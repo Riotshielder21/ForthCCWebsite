@@ -29,7 +29,7 @@ warn() {
 }
 
 send_alert() {
-    local subject="ðŸš¨ FCC Website Down - $HOSTNAME"
+    local subject="FCC Website Down - $HOSTNAME"
     local body="Website is unreachable at $CHECK_URL\n\nTime: $(date)\nHost: $HOSTNAME\n\nPlease check the server immediately."
     
     echo -e "$body" | mail -s "$subject" "$EMAIL_TO" 2>/dev/null || warn "Failed to send email alert"

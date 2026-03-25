@@ -7,11 +7,13 @@ This guide will help you set up and run the Forth Canoe Club website locally for
 - Node.js 18+ (https://nodejs.org/)
 - npm (comes with Node.js)
 - Git
+- Python 3.8+ (for JustGo sync automation)
 
 ## Quick Start
 
 ### 1. Install Dependencies
 
+**Node.js dependencies:**
 ```bash
 npm install
 ```
@@ -22,6 +24,17 @@ This installs all required packages:
 - Tailwind CSS - Styling
 - Firebase - Backend services
 - Lucide React - Icons
+
+**Python dependencies (for JustGo sync):**
+```bash
+# Create virtual environment (optional but recommended)
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install Python packages
+pip install -r requirements.txt
+playwright install chromium
+```
 
 ### 2. Development Server
 

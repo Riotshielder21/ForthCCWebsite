@@ -22,7 +22,25 @@ ssh user@your-server-ip
 mkdir ~/app && cd ~/app
 ```
 
-### 1.2 Clone Repository
+### 1.2 Install System Dependencies
+
+Update your system and install required packages:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y curl wget git nginx certbot python3-certbot-nginx nodejs npm mailutils ddclient python3 python3-pip python3-venv
+```
+
+**Required packages:**
+- `curl wget git` - Download and version control tools
+- `nginx` - Web server and reverse proxy
+- `certbot python3-certbot-nginx` - SSL certificate automation
+- `nodejs npm` - JavaScript runtime and package manager
+- `mailutils` - Email sending for alerts
+- `ddclient` - Dynamic DNS client
+- `python3 python3-pip python3-venv` - Python environment for automation
+
+### 1.3 Clone Repository
 
 **SSH (recommended):**
 ```bash
@@ -34,9 +52,9 @@ git clone git@github.com:Riotshielder21/FCCWebsite.git .
 git clone https://github.com/Riotshielder21/FCCWebsite.git .
 ```
 
-### 1.3 Run Deploy Script
+### 1.4 Run Deploy Script
 
-This automates all setup:
+This automates application setup (assumes system dependencies are already installed):
 
 ```bash
 chmod +x scripts/deploy.sh
@@ -44,9 +62,8 @@ sudo ./scripts/deploy.sh riotshielder21@gmail.com fccwebsite.gg-edi.co.uk
 ```
 
 **Handles:**
-- System dependencies (Node, Python, Nginx, SSL)
 - App user & directory setup
-- Node.js build
+- Node.js build & dependencies
 - Python virtualenv + Playwright
 - Systemd services (auto-restart)
 - Health check scripts

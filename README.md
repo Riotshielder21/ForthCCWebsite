@@ -7,14 +7,25 @@ A modern, fast React website for managing memberships, subscriptions, and equipm
 ## Features
 
 - 🛍️ Shop with cart & checkout
-- � List submissions to Google Sheets
-- �💳 Monthly & annual billing
+- 📝 List submissions to Google Sheets
+- 💳 Monthly & annual billing
 - 🎟️ Promo code support
 - 📱 Fully responsive design
 - 🚀 Lightning-fast performance
 - 🔐 Firebase integration
 
+## 🖥️ System Requirements
+
+**Ubuntu 22.04 LTS or later** with these packages:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y curl wget git nginx certbot python3-certbot-nginx nodejs npm mailutils ddclient python3 python3-pip python3-venv
+```
+
 ## 📦 One-Line Deploy
+
+**Prerequisites:** Ubuntu 22.04+ with system dependencies installed (see [SETUP.md](SETUP.md))
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/Riotshielder21/FCCWebsite/main/scripts/deploy.sh \
@@ -26,15 +37,20 @@ Or locally:
 sudo ./scripts/deploy.sh riotshielder21@gmail.com fccwebsite.gg-edi.co.uk
 ```
 
-That's it! ✨
+**What it does:** Application setup, services, and configuration ✨
 
 ## 🚀 Local Development
 
 ```bash
+# Node.js setup
 npm install        # Install dependencies
 npm run dev        # Start dev server →  http://127.0.0.1:5173
 npm run build      # Build for production
 npm start          # Run production server → http://127.0.0.1:3000
+
+# Python setup (for JustGo sync)
+pip install -r requirements.txt  # Install Python dependencies
+playwright install chromium     # Install browser for automation
 ```
 
 ## 📖 Documentation

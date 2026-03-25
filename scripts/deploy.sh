@@ -1,6 +1,6 @@
 ﻿#!/bin/bash
-# FCC Website Master Deployment Script
-# ðŸš€ One-command setup and deployment to Linux server
+# FCC Website Application Deployment Script
+# 🚀 Application setup and configuration (system dependencies must be installed manually)
 
 set -e
 
@@ -11,10 +11,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log() { echo -e "${GREEN}âœ“${NC} $1"; }
-warn() { echo -e "${YELLOW}âš ${NC} $1"; }
-error() { echo -e "${RED}âœ—${NC} $1"; exit 1; }
-info() { echo -e "${BLUE}â„¹${NC} $1"; }
+log() { echo -e "${GREEN}[v]${NC} $1"; }
+warn() { echo -e "${YELLOW}[w]${NC} $1"; }
+error() { echo -e "${RED}[x]${NC} $1"; exit 1; }
+info() { echo -e "${BLUE}[i]${NC} $1"; }
 
 # Configuration
 APP_HOME="/home/fcc-web/FCCWebsite"
@@ -22,11 +22,27 @@ APP_USER="fcc-web"
 ALERT_EMAIL="${1:-riotshielder21@gmail.com}"
 DOMAIN="${2:-fccwebsite.gg-edi.co.uk}"
 
-# Step 1: System Setup
-info "Step 1: System Dependencies"
-sudo apt-get update &>/dev/null
-sudo apt-get install -y curl wget git nginx certbot python3-certbot-nginx nodejs npm mailutils ddclient &>/dev/null
-log "System dependencies installed"
+# Ensure we're running from the correct directory
+if [ ! -d "$APP_HOME" ]; then
+    error "Application home directory $APP_HOME not found"
+fi
+
+# Step 1: System Validation
+info "Step 1: Validating System Dependencies"
+REQUIRED_PACKAGES="curl wget git nginx certbot python3-certbot-nginx nodejs npm mailutils ddclient python3 python3-pip python3-venv"
+MISSING_PACKAGES=""
+
+for pkg in $REQUIRED_PACKAGES; do
+    if ! dpkg -l | grep -q "^ii  $pkg "; then
+        MISSING_PACKAGES="$MISSING_PACKAGES $pkg"
+    fi
+done
+
+if [ -n "$MISSING_PACKAGES" ]; then
+    error "Missing required packages:$MISSING_PACKAGES\n\nPlease install manually:\n  sudo apt-get update\n  sudo apt-get install -y$MISSING_PACKAGES"
+else
+    log "All system dependencies are installed"
+fi
 
 # Step 2: Create App User
 info "Step 2: Creating App User"
@@ -40,23 +56,48 @@ fi
 # Step 3: Update Repository
 info "Step 3: Updating Application from main"
 cd "$APP_HOME"
-sudo -u "$APP_USER" git pull origin main
-log "Repository updated from main"
+if [ -d ".git" ]; then
+    if sudo -u "$APP_USER" git pull origin main; then
+        log "Repository updated from main"
+    else
+        warn "Failed to pull from git, continuing with existing code"
+    fi
+else
+    warn "No git repository found, skipping update"
+fi
 
 # Step 4: Node.js Setup
 info "Step 4: Building Node.js Application"
 cd "$APP_HOME"
-sudo -u "$APP_USER" npm install --silent
-sudo -u "$APP_USER" npm run build --silent
-log "Application built"
+
+# Check if node and npm are available
+if ! sudo -u "$APP_USER" which node >/dev/null 2>&1; then
+    error "Node.js not found for user $APP_USER"
+fi
+
+if ! sudo -u "$APP_USER" which npm >/dev/null 2>&1; then
+    error "npm not found for user $APP_USER"
+fi
+
+if sudo -u "$APP_USER" npm install; then
+    log "Dependencies installed"
+else
+    error "Failed to install dependencies"
+fi
+
+if sudo -u "$APP_USER" npm run build; then
+    log "Application built"
+else
+    error "Failed to build application"
+fi
 
 # Step 5: Python Setup (for JustGo Sync)
 info "Step 5: Setting up Python Environment"
 cd "$APP_HOME"
 if [ ! -d "venv" ]; then
     sudo -u "$APP_USER" python3 -m venv venv
-    sudo -u "$APP_USER" ./venv/bin/pip install -q playwright firebase-admin
-    sudo -u "$APP_USER" ./venv/bin/playwright install chromium &>/dev/null
+    sudo -u "$APP_USER" ./venv/bin/pip install -r requirements.txt
+    sudo -u "$APP_USER" ./venv/bin/playwright install chromium
     log "Python environment ready"
 else
     log "Python environment already configured"
@@ -181,9 +222,9 @@ fi
 
 # Summary
 echo ""
-echo -e "${BLUE}â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”${NC}"
-echo -e "${GREEN}âœ“ Deployment Complete!${NC}"
-echo -e "${BLUE}â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”${NC}"
+echo -e "${BLUE}==============================================================================================${NC}"
+echo -e "${GREEN}“ Deployment Complete!${NC}"
+echo -e "${BLUE}=============================================================================================={NC}"
 echo ""
 echo "Website:"
 echo "  Local: http://127.0.0.1:3000"
@@ -193,10 +234,10 @@ echo "Email: $ALERT_EMAIL"
 echo "Domain: $DOMAIN"
 echo ""
 echo "Services:"
-echo "  â€¢ fcc-web (Node.js app)"
-echo "  â€¢ fcc-health-check (Email alerts)"
-echo "  â€¢ nginx (Reverse proxy + SSL)"
-echo "  â€¢ ddclient (Dynamic DNS)"
+echo "  fcc-web (Node.js app)"
+echo "  fcc-health-check (Email alerts)"
+echo "  nginx (Reverse proxy + SSL)"
+echo "  ddclient (Dynamic DNS)"
 echo ""
 echo "Commands:"
 echo "  sudo systemctl status fcc-web"
