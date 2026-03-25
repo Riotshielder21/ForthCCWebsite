@@ -1,6 +1,18 @@
-# Forth Canoe Club - Home Server Security Guide
+﻿# âš ï¸ Documentation Moved
 
-This guide outlines security best practices for your Ubuntu home server running the JustGo Sync automation and web portal. The goal is to expose only the website and SSH access while keeping the host secure.
+Security documentation has been consolidated into [SECURITY.md](SECURITY.md).
+
+See [INDEX.md](INDEX.md) for all guides.
+
+---
+
+**Quick secure deployment:**
+```bash
+sudo ./scripts/deploy.sh riotshielder21@gmail.com fccwebsite.gg-edi.co.uk
+```
+
+The script includes security hardening by default!
+
 
 ## 1. System Updates & Hardening
 
@@ -166,7 +178,7 @@ sudo usermod -aG www-data fccuser  # if using nginx
 
 ### Secure Sensitive Files
 ```bash
-# In ~/fcc-server
+# In ~/FCCWebsite
 chmod 600 serviceAccountKey.json
 chmod 600 .env  # if you have one
 chmod 700 venv/  # restrict venv access
@@ -193,7 +205,7 @@ sudo nano /etc/logrotate.d/fcc-app
 
 Add:
 ```
-/home/fccuser/fcc-server/*.log {
+/home/fccuser/FCCWebsite/*.log {
     daily
     missingok
     rotate 7
@@ -206,7 +218,7 @@ Add:
 ### Check Logs Regularly
 ```bash
 sudo journalctl -u fcc-web -f
-tail -f ~/fcc-server/sync.log
+tail -f ~/FCCWebsite/sync.log
 sudo tail -f /var/log/auth.log
 ```
 
@@ -229,13 +241,13 @@ DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p $BACKUP_DIR
 
 # Backup app directory (exclude venv and logs)
-rsync -av --exclude='venv/' --exclude='*.log' /home/fccuser/fcc-server/ $BACKUP_DIR/fcc-server_$DATE/
+rsync -av --exclude='venv/' --exclude='*.log' /home/fccuser/FCCWebsite/ $BACKUP_DIR/FCCWebsite_$DATE/
 
 # Backup database if applicable
 # Add Firebase export commands here
 
 # Clean old backups (keep last 7)
-find $BACKUP_DIR -name "fcc-server_*" -type d -mtime +7 -exec rm -rf {} \;
+find $BACKUP_DIR -name "FCCWebsite_*" -type d -mtime +7 -exec rm -rf {} \;
 ```
 
 ```bash

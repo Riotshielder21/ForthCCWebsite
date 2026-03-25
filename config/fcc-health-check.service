@@ -1,0 +1,18 @@
+﻿[Unit]
+Description=FCC Health Check & Email Alerts
+After=fcc-web.service
+Requires=fcc-web.service
+
+[Service]
+Type=simple
+User=jwatt
+ExecStart=/usr/local/bin/fcc-health-check.sh
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+Environment="ALERT_EMAIL=riotshielder21@gmail.com"
+Environment="CHECK_INTERVAL=300"
+
+[Install]
+WantedBy=multi-user.target

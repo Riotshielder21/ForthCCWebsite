@@ -1,4 +1,21 @@
-Forth Canoe Club - Home Server Setup Guide
+﻿# âš ï¸ Documentation Moved
+
+This guide has been consolidated into a simplified, single-script deployment.
+
+**See:** [SETUP.md](SETUP.md) (10 minutes, all-inclusive)
+
+## One-Line Deploy
+
+```bash
+sudo ./scripts/deploy.sh riotshielder21@gmail.com fccwebsite.gg-edi.co.uk
+```
+
+That's it! âœ¨
+
+---
+
+For detailed info, see [INDEX.md](INDEX.md)
+
 
 This guide details how to set up the JustGo Sync automation and the web portal on a fresh Linux home server (e.g., Ubuntu/Debian).
 
@@ -11,7 +28,7 @@ sudo apt install python3-pip python3-venv git curl ufw openssh-client -y
 
 Set up SSH credentials for GitHub (if repo is private):
 
-ssh-keygen -t ed25519 -C "riotshielder21@gmail.com"
+ssh-keygen -t ed25519 -C "username@email.com"
 cat ~/.ssh/id_ed25519.pub
 # Add the public key to GitHub: Settings > SSH and GPG keys > New SSH key
 
@@ -36,8 +53,8 @@ The script that pulls data from JustGo and updates Firebase.
 
 Clone the Repository:
 
-git clone git@github.com:yourusername/yourrepo.git ~/fcc-server
-cd ~/fcc-server
+git clone git@github.com:yourusername/yourrepo.git ~/FCCWebsite
+cd ~/FCCWebsite
 
 Create and Activate Virtual Environment:
 
@@ -90,7 +107,7 @@ curl -X PUT "[https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$R
      --data "{\"type\":\"A\",\"name\":\"club.yourdomain.com\",\"content\":\"$IP\",\"ttl\":120,\"proxied\":true}"
 
 
-Add to crontab: */20 * * * * bash /home/user/fcc-server/update_ip.sh
+Add to crontab: */20 * * * * bash /home/user/FCCWebsite/update_ip.sh
 
 4. Resilience & Auto-Restart
 
@@ -111,7 +128,7 @@ After=network.target
 
 [Service]
 User=yourusername
-WorkingDirectory=/home/yourusername/fcc-server
+WorkingDirectory=/home/yourusername/FCCWebsite
 ExecStart=/usr/bin/npm start
 Restart=always
 Environment=PORT=3000
@@ -132,10 +149,10 @@ crontab -e
 Add:
 
 # Sync JustGo daily at 4 AM
-0 4 * * * export JUSTGO_USER="..." && export JUSTGO_PASS="..." && /usr/bin/python3 /home/user/fcc-server/justgo_sync.py >> /home/user/fcc-server/sync.log 2>&1
+0 4 * * * export JUSTGO_USER="..." && export JUSTGO_PASS="..." && /usr/bin/python3 /home/user/FCCWebsite/justgo_sync.py >> /home/user/FCCWebsite/sync.log 2>&1
 
 # Update repo weekly on Sundays at 3 AM
-0 3 * * 0 bash /home/user/fcc-server/update_repo.sh
+0 3 * * 0 bash /home/user/FCCWebsite/update_repo.sh
 
 
 5. Network & Port Forwarding
@@ -152,6 +169,6 @@ Router: Log into your home router and forward Port 80/443 (or 3000) to the inter
 
 Logs: journalctl -u fcc-web -f
 
-Sync Logs: tail -f ~/fcc-server/sync.log
+Sync Logs: tail -f ~/FCCWebsite/sync.log
 
 IP Status: cat /var/log/syslog | grep ddclient

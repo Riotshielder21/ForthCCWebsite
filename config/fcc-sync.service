@@ -1,0 +1,13 @@
+﻿[Unit]
+Description=FCC JustGo Sync Service
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=jwatt
+WorkingDirectory=/home/jwatt/FCCWebsite
+ExecStart=/home/jwatt/FCCWebsite/venv/bin/python /home/jwatt/FCCWebsite/scripts/justgo-sync.py
+StandardOutput=journal
+StandardError=journal
+Environment="JUSTGO_USER=%i"
+Environment="JUSTGO_PASS=%i"

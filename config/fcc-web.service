@@ -1,0 +1,19 @@
+﻿[Unit]
+Description=FCC Website Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jwatt
+WorkingDirectory=/home/jwatt/FCCWebsite
+ExecStart=/usr/bin/node /home/jwatt/FCCWebsite/server.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment="NODE_ENV=production"
+Environment="PORT=3000"
+
+[Install]
+WantedBy=multi-user.target
