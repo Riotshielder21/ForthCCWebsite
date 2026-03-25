@@ -5,7 +5,7 @@ Requires=fcc-web.service
 
 [Service]
 Type=simple
-User=jwatt
+User=fcc-web
 ExecStart=/usr/local/bin/fcc-health-check.sh
 Restart=always
 RestartSec=30

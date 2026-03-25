@@ -1,8 +1,8 @@
-#!/bin/bash
+﻿#!/bin/bash
 # Update repo script - pulls latest changes from main branch
 # Run this periodically via cron to keep the server code up to date
 
-cd /home/jwatt/FCCWebsite
+cd /home/fcc-web/FCCWebsite
 
 # Stash any local changes to avoid conflicts
 git stash

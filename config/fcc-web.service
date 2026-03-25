@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=jwatt
-WorkingDirectory=/home/jwatt/FCCWebsite
-ExecStart=/usr/bin/node /home/jwatt/FCCWebsite/server.js
+User=fcc-web
+WorkingDirectory=/home/fcc-web/FCCWebsite
+ExecStart=/usr/bin/node /home/fcc-web/FCCWebsite/server.js
 Restart=always
 RestartSec=10
 StandardOutput=journal

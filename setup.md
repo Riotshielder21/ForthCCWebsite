@@ -89,14 +89,46 @@ Add serviceAccountKey.json:
 
 ```bash
 # Get from Firebase Console > Project Settings > Service Accounts
-sudo nano /home/jwatt/FCCWebsite/serviceAccountKey.json
+sudo nano /home/fcc-web/FCCWebsite/serviceAccountKey.json
 # Paste JSON key (Ctrl+X > Y > Enter)
 
-sudo chmod 600 /home/jwatt/FCCWebsite/serviceAccountKey.json
-sudo chown jwatt:jwatt /home/jwatt/FCCWebsite/serviceAccountKey.json
+sudo chmod 600 /home/fcc-web/FCCWebsite/serviceAccountKey.json
+sudo chown fcc-web:fcc-web /home/fcc-web/FCCWebsite/serviceAccountKey.json
 ```
 
-### 2.3 Email Alerts
+### 2.4 Google Sheets Integration (NEW)
+
+**Create Google Sheet:**
+1. Go to [sheets.google.com](https://sheets.google.com)
+2. Create new spreadsheet
+3. Rename first tab to "Lists"
+4. Add headers: `Timestamp | Name | Email | List Type | Items | Notes`
+
+**Setup Service Account:**
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create/select project
+3. Enable "Google Sheets API"
+4. Create Service Account (IAM > Service Accounts)
+5. Generate JSON key, download it
+
+**Configure on Server:**
+```bash
+# Place key file
+sudo nano /home/fcc-web/FCCWebsite/google-service-account.json
+# Paste JSON content (Ctrl+X > Y > Enter)
+
+sudo chmod 600 /home/fcc-web/FCCWebsite/google-service-account.json
+sudo chown fcc-web:fcc-web /home/fcc-web/FCCWebsite/google-service-account.json
+
+# Share Google Sheet with service account email
+# (email found in JSON: "client_email" field)
+
+# Add Sheet ID to environment
+sudo nano /home/fcc-web/FCCWebsite/.env
+# Add: GOOGLE_SHEET_ID=your_sheet_id_from_url
+```
+
+### 2.5 Email Alerts
 
 Configure who gets notified:
 
@@ -203,7 +235,7 @@ sudo systemctl restart fcc-web
 ### Deploy Code Updates
 
 ```bash
-cd /home/jwatt/FCCWebsite
+cd /home/fcc-web/FCCWebsite
 git pull
 npm run build
 sudo systemctl restart fcc-web
@@ -356,7 +388,7 @@ sudo dpkg-reconfigure -plow unattended-upgrades
 
 ```bash
 # Backup app
-sudo tar -czf fcc-backup-$(date +%Y%m%d).tar.gz /home/jwatt/FCCWebsite
+sudo tar -czf fcc-backup-$(date +%Y%m%d).tar.gz /home/fcc-web/FCCWebsite
 
 # Backup certificates
 sudo tar -czf fcc-certs-$(date +%Y%m%d).tar.gz /etc/letsencrypt
@@ -480,7 +512,7 @@ sudo systemctl status fcc-web -l
 - âœ… Firebase integration
 
 **Key locations:**
-- Website: `/home/jwatt/FCCWebsite/`
+- Website: `/home/fcc-web/FCCWebsite/`
 - Nginx: `/etc/nginx/sites-available/fcc-web`
 - Services: `/etc/systemd/system/fcc-*.service`
 - Logs: `journalctl -u fcc-web`
@@ -491,7 +523,7 @@ sudo systemctl status fcc-web -l
 sudo systemctl status fcc-web                # Status
 sudo journalctl -u fcc-web -f                # Logs
 sudo systemctl restart fcc-web               # Restart
-cd /home/jwatt/FCCWebsite && git pull             # Update
+cd /home/fcc-web/FCCWebsite && git pull             # Update
 ```
 
 ---

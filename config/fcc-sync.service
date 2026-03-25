@@ -4,9 +4,9 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-User=jwatt
-WorkingDirectory=/home/jwatt/FCCWebsite
-ExecStart=/home/jwatt/FCCWebsite/venv/bin/python /home/jwatt/FCCWebsite/scripts/justgo-sync.py
+User=fcc-web
+WorkingDirectory=/home/fcc-web/FCCWebsite
+ExecStart=/home/fcc-web/FCCWebsite/venv/bin/python /home/fcc-web/FCCWebsite/scripts/justgo-sync.py
 StandardOutput=journal
 StandardError=journal
 Environment="JUSTGO_USER=%i"

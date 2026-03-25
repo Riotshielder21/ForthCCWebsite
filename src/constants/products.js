@@ -1,4 +1,4 @@
-// Discount tiers
+﻿// Discount tiers
 export const DISCOUNTS = {
   ANNUAL: 0.33,
   VOLUNTEER: 0.25

@@ -39,7 +39,7 @@ Then configure (see [SETUP.md](SETUP.md) Part 2).
 
 1. **fcc-web** - Node.js website
    - Port: 3000 (internal)
-   - User: jwatt
+   - User: fcc-web
    - Restart: Always
 
 2. **fcc-health-check** - Email downtime alerts
@@ -103,7 +103,7 @@ Created/modified during deployment:
 ### Deploy New Code
 
 ```bash
-cd /home/jwatt/FCCWebsite
+cd /home/fcc-web/FCCWebsite
 git pull origin main
 npm run build
 sudo systemctl restart fcc-web
@@ -235,7 +235,7 @@ sudo systemctl list-units --type service --failed
 
 ```bash
 # Disk usage
-df -h /home/jwatt/FCCWebsite
+df -h /home/fcc-web/FCCWebsite
 
 # Memory usage
 free -h
@@ -244,7 +244,7 @@ free -h
 top -b -n 1 | head -15
 
 # File count
-find /home/jwatt/FCCWebsite -type f | wc -l
+find /home/fcc-web/FCCWebsite -type f | wc -l
 ```
 
 ### Optimize Nginx
@@ -262,7 +262,7 @@ Nginx is pre-configured with:
 sudo rm -rf /var/cache/nginx/*
 
 # Node.js cache
-rm -rf /home/jwatt/FCCWebsite/node_modules/.cache
+rm -rf /home/fcc-web/FCCWebsite/node_modules/.cache
 ```
 
 ---
@@ -348,7 +348,7 @@ Check spam folder if not received.
 ### Revert to Previous Code
 
 ```bash
-cd /home/jwatt/FCCWebsite
+cd /home/fcc-web/FCCWebsite
 git log --oneline -5    # View recent commits
 git revert <commit-id>  # Revert specific commit
 git push
@@ -375,7 +375,7 @@ sudo tar -xzf fcc-backup-20260325.tar.gz -C /
 
 ```bash
 # Run sync manually
-/home/jwatt/FCCWebsite/venv/bin/python /home/jwatt/FCCWebsite/scripts/justgo-sync.py
+/home/fcc-web/FCCWebsite/venv/bin/python /home/fcc-web/FCCWebsite/scripts/justgo-sync.py
 
 # View logs
 sudo journalctl -u fcc-sync -f
@@ -385,7 +385,7 @@ sudo journalctl -u fcc-sync -f
 
 ```bash
 # Via Node.js shell
-cd /home/jwatt/FCCWebsite
+cd /home/fcc-web/FCCWebsite
 node
 > const admin = require('firebase-admin');
 > const db = admin.firestore();
@@ -400,10 +400,10 @@ node
 
 ```bash
 # Backup current
-sudo tar -czf fcc-backup-final.tar.gz /home/jwatt/FCCWebsite
+sudo tar -czf fcc-backup-final.tar.gz /home/fcc-web/FCCWebsite
 
 # Remove app
-sudo rm -rf /home/jwatt/FCCWebsite
+sudo rm -rf /home/fcc-web/FCCWebsite
 
 # Redeploy
 cd /home/fcc-web
@@ -457,7 +457,7 @@ sudo ./scripts/deploy.sh email@example.com domain.com
 
 # Configure
 sudo nano /etc/ddclient.conf          # DNS
-sudo nano /home/jwatt/FCCWebsite/serviceAccountKey.json  # Firebase
+sudo nano /home/fcc-web/FCCWebsite/serviceAccountKey.json  # Firebase
 sudo systemctl edit fcc-health-check.service          # Alerts
 
 # Check
@@ -470,7 +470,7 @@ sudo journalctl -u fcc-web -f
 sudo systemctl restart fcc-web
 
 # Update
-cd /home/jwatt/FCCWebsite && git pull && npm run build && sudo systemctl restart fcc-web
+cd /home/fcc-web/FCCWebsite && git pull && npm run build && sudo systemctl restart fcc-web
 
 # Monitor
 df -h && free -h && sudo top -b -n 1

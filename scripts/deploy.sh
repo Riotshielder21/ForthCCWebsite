@@ -17,8 +17,8 @@ error() { echo -e "${RED}âœ—${NC} $1"; exit 1; }
 info() { echo -e "${BLUE}â„¹${NC} $1"; }
 
 # Configuration
-APP_HOME="/home/jwatt/FCCWebsite"
-APP_USER="jwatt"
+APP_HOME="/home/fcc-web/FCCWebsite"
+APP_USER="fcc-web"
 ALERT_EMAIL="${1:-riotshielder21@gmail.com}"
 DOMAIN="${2:-fccwebsite.gg-edi.co.uk}"
 
@@ -78,9 +78,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=jwatt
-WorkingDirectory=/home/jwatt/FCCWebsite
-ExecStart=/usr/bin/node /home/jwatt/FCCWebsite/server.js
+User=fcc-web
+WorkingDirectory=/home/fcc-web/FCCWebsite
+ExecStart=/usr/bin/node /home/fcc-web/FCCWebsite/server.js
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -100,7 +100,7 @@ Requires=fcc-web.service
 
 [Service]
 Type=simple
-User=jwatt
+User=fcc-web
 ExecStart=/usr/local/bin/fcc-health-check.sh
 Restart=always
 RestartSec=30

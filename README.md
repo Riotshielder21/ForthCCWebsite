@@ -7,7 +7,8 @@ A modern, fast React website for managing memberships, subscriptions, and equipm
 ## Features
 
 - 🛍️ Shop with cart & checkout
-- 💳 Monthly & annual billing
+- � List submissions to Google Sheets
+- �💳 Monthly & annual billing
 - 🎟️ Promo code support
 - 📱 Fully responsive design
 - 🚀 Lightning-fast performance
@@ -76,7 +77,7 @@ sudo journalctl -u fcc-web -f
 sudo systemctl restart fcc-web
 
 # Deploy updates
-cd /home/jwatt/FCCWebsite
+cd /home/fcc-web/FCCWebsite
 git pull && npm run build && sudo systemctl restart fcc-web
 ```
 
@@ -126,7 +127,7 @@ More help → [DEPLOY.md](DEPLOY.md#troubleshooting)
 ## 📦 Project Structure
 
 ```
-/home/jwatt/FCCWebsite/
+/home/fcc-web/FCCWebsite/
 ├── src/               # React source
 ├── dist/              # Built files (deployed)
 ├── server.js          # Express server
