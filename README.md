@@ -16,16 +16,22 @@ A modern, fast React website for managing memberships, subscriptions, and equipm
 
 ## 🖥️ System Requirements
 
-**Ubuntu 22.04 LTS or later** with these packages:
+**Ubuntu 22.04 LTS or later** with system packages and npm dependencies:
 
 ```bash
+# System packages
 sudo apt-get update
 sudo apt-get install -y curl wget git nginx certbot python3-certbot-nginx nodejs npm mailutils ddclient python3 python3-pip python3-venv
+
+# npm dependencies
+npm install
 ```
+
+See [PREREQUISITES.md](PREREQUISITES.md) for complete dependency list and manual checklist.
 
 ## 📦 One-Line Deploy
 
-**Prerequisites:** Ubuntu 22.04+ with system dependencies installed (see [SETUP.md](SETUP.md))
+**Prerequisites:** System packages AND `npm install` must be completed first
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/Riotshielder21/FCCWebsite/main/scripts/deploy.sh \
@@ -37,7 +43,7 @@ Or locally:
 sudo ./scripts/deploy.sh riotshielder21@gmail.com fccwebsite.gg-edi.co.uk
 ```
 
-**What it does:** Application setup, services, and configuration ✨
+**What it does:** Application build, services, and configuration ✨
 
 **Safe to Re-run:** Yes! Script cleans build artifacts but preserves all data, credentials, and configuration. Perfect for updates or recovery from network issues.
 

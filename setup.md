@@ -52,9 +52,21 @@ git clone git@github.com:Riotshielder21/FCCWebsite.git .
 git clone https://github.com/Riotshielder21/FCCWebsite.git .
 ```
 
+### 1.3.5 Install npm Dependencies
+
+Install all Node.js dependencies (this must complete before deployment):
+
+```bash
+npm install
+```
+
+> **Why manual?** npm install can be slow and timeout on poor networks. Installing manually beforehand ensures stable deployment. See [PREREQUISITES.md](PREREQUISITES.md) for the full dependency list.
+
+If npm install times out, simply re-run it - it will resume from where it left off.
+
 ### 1.4 Run Deploy Script
 
-This automates application setup (assumes system dependencies are already installed):
+This automates application setup (assumes system dependencies and npm install are already done):
 
 ```bash
 chmod +x scripts/deploy.sh
@@ -63,7 +75,7 @@ sudo ./scripts/deploy.sh riotshielder21@gmail.com fccwebsite.gg-edi.co.uk
 
 **Handles:**
 - App user & directory setup
-- Node.js build & dependencies
+- Node.js build
 - Python virtualenv + Playwright
 - Systemd services (auto-restart)
 - Health check scripts

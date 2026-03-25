@@ -72,44 +72,30 @@ cd "$APP_HOME"
 sudo -u "$APP_USER" rm -rf dist/ node_modules/ .vite-cache/ 2>/dev/null || true
 log "Build artifacts cleaned (data preserved)"
 
-# Step 4: Node.js Setup
-info "Step 4: Building Node.js Application"
+# Step 4: Validate Node.js Build Ready
+info "Step 4: Validating Application Build"
 cd "$APP_HOME"
 
 # Check if node and npm are available
 if ! sudo -u "$APP_USER" which node >/dev/null 2>&1; then
-    error "Node.js not found for user $APP_USER"
+    error "Node.js not found for user $APP_USER. Install via: sudo apt-get install nodejs npm"
 fi
 
 if ! sudo -u "$APP_USER" which npm >/dev/null 2>&1; then
-    error "npm not found for user $APP_USER"
+    error "npm not found for user $APP_USER. Install via: sudo apt-get install npm"
 fi
 
-# npm install with retry logic for network issues
-info "Installing Node.js dependencies (with network retry)"
-NPM_MAX_RETRIES=3
-NPM_RETRY_COUNT=0
-while [ $NPM_RETRY_COUNT -lt $NPM_MAX_RETRIES ]; do
-    if sudo -u "$APP_USER" npm install --timeout=120000; then
-        log "Dependencies installed"
-        break
-    else
-        NPM_RETRY_COUNT=$((NPM_RETRY_COUNT + 1))
-        if [ $NPM_RETRY_COUNT -lt $NPM_MAX_RETRIES ]; then
-            warn "npm install failed (attempt $NPM_RETRY_COUNT/$NPM_MAX_RETRIES), retrying in 10 seconds..."
-            sleep 10
-            # Clear npm cache on retry
-            sudo -u "$APP_USER" npm cache clean --force 2>/dev/null || true
-        else
-            error "Failed to install dependencies after $NPM_MAX_RETRIES attempts"
-        fi
-    fi
-done
+# Validate node_modules exists (npm install should be done manually)
+if [ ! -d "node_modules" ]; then
+    error "node_modules not found. Please run 'npm install' manually first. See PREREQUISITES.md"
+fi
+log "Node.js environment ready"
 
+# Build the application
 if sudo -u "$APP_USER" npm run build; then
-    log "Application built"
+    log "Application built successfully"
 else
-    error "Failed to build application"
+    error "Failed to build application. Check npm and node_modules."
 fi
 
 # Step 5: Python Setup (for JustGo Sync)
