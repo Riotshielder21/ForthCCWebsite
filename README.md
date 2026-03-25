@@ -39,6 +39,8 @@ sudo ./scripts/deploy.sh riotshielder21@gmail.com fccwebsite.gg-edi.co.uk
 
 **What it does:** Application setup, services, and configuration ✨
 
+**Safe to Re-run:** Yes! Script cleans build artifacts but preserves all data, credentials, and configuration. Perfect for updates or recovery from network issues.
+
 ## 🚀 Local Development
 
 ```bash

@@ -40,7 +40,7 @@ sudo apt-get install -y curl wget git nginx certbot python3-certbot-nginx nodejs
 - `ddclient` - Dynamic DNS client
 - `python3 python3-pip python3-venv` - Python environment for automation
 
-### 1.4 Clone Repository
+### 1.3 Clone Repository
 
 **SSH (recommended):**
 ```bash
@@ -52,7 +52,7 @@ git clone git@github.com:Riotshielder21/FCCWebsite.git .
 git clone https://github.com/Riotshielder21/FCCWebsite.git .
 ```
 
-### 1.5 Run Deploy Script
+### 1.4 Run Deploy Script
 
 This automates application setup (assumes system dependencies are already installed):
 
@@ -72,7 +72,24 @@ sudo ./scripts/deploy.sh riotshielder21@gmail.com fccwebsite.gg-edi.co.uk
 - Dynamic DNS
 - Firewall rules
 
-**Time:** 5-10 minutes
+**Network Resilience:**
+- Auto-retries npm install on timeout (3 attempts)
+- 120-second timeout per npm operation
+- Automatic npm cache cleaning on retry
+
+**What Gets Cleaned (Safe to Re-run):**
+- `dist/` - Build artifacts
+- `node_modules/` - Dependencies (reinstalled)
+- `.vite-cache/` - Build cache
+
+**What's Preserved (Data & Configuration):**
+- `serviceAccountKey.json` - Firebase credentials
+- `.env` - Environment variables
+- `venv/` - Python environment
+- `scripts/` and all data files
+- Database records and customer history
+
+**Time:** 5-10 minutes (first run) or 2-3 minutes (re-run)
 
 ---
 
