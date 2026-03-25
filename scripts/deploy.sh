@@ -44,15 +44,6 @@ else
     log "All system dependencies are installed"
 fi
 
-# Step 2: Create App User
-info "Step 2: Creating App User"
-if ! id "$APP_USER" &>/dev/null; then
-    sudo useradd -m -s /bin/bash "$APP_USER"
-    log "User '$APP_USER' created"
-else
-    log "User '$APP_USER' already exists"
-fi
-
 # Step 3: Update Repository
 info "Step 3: Updating Application from main"
 cd "$APP_HOME"
