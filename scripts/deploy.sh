@@ -1,6 +1,6 @@
 ﻿#!/bin/bash
 # FCC Website Application Deployment Script
-# 🚀 Application setup and configuration (system dependencies must be installed manually)
+# 🚀 Application setup, build cleanup, and configuration (system dependencies must be installed manually)
 
 set -e
 
@@ -53,8 +53,19 @@ else
     log "User '$APP_USER' already exists"
 fi
 
-# Step 3: Update Repository
-info "Step 3: Updating Application from main"
+# Step 3: Clean Previous Build
+info "Step 3: Cleaning Previous Build"
+cd "$APP_HOME"
+
+# Remove build artifacts but preserve data and config
+sudo -u "$APP_USER" rm -rf node_modules dist .vite 2>/dev/null || true
+sudo -u "$APP_USER" npm cache clean --force 2>/dev/null || true
+
+# Preserved: serviceAccountKey.json, .env, Firebase data, logs, config files
+log "Previous build artifacts cleaned (data preserved)"
+
+# Step 4: Update Repository
+info "Step 4: Updating Application from main"
 cd "$APP_HOME"
 if [ -d ".git" ]; then
     if sudo -u "$APP_USER" git pull origin main; then
@@ -66,8 +77,8 @@ else
     warn "No git repository found, skipping update"
 fi
 
-# Step 4: Node.js Setup
-info "Step 4: Building Node.js Application"
+# Step 5: Node.js Setup
+info "Step 5: Building Node.js Application"
 cd "$APP_HOME"
 
 # Check if node and npm are available
@@ -79,11 +90,24 @@ if ! sudo -u "$APP_USER" which npm >/dev/null 2>&1; then
     error "npm not found for user $APP_USER"
 fi
 
-if sudo -u "$APP_USER" npm install; then
-    log "Dependencies installed"
-else
-    error "Failed to install dependencies"
-fi
+# Retry npm install up to 3 times for network issues
+MAX_RETRIES=3
+RETRY_COUNT=0
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if sudo -u "$APP_USER" npm install --timeout=60000; then
+        log "Dependencies installed"
+        break
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            warn "npm install failed (attempt $RETRY_COUNT/$MAX_RETRIES), retrying in 10 seconds..."
+            sleep 10
+        else
+            error "Failed to install dependencies after $MAX_RETRIES attempts"
+        fi
+    fi
+done
 
 if sudo -u "$APP_USER" npm run build; then
     log "Application built"
@@ -91,8 +115,8 @@ else
     error "Failed to build application"
 fi
 
-# Step 5: Python Setup (for JustGo Sync)
-info "Step 5: Setting up Python Environment"
+# Step 6: Python Setup (for JustGo Sync)
+info "Step 6: Setting up Python Environment"
 cd "$APP_HOME"
 if [ ! -d "venv" ]; then
     sudo -u "$APP_USER" python3 -m venv venv
@@ -103,14 +127,14 @@ else
     log "Python environment already configured"
 fi
 
-# Step 6: Install Health Check Script
-info "Step 6: Installing Health Check Service"
+# Step 7: Install Health Check Script
+info "Step 7: Installing Health Check Service"
 sudo cp scripts/health-check.sh /usr/local/bin/fcc-health-check.sh
 sudo chmod +x /usr/local/bin/fcc-health-check.sh
 log "Health check script installed"
 
-# Step 7: Configure Systemd Services
-info "Step 7: Configuring Systemd Services"
+# Step 8: Configure Systemd Services
+info "Step 8: Configuring Systemd Services"
 sudo tee /etc/systemd/system/fcc-web.service > /dev/null << 'EOF'
 [Unit]
 Description=FCC Website Service
@@ -158,8 +182,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable fcc-web fcc-health-check
 log "Systemd services configured"
 
-# Step 8: Configure Nginx
-info "Step 8: Configuring Nginx"
+# Step 9: Configure Nginx
+info "Step 9: Configuring Nginx"
 sudo cp config/nginx.conf /etc/nginx/sites-available/fcc-web
 sudo sed -i "s/fccwebsite.gg-edi.co.uk/$DOMAIN/g" /etc/nginx/sites-available/fcc-web
 sudo ln -sf /etc/nginx/sites-available/fcc-web /etc/nginx/sites-enabled/ 2>/dev/null || true
@@ -168,8 +192,8 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t &>/dev/null && sudo systemctl reload nginx || error "Nginx configuration error"
 log "Nginx configured"
 
-# Step 9: SSL Certificate
-info "Step 9: Setting up SSL Certificate"
+# Step 10: SSL Certificate
+info "Step 10: Setting up SSL Certificate"
 if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
     sudo certbot certonly --nginx -d "$DOMAIN" -d "www.$DOMAIN" --non-interactive --agree-tos -m "$ALERT_EMAIL" || warn "SSL setup skipped"
 else
@@ -177,8 +201,8 @@ else
 fi
 log "SSL configured"
 
-# Step 10: Configure ddclient (Dynamic DNS)
-info "Step 10: Configuring Dynamic DNS"
+# Step 11: Configure ddclient (Dynamic DNS)
+info "Step 11: Configuring Dynamic DNS"
 sudo tee /etc/ddclient.conf > /dev/null << 'EOF'
 protocol=cloudflare
 use=web, web=checkip.dyndns.com/
@@ -191,16 +215,16 @@ sudo chmod 600 /etc/ddclient.conf
 sudo systemctl enable ddclient
 log "Dynamic DNS configured (update /etc/ddclient.conf with your credentials)"
 
-# Step 11: Setup Email Alerts
-info "Step 11: Configuring Email"
+# Step 12: Setup Email Alerts
+info "Step 12: Configuring Email"
 if command -v postfix &> /dev/null; then
     log "Postfix mail service active"
 else
     warn "Install mailutils: sudo apt-get install mailutils"
 fi
 
-# Step 12: Firewall
-info "Step 12: Configuring Firewall"
+# Step 13: Firewall
+info "Step 13: Configuring Firewall"
 sudo ufw default deny incoming &>/dev/null || true
 sudo ufw default allow outgoing &>/dev/null || true
 sudo ufw allow 22/tcp &>/dev/null || true
@@ -209,8 +233,8 @@ sudo ufw allow 443/tcp &>/dev/null || true
 sudo ufw enable -y &>/dev/null || true
 log "Firewall configured"
 
-# Step 13: Start Services
-info "Step 13: Starting Services"
+# Step 14: Start Services
+info "Step 14: Starting Services"
 sudo systemctl start fcc-web fcc-health-check
 sleep 3
 

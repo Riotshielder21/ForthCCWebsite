@@ -40,7 +40,7 @@ sudo apt-get install -y curl wget git nginx certbot python3-certbot-nginx nodejs
 - `ddclient` - Dynamic DNS client
 - `python3 python3-pip python3-venv` - Python environment for automation
 
-### 1.3 Clone Repository
+### 1.4 Clone Repository
 
 **SSH (recommended):**
 ```bash
@@ -52,7 +52,7 @@ git clone git@github.com:Riotshielder21/FCCWebsite.git .
 git clone https://github.com/Riotshielder21/FCCWebsite.git .
 ```
 
-### 1.4 Run Deploy Script
+### 1.5 Run Deploy Script
 
 This automates application setup (assumes system dependencies are already installed):
 
