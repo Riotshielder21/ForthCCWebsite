@@ -395,7 +395,7 @@ export default function App() {
               <div className="CartItemList">
                 {cart.length === 0 ? (
                   <div className="CartEmptyState">
-                    <ShoppingBag />
+                    <ShoppingBag className="w-12 h-12 mx-auto mb-4" />
                     <p className="CartEmptyText">Basket is empty</p>
                   </div>
                 ) : (
