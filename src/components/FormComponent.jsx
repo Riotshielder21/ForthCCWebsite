@@ -1,19 +1,21 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { Plus, X, Send, CheckCircle, AlertCircle } from 'lucide-react';
 
-const LIST_TYPES = [
-  'Equipment Needed',
-  'Volunteer Sign-ups',
-  'Event Participants',
-  'Maintenance Tasks',
-  'Other'
-];
-
-export default function ListSubmissionForm() {
+export default function FormComponent({
+  title = 'Submit a Form',
+  description = 'Fill in the details below to submit your form.',
+  categories = [],
+  categoryLabel = 'Category',
+  itemsLabel = 'Items',
+  itemPlaceholder = 'Item',
+  submitLabel = 'Submit',
+  endpoint = '/api/forms',
+  onSuccess,
+}) {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    listType: '',
+    category: '',
     items: [''],
     notes: ''
   });
@@ -47,14 +49,13 @@ export default function ListSubmissionForm() {
     setSubmitStatus(null);
 
     try {
-      // Filter out empty items
       const filteredItems = formData.items.filter(item => item.trim() !== '');
 
       if (filteredItems.length === 0) {
-        throw new Error('Please add at least one item to your list');
+        throw new Error(`Please add at least one ${itemPlaceholder.toLowerCase()}`);
       }
 
-      const response = await fetch('/api/lists', {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -68,34 +69,28 @@ export default function ListSubmissionForm() {
       const result = await response.json();
 
       if (response.ok) {
-        let message = 'List submitted successfully!';
-        
-        // Handle volunteer verification and discount code
-        if (formData.listType === 'Volunteer Sign-ups') {
-          if (result.verification?.verified) {
-            message = `Thank you for volunteering! Your discount code is: ${result.discountCode}`;
-          } else {
-            message = 'List submitted successfully! Note: Your name was not found in our member database. Please contact us if you believe this is an error.';
-          }
+        let message = 'Submitted successfully!';
+
+        if (onSuccess) {
+          message = onSuccess(result, formData) || message;
         }
 
-        setSubmitStatus({ 
-          type: 'success', 
+        setSubmitStatus({
+          type: 'success',
           message,
           discountCode: result.discountCode,
           verified: result.verification?.verified
         });
-        
-        // Reset form
+
         setFormData({
           name: '',
           email: '',
-          listType: '',
+          category: '',
           items: [''],
           notes: ''
         });
       } else {
-        throw new Error(result.error || 'Failed to submit list');
+        throw new Error(result.error || 'Failed to submit');
       }
     } catch (error) {
       setSubmitStatus({ type: 'error', message: error.message });
@@ -106,17 +101,16 @@ export default function ListSubmissionForm() {
 
   return (
     <div className="FormContainer">
-      <div className="SpaceB8">
+          <div className="SpaceB8">
         <h2 className="FormTitle">
-          Submit a Form request
+          {title}
         </h2>
         <p className="FormDescription">
-          Book out equipment, become a volunteers.
+          {description}
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="FormBody">
-        {/* Basic Info */}
         <div className="FormFieldGrid">
           <div>
             <label className="FormLabel">
@@ -146,28 +140,28 @@ export default function ListSubmissionForm() {
           </div>
         </div>
 
-        {/* List Type */}
-        <div>
-          <label className="FormLabel">
-            List Type *
-          </label>
-          <select
-            required
-            value={formData.listType}
-            onChange={(e) => handleInputChange('listType', e.target.value)}
-            className="FormInput"
-          >
-            <option value="">Select required form...</option>
-            {LIST_TYPES.map(type => (
-              <option key={type} value={type}>{type}</option>
-            ))}
-          </select>
-        </div>
+        {categories.length > 0 && (
+          <div>
+            <label className="FormLabel">
+              {categoryLabel} *
+            </label>
+            <select
+              required
+              value={formData.category}
+              onChange={(e) => handleInputChange('category', e.target.value)}
+              className="FormInput"
+            >
+              <option value="">Select...</option>
+              {categories.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
-        {/* List Items */}
         <div>
           <label className="FormLabel">
-            List Items *
+            {itemsLabel} *
           </label>
           <div className="FormItemList">
             {formData.items.map((item, index) => (
@@ -177,7 +171,7 @@ export default function ListSubmissionForm() {
                   value={item}
                   onChange={(e) => handleItemChange(index, e.target.value)}
                   className="FormInputFlex FormInput"
-                  placeholder={`Item ${index + 1}`}
+                  placeholder={`${itemPlaceholder} ${index + 1}`}
                 />
                 {formData.items.length > 1 && (
                   <button
@@ -197,25 +191,23 @@ export default function ListSubmissionForm() {
             className="FormAddButton"
           >
             <Plus className="IconMd" />
-            Add Another Item
+            Add Another {itemPlaceholder}
           </button>
         </div>
 
-        {/* Notes */}
         <div>
-          <label className="FormLabel">
+            <label className="FormLabel">
             Additional Notes
           </label>
           <textarea
             value={formData.notes}
             onChange={(e) => handleInputChange('notes', e.target.value)}
             rows={3}
-            className="FormInput"
+              className="FormInput"
             placeholder="Any additional information..."
           />
         </div>
 
-        {/* Submit Status */}
         {submitStatus && (
           <div className={`FormAlert ${
             submitStatus.type === 'success'
@@ -248,7 +240,6 @@ export default function ListSubmissionForm() {
           </div>
         )}
 
-        {/* Submit Button */}
         <button
           type="submit"
           disabled={isSubmitting}
@@ -262,7 +253,7 @@ export default function ListSubmissionForm() {
           ) : (
             <>
               <Send className="IconMd" />
-              Submit List
+              {submitLabel}
             </>
           )}
         </button>

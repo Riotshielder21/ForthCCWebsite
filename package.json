@@ -1,7 +1,7 @@
 {
   "name": "fcc-website",
   "version": "1.0.0",
-  "description": "Forth Canoe Club - Online Store & Subscriptions Portal",
+  "description": "Forth Canoe Club SCIO",
   "type": "module",
   "scripts": {
     "dev": "vite",

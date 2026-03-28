@@ -11,28 +11,57 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
   appId: "forth-canoe-club-id"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+// Initialize Firebase lazily and safely so config/auth issues do not blank the whole app.
+let app = null;
+let auth = null;
+let db = null;
+
+try {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+} catch (error) {
+  console.error('Firebase initialization failed:', error);
+}
+
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'forth-canoe-default';
 
 // Auth Functions
 export const initializeAuth = async () => {
+  if (!auth) return;
+
   if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-    await signInWithCustomToken(auth, __initial_auth_token);
+    try {
+      await signInWithCustomToken(auth, __initial_auth_token);
+    } catch (error) {
+      console.error('Custom token auth failed:', error);
+      await signInAnonymously(auth);
+    }
   } else {
-    await signInAnonymously(auth);
+    try {
+      await signInAnonymously(auth);
+    } catch (error) {
+      console.error('Anonymous auth failed:', error);
+    }
   }
 };
 
 export const setupAuthListener = (callback) => {
+  if (!auth) {
+    callback(null);
+    return () => {};
+  }
+
   return onAuthStateChanged(auth, callback);
 };
 
 // Member Verification Functions
 export const verifyMember = async (name) => {
   try {
+    if (!db) {
+      return { verified: false, error: 'database_unavailable' };
+    }
+
     const membersRef = collection(db, 'artifacts', appId, 'public', 'data', 'members');
     const q = query(membersRef, where('name', '>=', name), where('name', '<=', name + '\uf8ff'));
     const querySnapshot = await getDocs(q);
@@ -62,6 +91,10 @@ export const generateDiscountCode = () => {
 
 export const saveDiscountCode = async (name, email, discountCode) => {
   try {
+    if (!db) {
+      return { success: false, error: 'database_unavailable' };
+    }
+
     await addDoc(collection(db, 'discountCodes'), {
       name,
       email,
@@ -79,6 +112,10 @@ export const saveDiscountCode = async (name, email, discountCode) => {
 
 export const validateDiscountCode = async (code) => {
   try {
+    if (!db) {
+      return { valid: false, reason: 'unavailable' };
+    }
+
     const codesRef = collection(db, 'discountCodes');
     const q = query(codesRef, where('code', '==', code), where('used', '==', false));
     const querySnapshot = await getDocs(q);
@@ -92,7 +129,16 @@ export const validateDiscountCode = async (code) => {
         return { valid: false, reason: 'expired' };
       }
 
-      return { valid: true, discount: 0.25, codeData };
+      // Support both flat (£ amount off monthly) and multiplier (percentage off)
+      // discountType: 'flat' | 'multiplier'
+      // discountValue: flat = £ amount off monthly, multiplier = decimal (e.g. 0.25 = 25% off)
+      return {
+        valid: true,
+        discountType: codeData.discountType || 'multiplier',
+        discountValue: codeData.discountValue ?? 0.25,
+        label: codeData.label || 'Discount',
+        codeData
+      };
     }
 
     return { valid: false, reason: 'not_found' };
@@ -104,9 +150,3 @@ export const validateDiscountCode = async (code) => {
 
 // Export Firebase instances
 export { auth, db, app, appId };
-
-// Firestore exports
-export { collection, onSnapshot, doc, setDoc, addDoc, serverTimestamp, query, where, getDocs };
-
-// Member and discount functions
-export { verifyMember, generateDiscountCode, saveDiscountCode, validateDiscountCode };

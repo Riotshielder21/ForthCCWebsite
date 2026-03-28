@@ -1,253 +1,251 @@
 # FCC Website - Local Development Guide
 
-This guide will help you set up and run the Forth Canoe Club website locally for development and testing.
+Complete guide for local development, testing, and live editing of the Forth Canoe Club website.
 
 ## Prerequisites
 
-- Node.js 18+ (https://nodejs.org/)
-- npm (comes with Node.js)
-- Git
-- Python 3.8+ (for JustGo sync automation)
+**One-time system setup:**
+
+```bash
+sudo apt update
+sudo apt install -y nodejs npm python3 python3-pip python3-venv
+```
+
+Verify installation:
+```bash
+node --version    # Should be v18+
+npm --version     # Should be v9+
+python3 --version # Should be v3.12+
+```
 
 ## Quick Start
 
 ### 1. Install Dependencies
 
-**Node.js dependencies:**
+Navigate to the project directory and install all Node.js and Python packages:
+
 ```bash
+cd /path/to/FCCWebsite
 npm install
-```
-
-This installs all required packages:
-- React 18.2 - UI framework
-- Vite - Build tool & dev server
-- Tailwind CSS - Styling
-- Firebase - Backend services
-- Lucide React - Icons
-
-**Python dependencies (for JustGo sync):**
-```bash
-# Create virtual environment (optional but recommended)
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install Python packages
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. Development Server
+This installs:
+- **Node.js**: React 18.2, Vite, Tailwind CSS, Firebase, Express
+- **Python**: JustGo sync automation, Playwright browser automation
 
-Start the local development server:
+### 2. Start Development Server
 
 ```bash
 npm run dev
 ```
 
-The site will be available at:
-- **Local**: http://127.0.0.1:5173 (Vite default)
-- Watch your terminal for the exact URL
+Output will show:
+```
+  ➜  Local:   http://127.0.0.1:5173/
+  ➜  Press h to show help
+```
 
-The dev server includes:
-- Hot Module Replacement (HMR) - changes reload automatically
-- Source maps for debugging
-- Fast refresh
+**Access from:**
+- **Local machine**: `http://127.0.0.1:5173` or `http://localhost:5173`
+- **Windows (from WSL)**: `http://localhost:5173` (WSL 2 default) or `http://<wsl-ip>:5173`
+- **Network**: `http://<your-machine-ip>:5173`
 
-### 3. Build for Production
+## Development Workflow
 
-Create an optimized production build:
+### Live Editing
+
+Any changes to files in `src/` automatically reload in the browser:
+
+```
+src/
+├── main.jsx            # React app entry point
+├── index.css           # Global styles
+├── components/         # React components (ListSubmissionForm, etc.)
+├── constants/          # Static data (products.js)
+└── utils/              # Helpers (Firebase integration)
+```
+
+**Example:** Edit `src/components/ListSubmissionForm.jsx`, save, and see changes instantly in your browser.
+
+### Available Commands
+
+| Command | Purpose | Output |
+|---------|---------|--------|
+| `npm run dev` | Start dev server with hot reload | http://127.0.0.1:5173 |
+| `npm run build` | Build for production | `dist/` folder |
+| `npm run preview` | Preview production build locally | http://127.0.0.1:4173 |
+| `npm start` | Run production server (Node.js) | http://127.0.0.1:3000 |
+
+## Testing Locally
+
+### Frontend Testing
+
+1. **Component-level testing:**
+   - Edit a component in `src/components/`
+   - Watch live changes in the browser
+   - Use browser DevTools (F12) to inspect
+
+2. **Full page testing:**
+   ```bash
+   npm run dev
+   ```
+   Visit http://127.0.0.1:5173 and interact with forms, products, and checkout
+
+3. **Responsive design testing:**
+   - Open DevTools (F12)
+   - Toggle device toolbar (Ctrl+Shift+M)
+   - Test on mobile/tablet sizes
+
+### Production Build Testing
+
+Build and test the production bundle locally:
 
 ```bash
-npm run build
+npm run build        # Create optimized production build
+npm run preview      # Serve the production build
 ```
 
-This generates a `dist/` folder with minified assets ready for deployment.
+Visit http://127.0.0.1:4173 — this is how the site performs in production.
 
-### 4. Preview Production Build
-
-Before deploying, preview the production build locally:
+**Or run the full Node.js server:**
 
 ```bash
-npm run preview
+npm start            # Runs server.js on port 3000
 ```
 
-### 5. Run Production Server
+Visit http://127.0.0.1:3000
 
-To test the Express server that will run on your Linux server:
+### Testing Firebase Integration
+
+1. Ensure `src/utils/firebase.js` is configured with your Firebase project credentials
+2. Test authentication and database operations through the UI
+3. Check browser console (F12) for Firebase errors
+
+### Testing Form Submissions
+
+1. The `ListSubmissionForm` component sends data to Google Sheets
+2. Fill out any list submission form and submit
+3. Check the target Google Sheet for new entries
+4. View network requests in DevTools (F12 → Network tab)
+
+## Python Development (JustGo Sync)
+
+### Setup Virtual Environment
 
 ```bash
-npm start
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+playwright install chromium
 ```
 
-This runs: `npm run build && node server.js`
-
-The server will start at: http://127.0.0.1:3000
-
-## Project Structure
-
-```
-FCCWebsite/
-├── src/
-│   ├── main.jsx          # React app component
-│   ├── App.jsx           # React entry point
-│   └── index.css         # Global styles
-├── index.html            # HTML entry point
-├── vite.config.js        # Vite configuration
-├── tailwind.config.js    # Tailwind CSS config
-├── postcss.config.js     # PostCSS config
-├── server.js             # Express server for production
-├── package.json          # Dependencies & scripts
-└── dist/                 # Build output (generated)
-```
-
-## Available Scripts
-
-| Command | Purpose |
-|---------|---------|
-| `npm run dev` | Start development server with HMR |
-| `npm run build` | Create production build |
-| `npm run preview` | Preview production build |
-| `npm start` | Build and run production server |
-| `npm run server` | Run server.js directly |
-
-## Environment Variables
-
-Create a `.env` file based on `.env.example`:
+### Run JustGo Sync Script
 
 ```bash
-cp .env.example .env
+source venv/bin/activate
+python3 scripts/justgo-sync.py
 ```
 
-Edit `.env` and fill in your Firebase credentials if needed.
+Monitors and syncs JustGo data to your database.
 
-## Firebase Integration
+### Deactivate Virtual Environment
 
-The app connects to Firebase for:
-- User authentication (currently anonymous)
-- Firestore database
-- Real-time data syncing
-
-Credentials are embedded in `src/main.jsx`:
-```javascript
-const firebaseConfig = {
-  projectId: "forth-canoe-club",
-  // ... other config
-}
+```bash
+deactivate
 ```
+
+## Development Server Features
+
+✅ **Hot Module Reloading (HMR)** - Changes appear instantly without refresh  
+✅ **Source Maps** - Debug original source code in DevTools  
+✅ **Auto-restart** - Server restarts if it crashes  
+✅ **CSS Hot Reload** - Tailwind CSS changes without page reload  
+✅ **Network tab** - Monitor API calls and Firebase requests  
 
 ## Troubleshooting
 
-### Port Already in Use
-
-If port 3000 or 5173 is already in use:
+### "Cannot find module" errors
 
 ```bash
-# Windows - Find process using port 3000
-netstat -ano | findstr :3000
-
-# Kill the process (replace PID with actual process ID)
-taskkill /PID <PID> /F
-
-# Or use a different port
-PORT=3001 npm start
-```
-
-### Node Modules Issues
-
-If you get module errors:
-
-```bash
-# Clear node_modules and reinstall
+# Clear and reinstall
 rm -rf node_modules package-lock.json
 npm install
 ```
 
-### Vite Cache Issues
+### Dev server won't start
 
+Check if port 5173 is in use:
 ```bash
-# Clear Vite cache
-rm -rf .vite
-npm run dev
+# macOS/Linux
+lsof -i :5173
+
+# Kill the process using it
+kill -9 <PID>
 ```
 
-## Development Workflow
+Then restart: `npm run dev`
 
-1. **Edit files** in `src/` folder
-2. **See changes** instantly (HMR)
-3. **Console** shows any errors/warnings
-4. **Test** the full site in browser
-5. **Build** when ready: `npm run build`
-6. **Deploy** the `dist/` folder
+### Firebase not working
 
-## Testing the Full Stack
+1. Verify credentials in `src/utils/firebase.js`
+2. Check browser console for Firebase errors (F12)
+3. Ensure Firebase project allows your origin (localhost)
 
-Before deploying to Linux:
+### Changes not appearing in browser
 
-```bash
-# Terminal 1: Development
-npm run dev
+1. Check if dev server is running (`npm run dev` in terminal)
+2. Hard refresh browser (Ctrl+Shift+R or Cmd+Shift+R)
+3. Check browser console for errors (F12)
 
-# Terminal 2 (after building): Production preview
-npm start
-```
-
-Then visit:
-- Dev: http://127.0.0.1:5173
-- Prod: http://127.0.0.1:3000
-
-## Linux Deployment
-
-Once tested locally, deploy to your Ubuntu server:
+### Build fails
 
 ```bash
-# On your Ubuntu server
-cd ~/FCCWebsite
-npm install
-npm run build
-npm start
+# Clean and rebuild
+npm run build  # Check error messages
+npm run preview  # Test the build output
 ```
 
-The website will be available at your server's IP on port 3000.
+## Project Structure Overview
+
+```
+FCCWebsite/
+├── src/
+│   ├── main.jsx                    # React app entry
+│   ├── index.css                   # Global styles
+│   ├── components/
+│   │   └── ListSubmissionForm.jsx   # Form component
+│   ├── constants/
+│   │   └── products.js             # Product data
+│   └── utils/
+│       └── firebase.js             # Firebase config
+├── server.js                        # Express server (production)
+├── index.html                       # HTML template
+├── vite.config.js                   # Vite configuration
+├── tailwind.config.js               # Tailwind CSS config
+├── postcss.config.js                # PostCSS config
+├── requirements.txt                 # Python dependencies
+├── scripts/
+│   ├── deploy.sh                    # Production deployment
+│   ├── health-check.sh              # Health monitoring
+│   └── justgo-sync.py               # JustGo automation
+└── package.json                     # Node.js dependencies
+```
 
 ## Performance Tips
 
-- **Tree shaking**: Vite automatically removes unused code
-- **Code splitting**: Large components are split into separate bundles
-- **Minification**: Production builds are minified
-- **Gzip compression**: Server.js uses compression middleware
-
-## Common Issues
-
-### Firebase Auth Errors
-- Check Firebase config in `src/main.jsx`
-- Ensure serviceAccountKey.json is in the root (for backend)
-- Check Firebase project permissions
-
-### CSS Not Loading
-- Rebuild: `npm run build`
-- Clear browser cache (Ctrl+Shift+Delete)
-- Check tailwind.config.js includes `src/**/*.{js,jsx}`
-
-### Dependencies Installation Failed
-```bash
-npm install --legacy-peer-deps
-# Or update all packages
-npm update
-```
-
-## Need Help?
-
-1. Check the [Vite Docs](https://vitejs.dev/)
-2. Check the [React Docs](https://react.dev/)
-3. Check the [Tailwind Docs](https://tailwindcss.com/)
-4. Check the [Firebase Docs](https://firebase.google.com/docs)
+- Use React DevTools extension in Firefox/Chrome
+- Check bundle size: `npm run build` and inspect `dist/`
+- Use browser DevTools Performance tab to profile
+- Monitor console for warnings during development
 
 ## Next Steps
 
-- [ ] Install dependencies: `npm install`
-- [ ] Start dev server: `npm run dev`
-- [ ] View in browser: http://127.0.0.1:5173
-- [ ] Test all features locally
-- [ ] Build: `npm run build`
-- [ ] Test production: `npm start`
-- [ ] Deploy to Linux server
+- **Change the website?** → Edit `src/` files, save, and see live updates
+- **Deploy to production?** → See [DEPLOY.md](DEPLOY.md)
+- **Need help?** → Check specific component files or [README.md](README.md)
+
+---
+
+**Happy coding! 🚀**

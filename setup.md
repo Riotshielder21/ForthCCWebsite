@@ -54,22 +54,31 @@ git clone https://github.com/Riotshielder21/FCCWebsite.git .
 
 ### 1.3.5 Install npm Dependencies
 
-Install all Node.js dependencies (this must complete before deployment):
+**You must do this ON THE UBUNTU SERVER (same session as clone):**
 
 ```bash
+# Test node and npm are available
+node --version  # Should be 18+
+npm --version   # Should be 8+
+
+# Install all Node.js dependencies (this must complete before deployment)
 npm install
 ```
 
-> **Why manual?** npm install can be slow and timeout on poor networks. Installing manually beforehand ensures stable deployment. See [PREREQUISITES.md](PREREQUISITES.md) for the full dependency list.
+> **Important:** Run this ON THE SERVER, not on your local machine. The `node_modules` folder must exist at `/home/fcc-web/FCCWebsite/node_modules` on the Ubuntu server before deployment.
 
-If npm install times out, simply re-run it - it will resume from where it left off.
+If npm install times out, simply re-run it from the same directory - it will resume from where it left off.
 
 ### 1.4 Run Deploy Script
 
-This automates application setup (assumes system dependencies and npm install are already done):
+Immediately after npm install completes (still on Ubuntu server):
 
 ```bash
+# Fix script line endings (in case of Windows line endings)
+sed -i 's/\r$//' scripts/deploy.sh
 chmod +x scripts/deploy.sh
+
+# Run deployment
 sudo ./scripts/deploy.sh riotshielder21@gmail.com fccwebsite.gg-edi.co.uk
 ```
 

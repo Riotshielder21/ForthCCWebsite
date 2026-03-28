@@ -8,6 +8,11 @@ export default {
     extend: {
       colors: {
         dark: '#002147',
+        fcc: {
+          ink: 'var(--fcc-color-ink)',
+          copy: 'var(--fcc-color-copy)',
+          accent: 'var(--fcc-color-accent)',
+        },
       }
     },
   },

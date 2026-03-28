@@ -76,11 +76,11 @@ if ! sudo -u "$APP_USER" which npm >/dev/null 2>&1; then
     error "npm not found for user $APP_USER. Install via: sudo apt-get install npm"
 fi
 
-# Validate node_modules exists (npm install should be done manually)
+# Validate node_modules exists (npm install must be done manually first)
 if [ ! -d "node_modules" ]; then
-    error "node_modules not found. Please run 'npm install' manually first. See PREREQUISITES.md"
+    error "node_modules not found. Please run 'npm install' manually first. See DEVELOPMENT.md"
 fi
-log "Node.js environment ready"
+log "Node.js dependencies validated"
 
 # Build the application
 if sudo -u "$APP_USER" npm run build; then
@@ -89,17 +89,13 @@ else
     error "Failed to build application. Check npm and node_modules."
 fi
 
-# Step 5: Python Setup (for JustGo Sync)
-info "Step 5: Setting up Python Environment"
+# Validate Python Environment
+info "Step 5: Validating Python Environment"
 cd "$APP_HOME"
 if [ ! -d "venv" ]; then
-    sudo -u "$APP_USER" python3 -m venv venv
-    sudo -u "$APP_USER" ./venv/bin/pip install -r requirements.txt
-    sudo -u "$APP_USER" ./venv/bin/playwright install chromium
-    log "Python environment ready"
-else
-    log "Python environment already configured"
+    error "venv not found. Please setup Python environment manually first. See DEVELOPMENT.md"
 fi
+log "Python environment validated"
 
 # Step 6: Install Health Check Script
 info "Step 6: Installing Health Check Service"
