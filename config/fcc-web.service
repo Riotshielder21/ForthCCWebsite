@@ -1,0 +1,19 @@
+﻿[Unit]
+Description=FCC Website Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fcc-web
+WorkingDirectory=/home/fcc-web/FCCWebsite
+ExecStart=/usr/bin/node /home/fcc-web/FCCWebsite/server.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment="NODE_ENV=production"
+Environment="PORT=3000"
+
+[Install]
+WantedBy=multi-user.target

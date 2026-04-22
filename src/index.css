@@ -1,0 +1,1131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --fcc-color-ink: #002147;
+    --fcc-color-ink-strong: #0b3153;
+    --fcc-color-accent: #0ea5e9;
+    --fcc-color-accent-soft: #e0f2fe;
+    --fcc-color-surface: #ffffff;
+    --fcc-color-surface-subtle: #f8fafc;
+    --fcc-color-border: #e2e8f0;
+    --fcc-color-copy: #64748b;
+    --fcc-color-success: #059669;
+    --fcc-color-success-soft: #ecfdf5;
+    --fcc-color-danger: #dc2626;
+    --fcc-font-display: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --fcc-font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --fcc-letter-tight: -0.04em;
+    --fcc-letter-wide: 0.24em;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900;
+    font-family: var(--fcc-font-body);
+  }
+}
+
+@layer components {
+  .SiteShell {
+    @apply min-h-screen bg-slate-50 selection:bg-sky-100;
+    color: var(--fcc-color-ink);
+    font-family: var(--fcc-font-body);
+  }
+
+  .SiteSection {
+    @apply max-w-7xl mx-auto px-6;
+  }
+
+  .SiteHeader {
+    @apply sticky top-0 z-[50] text-white;
+    background: var(--fcc-color-ink);
+  }
+
+  .SiteHeaderInner {
+    @apply max-w-7xl mx-auto px-6 h-20 flex justify-between items-center;
+  }
+
+  .BrandLockup {
+    @apply flex items-center gap-4 cursor-pointer;
+  }
+
+  .BrandMarkWrap {
+    @apply bg-white p-1 rounded-lg;
+  }
+
+  .BrandTitle {
+    @apply text-lg leading-tight uppercase;
+    font-family: var(--fcc-font-display);
+    font-weight: 900;
+    letter-spacing: var(--fcc-letter-tight);
+  }
+
+  .TopNav {
+    @apply hidden lg:flex items-center gap-6;
+  }
+
+  .TopNavButton {
+    @apply px-4 py-2 rounded-full transition-all;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .TopNavButtonActive {
+    @apply bg-sky-100;
+    color: var(--fcc-color-ink);
+  }
+
+  .TopNavButtonIdle {
+    @apply hover:text-sky-300;
+  }
+
+  .CartToggleButton {
+    @apply relative p-3 rounded-xl border transition ml-4;
+    @apply border-white/10 bg-sky-950 hover:bg-sky-900;
+  }
+
+  .CartToggleBadge {
+    @apply absolute -top-2 -right-2 text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2;
+    background: #38bdf8;
+    color: var(--fcc-color-ink);
+    border-color: var(--fcc-color-ink);
+  }
+
+  .PageHero {
+    @apply flex flex-col md:flex-row justify-between items-start md:items-center gap-8;
+  }
+
+  .ContentPanel {
+    @apply p-8 md:p-12 rounded-[2.5rem] border;
+    border-color: #f1f5f9;
+    background: var(--fcc-color-surface);
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  }
+
+  .ContentPanelMuted {
+    background: var(--fcc-color-surface-subtle);
+  }
+
+  .ContentTitle {
+    @apply mb-3 uppercase;
+    font-family: var(--fcc-font-display);
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: var(--fcc-letter-tight);
+    color: var(--fcc-color-ink);
+  }
+
+  .ContentBody {
+    @apply text-sm font-medium leading-relaxed;
+    color: var(--fcc-color-copy);
+  }
+
+  .ContentBody a, .ContentBody button {
+    font-weight: 700;
+    color: var(--fcc-color-ink);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .ContentBody ul {
+    @apply space-y-2 mt-3;
+  }
+
+  .ContentBody li {
+    @apply flex gap-2.5;
+  }
+
+  .ContentBody li::before {
+    content: '';
+    @apply flex-shrink-0 w-1.5 h-1.5 rounded-full mt-1.5;
+    background: var(--fcc-color-accent);
+  }
+
+  .PageTitle {
+    @apply mb-4 uppercase;
+    font-family: var(--fcc-font-display);
+    font-size: clamp(3rem, 7vw, 4.5rem);
+    font-weight: 900;
+    line-height: 0.92;
+    letter-spacing: var(--fcc-letter-tight);
+    color: var(--fcc-color-ink);
+  }
+
+  .PageIntro {
+    @apply max-w-lg font-medium;
+    color: var(--fcc-color-copy);
+  }
+
+  .CategoryBar {
+    @apply bg-white p-1 rounded-2xl shadow-sm border flex flex-wrap;
+    border-color: var(--fcc-color-border);
+  }
+
+  .CategoryButton {
+    @apply px-6 py-3 rounded-xl transition-all;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .CategoryButtonActive {
+    @apply text-white;
+    background: var(--fcc-color-ink);
+  }
+
+  .CategoryButtonIdle {
+    @apply text-slate-400 hover:text-slate-900;
+  }
+
+  .ShopGrid {
+    @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8;
+  }
+
+  .ShopItemCard {
+    @apply bg-white border rounded-[2.5rem] p-10 flex flex-col h-full relative transition-all duration-500 hover:shadow-xl;
+    border-color: #f1f5f9;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+
+  .ShopItemCard:hover .IconActionButton:not(.IconActionButtonActive) {
+    @apply scale-110;
+  }
+
+  .ShopItemBadge {
+    @apply absolute top-8 right-8 px-3 py-1 rounded-full uppercase;
+    background: var(--fcc-color-accent-soft);
+    color: #0284c7;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .ShopItemHeader {
+    @apply mb-10;
+  }
+
+  .ShopItemEyebrow {
+    @apply uppercase;
+    color: #0ea5e9;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.2em;
+  }
+
+  .ShopItemTitle {
+    @apply mt-2 uppercase leading-tight;
+    color: var(--fcc-color-ink);
+    font-family: var(--fcc-font-display);
+    font-size: 1.875rem;
+    font-weight: 900;
+    letter-spacing: var(--fcc-letter-tight);
+  }
+
+  .ShopItemBody {
+    @apply text-sm font-medium mb-12 flex-grow;
+    color: var(--fcc-color-copy);
+  }
+
+  .ShopItemFooter {
+    @apply flex justify-between items-end;
+  }
+
+  .ShopItemPrice {
+    color: var(--fcc-color-ink);
+    font-family: var(--fcc-font-display);
+    font-size: 2.25rem;
+    font-weight: 900;
+    line-height: 1;
+  }
+
+  .ShopItemMeta {
+    @apply mt-1 uppercase;
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .PrimaryActionButton {
+    @apply px-8 py-4 inline-flex items-center gap-2 text-white rounded-2xl transition-all;
+    background: var(--fcc-color-ink);
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  .PrimaryActionButton:hover {
+    background: #0c4a6e;
+  }
+
+  .IconActionButton {
+    @apply p-4 rounded-2xl transition-all;
+    background: var(--fcc-color-surface-subtle);
+    color: var(--fcc-color-ink);
+  }
+
+  .IconActionButton:hover {
+    background: #e0f2fe;
+  }
+
+  .IconActionButtonActive {
+    @apply cursor-default;
+    background: #e0f2fe;
+    color: #0284c7;
+  }
+
+  .FooterBar {
+    @apply py-16 px-6;
+    background: var(--fcc-color-ink);
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  .FooterInner {
+    @apply max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start gap-8;
+  }
+
+  .FooterMeta {
+    @apply uppercase;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+  }
+
+  .FooterLinks {
+    @apply flex gap-8 uppercase;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .CartOverlay {
+    @apply fixed inset-0 z-[100] flex justify-end;
+  }
+
+  .CartBackdrop {
+    @apply absolute inset-0 backdrop-blur-sm;
+    background: rgba(0, 33, 71, 0.4);
+  }
+
+  .CartPanel {
+    @apply relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col;
+  }
+
+  .CartHeader {
+    @apply p-10 flex justify-between items-center;
+  }
+
+  .CartTitle {
+    @apply uppercase;
+    color: var(--fcc-color-ink);
+    font-family: var(--fcc-font-display);
+    font-size: 1.875rem;
+    font-weight: 900;
+    letter-spacing: var(--fcc-letter-tight);
+  }
+
+  .CartCloseButton {
+    @apply p-2 rounded-full transition;
+    color: var(--fcc-color-ink);
+  }
+
+  .CartCloseButton:hover {
+    background: #f1f5f9;
+  }
+
+  .CartBody {
+    @apply px-10 flex-grow overflow-y-auto;
+  }
+
+  .BillingToggle {
+    @apply p-1.5 rounded-2xl flex items-center mb-10 border;
+    background: var(--fcc-color-surface-subtle);
+    border-color: #f1f5f9;
+  }
+
+  .BillingToggleButton {
+    @apply flex-1 py-4 rounded-xl uppercase transition-all;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .BillingToggleButtonActive {
+    @apply bg-white shadow-sm;
+    color: var(--fcc-color-ink);
+  }
+
+  .BillingToggleButtonIdle {
+    color: #94a3b8;
+  }
+
+  .CartItemCard {
+    @apply p-6 rounded-2xl border;
+    background: var(--fcc-color-surface-subtle);
+    border-color: #f1f5f9;
+  }
+
+  .CartItemTitle {
+    @apply uppercase text-sm;
+    color: var(--fcc-color-ink);
+    font-weight: 900;
+    letter-spacing: -0.02em;
+  }
+
+  .CartItemMeta {
+    @apply uppercase;
+    color: #0ea5e9;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .CartItemPrice {
+    color: var(--fcc-color-ink);
+    font-weight: 900;
+  }
+
+  .CartVoucherCard {
+    @apply mt-3 rounded-xl px-4 py-2 border;
+    background: var(--fcc-color-success-soft);
+    border-color: #bbf7d0;
+  }
+
+  .CartVoucherLabel {
+    @apply uppercase mb-0.5;
+    color: var(--fcc-color-success);
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .CartVoucherCode {
+    color: #047857;
+    font-size: 0.875rem;
+    font-weight: 900;
+    letter-spacing: 0.16em;
+  }
+
+  .CartVoucherHint {
+    @apply mt-0.5;
+    color: #10b981;
+    font-size: 8px;
+  }
+
+  .FormCodeInput {
+    @apply flex-grow border rounded-xl px-4 py-3 focus:outline-none transition-colors;
+    background: var(--fcc-color-surface-subtle);
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  .FormCodeInputIdle {
+    @apply border-slate-200 focus:border-slate-900;
+  }
+
+  .FormCodeInputError {
+    @apply border-red-500 text-red-500;
+  }
+
+  .FormCodeInputSuccess {
+    border-color: #10b981;
+    color: #059669;
+  }
+
+  .StatusText {
+    @apply uppercase flex items-center gap-1 ml-2;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .StatusTextError {
+    color: var(--fcc-color-danger);
+  }
+
+  .StatusTextSuccess {
+    color: var(--fcc-color-success);
+  }
+
+  .CartSummary {
+    @apply p-10 pt-6;
+  }
+
+  .CartSummaryLine {
+    @apply uppercase;
+    color: #10b981;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+  }
+
+  .CartSummaryTotal {
+    color: var(--fcc-color-ink);
+    font-family: var(--fcc-font-display);
+    font-size: 2.25rem;
+    font-weight: 900;
+    letter-spacing: var(--fcc-letter-tight);
+  }
+
+  .CheckoutButton {
+    @apply w-full py-6 rounded-[2rem] flex items-center justify-center gap-3 transition-all shadow-xl;
+    background: var(--fcc-color-ink);
+    color: white;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    box-shadow: 0 20px 35px rgba(8, 47, 73, 0.18);
+  }
+
+  .CheckoutButton:hover {
+    background: #0c4a6e;
+  }
+
+  /* ─── Page Animation ────────────────────────────── */
+
+  .PageFadeIn {
+    animation: pageFadeIn 700ms ease-out;
+  }
+
+  /* ─── Section Layouts ───────────────────────────── */
+
+  .SectionHero {
+    @apply max-w-7xl mx-auto px-6 pt-20 pb-12;
+  }
+
+  .SectionContent {
+    @apply max-w-7xl mx-auto px-6 pb-12;
+  }
+
+  .SectionBottom {
+    @apply max-w-7xl mx-auto px-6 pb-32;
+  }
+
+  /* ─── Grid Layouts ──────────────────────────────── */
+
+  .CardGrid2 {
+    @apply grid grid-cols-1 md:grid-cols-2 gap-6;
+  }
+
+  .CardGrid2Lg {
+    @apply grid grid-cols-1 lg:grid-cols-2 gap-8;
+  }
+
+  .CardGrid3 {
+    @apply grid grid-cols-1 md:grid-cols-3 gap-8;
+  }
+
+  .DisciplineGrid {
+    @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6;
+  }
+
+  .SponsorGrid {
+    @apply grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3;
+  }
+
+  /* ─── Content Variants ──────────────────────────── */
+
+  .ContentBodyIntro {
+    @apply max-w-2xl;
+  }
+
+  .ContentBodyNote {
+    @apply text-xs;
+  }
+
+  .ContentBodyGrow {
+    @apply flex-grow;
+  }
+
+  .ContentPanelFlex {
+    @apply flex flex-col;
+  }
+
+  .ContentTitleLg {
+    @apply mb-3 uppercase;
+    font-family: var(--fcc-font-display);
+    font-size: clamp(2rem, 4vw, 2.5rem);
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: var(--fcc-letter-tight);
+    color: var(--fcc-color-ink);
+  }
+
+  .EyebrowRow {
+    @apply flex items-center gap-2 mb-2;
+  }
+
+  /* ─── Mission Section ───────────────────────────── */
+
+  .MissionNumber {
+    @apply flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white;
+    background: var(--fcc-color-ink);
+  }
+
+  .MissionHeading {
+    @apply font-black text-sm uppercase tracking-tight;
+    color: var(--fcc-color-ink);
+  }
+
+  /* ─── Sponsor Cards ─────────────────────────────── */
+
+  .SponsorCard {
+    @apply bg-white rounded-2xl border p-5 flex items-center justify-center text-center hover:shadow-md transition-all;
+    border-color: #f1f5f9;
+    min-height: 90px;
+  }
+
+  .SponsorName {
+    @apply uppercase leading-tight;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    color: var(--fcc-color-ink);
+  }
+
+  /* ─── Dropdown ──────────────────────────────────── */
+
+  .DropdownTrigger {
+    @apply w-full flex items-center justify-between px-5 py-4 rounded-xl border transition-colors;
+    border-color: var(--fcc-color-border);
+    background: var(--fcc-color-surface-subtle);
+  }
+
+  .DropdownTriggerValue {
+    @apply flex items-center gap-3;
+  }
+
+  .DropdownTriggerChevron {
+    @apply transition-transform;
+    color: var(--fcc-color-copy);
+  }
+  .DropdownTriggerChevron.is-open {
+    transform: rotate(180deg);
+  }
+
+  .DropdownPanel {
+    @apply absolute z-10 w-full mt-2 bg-white rounded-xl border shadow-lg overflow-hidden;
+    border-color: var(--fcc-color-border);
+  }
+
+  .DropdownItem {
+    @apply w-full flex items-center justify-between px-5 py-4 transition-colors text-left;
+  }
+
+  .DropdownItemActive {
+    @apply bg-sky-50;
+  }
+
+  .DropdownItemIdle {
+    @apply hover:bg-slate-50;
+  }
+
+  .DropdownItemLabel {
+    @apply text-xs font-black uppercase tracking-widest block;
+    color: var(--fcc-color-ink);
+  }
+
+  .DropdownItemHint {
+    @apply font-medium;
+    font-size: 10px;
+    color: var(--fcc-color-copy);
+  }
+
+  .DropdownItemPrice {
+    @apply text-sm font-black flex-shrink-0 ml-4;
+    color: var(--fcc-color-ink);
+  }
+
+  /* ─── Kit Hire ──────────────────────────────────── */
+
+  .KitHireMonthlyLabel {
+    @apply mt-1;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--fcc-color-accent);
+  }
+
+  /* ─── Receipt Page ──────────────────────────────── */
+
+  .ReceiptCard {
+    @apply bg-white rounded-[2.5rem] border p-10 md:p-14;
+    border-color: #f1f5f9;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+
+  .ReceiptLabel {
+    @apply uppercase mb-1;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+    color: var(--fcc-color-copy);
+  }
+
+  .ReceiptValue {
+    @apply text-sm font-black;
+    color: var(--fcc-color-ink);
+  }
+
+  .ReceiptDivider {
+    @apply flex justify-between items-start mb-8 pb-8 border-b;
+    border-color: #f1f5f9;
+  }
+
+  .ReceiptDivider > :last-child {
+    @apply text-right;
+  }
+
+  .ReceiptLineItem {
+    @apply flex justify-between items-start py-3 border-b;
+    border-color: #f1f5f9;
+  }
+
+  .ReceiptItemName {
+    @apply text-sm font-black uppercase tracking-tight;
+    color: var(--fcc-color-ink);
+  }
+
+  .ReceiptItemMeta {
+    @apply font-bold uppercase;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--fcc-color-accent);
+  }
+
+  .ReceiptItemPrice {
+    @apply text-sm font-black flex-shrink-0 ml-4;
+    color: var(--fcc-color-ink);
+  }
+
+  .ReceiptSummaryRow {
+    @apply flex justify-between text-sm;
+  }
+
+  .ReceiptSummaryLabel {
+    @apply font-bold;
+    color: var(--fcc-color-copy);
+  }
+
+  .ReceiptSummaryValue {
+    @apply font-black;
+    color: var(--fcc-color-ink);
+  }
+
+  .ReceiptSavingLabel {
+    @apply font-bold text-emerald-600;
+  }
+
+  .ReceiptSavingValue {
+    @apply font-black text-emerald-600;
+  }
+
+  .ReceiptTotalRow {
+    @apply flex justify-between items-end pt-4 border-t;
+    border-color: var(--fcc-color-border);
+  }
+
+  .ReceiptTotalLabel {
+    @apply text-xs font-black uppercase tracking-widest;
+    color: var(--fcc-color-copy);
+  }
+
+  .ReceiptTotalValue {
+    @apply text-3xl font-black;
+    color: var(--fcc-color-ink);
+    letter-spacing: -0.04em;
+  }
+
+  .ReceiptVoucherCard {
+    @apply bg-emerald-50 border border-emerald-200 rounded-2xl p-5;
+  }
+
+  .ReceiptVoucherLabel {
+    @apply uppercase mb-1;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+    color: #059669;
+  }
+
+  .ReceiptVoucherCode {
+    @apply font-black tracking-widest text-xl;
+    color: #047857;
+  }
+
+  .ReceiptVoucherHint {
+    @apply mt-1;
+    font-size: 9px;
+    color: #10b981;
+  }
+
+  .InfoBox {
+    @apply rounded-xl p-4 text-xs font-medium;
+    background: #f0f9ff;
+    color: #0369a1;
+  }
+
+  .ReceiptBackButton {
+    @apply flex-1 flex items-center justify-center gap-2 py-5 rounded-2xl font-black uppercase tracking-widest text-xs transition-all;
+    background: var(--fcc-color-ink);
+    color: white;
+  }
+
+  .ReceiptBackButton:hover {
+    background: #0c4a6e;
+  }
+
+  /* ─── Toast ─────────────────────────────────────── */
+
+  .ToastWrapper {
+    @apply fixed bottom-6 left-1/2 -translate-x-1/2 z-[200];
+    animation: toastSlideIn 300ms ease-out;
+  }
+
+  .ToastInner {
+    @apply flex items-center gap-3 px-6 py-4 rounded-2xl shadow-xl border;
+    background: var(--fcc-color-ink);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .ToastText {
+    @apply text-white text-xs font-black uppercase tracking-widest;
+  }
+
+  /* ─── Cart Empty State ──────────────────────────── */
+
+  .CartEmptyState {
+    @apply py-20 text-center opacity-30;
+  }
+
+  .CartEmptyState svg {
+    @apply w-12 h-12 mx-auto mb-4;
+  }
+
+  .CartEmptyText {
+    font-size: 10px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+  }
+
+  /* ─── Form ──────────────────────────────────────── */
+
+  .FormContainer {
+    @apply max-w-2xl mx-auto p-6 bg-white rounded-2xl shadow-sm border;
+    border-color: #f1f5f9;
+  }
+
+  .FormTitle {
+    @apply text-3xl font-black uppercase mb-2;
+    color: var(--fcc-color-ink);
+    letter-spacing: -0.05em;
+  }
+
+  .FormDescription {
+    @apply text-sm;
+    color: var(--fcc-color-copy);
+  }
+
+  .FormLabel {
+    @apply block text-sm font-bold uppercase mb-2;
+    color: var(--fcc-color-ink);
+    letter-spacing: 0.18em;
+  }
+
+  .FormInput {
+    @apply w-full px-4 py-3 border rounded-xl focus:outline-none transition-colors bg-white;
+    border-color: var(--fcc-color-border);
+  }
+
+  .FormInput:focus {
+    border-color: var(--fcc-color-ink);
+  }
+
+  textarea.FormInput {
+    @apply resize-none;
+  }
+
+  .FormFieldGrid {
+    @apply grid grid-cols-1 md:grid-cols-2 gap-4;
+  }
+
+  .FormAddButton {
+    @apply mt-3 flex items-center gap-2 px-4 py-2 text-sm font-bold uppercase rounded-lg transition-colors;
+    color: var(--fcc-color-ink);
+    letter-spacing: 0.18em;
+  }
+
+  .FormAddButton:hover {
+    background: var(--fcc-color-surface-subtle);
+  }
+
+  .FormSubmitButton {
+    @apply w-full py-4 rounded-xl font-black uppercase text-sm flex items-center justify-center gap-3 transition-all;
+    background: var(--fcc-color-ink);
+    color: white;
+    letter-spacing: 0.18em;
+  }
+
+  .FormSubmitButton:hover {
+    background: #0c4a6e;
+  }
+
+  .FormSubmitButton:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  .FormAlert {
+    @apply p-4 rounded-xl;
+  }
+
+  .FormAlertInner {
+    @apply flex items-start gap-3;
+  }
+
+  .FormAlertIcon {
+    @apply mt-0.5;
+  }
+
+  .FormAlertBody {
+    @apply flex-1;
+  }
+
+  .FormAlertMessage {
+    @apply font-medium mb-2;
+  }
+
+  .DiscountCodeTitle {
+    @apply text-sm font-bold uppercase mb-1;
+    letter-spacing: 0.18em;
+    color: #065f46;
+  }
+
+  .DiscountCodeValue {
+    @apply text-2xl font-black;
+    letter-spacing: 0.08em;
+    color: var(--fcc-color-ink);
+  }
+
+  .DiscountCodeHint {
+    @apply text-xs mt-1;
+    color: #059669;
+  }
+
+  .FormSpinner {
+    @apply w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin;
+  }
+
+  .AlertSuccess {
+    @apply bg-emerald-50 text-emerald-700 border border-emerald-200;
+  }
+
+  .AlertError {
+    @apply bg-red-50 text-red-700 border border-red-200;
+  }
+
+  .DiscountCodeBox {
+    @apply bg-white p-3 rounded-lg border-2 border-dashed border-emerald-300;
+  }
+
+  /* ─── Mobile Navigation ─────────────────────────── */
+
+  .MobileNavControls {
+    @apply flex items-center gap-3 lg:hidden;
+  }
+
+  .MobileMenu {
+    @apply lg:hidden px-6 pb-6 flex flex-col gap-1;
+    background: var(--fcc-color-ink);
+  }
+
+  /* ─── Footer ────────────────────────────────────── */
+
+  .FooterCopyright {
+    @apply font-bold text-xs mb-2;
+  }
+
+  .FooterLink {
+    @apply hover:text-white transition;
+  }
+
+  /* ─── Spacing Modifiers ─────────────────────────── */
+
+  .SpaceT1 { @apply mt-1; }
+  .SpaceT2 { @apply mt-2; }
+  .SpaceT3 { @apply mt-3; }
+  .SpaceT4 { @apply mt-4; }
+  .SpaceT6 { @apply mt-6; }
+  .SpaceT8 { @apply mt-8; }
+
+  .SpaceB1 { @apply mb-1; }
+  .SpaceB2 { @apply mb-2; }
+  .SpaceB3 { @apply mb-3; }
+  .SpaceB4 { @apply mb-4; }
+  .SpaceB6 { @apply mb-6; }
+  .SpaceB8 { @apply mb-8; }
+
+  .SpaceY2 { @apply space-y-2; }
+  .SpaceY3 { @apply space-y-3; }
+  .SpaceY4 { @apply space-y-4; }
+  .SpaceY5 { @apply space-y-5; }
+
+  .PushBottom { @apply mt-auto; }
+
+  /* ─── Layout Modifiers ──────────────────────────── */
+
+  .CardSpanFull { @apply md:col-span-2; }
+
+  .CardGrid3Lg {
+    @apply grid grid-cols-1 lg:grid-cols-3 gap-8;
+  }
+
+  /* ─── Icon Sizes ────────────────────────────────── */
+
+  .IconSm  { @apply w-3 h-3; }
+  .IconMd  { @apply w-4 h-4; }
+  .IconLg  { @apply w-5 h-5; }
+  .IconXl  { @apply w-6 h-6; }
+  .IconAccent { color: var(--fcc-color-accent); }
+
+  /* ─── Content Modifiers ─────────────────────────── */
+
+  .ContentBodySpaced {
+    @apply space-y-3;
+  }
+
+  .ContentLink {
+    @apply text-sm font-bold block;
+    color: var(--fcc-color-accent);
+  }
+
+  .ContentLink:hover {
+    @apply underline;
+  }
+
+  .ContentBodyStrong {
+    @apply font-bold;
+    color: var(--fcc-color-copy);
+  }
+
+  /* ─── Brand ─────────────────────────────────────── */
+
+  .BrandMark { @apply w-10 h-10; }
+
+  /* ─── Mobile Menu ───────────────────────────────── */
+
+  .MobileMenuButton {
+    @apply p-3 text-white;
+  }
+
+  .MobileMenu .TopNavButton {
+    @apply text-left;
+  }
+
+  /* ─── Mission Section Extras ────────────────────── */
+
+  .MissionList { @apply space-y-5; }
+  .MissionItem { @apply flex gap-4; }
+
+  /* ─── Cart Extras ───────────────────────────────── */
+
+  .CartItemRow {
+    @apply flex justify-between items-center;
+  }
+
+  .CartItemActions {
+    @apply flex items-center gap-4;
+  }
+
+  .CartRemoveButton {
+    @apply text-slate-300 transition;
+  }
+  .CartRemoveButton:hover {
+    @apply text-red-500;
+  }
+
+  .CartItemList { @apply space-y-4; }
+
+  .CartBreakdown {
+    @apply mb-4 pb-4 border-b border-slate-200;
+  }
+
+  .CartBreakdownLabel {
+    @apply text-sm text-slate-600 mb-2;
+  }
+
+  .PromoSection { @apply mt-8 space-y-3; }
+  .PromoInputRow { @apply flex gap-2; }
+
+  .PrimaryActionButtonCompact {
+    @apply px-6 py-3 inline-flex items-center gap-2 text-white rounded-2xl transition-all;
+    background: var(--fcc-color-ink);
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .PrimaryActionButtonCompact:hover {
+    background: #0c4a6e;
+  }
+
+  .CartSummaryInner {
+    @apply text-right space-y-1 mb-6;
+  }
+
+  /* ─── Receipt Extras ────────────────────────────── */
+
+  .ReceiptWrapper { @apply max-w-2xl mx-auto; }
+  .ReceiptHeader { @apply text-center mb-12; }
+  .ReceiptCheckIcon { @apply w-16 h-16 mx-auto mb-4 text-emerald-500; }
+  .PageIntroCentered { @apply max-w-lg font-medium mx-auto; color: var(--fcc-color-copy); }
+  .ReceiptActions { @apply mt-8 flex flex-col sm:flex-row gap-4; }
+  .ReceiptItemList { @apply space-y-4 mb-8; }
+  .ReceiptTotals { @apply space-y-2 mb-8 pt-4 border-t; border-color: #e2e8f0; }
+  .ReceiptVoucherList { @apply space-y-3 mb-8; }
+
+  /* ─── Dropdown Extras ───────────────────────────── */
+
+  .DropdownWrapper { @apply relative mb-6; }
+
+  /* ─── Form Extras ───────────────────────────────── */
+
+  .FormInputFlex { @apply flex-1; }
+
+  .FormItemList { @apply space-y-3; }
+  .FormItemRow { @apply flex gap-2; }
+  .FormBody { @apply space-y-6; }
+
+  .FormRemoveButton {
+    @apply p-3 text-slate-400 transition-colors;
+  }
+  .FormRemoveButton:hover {
+    @apply text-red-500;
+  }
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@keyframes pageFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes toastSlideIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(1rem); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes slideInFromRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
