@@ -3,7 +3,7 @@ import {
   Trash2, ShoppingBag, X, ShoppingCart,
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
-import { initializeAuth, setupAuthListener, validateDiscountCode, generateDiscountCode } from './utils/firebase';
+import { initializeAuth, validateDiscountCode, generateDiscountCode } from './utils/firebase';
 import { DISCOUNTS, VALID_PROMO_CODES } from './constants/products';
 import SiteNavigation from './components/SiteNavigation';
 import HomePage from './pages/HomePage';
@@ -14,12 +14,21 @@ import VolunteeringPage from './pages/VolunteeringPage';
 import AboutPage from './pages/AboutPage';
 import ContactUsPage from './pages/ContactUsPage';
 import AccessProjectPage from './pages/AccessProjectPage';
-import ReceiptPage from './pages/ReceiptPage';
+import AdminPage from './pages/AdminPage';
+import OrderLookupPage from './pages/OrderLookupPage';
+import PaymentSuccessPage from './pages/PaymentSuccessPage';
+import { subscribeToProducts } from './utils/content';
+import { PRODUCTS } from './constants/products';
 import './index.css';
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState('home');
-  const [user, setUser] = useState(null);
+  const [currentPage, setCurrentPage] = useState(() => {
+    if (window.location.pathname === '/admin') return 'admin';
+    if (window.location.pathname.startsWith('/order/')) return 'order-lookup';
+    if (window.location.pathname === '/payment-success') return 'payment-success';
+    return 'home';
+  });
+  const [products, setProducts] = useState(PRODUCTS);
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isAnnual, setIsAnnual] = useState(true);
@@ -30,8 +39,8 @@ export default function App() {
   const [promoError, setPromoError] = useState(null);
 
   const [voucherCodes, setVoucherCodes] = useState({});
-  const [checkoutDone, setCheckoutDone] = useState(false);
-  const [receiptData, setReceiptData] = useState(null);
+  const [checkoutEmail, setCheckoutEmail] = useState('');
+  const [checkoutError, setCheckoutError] = useState('');
 
   const [toast, setToast] = useState(null);
   const showToast = (message) => {
@@ -44,8 +53,11 @@ export default function App() {
       await initializeAuth();
     };
     initAuth();
-    return setupAuthListener(setUser);
   }, []);
+
+  useEffect(() => subscribeToProducts((remoteProducts) => {
+    if (remoteProducts.length > 0) setProducts(remoteProducts);
+  }, (error) => console.error('Product catalog unavailable:', error)), []);
 
   const addToCart = (product) => {
     if (product.type === 'external') return;
@@ -68,28 +80,37 @@ export default function App() {
     });
   };
 
-  const handleCheckout = () => {
-    setReceiptData({
-      cart: [...cart],
-      calculations: { ...calculations },
-      voucherCodes: { ...voucherCodes },
-      activePromo: activePromo ? { ...activePromo } : null,
-      isAnnual,
-    });
-    setCheckoutDone(true);
+  const handleCheckout = async () => {
+    if (!checkoutEmail.trim()) {
+      setCheckoutError('Enter an email address to receive your receipt.');
+      return;
+    }
+    setCheckoutError('');
+    try {
+      const response = await fetch('/api/checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: checkoutEmail.trim(),
+          items: cart.map((item) => ({
+            id: item.id,
+            name: item.name,
+            type: item.type,
+            price: getPricedItemDetails(item).displayPrice
+          })),
+          total: calculations.total,
+          billingMode: isAnnual ? 'annual' : 'monthly'
+        })
+      });
+      const order = await response.json();
+      if (!response.ok) throw new Error(order.error || 'Could not save your purchase.');
+      window.location.href = order.checkoutUrl;
+      return;
+    } catch (error) {
+      setCheckoutError(error.message);
+      return;
+    }
     setIsCartOpen(false);
-    setCurrentPage('receipt');
-  };
-
-  const handleCloseCheckout = () => {
-    setCart([]);
-    setVoucherCodes({});
-    setActivePromo(null);
-    setPromoInput('');
-    setCheckoutDone(false);
-    setReceiptData(null);
-    setIsCartOpen(false);
-    setCurrentPage('membership');
   };
 
   const handleApplyPromo = async () => {
@@ -292,19 +313,8 @@ export default function App() {
   };
 
   const renderPage = () => {
-    if (currentPage === 'receipt' && receiptData) {
-      return (
-        <ReceiptPage
-          cart={receiptData.cart}
-          calculations={receiptData.calculations}
-          voucherCodes={receiptData.voucherCodes}
-          activePromo={receiptData.activePromo}
-          isAnnual={receiptData.isAnnual}
-          getPricedItemDetails={getPricedItemDetails}
-          onClose={handleCloseCheckout}
-        />
-      );
-    }
+    if (currentPage === 'order-lookup') return <OrderLookupPage />;
+    if (currentPage === 'payment-success') return <PaymentSuccessPage />;
 
     switch (currentPage) {
       case 'home':
@@ -318,8 +328,11 @@ export default function App() {
             addToCart={addToCart}
             getItemDisplayPrice={getItemDisplayPrice}
             getKitHireMonthly={getKitHireMonthly}
+            products={products}
           />
         );
+      case 'admin':
+        return <AdminPage products={products} onProductsChange={setProducts} />;
       case 'beginners':
         return <BeginnersPage onNavigate={setCurrentPage} />;
       case 'disciplines':
@@ -371,7 +384,7 @@ export default function App() {
           <div className="CartPanel" style={{ animation: 'slideInFromRight 500ms ease-out' }}>
             <div className="CartHeader">
               <h2 className="CartTitle">Your Basket</h2>
-              <button onClick={() => setIsCartOpen(false)} className="CartCloseButton">
+              <button onClick={() => setIsCartOpen(false)} className="CartCloseButton" aria-label="Close basket">
                 <X className="IconXl" />
               </button>
             </div>
@@ -410,7 +423,11 @@ export default function App() {
                         </div>
                         <div className="CartItemActions">
                           <span className="CartItemPrice">£{getItemDisplayPrice(item)}</span>
-                          <button onClick={() => removeFromCart(item.id)} className="CartRemoveButton">
+                          <button
+                            onClick={() => removeFromCart(item.id)}
+                            className="CartRemoveButton"
+                            aria-label={`Remove ${item.name} from basket`}
+                          >
                             <Trash2 className="IconMd" />
                           </button>
                         </div>
@@ -462,7 +479,7 @@ export default function App() {
 
             {cart.length > 0 && (
               <div className="CartSummary">
-                <div className="CartSummaryInner">
+                  <div className="CartSummaryInner">
                   {/* Cost Breakdown Section */}
                   {isAnnual ? (
                     // Annual mode: Only show Year 1 upfront cost
@@ -502,6 +519,17 @@ export default function App() {
                   <div className="CartSummaryTotal">
                     Total £{calculations.total.toFixed(2)}
                   </div>
+                  <label className="FormLabel CartEmailLabel">
+                    Receipt email
+                    <input
+                      className="FormInput"
+                      type="email"
+                      value={checkoutEmail}
+                      onChange={(event) => setCheckoutEmail(event.target.value)}
+                      placeholder="you@example.com"
+                    />
+                  </label>
+                  {checkoutError && <p className="StatusText StatusTextError">{checkoutError}</p>}
                 </div>
                 <button
                   onClick={handleCheckout}

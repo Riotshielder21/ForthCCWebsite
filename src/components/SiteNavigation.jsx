@@ -15,14 +15,14 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
   return (
     <nav className="SiteHeader">
       <div className="SiteHeaderInner">
-        <div className="BrandLockup" onClick={() => handleNav('HOME')}>
+        <button className="BrandLockup" onClick={() => handleNav('HOME')} aria-label="Go to home page">
           <div className="BrandMarkWrap">
             <img src={fccLogoMark} alt="FCC" className="BrandMark" />
           </div>
           <div>
             <h1 className="BrandTitle">Forth Canoe<br />Club SCIO</h1>
           </div>
-        </div>
+        </button>
 
         <div className="TopNav">
           {NAV_ITEMS.map((item) => (
@@ -37,6 +37,7 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
           <button
             onClick={onCartOpen}
             className="CartToggleButton"
+            aria-label={`Open basket${cartCount > 0 ? `, ${cartCount} item${cartCount === 1 ? '' : 's'}` : ''}`}
           >
             <ShoppingCart className="IconLg" />
             {cartCount > 0 && (
@@ -48,13 +49,22 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
         </div>
 
         <div className="MobileNavControls">
-          <button onClick={onCartOpen} className="CartToggleButton">
+          <button
+            onClick={onCartOpen}
+            className="CartToggleButton"
+            aria-label={`Open basket${cartCount > 0 ? `, ${cartCount} item${cartCount === 1 ? '' : 's'}` : ''}`}
+          >
             <ShoppingCart className="IconLg" />
             {cartCount > 0 && (
               <span className="CartToggleBadge">{cartCount}</span>
             )}
           </button>
-          <button onClick={() => setMobileOpen(!mobileOpen)} className="MobileMenuButton">
+          <button
+            onClick={() => setMobileOpen(!mobileOpen)}
+            className="MobileMenuButton"
+            aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={mobileOpen}
+          >
             {mobileOpen ? <X className="IconXl" /> : <Menu className="IconXl" />}
           </button>
         </div>

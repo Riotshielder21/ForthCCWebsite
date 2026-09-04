@@ -1,25 +1,39 @@
 ﻿import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
+import { getAnalytics, isSupported } from 'firebase/analytics';
+
+const runtimeEnv = typeof import.meta.env !== 'undefined' ? import.meta.env : process.env;
 
 // Firebase Configuration
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-  apiKey: "",
-  authDomain: "forth-canoe-club.firebaseapp.com",
-  projectId: "forth-canoe-club",
-  storageBucket: "forth-canoe-club.appspot.com",
-  appId: "forth-canoe-club-id"
+  apiKey: runtimeEnv.VITE_FIREBASE_API_KEY,
+  authDomain: runtimeEnv.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: runtimeEnv.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: runtimeEnv.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: runtimeEnv.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: runtimeEnv.VITE_FIREBASE_APP_ID,
+  measurementId: runtimeEnv.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase lazily and safely so config/auth issues do not blank the whole app.
 let app = null;
 let auth = null;
 let db = null;
+let storage = null;
+let analytics = null;
 
 try {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
+  storage = getStorage(app);
+  if (typeof window !== 'undefined') {
+    isSupported().then((supported) => {
+      if (supported) analytics = getAnalytics(app);
+    }).catch(() => {});
+  }
 } catch (error) {
   console.error('Firebase initialization failed:', error);
 }
@@ -53,6 +67,22 @@ export const setupAuthListener = (callback) => {
   }
 
   return onAuthStateChanged(auth, callback);
+};
+
+export const signInWithWorkspace = async () => {
+  if (!auth) throw new Error('Firebase authentication is unavailable.');
+
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ hd: 'forthcanoeclub.co.uk' });
+  const result = await signInWithPopup(auth, provider);
+  const email = result.user.email?.toLowerCase() || '';
+
+  if (!email.endsWith('@forthcanoeclub.co.uk')) {
+    await auth.signOut();
+    throw new Error('Use a Forth Canoe Club Google Workspace account.');
+  }
+
+  return result.user;
 };
 
 // Member Verification Functions
@@ -149,4 +179,4 @@ export const validateDiscountCode = async (code) => {
 };
 
 // Export Firebase instances
-export { auth, db, app, appId };
+export { auth, db, storage, analytics, app, appId };

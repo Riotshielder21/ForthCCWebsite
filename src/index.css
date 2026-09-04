@@ -44,11 +44,11 @@
   }
 
   .SiteHeaderInner {
-    @apply max-w-7xl mx-auto px-6 h-20 flex justify-between items-center;
+    @apply max-w-7xl mx-auto px-6 h-16 flex justify-between items-center;
   }
 
   .BrandLockup {
-    @apply flex items-center gap-4 cursor-pointer;
+    @apply flex items-center gap-4 cursor-pointer text-left;
   }
 
   .BrandMarkWrap {
@@ -99,7 +99,7 @@
   }
 
   .ContentPanel {
-    @apply p-8 md:p-12 rounded-[2.5rem] border;
+    @apply p-6 md:p-8 rounded-2xl border;
     border-color: #f1f5f9;
     background: var(--fcc-color-surface);
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
@@ -186,7 +186,7 @@
   }
 
   .ShopItemCard {
-    @apply bg-white border rounded-[2.5rem] p-10 flex flex-col h-full relative transition-all duration-500 hover:shadow-xl;
+    @apply bg-white border rounded-2xl p-7 flex flex-col h-full relative transition-all duration-500 hover:shadow-xl;
     border-color: #f1f5f9;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   }
@@ -205,7 +205,11 @@
   }
 
   .ShopItemHeader {
-    @apply mb-10;
+    @apply mb-6;
+  }
+
+  .ShopItemImage {
+    @apply w-full aspect-[16/9] object-cover rounded-xl mb-6;
   }
 
   .ShopItemEyebrow {
@@ -226,7 +230,7 @@
   }
 
   .ShopItemBody {
-    @apply text-sm font-medium mb-12 flex-grow;
+    @apply text-sm font-medium mb-8 flex-grow;
     color: var(--fcc-color-copy);
   }
 
@@ -497,15 +501,15 @@
   /* ─── Section Layouts ───────────────────────────── */
 
   .SectionHero {
-    @apply max-w-7xl mx-auto px-6 pt-20 pb-12;
+    @apply max-w-7xl mx-auto px-6 pt-12 pb-8;
   }
 
   .SectionContent {
-    @apply max-w-7xl mx-auto px-6 pb-12;
+    @apply max-w-7xl mx-auto px-6 pb-8;
   }
 
   .SectionBottom {
-    @apply max-w-7xl mx-auto px-6 pb-32;
+    @apply max-w-7xl mx-auto px-6 pb-20;
   }
 
   /* ─── Grid Layouts ──────────────────────────────── */
@@ -655,7 +659,7 @@
   /* ─── Receipt Page ──────────────────────────────── */
 
   .ReceiptCard {
-    @apply bg-white rounded-[2.5rem] border p-10 md:p-14;
+    @apply bg-white rounded-2xl border p-8 md:p-10;
     border-color: #f1f5f9;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   }
@@ -820,6 +824,75 @@
   .FormContainer {
     @apply max-w-2xl mx-auto p-6 bg-white rounded-2xl shadow-sm border;
     border-color: #f1f5f9;
+  }
+
+  .AdminLogin {
+    @apply mt-8;
+  }
+
+  .AdminLayout {
+    @apply grid grid-cols-1 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)] gap-6 items-start;
+  }
+
+  .AdminProductList,
+  .AdminEditor {
+    @apply p-6;
+  }
+
+  .AdminEditor {
+    @apply space-y-4;
+  }
+
+  .AdminListHeader {
+    @apply flex items-center justify-between gap-4 mb-5;
+  }
+
+  .AdminListHeader .ContentTitle {
+    @apply mb-0;
+  }
+
+  .AdminProducts {
+    @apply mt-5 space-y-1;
+  }
+
+  .AdminProduct {
+    @apply w-full flex flex-col items-start gap-1 p-3 rounded-xl text-left transition-colors;
+  }
+
+  .AdminProduct:hover,
+  .AdminProduct.is-selected {
+    @apply bg-sky-50;
+  }
+
+  .AdminProduct strong {
+    @apply text-xs uppercase;
+    color: var(--fcc-color-ink);
+  }
+
+  .AdminProduct span {
+    @apply text-[10px] uppercase tracking-widest;
+    color: var(--fcc-color-copy);
+  }
+
+  .AdminSeedButton {
+    @apply text-xs;
+  }
+
+  .AdminSignOut {
+    @apply inline-flex items-center gap-2 rounded-xl;
+    background: var(--fcc-color-ink);
+  }
+
+  .AdminCheckbox {
+    @apply flex items-center gap-2;
+  }
+
+  .AdminCheckbox input {
+    accent-color: var(--fcc-color-accent);
+  }
+
+  .AdminImagePreview {
+    @apply w-full max-h-48 object-cover rounded-xl;
   }
 
   .FormTitle {
@@ -1077,6 +1150,10 @@
 
   .CartSummaryInner {
     @apply text-right space-y-1 mb-6;
+  }
+
+  .CartEmailLabel {
+    @apply block text-left mt-4;
   }
 
   /* ─── Receipt Extras ────────────────────────────── */

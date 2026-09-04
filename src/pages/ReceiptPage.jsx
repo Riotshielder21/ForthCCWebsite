@@ -1,8 +1,7 @@
 import React from 'react';
-import { CheckCircle2, Receipt, ArrowLeft, CreditCard } from 'lucide-react';
+import { CheckCircle2, ArrowLeft } from 'lucide-react';
 
-export default function ReceiptPage({ cart, calculations, voucherCodes, activePromo, isAnnual, getPricedItemDetails, onClose }) {
-  const orderRef = `FCC-${Date.now().toString(36).toUpperCase()}`;
+export default function ReceiptPage({ cart, calculations, voucherCodes, activePromo, isAnnual, getPricedItemDetails, onClose, orderRef, emailSent }) {
   const orderDate = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
   });
@@ -15,7 +14,7 @@ export default function ReceiptPage({ cart, calculations, voucherCodes, activePr
           <div className="ReceiptHeader">
             <CheckCircle2 className="ReceiptCheckIcon" />
             <h2 className="PageTitle">Order<br />Complete</h2>
-            <p className="PageIntroCentered">Thank you for your purchase. A copy of this receipt will be emailed to you.</p>
+            <p className="PageIntroCentered">Thank you for your purchase. {emailSent ? 'A receipt and secure retrieval link have been emailed to you.' : 'Your receipt is saved, but email delivery is not configured yet.'}</p>
           </div>
 
           <div className="ReceiptCard">
@@ -106,9 +105,8 @@ export default function ReceiptPage({ cart, calculations, voucherCodes, activePr
               </div>
             )}
 
-            {/* Note about future info collection */}
             <div className="InfoBox">
-              <p><strong>Demo mode.</strong> In production, you will be asked to provide your details before payment is processed via Stripe.</p>
+              <p>Keep your receipt email. Its secure link lets you retrieve this purchase and subscription information without creating an account.</p>
             </div>
           </div>
 

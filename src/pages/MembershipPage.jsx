@@ -1,23 +1,22 @@
 import React, { useState } from 'react';
 import { ShoppingCart, CheckCircle2, ExternalLink, ChevronDown } from 'lucide-react';
-import { DISCOUNTS, CATEGORIES, PRODUCTS } from '../constants/products';
+import { DISCOUNTS, CATEGORIES } from '../constants/products';
 
-const MEMBERSHIP_TIERS = PRODUCTS.filter(p => p.membershipTier);
-const NON_MEMBERSHIP_PRODUCTS = PRODUCTS.filter(p => !p.membershipTier);
-
-export default function MembershipPage({ activeCategory, setActiveCategory, cart, addToCart, getItemDisplayPrice, getKitHireMonthly }) {
+export default function MembershipPage({ activeCategory, setActiveCategory, cart, addToCart, getItemDisplayPrice, getKitHireMonthly, products }) {
   const [selectedTier, setSelectedTier] = useState('adult');
   const [tierDropdownOpen, setTierDropdownOpen] = useState(false);
 
-  const selectedMembership = MEMBERSHIP_TIERS.find(t => t.membershipTier === selectedTier);
-  const membershipInCart = MEMBERSHIP_TIERS.some(t => cart.find(i => i.id === t.id));
+  const membershipTiers = products.filter((product) => product.membershipTier);
+  const nonMembershipProducts = products.filter((product) => !product.membershipTier);
+  const selectedMembership = membershipTiers.find(t => t.membershipTier === selectedTier);
+  const membershipInCart = membershipTiers.some(t => cart.find(i => i.id === t.id));
 
   const handleAddMembership = () => {
     if (!selectedMembership || membershipInCart) return;
     addToCart(selectedMembership);
   };
 
-  const displayProducts = NON_MEMBERSHIP_PRODUCTS.filter(
+  const displayProducts = nonMembershipProducts.filter(
     (p) => activeCategory === 'ALL' || p.category === activeCategory
   );
 
@@ -76,7 +75,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
 
                 {tierDropdownOpen && (
                   <div className="DropdownPanel">
-                    {MEMBERSHIP_TIERS.map((tier) => (
+                    {membershipTiers.map((tier) => (
                       <button
                         key={tier.membershipTier}
                         onClick={() => { setSelectedTier(tier.membershipTier); setTierDropdownOpen(false); }}
@@ -109,6 +108,8 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                 <button
                   onClick={handleAddMembership}
                   className={`${membershipInCart ? 'IconActionButton IconActionButtonActive' : 'IconActionButton'}`}
+                  aria-label={membershipInCart ? `${selectedMembership.name} is in basket` : `Add ${selectedMembership.name} to basket`}
+                  title={membershipInCart ? 'Already in basket' : 'Add to basket'}
                 >
                   {membershipInCart ? <CheckCircle2 className="IconXl" /> : <ShoppingCart className="IconXl" />}
                 </button>
@@ -119,6 +120,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
           {/* All other products */}
           {displayProducts.map((product) => (
             <div key={product.id} className="ShopItemCard">
+              {product.imageUrl && <img className="ShopItemImage" src={product.imageUrl} alt="" />}
               {product.hasAnnualDiscount && (
                 <div className="ShopItemBadge">
                   Save {(DISCOUNTS.ANNUAL * 100).toFixed(0)}% Annually
@@ -162,6 +164,8 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                   <button
                     onClick={() => addToCart(product)}
                     className={`${cart.find((i) => i.id === product.id) ? 'IconActionButton IconActionButtonActive' : 'IconActionButton'}`}
+                    aria-label={cart.find((i) => i.id === product.id) ? `${product.name} is in basket` : `Add ${product.name} to basket`}
+                    title={cart.find((i) => i.id === product.id) ? 'Already in basket' : 'Add to basket'}
                   >
                     {cart.find((i) => i.id === product.id) ? <CheckCircle2 className="IconXl" /> : <ShoppingCart className="IconXl" />}
                   </button>

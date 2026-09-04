@@ -1,98 +1,43 @@
-﻿# Forth Canoe Club
+﻿# Forth Canoe Club website
 
-A modern, fast React website for managing memberships, subscriptions, and equipment rental.
+React/Vite frontend with an Express API, Firebase content, Stripe test checkout, Google Workspace email, and JustGo sync.
 
-**Live Demo** → https://forthcanoeclub.co.uk (coming soon)
-
-## Features
-
-- 🛍️ Shop with cart & checkout
-- 📝 Forms with links to Google drive
-- 💳 Monthly & annual billing
-- 🎟️ Promo code support
-- 📱 Fully responsive design
-- 🚀 Lightning-fast performance
-- 🔐 Firebase integration
-- ⚡ Live development with instant reloading
-- 🔄 JustGo automation & sync
-- User verification, logins and invoice generation for committee to send to organisations
-
-## 📖 Getting Started
-
-| Guide | Purpose |
-|-------|---------|
-| **[DEVELOPMENT.md](DEVELOPMENT.md)** | 👈 Local development & testing |
-| [SETUP.md](SETUP.md) | Initial setup guide |
-
-## 📋 Tech Stack
-
-React 18.2 • Vite • Tailwind CSS • Node.js • Express • Firebase
-
-## 📦 Project Structure
-
-```
-src/                  # React source code
-├── components/       # React components
-├── constants/        # Static data
-├── utils/            # Utilities (Firebase, helpers)
-scripts/              # Deployment & automation
-├── deploy.sh         # Production deployment
-└── justgo-sync.py    # JustGo synchronization
-config/               # System configuration
-server.js             # Production Express server
-```
-
-## 🎯 Quick Commands
+## Start locally
 
 ```bash
-npm install           # Install dependencies (one-time)
-npm run dev          # Start development server with live reload
-npm run build        # Build for production
-npm run preview      # Preview production build
-npm start            # Run production server
+cp .env.example .env
+npm install
+set -a; source .env; set +a
+npm run build
+npm run server
 ```
 
-**See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed commands and troubleshooting.**
+Open `http://localhost:3000`.
 
-## 🚀 Deploying to Production
+For frontend-only editing, run `npm run dev`.
+
+## Test payments
 
 ```bash
-sudo ./scripts/deploy.sh email@example.com domain.com
+stripe listen --forward-to localhost:3000/api/stripe/webhook
 ```
 
-The deployment script:
-- ✅ Validates system dependencies
-- ✅ Installs Node.js packages
-- ✅ Builds the application
-- ✅ Configures Nginx with SSL
-- ✅ Sets up systemd services
-- ✅ Enables health checks & email alerts
+Use Stripe test card `4242 4242 4242 4242`.
 
-**See [DEPLOY.md](DEPLOY.md) for complete deployment walkthrough.**
+## Project map
 
-## 🌐 Access Points
+| Path | Purpose |
+|---|---|
+| `src/pages` | Website pages and admin tools |
+| `src/components` | Shared UI and forms |
+| `src/constants/products.js` | Offline product fallback |
+| `src/utils/content.js` | Firestore product catalog |
+| `server.js` | Orders, Stripe, email, forms |
+| `firestore.rules` / `storage.rules` | Firebase access rules |
+| `scripts` | Deployment and JustGo sync |
 
-| Endpoint | Purpose |
-|----------|---------|
-| `http://127.0.0.1:5173` | Development server (with hot reload) |
-| `http://127.0.0.1:4173` | Production build preview |
-| `http://127.0.0.1:3000` | Production server |
-| `https://forthcanoeclub.com` | Live website (when deployed) |
+## Guides
 
-## 🔍 Monitoring
-
-Once deployed:
-
-```bash
-# Check website status
-sudo systemctl status fcc-web
-
-# View live logs
-sudo journalctl -u fcc-web -f
-
-# Restart service
-sudo systemctl restart fcc-web
-```
-
-See [DEPLOY.md](DEPLOY.md) for more monitoring commands.
+- [DEVELOPMENT.md](DEVELOPMENT.md): local setup and checks
+- [CONTENT_MANAGEMENT.md](CONTENT_MANAGEMENT.md): admin, Firebase, Workspace, and Stripe setup
 
