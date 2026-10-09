@@ -61,9 +61,23 @@ jobs:
           secrets: |-
             GITHUB_CONTENT_TOKEN=github-content-token:latest
             FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account-json:latest
+            STRIPE_SECRET_KEY=stripe-test-secret-key:latest
+            STRIPE_WEBHOOK_SECRET=stripe-test-webhook-secret:latest
 
       - name: Build website
-        run: npm run build
+        run: |
+          node --input-type=module <<'NODE'
+          const required = [
+            'VITE_FIREBASE_API_KEY',
+            'VITE_FIREBASE_AUTH_DOMAIN',
+            'VITE_FIREBASE_PROJECT_ID',
+            'VITE_FIREBASE_STORAGE_BUCKET',
+            'VITE_FIREBASE_APP_ID'
+          ];
+          const missing = required.filter((name) => !process.env[name]?.trim());
+          if (missing.length) throw new Error(`Missing Firebase web secrets: ${missing.join(', ')}`);
+          NODE
+          npm run build
         env:
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}

@@ -49,10 +49,14 @@ app.use(cors());
 app.use(express.static('dist'));
 
 const stripeRequest = async (path, params) => {
+  const secretKey = process.env.STRIPE_SECRET_KEY || '';
+  if (!secretKey.startsWith('sk_test_')) {
+    throw new Error('Stripe checkout requires a test-mode secret key. Live payments are disabled.');
+  }
   const response = await fetch(`https://api.stripe.com/v1/${path}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
+      Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded'
     },
     body: new URLSearchParams(params)
