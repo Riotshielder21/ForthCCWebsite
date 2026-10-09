@@ -1,6 +1,7 @@
 ﻿import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { domainToASCII } from 'url';
 import compression from 'compression';
 import cors from 'cors';
 import { google } from 'googleapis';
@@ -25,6 +26,21 @@ const rateLimit = (limit, windowMs) => (req, res, next) => {
   recent.push(now);
   requestWindows.set(key, recent);
   next();
+};
+
+const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+const isValidEmail = (value) => {
+  const email = normalizeEmail(value);
+  if (!email || email.length > 254 || /[\s\u0000-\u001f\u007f]/.test(email)) return false;
+  const parts = email.split('@');
+  if (parts.length !== 2) return false;
+  const [local, inputDomain] = parts;
+  if (!local || local.length > 64 || local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/i.test(local)) return false;
+  const domain = domainToASCII(inputDomain);
+  if (!domain || domain.length > 253) return false;
+  const labels = domain.split('.');
+  return labels.length > 1 && labels.every((label) => label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
 };
 
 // Middleware
@@ -190,7 +206,7 @@ app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) =
     const { pageId, content = {} } = req.body;
     const page = PAGE_CONTENT[pageId];
     const repository = process.env.GITHUB_REPOSITORY || 'Riotshielder21/ForthCCWebsite';
-    const branch = process.env.GITHUB_BRANCH || 'main';
+    const branch = process.env.GITHUB_CONTENT_BRANCH || 'live/web-admin-edit';
     const token = process.env.GITHUB_CONTENT_TOKEN;
     if (!token) return res.status(503).json({ error: 'GitHub publishing is not configured on the API server.' });
     if (!page || !content || typeof content !== 'object' || Array.isArray(content)) {
@@ -209,16 +225,11 @@ app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) =
       publishedContent[key] = value;
     }
 
-    const encodedRepository = repository.split('/').map(encodeURIComponent).join('/');
+    const github = createGitHubClient(repository, token);
+    await ensureGitHubBranch(github, branch);
     const path = `public/content/pages/${pageId}.json`;
-    const endpoint = `https://api.github.com/repos/${encodedRepository}/contents/${path}`;
-    const headers = {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': '2022-11-28'
-    };
-
-    const currentResponse = await fetch(`${endpoint}?ref=${encodeURIComponent(branch)}`, { headers });
+    const endpoint = github.url(`/contents/${path}`);
+    const currentResponse = await github.request(`${endpoint}?ref=${encodeURIComponent(branch)}`);
     let sha;
     if (currentResponse.ok) {
       sha = (await currentResponse.json()).sha;
@@ -227,9 +238,8 @@ app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) =
       throw new Error(errorBody.message || 'GitHub could not read the current page file.');
     }
 
-    const update = await fetch(endpoint, {
+    const update = await github.request(endpoint, {
       method: 'PUT',
-      headers,
       body: JSON.stringify({
         message: `Update page content: ${page.label}`,
         content: Buffer.from(`${JSON.stringify(publishedContent, null, 2)}\n`).toString('base64'),
@@ -244,12 +254,140 @@ app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) =
     const result = await update.json();
     if (!update.ok) throw new Error(result.message || 'GitHub could not save the page file.');
 
-    res.json({ success: true, commit: result.commit.sha, url: result.content.html_url, publishWindow: 'next nightly deployment' });
+    res.json({ success: true, branch, commit: result.commit.sha, url: result.content.html_url });
   } catch (error) {
-    console.error('GitHub page publish failed:', error.message);
-    res.status(500).json({ error: error.message || 'Could not publish page content.' });
+    console.error('GitHub page draft save failed:', error.message);
+    res.status(500).json({ error: error.message || 'Could not save page draft.' });
   }
 });
+
+app.post('/api/admin/create-content-pr', rateLimit(5, 60 * 1000), async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const repository = process.env.GITHUB_REPOSITORY || 'Riotshielder21/ForthCCWebsite';
+    const base = process.env.GITHUB_BRANCH || 'main';
+    const head = process.env.GITHUB_CONTENT_BRANCH || 'live/web-admin-edit';
+    const token = process.env.GITHUB_CONTENT_TOKEN;
+    if (!token) return res.status(503).json({ error: 'GitHub publishing is not configured on the API server.' });
+
+    const github = createGitHubClient(repository, token);
+    const compareResponse = await github.request(github.url(`/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`));
+    const comparison = await compareResponse.json();
+    if (!compareResponse.ok) throw new Error(comparison.message || 'Could not compare the draft branch with main.');
+    if (comparison.ahead_by === 0) return res.status(409).json({ error: 'There are no saved changes to review.' });
+
+    const owner = repository.split('/')[0];
+    const pullsResponse = await github.request(github.url(`/pulls?state=open&base=${encodeURIComponent(base)}&head=${encodeURIComponent(`${owner}:${head}`)}`));
+    const pulls = await pullsResponse.json();
+    if (!pullsResponse.ok) throw new Error(pulls.message || 'Could not check for an existing review request.');
+
+    let pullRequest = pulls[0];
+    if (!pullRequest) {
+      const createResponse = await github.request(github.url('/pulls'), {
+        method: 'POST',
+        body: JSON.stringify({
+          title: 'Review website content updates',
+          head,
+          base,
+          body: `Website content changes are ready for review.\n\nRequested by ${admin.email}. Review the page changes, then approve and merge to publish them through the main-branch Firebase deployment.`
+        })
+      });
+      pullRequest = await createResponse.json();
+      if (!createResponse.ok) throw new Error(pullRequest.message || 'Could not create the content review pull request.');
+    }
+
+    const assignee = process.env.GITHUB_PR_ASSIGNEE || 'Riotshielder21';
+    if (assignee) {
+      const assignmentResponse = await github.request(github.url(`/issues/${pullRequest.number}`), {
+        method: 'PATCH',
+        body: JSON.stringify({ assignees: [assignee] })
+      });
+      if (!assignmentResponse.ok) console.warn('Could not assign content PR:', (await assignmentResponse.json()).message);
+    }
+
+    const reviewers = (process.env.GITHUB_PR_REVIEWERS || 'Riotshielder21').split(',').map((name) => name.trim()).filter(Boolean);
+    if (reviewers.length) {
+      const reviewerResponse = await github.request(github.url(`/pulls/${pullRequest.number}/requested_reviewers`), {
+        method: 'POST',
+        body: JSON.stringify({ reviewers })
+      });
+      if (!reviewerResponse.ok) console.warn('Could not request content PR reviewers:', (await reviewerResponse.json()).message);
+    }
+
+    const notificationSent = await sendContentPrNotification(pullRequest, admin.email);
+    res.json({ success: true, number: pullRequest.number, url: pullRequest.html_url, branch: head, assignee, notificationSent });
+  } catch (error) {
+    console.error('GitHub content PR failed:', error.message);
+    res.status(500).json({ error: error.message || 'Could not create content review request.' });
+  }
+});
+
+const sendContentPrNotification = async (pullRequest, requestedBy) => {
+  const recipient = process.env.GITHUB_PR_NOTIFICATION_EMAIL || 'Riotshielder21@gmail.com';
+  const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
+  if (!gmailApi || !sender || !recipient) return false;
+  const raw = [
+    `From: Forth Canoe Club Website <${sender}>`,
+    `To: ${recipient}`,
+    `Subject: Website changes need your review: PR #${pullRequest.number}`,
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    `An administrator (${requestedBy}) submitted website content for review.`,
+    '',
+    `Review and merge the pull request to publish the changes: ${pullRequest.html_url}`,
+    '',
+    'The approved main-branch workflow deploys the website to Firebase.'
+  ].join('\r\n');
+  try {
+    await gmailApi.users.messages.send({
+      userId: 'me',
+      requestBody: { raw: Buffer.from(raw).toString('base64url') }
+    });
+    return true;
+  } catch (error) {
+    console.error('Could not email content PR notification:', error.message);
+    return false;
+  }
+};
+
+const createGitHubClient = (repository, token) => {
+  const encodedRepository = repository.split('/').map(encodeURIComponent).join('/');
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${token}`,
+    'X-GitHub-Api-Version': '2022-11-28'
+  };
+  return {
+    url: (path) => `https://api.github.com/repos/${encodedRepository}${path}`,
+    request: (url, options = {}) => fetch(url, { ...options, headers: { ...headers, ...options.headers } })
+  };
+};
+
+const ensureGitHubBranch = async (github, branch) => {
+  const encodedBranch = encodeURIComponent(branch);
+  const branchRef = await github.request(github.url(`/git/ref/heads/${encodedBranch}`));
+  if (branchRef.ok) return;
+  if (branchRef.status !== 404) {
+    const error = await branchRef.json().catch(() => ({}));
+    throw new Error(error.message || 'Could not read content branch.');
+  }
+
+  const baseBranch = process.env.GITHUB_BRANCH || 'main';
+  const baseRef = await github.request(github.url(`/git/ref/heads/${encodeURIComponent(baseBranch)}`));
+  const baseData = await baseRef.json();
+  if (!baseRef.ok) throw new Error(baseData.message || 'Could not read main branch.');
+
+  const createRef = await github.request(github.url('/git/refs'), {
+    method: 'POST',
+    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseData.object.sha })
+  });
+  if (!createRef.ok) {
+    const error = await createRef.json();
+    throw new Error(error.message || 'Could not create the content review branch.');
+  }
+};
 
 app.post('/api/admin/forms', rateLimit(20, 60 * 1000), async (req, res) => {
   try {
@@ -307,10 +445,11 @@ app.post('/api/admin/forms', rateLimit(20, 60 * 1000), async (req, res) => {
 
 app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
-    const { email, items, total, billingMode = 'annual' } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const { items, total, billingMode = 'annual' } = req.body;
     if (!process.env.STRIPE_SECRET_KEY) return res.status(503).json({ error: 'Stripe test mode is not configured.' });
-    if (!email || !/^\S+@\S+\.\S+$/.test(email) || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'A valid email and at least one item are required.' });
+    if (!isValidEmail(email) || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Enter a valid email address and include at least one item.' });
     }
 
     const orderRef = `FCC-${Date.now().toString(36).toUpperCase()}`;
@@ -329,7 +468,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const session = await stripeRequest('checkout/sessions', [
       ...lineItems,
       ['mode', hasRecurringItem ? 'subscription' : 'payment'],
-      ['customer_email', email.toLowerCase()],
+      ['customer_email', email],
       ['success_url', `${process.env.PUBLIC_SITE_URL || 'http://localhost:3000'}/payment-success?session_id={CHECKOUT_SESSION_ID}`],
       ['cancel_url', `${process.env.PUBLIC_SITE_URL || 'http://localhost:3000'}/membership`],
       ['metadata[order_ref]', orderRef],
@@ -382,8 +521,8 @@ const sendOrderEmail = async ({ email, orderRef, accessToken, items, total }) =>
 app.post('/api/orders', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
     const { email, items, total, receipt } = req.body;
-    if (!email || !/^\S+@\S+\.\S+$/.test(email) || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'A valid email and at least one item are required.' });
+    if (!isValidEmail(email) || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Enter a valid email address and include at least one item.' });
     }
     if (!adminDb) {
       return res.status(503).json({ error: 'Order storage is not configured.' });
@@ -392,7 +531,7 @@ app.post('/api/orders', rateLimit(10, 60 * 1000), async (req, res) => {
     const orderRef = `FCC-${Date.now().toString(36).toUpperCase()}`;
     const accessToken = createAccessToken();
     await adminDb.collection('orders').doc(orderRef).create({
-      email: email.toLowerCase(),
+      email: normalizeEmail(email),
       accessTokenHash: hashAccessToken(accessToken),
       receipt: receipt || {},
       items,

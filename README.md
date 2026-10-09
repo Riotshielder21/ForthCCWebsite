@@ -32,7 +32,7 @@ npx firebase-tools login
 npx firebase-tools deploy --only hosting
 ```
 
-Pushes to `main` deploy automatically through `.github/workflows/firebase-hosting.yml`. Add the workflow secrets listed in `.env.example` plus `FIREBASE_SERVICE_ACCOUNT` in GitHub repository settings.
+Pushes to `main` deploy automatically through `.github/workflows/firebase-hosting.yml`. The workflow deploys the Cloud Run API first, then builds/deploys Firebase Hosting. Add the required GitHub Actions secrets described in [CONTENT_MANAGEMENT.md](CONTENT_MANAGEMENT.md).
 
 Firebase Hosting serves the frontend only. Stripe, Gmail, order, and form API routes still need the Express server on Cloud Run or another server. Hosting currently rewrites page routes to the React app and does not proxy `/api` routes.
 
@@ -50,7 +50,7 @@ Firebase Hosting serves the frontend only. Stripe, Gmail, order, and form API ro
 
 Google Workspace forms use a Shared Drive root folder. Each admin-created form gets one response spreadsheet inside the current club-year folder. See [CONTENT_MANAGEMENT.md](CONTENT_MANAGEMENT.md).
 
-Admin page-copy changes are committed to `public/content/pages/` in GitHub and published by the nightly Firebase Hosting workflow. Cloud Run hosts the authenticated GitHub-writing API; configure `VITE_API_BASE_URL` in GitHub Actions to its service URL.
+Admin page-copy changes are committed to `live/web-admin-edit` and proposed through a PR to `main`. Page-only merges publish on the nightly schedule. Shop product changes currently save directly to Firestore.
 
 ## Guides
 

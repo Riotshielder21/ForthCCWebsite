@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Trash2, ShoppingBag, X, ShoppingCart,
   CreditCard, CheckCircle2, AlertCircle
@@ -49,6 +49,7 @@ export default function App() {
   const [voucherCodes, setVoucherCodes] = useState({});
   const [checkoutEmail, setCheckoutEmail] = useState('');
   const [checkoutError, setCheckoutError] = useState('');
+  const checkoutEmailRef = useRef(null);
 
   const [toast, setToast] = useState(null);
   const showToast = (message) => {
@@ -70,6 +71,30 @@ export default function App() {
   useEffect(() => loadPublishedPageContent(setPageContent, (error) => {
     console.error('Page content unavailable:', error);
   }), []);
+
+  useEffect(() => {
+    const previewPageId = window.location.pathname.startsWith('/_preview/')
+      ? window.location.pathname.slice('/_preview/'.length)
+      : '';
+    if (!previewPageId || !PAGE_CONTENT[previewPageId]) return undefined;
+
+    const draftKey = `fcc-page-preview:${previewPageId}`;
+    const applyDraft = (serializedDraft) => {
+      if (!serializedDraft) return;
+      try {
+        const draft = JSON.parse(serializedDraft);
+        setPageContent((current) => ({ ...current, [previewPageId]: draft }));
+      } catch {
+        localStorage.removeItem(draftKey);
+      }
+    };
+    applyDraft(localStorage.getItem(draftKey));
+    const handleStorage = (event) => {
+      if (event.key === draftKey) applyDraft(event.newValue);
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   const addToCart = (product) => {
     if (product.type === 'external') return;
@@ -95,6 +120,12 @@ export default function App() {
   const handleCheckout = async () => {
     if (!checkoutEmail.trim()) {
       setCheckoutError('Enter an email address to receive your receipt.');
+      checkoutEmailRef.current?.focus();
+      return;
+    }
+    if (!checkoutEmailRef.current?.checkValidity()) {
+      checkoutEmailRef.current?.reportValidity();
+      setCheckoutError('Enter a valid email address to receive your receipt.');
       return;
     }
     setCheckoutError('');
@@ -535,8 +566,13 @@ export default function App() {
                   <label className="FormLabel CartEmailLabel">
                     Receipt email
                     <input
+                      ref={checkoutEmailRef}
                       className="FormInput"
                       type="email"
+                      required
+                      maxLength={254}
+                      autoComplete="email"
+                      inputMode="email"
                       value={checkoutEmail}
                       onChange={(event) => setCheckoutEmail(event.target.value)}
                       placeholder="you@example.com"

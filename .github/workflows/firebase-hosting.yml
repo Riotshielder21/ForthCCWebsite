@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   deploy:
@@ -29,6 +30,38 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Authenticate with Google Cloud
+        id: google-auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Deploy API to Cloud Run
+        id: deploy-api
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: fcc-website-api
+          source: .
+          project_id: fccwebsite-23cfc
+          region: europe-west2
+          flags: --allow-unauthenticated
+          env_vars: |-
+            GITHUB_REPOSITORY=Riotshielder21/ForthCCWebsite
+            GITHUB_BRANCH=main
+            GITHUB_CONTENT_BRANCH=live/web-admin-edit
+            GITHUB_COMMIT_EMAIL=website@forthcanoeclub.co.uk
+            GITHUB_PR_ASSIGNEE=Riotshielder21
+            GITHUB_PR_NOTIFICATION_EMAIL=Riotshielder21@gmail.com
+            GITHUB_PR_REVIEWERS=Riotshielder21
+            GOOGLE_WORKSPACE_DELEGATED_USER=website@forthcanoeclub.co.uk
+            GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk
+            GOOGLE_SHARED_DRIVE_ID=${{ secrets.GOOGLE_SHARED_DRIVE_ID }}
+            GOOGLE_FORMS_ROOT_FOLDER_ID=${{ secrets.GOOGLE_FORMS_ROOT_FOLDER_ID }}
+            PUBLIC_SITE_URL=https://forthcanoeclub.co.uk
+          secrets: |-
+            GITHUB_CONTENT_TOKEN=github-content-token:latest
+            FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account-json:latest
+
       - name: Build website
         run: npm run build
         env:
@@ -40,13 +73,7 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
           VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
           VITE_APP_ID: ${{ secrets.VITE_APP_ID }}
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-
-      - name: Authenticate with Google Cloud
-        id: google-auth
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VITE_API_BASE_URL: ${{ steps.deploy-api.outputs.url }}
 
       - name: Deploy Firebase services
         run: npx firebase-tools deploy --project fccwebsite-23cfc --only hosting,firestore:rules,storage

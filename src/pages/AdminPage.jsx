@@ -28,6 +28,9 @@ export default function AdminPage({ products, onProductsChange }) {
   const [draft, setDraft] = useState(EMPTY_PRODUCT);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [isSavingPage, setIsSavingPage] = useState(false);
+  const [isCreatingPR, setIsCreatingPR] = useState(false);
+  const [pullRequest, setPullRequest] = useState(null);
   const [adminUser, setAdminUser] = useState(null);
   const [formDraft, setFormDraft] = useState({ name: '', description: '', fields: 'Name\nEmail\nResponse' });
   const [selectedPage, setSelectedPage] = useState('home');
@@ -35,7 +38,15 @@ export default function AdminPage({ products, onProductsChange }) {
 
   const updateDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value }));
   const [pageDraft, setPageDraft] = useState(null);
-  const updatePageDraft = (field, value) => setPageDraft((current) => ({ ...(current || savedPageContent), [field]: value }));
+  const updatePageDraft = (field, value) => {
+    const next = { ...(pageDraft || savedPageContent), [field]: value };
+    setPageDraft(next);
+    try {
+      localStorage.setItem(`fcc-page-preview:${selectedPage}`, JSON.stringify(next));
+    } catch {
+      setError('Live preview storage is unavailable in this browser.');
+    }
+  };
 
   const handleLogin = async () => {
     setError('');
@@ -84,12 +95,38 @@ export default function AdminPage({ products, onProductsChange }) {
   const handleSavePage = async (event) => {
     event.preventDefault();
     setError('');
+    setMessage('');
+    setIsSavingPage(true);
     try {
       const idToken = await adminUser.getIdToken(true);
       const result = await savePageContent(selectedPage, pageDraft || savedPageContent, idToken);
-      setMessage(`Saved to GitHub (${result.commit.slice(0, 7)}). Website publish is scheduled for the next nightly build.`);
+      setMessage(`Draft saved on ${result.branch} (${result.commit.slice(0, 7)}). Review it in the preview, then use “Save to web / Create PR”.`);
     } catch (saveError) {
       setError(saveError.message);
+    } finally {
+      setIsSavingPage(false);
+    }
+  };
+
+  const handleCreatePR = async () => {
+    setError('');
+    setMessage('');
+    setIsCreatingPR(true);
+    try {
+      const idToken = await adminUser.getIdToken(true);
+      await savePageContent(selectedPage, pageDraft || savedPageContent, idToken);
+      const response = await fetch(apiUrl('/api/admin/create-content-pr'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` }
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not create review PR.');
+      setPullRequest(result);
+      setMessage(`Pull request #${result.number} is ready for review.${result.notificationSent ? ' Email sent to Riotshielder21@gmail.com.' : ' PR created; email notification could not be sent.'}`);
+    } catch (prError) {
+      setError(prError.message);
+    } finally {
+      setIsCreatingPR(false);
     }
   };
 
@@ -183,7 +220,7 @@ export default function AdminPage({ products, onProductsChange }) {
           <div>
             <span className="ShopItemEyebrow">Content Management</span>
             <h2 className="PageTitle SpaceT2">Shop editor</h2>
-            <p className="PageIntro">Product edits appear immediately. Page copy is committed to GitHub and published by the nightly build.</p>
+            <p className="PageIntro">Page drafts go to the review branch. Use Save to web to open a pull request; merging to main publishes the approved update.</p>
           </div>
           <button className="MobileMenuButton AdminSignOut" onClick={() => { signOut(auth); setAdminUser(null); setIsSignedIn(false); }}> <LogOut className="IconMd" /> Sign out</button>
         </div>
@@ -227,7 +264,7 @@ export default function AdminPage({ products, onProductsChange }) {
               {Object.entries(PAGE_CONTENT).map(([id, page]) => <option value={id} key={id}>{page.label}</option>)}
             </select></label>
           </div>
-          <p className="ContentBody SpaceB4">Edit the copy and links below. Saving commits the page to GitHub; Firebase Hosting publishes it after the nightly build.</p>
+          <p className="ContentBody SpaceB4">Save a draft to the review branch and check the preview. When ready, create a pull request for review; only merging it to main makes the change live.</p>
           <div className="AdminPageEditorGrid">
             <form className="AdminPageFields" onSubmit={handleSavePage}>
               {Object.entries(PAGE_CONTENT[selectedPage].fields).map(([key, definition]) => (
@@ -237,7 +274,15 @@ export default function AdminPage({ products, onProductsChange }) {
                     : <input className="FormInput" value={pageDraft?.[key] ?? savedPageContent[key]} onChange={(event) => updatePageDraft(key, event.target.value)} />}
                 </label>
               ))}
-              <button className="FormSubmitButton" type="submit"><Save className="IconMd" /> Save {PAGE_CONTENT[selectedPage].label}</button>
+              <div className="AdminPageActions">
+                <button className="FormSubmitButton" type="submit" disabled={isSavingPage}>
+                  <Save className="IconMd" /> {isSavingPage ? 'Saving draft…' : `Save ${PAGE_CONTENT[selectedPage].label} draft`}
+                </button>
+                <button className="PrimaryActionButton" type="button" onClick={handleCreatePR} disabled={isCreatingPR}>
+                  {isCreatingPR ? 'Creating PR…' : 'Save to web / Create PR'}
+                </button>
+                {pullRequest?.url && <a className="ContentLink" href={pullRequest.url} target="_blank" rel="noreferrer">Open pull request #{pullRequest.number}</a>}
+              </div>
             </form>
             <iframe className="AdminPagePreview" title={`${PAGE_CONTENT[selectedPage].label} page preview`} src={`/_preview/${encodeURIComponent(selectedPage)}`} />
           </div>

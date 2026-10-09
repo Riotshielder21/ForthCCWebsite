@@ -3,7 +3,7 @@ import { usePageContent } from '../utils/PageContentContext';
 
 export default function DisciplinesPage() {
   const copy = usePageContent('disciplines');
-  const disciplines = ['slalom', 'polo', 'sprint', 'whitewater', 'touring', 'surf'].map((id) => ({
+  const disciplines = ['slalom', 'polo', 'sprint', 'whitewater', 'touring', 'surf', 'canoe', 'paddleboarding'].map((id) => ({
     name: copy[`${id}Title`],
     description: copy[`${id}Body`]
   }));
