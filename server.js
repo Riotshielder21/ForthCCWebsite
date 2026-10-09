@@ -400,13 +400,14 @@ app.post('/api/admin/forms', rateLimit(20, 60 * 1000), async (req, res) => {
     const rootFolderId = process.env.GOOGLE_FORMS_ROOT_FOLDER_ID;
     if (!rootFolderId) return res.status(503).json({ error: 'Google Forms root folder is not configured.' });
 
+    const sharedDriveId = process.env.GOOGLE_SHARED_DRIVE_ID;
     const folderSearch = await driveApi.files.list({
       q: `'${rootFolderId}' in parents and name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
       fields: 'files(id,name)',
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
-      corpora: 'drive',
-      driveId: process.env.GOOGLE_SHARED_DRIVE_ID
+      corpora: sharedDriveId ? 'drive' : 'user',
+      ...(sharedDriveId ? { driveId: sharedDriveId } : {})
     });
     const folder = folderSearch.data.files?.[0] || (await driveApi.files.create({
       requestBody: {
