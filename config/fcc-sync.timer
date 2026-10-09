@@ -1,0 +1,11 @@
+[Unit]
+Description=FCC JustGo Sync Timer
+Requires=fcc-sync.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1d
+OnUnitActiveSec=04:00
+
+[Install]
+WantedBy=timers.target

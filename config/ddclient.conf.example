@@ -1,0 +1,35 @@
+﻿# ddclient configuration for Cloudflare Dynamic DNS
+# Edit this file with your Cloudflare credentials
+
+##
+## Configuration file for ddclient.
+## Edit this file and then run: sudo systemctl restart ddclient
+##
+
+# Protocol
+protocol=cloudflare
+
+# IP lookup method
+use=web, web=checkip.dyndns.com/
+
+# Your domain
+zone=gg-edi.co.uk
+
+# Cloudflare API credentials
+login=riotshielder21@gmail.com
+password='your-cloudflare-api-token'
+
+# Subdomains to update (fccwebsite.gg-edi.co.uk,www.fccwebsite.gg-edi.co.uk)
+fccwebsite.gg-edi.co.uk,www.fccwebsite.gg-edi.co.uk
+
+# Check interval (in seconds) - default is 600
+# Uncomment to customize:
+# check_interval=600
+# foreground (for debugging)
+# foreground=yes
+
+# Log file location
+# logfile=/var/log/ddclient.log
+
+# PID file location
+# pid=/var/run/ddclient.pid
