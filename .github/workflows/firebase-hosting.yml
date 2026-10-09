@@ -55,8 +55,8 @@ jobs:
             GITHUB_PR_REVIEWERS=Riotshielder21
             GOOGLE_WORKSPACE_DELEGATED_USER=website@forthcanoeclub.co.uk
             GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk
-            GOOGLE_SHARED_DRIVE_ID=${{ secrets.GOOGLE_SHARED_DRIVE_ID }}
-            GOOGLE_FORMS_ROOT_FOLDER_ID=${{ secrets.GOOGLE_FORMS_ROOT_FOLDER_ID }}
+            GOOGLE_SHARED_DRIVE_ID=0APxBZiGs6yEGUk9PVA
+            GOOGLE_FORMS_ROOT_FOLDER_ID=1_ptxNQkgpJdogsjDZ4Wbqb310LCEJI4Z
             PUBLIC_SITE_URL=https://forthcanoeclub.co.uk
           secrets: |-
             GITHUB_CONTENT_TOKEN=github-content-token:latest

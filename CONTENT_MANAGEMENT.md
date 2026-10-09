@@ -61,11 +61,11 @@ GITHUB_PR_ASSIGNEE=Riotshielder21
 GITHUB_PR_NOTIFICATION_EMAIL=Riotshielder21@gmail.com
 ```
 
-6. Add `GOOGLE_SHARED_DRIVE_ID` and `GOOGLE_FORMS_ROOT_FOLDER_ID` as GitHub Actions secrets. The workflow requests `Riotshielder21` as PR reviewer by default.
+6. The workflow is configured with the Website Forms folder ID. The delegated Workspace account must be able to access it. The workflow requests `Riotshielder21` as PR reviewer by default.
 7. Push the workflow to `main`. It deploys the API first and injects the resulting Cloud Run URL into the frontend build automatically.
 8. Admin page saves write `public/content/pages/{pageId}.json` to `live/web-admin-edit`.
 
-Optional manual Cloud Run deploy (after creating secrets and filling in the two Drive IDs):
+Optional manual Cloud Run deploy (after creating secrets):
 
 ```bash
 gcloud run deploy fcc-website-api \
@@ -73,7 +73,7 @@ gcloud run deploy fcc-website-api \
 	--project fccwebsite-23cfc \
 	--region europe-west2 \
 	--allow-unauthenticated \
-	--set-env-vars GITHUB_REPOSITORY=Riotshielder21/ForthCCWebsite,GITHUB_BRANCH=main,GITHUB_CONTENT_BRANCH=live/web-admin-edit,GITHUB_COMMIT_EMAIL=website@forthcanoeclub.co.uk,GITHUB_PR_ASSIGNEE=Riotshielder21,GITHUB_PR_NOTIFICATION_EMAIL=Riotshielder21@gmail.com,GOOGLE_WORKSPACE_DELEGATED_USER=website@forthcanoeclub.co.uk,GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk,GOOGLE_SHARED_DRIVE_ID=YOUR_DRIVE_ID,GOOGLE_FORMS_ROOT_FOLDER_ID=YOUR_FOLDER_ID,PUBLIC_SITE_URL=https://forthcanoeclub.co.uk \
+	--set-env-vars GITHUB_REPOSITORY=Riotshielder21/ForthCCWebsite,GITHUB_BRANCH=main,GITHUB_CONTENT_BRANCH=live/web-admin-edit,GITHUB_COMMIT_EMAIL=website@forthcanoeclub.co.uk,GITHUB_PR_ASSIGNEE=Riotshielder21,GITHUB_PR_NOTIFICATION_EMAIL=Riotshielder21@gmail.com,GOOGLE_WORKSPACE_DELEGATED_USER=website@forthcanoeclub.co.uk,GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk,GOOGLE_FORMS_ROOT_FOLDER_ID=1_ptxNQkgpJdogsjDZ4Wbqb310LCEJI4Z,PUBLIC_SITE_URL=https://forthcanoeclub.co.uk \
 	--set-secrets GITHUB_CONTENT_TOKEN=github-content-token:latest,FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account-json:latest
 ```
 
@@ -91,12 +91,14 @@ The website account should have access to one Shared Drive and one root folder:
 
 ```text
 ForthCommittee Shared Drive/
-└── Test_Website/
-    └── Website Forms/
+└── Test_Website/ (parent folder: 1WAELFfmAXyDiD4Yb9esCTD11uBj-nf6a)
+	└── Website Forms/ (configured folder: 1_ptxNQkgpJdogsjDZ4Wbqb310LCEJI4Z)
 	├── Forms 2025-2026/
 	├── Forms 2026-2027/
 	└── ...
 ```
+
+`GOOGLE_FORMS_ROOT_FOLDER_ID` is the `Website Forms` child folder. The Shared Drive ID is `0APxBZiGs6yEGUk9PVA`; the `Test_Website` parent folder ID is not a drive ID.
 
 Give the service account domain-wide delegation for:
 
@@ -113,8 +115,9 @@ GOOGLE_WORKSPACE_DELEGATED_USER=website@forthcanoeclub.co.uk
 GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk
 PUBLIC_SITE_URL=http://localhost:3000
 FIREBASE_SERVICE_ACCOUNT_PATH=./google-service-account.json
-GOOGLE_SHARED_DRIVE_ID=your_shared_drive_id_here
-GOOGLE_FORMS_ROOT_FOLDER_ID=your_forms_root_folder_id_here
+GOOGLE_FORMS_ROOT_FOLDER_ID=1_ptxNQkgpJdogsjDZ4Wbqb310LCEJI4Z
+# Shared Drive ID, not a folder ID.
+GOOGLE_SHARED_DRIVE_ID=0APxBZiGs6yEGUk9PVA
 GOOGLE_FORMS_TIMEZONE=Europe/London
 ```
 
