@@ -1,15 +1,16 @@
 import React from 'react';
 import { Mail, MapPin, ExternalLink } from 'lucide-react';
+import { usePageContent } from '../utils/PageContentContext';
 
 export default function ContactUsPage() {
+  const copy = usePageContent('contact');
+  const addressLines = copy.address.split('\n').filter(Boolean);
   return (
     <div className="PageFadeIn">
       <div className="SectionHero">
         <div className="ContentPanel ContentPanelMuted">
-          <h2 className="PageTitle">Contact Us</h2>
-          <p className="ContentBody ContentBodyIntro">
-            Got a question or want to book a session? Get in touch and we'll get back to you as soon as we can.
-          </p>
+          <h2 className="PageTitle">{copy.title}</h2>
+          <p className="ContentBody ContentBodyIntro">{copy.intro}</p>
         </div>
       </div>
 
@@ -18,16 +19,13 @@ export default function ContactUsPage() {
           <div className="CardSpanFull ContentPanel">
             <div className="EyebrowRow">
               <MapPin className="IconMd IconAccent" />
-              <span className="ShopItemEyebrow">Mailing Address</span>
+              <span className="ShopItemEyebrow">{copy.addressEyebrow}</span>
             </div>
-            <h3 className="ContentTitle SpaceT2 SpaceB3">Find Us</h3>
+            <h3 className="ContentTitle SpaceT2 SpaceB3">{copy.addressTitle}</h3>
             <p className="ContentBody SpaceB6">
-              Forth Canoe Club<br />
-              Harrison Park<br />
-              Polwarth<br />
-              Edinburgh EH11 1ED<br /><br />
-              <a href="https://maps.app.goo.gl/forthcanoeclub" target="_blank" rel="noreferrer" className="ContentLink">
-                View on maps →
+              {addressLines.map((line) => <React.Fragment key={line}>{line}<br /></React.Fragment>)}<br />
+              <a href={copy.mapUrl} target="_blank" rel="noreferrer" className="ContentLink">
+                {copy.mapAction} →
               </a>
             </p>
           </div>
@@ -35,27 +33,24 @@ export default function ContactUsPage() {
           <div className="ContentPanel">
             <div className="EyebrowRow">
               <Mail className="IconMd IconAccent" />
-              <span className="ShopItemEyebrow">General Enquiries</span>
+              <span className="ShopItemEyebrow">{copy.emailEyebrow}</span>
             </div>
-            <h3 className="ContentTitle SpaceT2">Get in Touch</h3>
-            <p className="ContentBody">
-              secretary@<br />forthcanoeclub.co.uk<br /><br />
-              We aim to respond within 48 hours.
-            </p>
+            <h3 className="ContentTitle SpaceT2">{copy.emailTitle}</h3>
+            <p className="ContentBody"><a href={`mailto:${copy.emailAddress}`}>{copy.emailAddress}</a><br /><br />{copy.responseTime}</p>
           </div>
 
           <div className="ContentPanel">
             <div className="EyebrowRow">
               <ExternalLink className="IconMd IconAccent" />
-              <span className="ShopItemEyebrow">Social Media</span>
+              <span className="ShopItemEyebrow">{copy.socialEyebrow}</span>
             </div>
-            <h3 className="ContentTitle SpaceT2">Follow Us</h3>
+            <h3 className="ContentTitle SpaceT2">{copy.socialTitle}</h3>
             <p className="ContentBody">
-              <a href="https://www.facebook.com/forth.canoeclub" target="_blank" rel="noreferrer" className="ContentLink SpaceB2">
-                Facebook →
+              <a href={copy.facebookUrl} target="_blank" rel="noreferrer" className="ContentLink SpaceB2">
+                {copy.facebookLabel} →
               </a>
-              <a href="https://www.instagram.com/forthcanoeclub" target="_blank" rel="noreferrer" className="ContentLink">
-                Instagram →
+              <a href={copy.instagramUrl} target="_blank" rel="noreferrer" className="ContentLink">
+                {copy.instagramLabel} →
               </a>
             </p>
           </div>
@@ -64,13 +59,9 @@ export default function ContactUsPage() {
 
       <div className="SectionContent">
         <div className="ContentPanel">
-          <h3 className="ContentTitle">Need Special Support?</h3>
-          <p className="ContentBody SpaceB3">
-            If you need additional support to get involved due to disability or long-term condition, contact our Supported Paddling coordinator.
-          </p>
-          <p className="ContentBody ContentBodyStrong">
-            supported.paddling@forthcanoeclub.co.uk
-          </p>
+          <h3 className="ContentTitle">{copy.supportTitle}</h3>
+          <p className="ContentBody SpaceB3">{copy.supportBody}</p>
+          <p className="ContentBody ContentBodyStrong"><a href={`mailto:${copy.supportEmail}`}>{copy.supportEmail}</a></p>
         </div>
       </div>
     </div>

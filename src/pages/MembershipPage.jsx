@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { ShoppingCart, CheckCircle2, ExternalLink, ChevronDown } from 'lucide-react';
 import { DISCOUNTS, CATEGORIES } from '../constants/products';
+import { usePageContent } from '../utils/PageContentContext';
 
 export default function MembershipPage({ activeCategory, setActiveCategory, cart, addToCart, getItemDisplayPrice, getKitHireMonthly, products }) {
+  const copy = usePageContent('membership');
   const [selectedTier, setSelectedTier] = useState('adult');
   const [tierDropdownOpen, setTierDropdownOpen] = useState(false);
 
@@ -25,8 +27,8 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
       <div className="SectionHero">
         <div className="PageHero">
           <div>
-            <h2 className="PageTitle">Store &<br />Subscriptions</h2>
-            <p className="PageIntro">The club year runs from 1 March. Membership and annual kit hire cover the current club year, while annual subscriptions are prorated to the next 1 March renewal.</p>
+            <h2 className="PageTitle">{copy.title}</h2>
+            <p className="PageIntro">{copy.intro}</p>
           </div>
           <div className="CategoryBar">
             {CATEGORIES.map((cat) => (
@@ -48,13 +50,10 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
           {(activeCategory === 'ALL' || activeCategory === 'MEMBERSHIP') && (
             <div className="ShopItemCard">
               <div className="ShopItemHeader">
-                <span className="ShopItemEyebrow">MEMBERSHIP</span>
-                <h3 className="ShopItemTitle">Club Membership<br />Via Website</h3>
+                <span className="ShopItemEyebrow">{copy.memberEyebrow}</span>
+                <h3 className="ShopItemTitle">{copy.memberTitle}</h3>
               </div>
-              <p className="ShopItemBody">
-                Join directly through our website. We'll set up your JustGo & SCA membership for you.
-                Select your tier below.
-              </p>
+              <p className="ShopItemBody">{copy.memberBody}</p>
 
               {/* Tier selector */}
               <div className="DropdownWrapper">
@@ -103,7 +102,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
               <div className="ShopItemFooter">
                 <div>
                   <div className="ShopItemPrice">£{selectedMembership?.basePrice.toFixed(2)}</div>
-                  <div className="ShopItemMeta">Club Year Price</div>
+                  <div className="ShopItemMeta">{copy.clubYearPriceLabel}</div>
                 </div>
                 <button
                   onClick={handleAddMembership}
@@ -136,7 +135,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                   {product.type === 'yearly-service' ? (
                     <>
                       <div className="ShopItemPrice">£{product.basePrice.toFixed(2)}</div>
-                      <div className="ShopItemMeta">Annual Price</div>
+                      <div className="ShopItemMeta">{copy.annualPriceLabel}</div>
                       <div className="KitHireMonthlyLabel">
                         or £{getKitHireMonthly(product)} /month
                       </div>
@@ -148,17 +147,17 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                       </div>
                       <div className="ShopItemMeta">
                         {product.type === 'voucher'
-                          ? 'Gift Voucher'
+                          ? copy.voucherPriceLabel
                           : product.type === 'annual-oneoff'
-                            ? 'Club Year Price'
-                            : 'Monthly Price'}
+                            ? copy.clubYearPriceLabel
+                            : copy.monthlyPriceLabel}
                       </div>
                     </>
                   )}
                 </div>
                 {product.type === 'external' ? (
                   <a href={product.externalLink} target="_blank" rel="noreferrer" className="PrimaryActionButton">
-                    JustGo <ExternalLink className="IconSm" />
+                    {copy.externalAction} <ExternalLink className="IconSm" />
                   </a>
                 ) : (
                   <button

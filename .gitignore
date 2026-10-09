@@ -17,12 +17,15 @@ build/
 
 # Environment & Secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 serviceAccountKey.json
 serviceaccount.json
 google-service-account.json
 scripts/creds.json
+*.pem
+*.key
+*:Zone.Identifier
 
 # IDE
 .vscode/
@@ -47,6 +50,7 @@ yarn-error.log*
 .parcel-cache/
 .vite/
 firebase-debug.log
+firebase-debug.*.log
 .firebase/
 
 # Backups

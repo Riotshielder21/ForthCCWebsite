@@ -17,8 +17,11 @@ import AccessProjectPage from './pages/AccessProjectPage';
 import AdminPage from './pages/AdminPage';
 import OrderLookupPage from './pages/OrderLookupPage';
 import PaymentSuccessPage from './pages/PaymentSuccessPage';
-import { subscribeToProducts } from './utils/content';
+import { loadPublishedPageContent, subscribeToProducts } from './utils/content';
+import { PageContentProvider } from './utils/PageContentContext';
+import { apiUrl } from './utils/api';
 import { PRODUCTS } from './constants/products';
+import { PAGE_CONTENT } from './constants/pageContent';
 import './index.css';
 
 export default function App() {
@@ -26,9 +29,14 @@ export default function App() {
     if (window.location.pathname === '/admin') return 'admin';
     if (window.location.pathname.startsWith('/order/')) return 'order-lookup';
     if (window.location.pathname === '/payment-success') return 'payment-success';
+    const previewPage = window.location.pathname.startsWith('/_preview/')
+      ? window.location.pathname.slice('/_preview/'.length)
+      : new URLSearchParams(window.location.search).get('page');
+    if (previewPage && PAGE_CONTENT[previewPage]) return previewPage;
     return 'home';
   });
   const [products, setProducts] = useState(PRODUCTS);
+  const [pageContent, setPageContent] = useState({});
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isAnnual, setIsAnnual] = useState(true);
@@ -59,6 +67,10 @@ export default function App() {
     if (remoteProducts.length > 0) setProducts(remoteProducts);
   }, (error) => console.error('Product catalog unavailable:', error)), []);
 
+  useEffect(() => loadPublishedPageContent(setPageContent, (error) => {
+    console.error('Page content unavailable:', error);
+  }), []);
+
   const addToCart = (product) => {
     if (product.type === 'external') return;
     setCart((prev) => {
@@ -87,7 +99,7 @@ export default function App() {
     }
     setCheckoutError('');
     try {
-      const response = await fetch('/api/checkout-session', {
+      const response = await fetch(apiUrl('/api/checkout-session'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -351,6 +363,7 @@ export default function App() {
   };
 
   return (
+    <PageContentProvider value={pageContent}>
     <div className="SiteShell">
       <SiteNavigation
         currentPage={currentPage}
@@ -554,5 +567,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </PageContentProvider>
   );
 }

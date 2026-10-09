@@ -1,4 +1,5 @@
 ﻿import React, { useState } from 'react';
+import { apiUrl } from '../utils/api';
 import { Plus, X, Send, CheckCircle, AlertCircle } from 'lucide-react';
 
 const LIST_TYPES = [
@@ -54,7 +55,7 @@ export default function ListSubmissionForm() {
         throw new Error('Please add at least one item to your list');
       }
 
-      const response = await fetch('/api/lists', {
+      const response = await fetch(apiUrl('/api/lists'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

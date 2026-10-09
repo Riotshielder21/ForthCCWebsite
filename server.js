@@ -6,6 +6,10 @@ import cors from 'cors';
 import { google } from 'googleapis';
 import fs from 'fs';
 import crypto from 'crypto';
+import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
+import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { getFirestore as getAdminFirestore, Timestamp } from 'firebase-admin/firestore';
+import { PAGE_CONTENT } from './src/constants/pageContent.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -42,32 +46,21 @@ const stripeRequest = async (path, params) => {
   return data;
 };
 
-const firestoreDocumentName = (orderRef) => `projects/${googleProjectId}/databases/(default)/documents/orders/${orderRef}`;
 const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '' }) => {
-  await firestoreApi.projects.databases.documents.createDocument({
-    parent: `projects/${googleProjectId}/databases/(default)/documents`,
-    collectionId: 'orders',
-    documentId: orderRef,
-    requestBody: {
-      fields: {
-        email: firestoreString(email.toLowerCase()),
-        items: firestoreString(JSON.stringify(items)),
-        total: firestoreString(total),
-        status: firestoreString(status),
-        stripeSessionId: firestoreString(stripeSessionId),
-        createdAt: { timestampValue: new Date().toISOString() },
-        expiresAt: { timestampValue: new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000).toISOString() }
-      }
-    }
+  if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
+  await adminDb.collection('orders').doc(orderRef).create({
+    email: email.toLowerCase(),
+    items,
+    total: String(total),
+    status,
+    stripeSessionId,
+    createdAt: Timestamp.now(),
+    expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
   });
 };
 const updateFirestoreOrder = async (orderRef, fields) => {
-  const updateFields = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, typeof value === 'object' && value.timestampValue ? value : firestoreString(value)]));
-  await firestoreApi.projects.databases.documents.patch({
-    name: firestoreDocumentName(orderRef),
-    updateMask: { fieldPaths: Object.keys(updateFields) },
-    requestBody: { fields: updateFields }
-  });
+  if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
+  await adminDb.collection('orders').doc(orderRef).update(fields);
 };
 
 app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: 'application/json' }), async (req, res) => {
@@ -90,24 +83,25 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const orderRef = session.metadata?.order_ref;
-      if (!orderRef || !firestoreApi) return res.status(400).send('Order metadata is missing.');
-      const document = await firestoreApi.projects.databases.documents.get({ name: firestoreDocumentName(orderRef) });
-      const fields = document.data.fields || {};
-      if (fields.status?.stringValue === 'paid' && fields.emailSent?.stringValue === 'true') {
+      if (!orderRef || !adminDb) return res.status(400).send('Order metadata is missing.');
+      const document = await adminDb.collection('orders').doc(orderRef).get();
+      if (!document.exists) return res.status(404).send('Order not found.');
+      const fields = document.data();
+      if (fields.status === 'paid' && fields.emailSent === true) {
         return res.json({ received: true });
       }
       const accessToken = createAccessToken();
-      const items = JSON.parse(fields.items?.stringValue || '[]');
-      const total = fields.total?.stringValue || '0';
+      const items = fields.items || [];
+      const total = fields.total || '0';
       await updateFirestoreOrder(orderRef, {
         status: 'paid',
         accessTokenHash: hashAccessToken(accessToken),
         stripePaymentIntentId: session.payment_intent || '',
         stripeSubscriptionId: session.subscription || '',
-        paidAt: { timestampValue: new Date().toISOString() }
+        paidAt: Timestamp.now()
       });
-      const emailSent = await sendOrderEmail({ email: fields.email?.stringValue, orderRef, accessToken, items, total });
-      await updateFirestoreOrder(orderRef, { emailSent: String(emailSent), emailSentAt: emailSent ? { timestampValue: new Date().toISOString() } : '' });
+      const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken, items, total });
+      await updateFirestoreOrder(orderRef, { emailSent, ...(emailSent ? { emailSentAt: Timestamp.now() } : {}) });
       console.log(`Stripe payment confirmed: ${session.id}; receipt email sent: ${emailSent}`);
     }
     res.json({ received: true });
@@ -122,29 +116,34 @@ app.use(express.static('dist'));
 
 // Google Sheets API Setup
 let sheets;
-let firestoreApi;
+let adminDb;
+let adminAuth;
 let gmailApi;
-let googleProjectId;
+let driveApi;
+let sheetsApi;
 try {
-  const credentialsPath = join(__dirname, 'google-service-account.json');
-  if (fs.existsSync(credentialsPath)) {
-    const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
-    googleProjectId = credentials.project_id;
-    const auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
-    });
-    sheets = google.sheets({ version: 'v4', auth });
+  const credentialsPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || join(__dirname, 'google-service-account.json');
+  const credentialsJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (credentialsJson || fs.existsSync(credentialsPath)) {
+    const credentials = credentialsJson
+      ? JSON.parse(credentialsJson)
+      : JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
+    const adminApp = getApps()[0] || initializeAdminApp({ credential: cert(credentials) });
+    adminDb = getAdminFirestore(adminApp);
+    adminAuth = getAdminAuth(adminApp);
     const workspaceAuth = new google.auth.GoogleAuth({
       credentials,
       subject: process.env.GOOGLE_WORKSPACE_DELEGATED_USER || undefined,
       scopes: [
-        'https://www.googleapis.com/auth/datastore',
-        'https://www.googleapis.com/auth/gmail.send'
+        'https://www.googleapis.com/auth/gmail.send',
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/spreadsheets'
       ]
     });
-    firestoreApi = google.firestore({ version: 'v1', auth: workspaceAuth });
+    sheets = google.sheets({ version: 'v4', auth: workspaceAuth });
+    sheetsApi = sheets;
     gmailApi = google.gmail({ version: 'v1', auth: workspaceAuth });
+    driveApi = google.drive({ version: 'v3', auth: workspaceAuth });
     console.log('âœ… Google Sheets API initialized');
   } else {
     console.warn('âš ï¸  Google service account key not found. Google Sheets integration disabled.');
@@ -155,8 +154,156 @@ try {
 
 const createAccessToken = () => crypto.randomBytes(32).toString('hex');
 const hashAccessToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
-const firestoreString = (value) => ({ stringValue: String(value ?? '') });
 const ORDER_ACCESS_DAYS = 90;
+
+const currentClubYear = () => {
+  const now = new Date();
+  return now.getMonth() >= 2 ? now.getFullYear() : now.getFullYear() - 1;
+};
+
+const requireAdmin = async (req, res) => {
+  const token = req.headers.authorization?.startsWith('Bearer ')
+    ? req.headers.authorization.slice(7)
+    : '';
+  if (!token || !adminAuth) {
+    res.status(401).json({ error: 'Admin authentication required.' });
+    return null;
+  }
+  try {
+    const decoded = await adminAuth.verifyIdToken(token);
+    if (decoded.admin !== true || !decoded.email?.toLowerCase().endsWith('@forthcanoeclub.co.uk')) {
+      res.status(403).json({ error: 'Admin access required.' });
+      return null;
+    }
+    return decoded;
+  } catch {
+    res.status(401).json({ error: 'Invalid admin session.' });
+    return null;
+  }
+};
+
+app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { pageId, content = {} } = req.body;
+    const page = PAGE_CONTENT[pageId];
+    const repository = process.env.GITHUB_REPOSITORY || 'Riotshielder21/ForthCCWebsite';
+    const branch = process.env.GITHUB_BRANCH || 'main';
+    const token = process.env.GITHUB_CONTENT_TOKEN;
+    if (!token) return res.status(503).json({ error: 'GitHub publishing is not configured on the API server.' });
+    if (!page || !content || typeof content !== 'object' || Array.isArray(content)) {
+      return res.status(400).json({ error: 'Unknown page or invalid content.' });
+    }
+
+    const publishedContent = {};
+    for (const [key, definition] of Object.entries(page.fields)) {
+      const value = content[key] ?? definition.value;
+      if (typeof value !== 'string' || value.length > 20000) {
+        return res.status(400).json({ error: `Invalid value for ${definition.label}.` });
+      }
+      if (/url$/i.test(key) && value && !/^https:\/\//i.test(value)) {
+        return res.status(400).json({ error: `${definition.label} must be an https URL.` });
+      }
+      publishedContent[key] = value;
+    }
+
+    const encodedRepository = repository.split('/').map(encodeURIComponent).join('/');
+    const path = `public/content/pages/${pageId}.json`;
+    const endpoint = `https://api.github.com/repos/${encodedRepository}/contents/${path}`;
+    const headers = {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28'
+    };
+
+    const currentResponse = await fetch(`${endpoint}?ref=${encodeURIComponent(branch)}`, { headers });
+    let sha;
+    if (currentResponse.ok) {
+      sha = (await currentResponse.json()).sha;
+    } else if (currentResponse.status !== 404) {
+      const errorBody = await currentResponse.json().catch(() => ({}));
+      throw new Error(errorBody.message || 'GitHub could not read the current page file.');
+    }
+
+    const update = await fetch(endpoint, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        message: `Update page content: ${page.label}`,
+        content: Buffer.from(`${JSON.stringify(publishedContent, null, 2)}\n`).toString('base64'),
+        branch,
+        ...(sha ? { sha } : {}),
+        committer: {
+          name: 'FCC Website Content Manager',
+          email: process.env.GITHUB_COMMIT_EMAIL || 'website@forthcanoeclub.co.uk'
+        }
+      })
+    });
+    const result = await update.json();
+    if (!update.ok) throw new Error(result.message || 'GitHub could not save the page file.');
+
+    res.json({ success: true, commit: result.commit.sha, url: result.content.html_url, publishWindow: 'next nightly deployment' });
+  } catch (error) {
+    console.error('GitHub page publish failed:', error.message);
+    res.status(500).json({ error: error.message || 'Could not publish page content.' });
+  }
+});
+
+app.post('/api/admin/forms', rateLimit(20, 60 * 1000), async (req, res) => {
+  try {
+    if (!await requireAdmin(req, res)) return;
+    const { name, description = '', fields = [] } = req.body;
+    if (!name || !Array.isArray(fields) || !adminDb || !driveApi || !sheetsApi) {
+      return res.status(400).json({ error: 'Form name, fields, and Google services are required.' });
+    }
+    const folderName = `Forms ${currentClubYear()}-${currentClubYear() + 1}`;
+    const rootFolderId = process.env.GOOGLE_FORMS_ROOT_FOLDER_ID;
+    if (!rootFolderId) return res.status(503).json({ error: 'Google Forms root folder is not configured.' });
+
+    const folderSearch = await driveApi.files.list({
+      q: `'${rootFolderId}' in parents and name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'files(id,name)',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+      corpora: 'drive',
+      driveId: process.env.GOOGLE_SHARED_DRIVE_ID
+    });
+    const folder = folderSearch.data.files?.[0] || (await driveApi.files.create({
+      requestBody: {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [rootFolderId]
+      },
+      fields: 'id,name',
+      supportsAllDrives: true
+    })).data;
+
+    const spreadsheet = await driveApi.files.create({
+      requestBody: {
+        name: `${name} - ${folderName}`,
+        mimeType: 'application/vnd.google-apps.spreadsheet',
+        parents: [folder.id]
+      },
+      fields: 'id,name,webViewLink',
+      supportsAllDrives: true
+    });
+    const spreadsheetId = spreadsheet.data.id;
+    await sheetsApi.spreadsheets.values.update({
+      spreadsheetId,
+      range: `A1:${String.fromCharCode(65 + Math.min(fields.length, 25))}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['Timestamp', 'Email', ...fields.map((field) => typeof field === 'string' ? field : field.label || 'Response')]] }
+    });
+    const form = { name, description, fields, spreadsheetId, folderId: folder.id, clubYear: currentClubYear(), createdAt: new Date().toISOString() };
+    const formDocument = await adminDb.collection('forms').add(form);
+    res.json({ success: true, form: { id: formDocument.id, ...form } });
+  } catch (error) {
+    console.error('Error creating form:', error);
+    res.status(500).json({ error: 'Could not create form.' });
+  }
+});
 
 app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
@@ -167,7 +314,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
 
     const orderRef = `FCC-${Date.now().toString(36).toUpperCase()}`;
-    if (!firestoreApi || !googleProjectId) return res.status(503).json({ error: 'Order storage is not configured.' });
+    if (!adminDb) return res.status(503).json({ error: 'Order storage is not configured.' });
     await createFirestoreOrder({ orderRef, email, items, total, status: 'pending' });
     const lineItems = items.flatMap((item, index) => [
       [`line_items[${index}][price_data][currency]`, 'gbp'],
@@ -238,27 +385,22 @@ app.post('/api/orders', rateLimit(10, 60 * 1000), async (req, res) => {
     if (!email || !/^\S+@\S+\.\S+$/.test(email) || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'A valid email and at least one item are required.' });
     }
-    if (!firestoreApi || !googleProjectId) {
+    if (!adminDb) {
       return res.status(503).json({ error: 'Order storage is not configured.' });
     }
 
     const orderRef = `FCC-${Date.now().toString(36).toUpperCase()}`;
     const accessToken = createAccessToken();
-    await firestoreApi.projects.databases.documents.createDocument({
-      parent: `projects/${googleProjectId}/databases/(default)/documents`,
-      collectionId: 'orders',
-      documentId: orderRef,
-      requestBody: {
-        fields: {
-          email: firestoreString(email.toLowerCase()),
-          accessTokenHash: firestoreString(hashAccessToken(accessToken)),
-          receipt: firestoreString(JSON.stringify(receipt || {})),
-          items: firestoreString(JSON.stringify(items)),
-          total: firestoreString(total),
-          createdAt: { timestampValue: new Date().toISOString() },
-          expiresAt: { timestampValue: new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000).toISOString() }
-        }
-      }
+    await adminDb.collection('orders').doc(orderRef).create({
+      email: email.toLowerCase(),
+      accessTokenHash: hashAccessToken(accessToken),
+      receipt: receipt || {},
+      items,
+      total: String(total),
+      status: 'paid',
+      emailSent: false,
+      createdAt: Timestamp.now(),
+      expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
     });
 
     let emailSent = false;
@@ -280,22 +422,21 @@ app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => 
     const separator = req.params.accessKey.indexOf('.');
     const orderRef = separator === -1 ? '' : req.params.accessKey.slice(0, separator);
     const accessToken = separator === -1 ? '' : req.params.accessKey.slice(separator + 1);
-    if (!firestoreApi || !googleProjectId || !orderRef || !accessToken) return res.status(404).json({ error: 'Order not found.' });
+    if (!adminDb || !orderRef || !accessToken) return res.status(404).json({ error: 'Order not found.' });
 
-    const document = await firestoreApi.projects.databases.documents.get({
-      name: `projects/${googleProjectId}/databases/(default)/documents/orders/${orderRef}`
-    });
-    const fields = document.data.fields || {};
-    if (fields.accessTokenHash?.stringValue !== hashAccessToken(accessToken)) return res.status(404).json({ error: 'Order not found.' });
-    if (fields.expiresAt?.timestampValue && new Date(fields.expiresAt.timestampValue) < new Date()) return res.status(410).json({ error: 'This receipt link has expired.' });
+    const document = await adminDb.collection('orders').doc(orderRef).get();
+    if (!document.exists) return res.status(404).json({ error: 'Order not found.' });
+    const fields = document.data();
+    if (fields.accessTokenHash !== hashAccessToken(accessToken)) return res.status(404).json({ error: 'Order not found.' });
+    if (fields.expiresAt?.toDate() < new Date()) return res.status(410).json({ error: 'This receipt link has expired.' });
 
     res.json({
       orderRef,
-      receipt: JSON.parse(fields.receipt?.stringValue || '{}'),
-      items: JSON.parse(fields.items?.stringValue || '[]'),
-      total: fields.total?.stringValue || '0',
-      createdAt: fields.createdAt?.timestampValue || null,
-      expiresAt: fields.expiresAt?.timestampValue || null
+      receipt: fields.receipt || {},
+      items: fields.items || [],
+      total: fields.total || '0',
+      createdAt: fields.createdAt?.toDate?.() || null,
+      expiresAt: fields.expiresAt?.toDate?.() || null
     });
   } catch (error) {
     if (error.code === 404) return res.status(404).json({ error: 'Order not found.' });
@@ -383,7 +524,9 @@ app.get('/health', (req, res) => {
 
 // Serve index.html for all routes (SPA routing)
 app.get('*', (req, res) => {
-  res.sendFile(join(__dirname, 'dist', 'index.html'));
+  const indexPath = join(__dirname, 'dist', 'index.html');
+  if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
+  res.status(404).json({ error: 'Not found.' });
 });
 
 // Error handling
@@ -393,7 +536,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, '127.0.0.1', () => {
+app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   console.log(`ðŸŽ¯ FCC Website running at http://127.0.0.1:${PORT}`);
   console.log(`ðŸ“ Serving from: ${__dirname}/dist`);
   console.log(`ðŸ›‘ To stop the server, press Ctrl+C`);

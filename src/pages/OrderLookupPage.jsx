@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { apiUrl } from '../utils/api';
 
 export default function OrderLookupPage() {
   const [state, setState] = useState({ loading: true, order: null, error: '' });
 
   useEffect(() => {
     const accessKey = window.location.pathname.split('/').filter(Boolean).pop();
-    fetch(`/api/orders/${encodeURIComponent(accessKey || '')}`)
+    fetch(apiUrl(`/api/orders/${encodeURIComponent(accessKey || '')}`))
       .then(async (response) => {
         const contentType = response.headers.get('content-type') || '';
         const data = contentType.includes('application/json') ? await response.json() : {};

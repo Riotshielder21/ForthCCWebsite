@@ -11,6 +11,15 @@
 firebase deploy --only firestore:rules,storage
 ```
 
+## Hosting and GitHub
+
+1. Create a Firebase service-account JSON for deployment.
+2. Add the Firebase deployment service-account JSON to GitHub as `FIREBASE_SERVICE_ACCOUNT`.
+3. Add each `VITE_FIREBASE_*` value from `.env` as a GitHub Actions secret.
+4. Push to `main`.
+
+The workflow builds `dist/` and deploys Hosting, Firestore rules, and Storage rules. Firebase Hosting runs the frontend only; deploy `server.js` separately to Cloud Run when Stripe, Gmail, orders, and forms are needed.
+
 ## Admin editor
 
 1. Add `localhost` and the production domain to Firebase authorized domains.
@@ -21,24 +30,86 @@ firebase deploy --only firestore:rules,storage
 
 The editor manages products, prices, descriptions, categories, discounts, and images.
 
-## Workspace email
+The admin dashboard also lets approved editors choose a public page, edit its labeled copy and external links, preview the current published page, and save changes as versioned JSON in GitHub. Page layout and interactive behavior remain code-managed.
+
+### Permanent page publishing
+
+1. Create a fine-grained GitHub token for `Riotshielder21/ForthCCWebsite` with **Contents: Read and write**.
+2. In Secret Manager, create `github-content-token` and store that token.
+3. Create `firebase-service-account-json` and store the Workspace-delegated service-account JSON.
+4. Deploy the Express API to Cloud Run in `europe-west2` from the included `Dockerfile`.
+5. Set Cloud Run secret environment variables:
+
+```text
+GITHUB_CONTENT_TOKEN = github-content-token:latest
+FIREBASE_SERVICE_ACCOUNT_JSON = firebase-service-account-json:latest
+```
+
+6. Set these Cloud Run variables:
+
+```text
+GITHUB_REPOSITORY=Riotshielder21/ForthCCWebsite
+GITHUB_BRANCH=main
+GITHUB_COMMIT_EMAIL=website@forthcanoeclub.co.uk
+```
+
+7. Add `VITE_API_BASE_URL` as a GitHub Actions secret, set to the Cloud Run service URL, and deploy the frontend once.
+8. Admin page saves write `public/content/pages/{pageId}.json` to the `main` branch.
+
+Example Cloud Run deploy (after creating the secrets and filling in the two Drive IDs):
+
+```bash
+gcloud run deploy fcc-website-api \
+	--source . \
+	--project fccwebsite-23cfc \
+	--region europe-west2 \
+	--allow-unauthenticated \
+	--set-env-vars GITHUB_REPOSITORY=Riotshielder21/ForthCCWebsite,GITHUB_BRANCH=main,GITHUB_COMMIT_EMAIL=website@forthcanoeclub.co.uk,GOOGLE_WORKSPACE_DELEGATED_USER=website@forthcanoeclub.co.uk,GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk,GOOGLE_SHARED_DRIVE_ID=YOUR_DRIVE_ID,GOOGLE_FORMS_ROOT_FOLDER_ID=YOUR_FOLDER_ID,PUBLIC_SITE_URL=https://forthcanoeclub.co.uk \
+	--set-secrets GITHUB_CONTENT_TOKEN=github-content-token:latest,FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account-json:latest
+```
+
+Page-content-only commits skip the immediate deploy. The Hosting workflow runs nightly at **18:00 UTC** and publishes the latest committed page JSON. Code changes pushed to `main` still deploy immediately. Use **Actions → Deploy Firebase Hosting → Run workflow** to publish an admin edit early.
+
+Cloud Run must allow unauthenticated HTTP so the public website can reach it; admin write endpoints independently verify Firebase ID tokens, the `admin` claim, and club email domain. Keep `GITHUB_CONTENT_TOKEN` and service-account JSON server-side only.
+
+## Google Workspace forms and email
+
+The website account should have access to one Shared Drive and one root folder:
+
+```text
+ForthCommittee Shared Drive/
+└── Test_Website/
+    └── Website Forms/
+	├── Forms 2025-2026/
+	├── Forms 2026-2027/
+	└── ...
+```
 
 Give the service account domain-wide delegation for:
 
 ```text
 https://www.googleapis.com/auth/gmail.send
-https://www.googleapis.com/auth/datastore
+https://www.googleapis.com/auth/drive
+https://www.googleapis.com/auth/spreadsheets
 ```
 
 Place the JSON file at `google-service-account.json` and set:
 
 ```env
 GOOGLE_WORKSPACE_DELEGATED_USER=website@forthcanoeclub.co.uk
-GOOGLE_WORKSPACE_SENDER=website-noreply@forthcanoeclub.co.uk
+GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk
 PUBLIC_SITE_URL=http://localhost:3000
+FIREBASE_SERVICE_ACCOUNT_PATH=./google-service-account.json
+GOOGLE_SHARED_DRIVE_ID=your_shared_drive_id_here
+GOOGLE_FORMS_ROOT_FOLDER_ID=your_forms_root_folder_id_here
+GOOGLE_FORMS_TIMEZONE=Europe/London
 ```
 
-Support: `secretary@forthcanoeclub.co.uk`.
+Support: `jack.watt@forthcanoeclub.co.uk`.
+
+Firebase stores form definitions in `forms`. Google Drive stores the response spreadsheet. When an admin creates a form through the admin API, the server creates one spreadsheet in the current club-year folder and stores its ID in Firebase. The admin account must have the `admin` custom claim.
+
+The existing volunteering form still uses the legacy fixed-sheet path. Migrate it to the new `forms` collection once the public dynamic-form page is added; do not create new fixed sheets for new forms.
 
 ## Stripe test mode
 

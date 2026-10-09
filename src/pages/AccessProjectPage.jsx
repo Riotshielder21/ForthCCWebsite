@@ -1,56 +1,47 @@
 import React from 'react';
 import { ExternalLink } from 'lucide-react';
+import { usePageContent } from '../utils/PageContentContext';
 
 export default function AccessProjectPage() {
+  const copy = usePageContent('access-project');
   return (
     <div className="PageFadeIn">
       <div className="SectionHero">
         <div className="ContentPanel ContentPanelMuted">
-          <h2 className="PageTitle">Access Project</h2>
-          <p className="ContentBody ContentBodyIntro">
-            Making paddling accessible to everyone. Our Access Project works to remove barriers
-            and create opportunities for people who might not otherwise have access to water sports.
-          </p>
+          <h2 className="PageTitle">{copy.title}</h2>
+          <p className="ContentBody ContentBodyIntro">{copy.intro}</p>
         </div>
       </div>
 
       <div className="SectionBottom">
         <div className="CardGrid2">
           <div className="ContentPanel">
-            <span className="ShopItemEyebrow">The Challenge</span>
-            <h3 className="ContentTitle SpaceT2">Our Vision</h3>
-            <p className="ContentBody">
-              Paddlesports can be accessible for people with disabilities. We want to be a pathway club for ParaCanoe athletes. Currently, wheelchair users must be lifted in and out of boats — we're working to change that and restore independence and autonomy. We're also advocating for accessible facilities like changing rooms and showers.
-            </p>
+            <span className="ShopItemEyebrow">{copy.tile1Eyebrow}</span>
+            <h3 className="ContentTitle SpaceT2">{copy.tile1Title}</h3>
+            <p className="ContentBody">{copy.tile1Body}</p>
           </div>
 
           <div className="ContentPanel">
-            <span className="ShopItemEyebrow">Our Approach</span>
-            <h3 className="ContentTitle SpaceT2">Inclusive Design</h3>
-            <p className="ContentBody">
-              "It's what you can do, rather than what you can't do." We work with individuals facing barriers to paddling, adapting sessions to meet their needs. Well-designed access improves the site for everyone.
-            </p>
+            <span className="ShopItemEyebrow">{copy.tile2Eyebrow}</span>
+            <h3 className="ContentTitle SpaceT2">{copy.tile2Title}</h3>
+            <p className="ContentBody">{copy.tile2Body}</p>
           </div>
 
           <div className="ContentPanel">
-            <span className="ShopItemEyebrow">Track Progress</span>
-            <h3 className="ContentTitle SpaceT2">Project Timeline</h3>
-            <p className="ContentBody SpaceB4">
-              We've completed feasibility studies and secured £32,000+ in pledges. We're now working through surveys, funding applications, designs, and approvals. Building work will follow once final funding is in place.
-            </p>
-            <a href="https://www.forthcanoeclub.co.uk/access-project" target="_blank" rel="noreferrer" className="ContentLink">
-              View full timeline →
+            <span className="ShopItemEyebrow">{copy.tile3Eyebrow}</span>
+            <h3 className="ContentTitle SpaceT2">{copy.tile3Title}</h3>
+            <p className="ContentBody SpaceB4">{copy.tile3Body}</p>
+            <a href={copy.timelineUrl} target="_blank" rel="noreferrer" className="ContentLink">
+              {copy.timelineAction} →
             </a>
           </div>
 
           <div className="ContentPanel">
-            <span className="ShopItemEyebrow">Get Involved</span>
-            <h3 className="ContentTitle SpaceT2">Support Our Work</h3>
-            <p className="ContentBody SpaceB4">
-              Help us make paddling accessible to everyone. Volunteer with the project, contribute skills, or donate to the fundraiser.
-            </p>
-            <a href="https://www.justgiving.com/campaign/forth-access-project" target="_blank" rel="noreferrer" className="PrimaryActionButton">
-              Donate Now <ExternalLink className="IconSm" />
+            <span className="ShopItemEyebrow">{copy.tile4Eyebrow}</span>
+            <h3 className="ContentTitle SpaceT2">{copy.tile4Title}</h3>
+            <p className="ContentBody SpaceB4">{copy.tile4Body}</p>
+            <a href={copy.donateUrl} target="_blank" rel="noreferrer" className="PrimaryActionButton">
+              {copy.donateAction} <ExternalLink className="IconSm" />
             </a>
           </div>
         </div>

@@ -895,6 +895,31 @@
     @apply w-full max-h-48 object-cover rounded-xl;
   }
 
+  .AdminFormBuilder {
+    @apply max-w-3xl;
+  }
+
+  .AdminPageEditorGrid {
+    @apply grid grid-cols-1 xl:grid-cols-2 gap-6 items-start;
+  }
+
+  .AdminPageFields {
+    @apply space-y-4 max-h-[75vh] overflow-y-auto pr-2;
+  }
+
+  .AdminPageSelector {
+    @apply flex items-center gap-3 min-w-56;
+  }
+
+  .AdminPagePreview {
+    @apply w-full min-h-[680px] border rounded-xl bg-slate-50;
+    border-color: var(--fcc-color-border);
+  }
+
+  .AdminPreserveLines {
+    white-space: pre-line;
+  }
+
   .FormTitle {
     @apply text-3xl font-black uppercase mb-2;
     color: var(--fcc-color-ink);

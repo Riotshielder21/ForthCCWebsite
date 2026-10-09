@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, X, Send, CheckCircle, AlertCircle } from 'lucide-react';
+import { apiUrl } from '../utils/api';
 
 export default function FormComponent({
   title = 'Submit a Form',
@@ -55,7 +56,7 @@ export default function FormComponent({
         throw new Error(`Please add at least one ${itemPlaceholder.toLowerCase()}`);
       }
 
-      const response = await fetch(endpoint, {
+      const response = await fetch(apiUrl(endpoint), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
