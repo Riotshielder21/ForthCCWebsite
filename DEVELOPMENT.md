@@ -5,6 +5,9 @@ Run from the repository root in Bash. Use Node 22 LTS and Java 21 for Firebase e
 ## Install
 
 ```bash
+npm install
+npm install -g --allow-scripts=@stripe/cli
+npm install-scripts approve esbuild protobufjs
 npm ci
 cp .env.example .env
 cp -n .env.emulator.example .env.emulator
