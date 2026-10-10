@@ -7,6 +7,9 @@ Run commands from the repository root in Bash. Use Node 22 LTS and npm; Docker a
 1. Install dependencies and create local configuration without overwriting an existing file:
 
 ```bash
+npm install
+npm install -g --allow-scripts=@stripe/cli
+npm install-scripts approve esbuild protobufjs
 npm ci
 cp -n .env.example .env
 ```
@@ -73,9 +76,12 @@ Open `http://localhost:3000`. Express serves `dist/` and the API from the same o
 2. In another terminal, run:
 
 ```bash
-stripe listen --forward-to localhost:3001/api/stripe/webhook
+stripe listen --forward-to localhost:3001/api/stripe/webhook --events=payment_intent.succeeded,payment_intent.payment_failed
 ```
-
+or all snapshots
+```bash
+stripe listen --forward-to localhost:3001/api/stripe/webhook --all-snapshot
+```
 3. Put the printed signing secret in `.env` as `STRIPE_WEBHOOK_SECRET`, then restart the API.
 4. Use a Stripe test secret key as `STRIPE_SECRET_KEY`.
 5. Pay with `4242 4242 4242 4242`, any future expiry, and any CVC. Never use real card details for this test.
