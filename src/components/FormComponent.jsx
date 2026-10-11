@@ -1,47 +1,30 @@
 import React, { useState } from 'react';
-import { Plus, X, Send, CheckCircle, AlertCircle } from 'lucide-react';
+import { Send, CheckCircle, AlertCircle } from 'lucide-react';
 import { apiUrl } from '../utils/api';
 
+const EMPTY = { name: '', email: '', category: '', notes: '' };
+
+// Each form (or category within a form) has preset questions; answers are sent as "Question: answer" items.
 export default function FormComponent({
   title = 'Submit a Form',
   description = 'Fill in the details below to submit your form.',
   categories = [],
   categoryLabel = 'Category',
-  itemsLabel = 'Items',
-  itemPlaceholder = 'Item',
+  questions = {},
   submitLabel = 'Submit',
   endpoint = '/api/forms',
   onSuccess,
 }) {
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    category: '',
-    items: [''],
-    notes: ''
-  });
+  const [formData, setFormData] = useState(EMPTY);
+  const [answers, setAnswers] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState(null);
 
+  const activeQuestions = Array.isArray(questions) ? questions : (questions[formData.category] || []);
+
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleItemChange = (index, value) => {
-    const newItems = [...formData.items];
-    newItems[index] = value;
-    setFormData(prev => ({ ...prev, items: newItems }));
-  };
-
-  const addItem = () => {
-    setFormData(prev => ({ ...prev, items: [...prev.items, ''] }));
-  };
-
-  const removeItem = (index) => {
-    if (formData.items.length > 1) {
-      const newItems = formData.items.filter((_, i) => i !== index);
-      setFormData(prev => ({ ...prev, items: newItems }));
-    }
+    if (field === 'category') setAnswers({});
   };
 
   const handleSubmit = async (e) => {
@@ -50,11 +33,11 @@ export default function FormComponent({
     setSubmitStatus(null);
 
     try {
-      const filteredItems = formData.items.filter(item => item.trim() !== '');
-
-      if (filteredItems.length === 0) {
-        throw new Error(`Please add at least one ${itemPlaceholder.toLowerCase()}`);
-      }
+      const items = activeQuestions
+        .map((question, index) => ({ question, answer: (answers[index] || '').trim() }))
+        .filter(({ answer }) => answer)
+        .map(({ question, answer }) => `${question.label}: ${answer}`);
+      if (items.length === 0) throw new Error('Please answer the questions.');
 
       const response = await fetch(apiUrl(endpoint), {
         method: 'POST',
@@ -63,7 +46,7 @@ export default function FormComponent({
         },
         body: JSON.stringify({
           ...formData,
-          items: filteredItems
+          items
         }),
       });
 
@@ -83,13 +66,8 @@ export default function FormComponent({
           verified: result.verification?.verified
         });
 
-        setFormData({
-          name: '',
-          email: '',
-          category: '',
-          items: [''],
-          notes: ''
-        });
+        setFormData(EMPTY);
+        setAnswers({});
       } else {
         throw new Error(result.error || 'Failed to submit');
       }
@@ -160,41 +138,16 @@ export default function FormComponent({
           </div>
         )}
 
-        <div>
-          <label className="FormLabel">
-            {itemsLabel} *
-          </label>
-          <div className="FormItemList">
-            {formData.items.map((item, index) => (
-              <div key={index} className="FormItemRow">
-                <input
-                  type="text"
-                  value={item}
-                  onChange={(e) => handleItemChange(index, e.target.value)}
-                  className="FormInputFlex FormInput"
-                  placeholder={`${itemPlaceholder} ${index + 1}`}
-                />
-                {formData.items.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeItem(index)}
-                    className="FormRemoveButton"
-                  >
-                    <X className="IconLg" />
-                  </button>
-                )}
-              </div>
-            ))}
+        {activeQuestions.map((question, index) => (
+          <div key={`${formData.category}-${index}`}>
+            <label className="FormLabel">{question.label} *</label>
+            {question.multiline ? (
+              <textarea rows={3} required value={answers[index] || ''} onChange={(e) => setAnswers(prev => ({ ...prev, [index]: e.target.value }))} className="FormInput" placeholder={question.placeholder} />
+            ) : (
+              <input type="text" required value={answers[index] || ''} onChange={(e) => setAnswers(prev => ({ ...prev, [index]: e.target.value }))} className="FormInput" placeholder={question.placeholder} />
+            )}
           </div>
-          <button
-            type="button"
-            onClick={addItem}
-            className="FormAddButton"
-          >
-            <Plus className="IconMd" />
-            Add Another {itemPlaceholder}
-          </button>
-        </div>
+        ))}
 
         <div>
             <label className="FormLabel">

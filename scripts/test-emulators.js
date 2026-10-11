@@ -78,8 +78,10 @@ try {
   const resolved = resolveCatalogue(PRODUCTS, savedCatalogue.docs.map((document) => ({ ...document.data(), id: document.id })));
   assert.ok(resolved.some((product) => product.id === 'TEST-EVENT'));
   assert.ok(resolved.some((product) => product.id === 'membership-adult'));
+  await db.collection('memberships').doc('TEST-EVENT-MEMBER').set({ firstName: 'Eve', lastName: 'Event', email: 'event@example.com', dob: '1990-01-01', status: 'active', validUntil: Timestamp.fromDate(new Date(Date.now() + 90 * 86400000)) });
   const eventCheckout = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'TEST-EVENT' }], billingMode: 'monthly' }) });
+    body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'TEST-EVENT', lineId: 'L1' }], billingMode: 'monthly',
+      people: [{ id: 'P1', lineIds: ['L1'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }] }) });
   assert.equal(eventCheckout.status, 200);
   const eventOrder = (await db.collection('orders').doc(eventCheckout.result.orderRef).get()).data();
   assert.deepEqual(eventOrder.items[0].eventSchedule, eventSchedule);

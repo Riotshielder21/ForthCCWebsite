@@ -3,13 +3,29 @@ import FormComponent from '../components/FormComponent';
 import { usePageContent } from '../utils/PageContentContext';
 import EditablePage from '../components/EditablePage';
 
-const VOLUNTEER_CATEGORIES = [
-  'Equipment Needed',
-  'Volunteer Sign-ups',
-  'Event Participants',
-  'Maintenance Tasks',
-  'Other'
-];
+const VOLUNTEER_QUESTIONS = {
+  'Equipment Needed': [
+    { label: 'What equipment do you need?', placeholder: 'e.g. 2 paddles, buoyancy aids' },
+    { label: 'What date do you need it by?', placeholder: 'e.g. 14 March' }
+  ],
+  'Volunteer Sign-ups': [
+    { label: 'Which activities would you like to help with?', multiline: true, placeholder: 'e.g. coaching, events, maintenance, fundraising' },
+    { label: 'When are you available?', placeholder: 'e.g. Thursday evenings' }
+  ],
+  'Event Participants': [
+    { label: 'Which event?', placeholder: 'Event name' },
+    { label: 'How many people are attending?', placeholder: 'e.g. 3' }
+  ],
+  'Maintenance Tasks': [
+    { label: 'What needs doing?', multiline: true },
+    { label: 'Where is it?', placeholder: 'e.g. boathouse, trailer' }
+  ],
+  Other: [
+    { label: 'Tell us what you would like to add', multiline: true }
+  ]
+};
+
+const VOLUNTEER_CATEGORIES = Object.keys(VOLUNTEER_QUESTIONS);
 
 const handleVolunteerSuccess = (result, formData) => {
   if (formData.category === 'Volunteer Sign-ups') {
@@ -72,8 +88,7 @@ export default function VolunteeringPage() {
           description={copy.formDescription}
           categories={VOLUNTEER_CATEGORIES}
           categoryLabel="List Type"
-          itemsLabel="List Items"
-          itemPlaceholder="Item"
+          questions={VOLUNTEER_QUESTIONS}
           submitLabel="Submit"
           endpoint="/api/lists"
           onSuccess={handleVolunteerSuccess}

@@ -1012,6 +1012,17 @@
   .FormInput {
     @apply w-full px-4 py-3 border rounded-xl focus:outline-none transition-colors bg-white;
     border-color: var(--fcc-color-border);
+    color: #0b4f8a;
+    font-family: Verdana, 'Segoe UI', Arial, sans-serif;
+    font-size: 0.95rem;
+    font-weight: 500;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+
+  .FormInput::placeholder {
+    color: #8a97a6;
+    font-weight: 400;
   }
 
   .FormInput:focus {
@@ -1343,3 +1354,51 @@
   from { transform: translateX(100%); }
   to { transform: translateX(0); }
 }
+
+.CheckoutDetails { display: flex; flex-direction: column; gap: 1rem; }
+.CheckoutSection, .CheckoutPerson { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 1rem; background: #fff; }
+.CheckoutPersonHeader, .CheckoutActions { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+.CheckoutAssign { display: flex; flex-direction: column; gap: 0.35rem; }
+.CheckoutGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.75rem; }
+.CheckoutFieldset { border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 0.75rem; padding: 0.75rem; }
+.CheckoutCheck { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.85rem; }
+.CheckoutErrors { margin: 0; padding-left: 1.25rem; }
+
+.CheckoutPage { max-width: 48rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; display: flex; flex-direction: column; gap: 1rem; }
+.CheckoutPageTop, .CheckoutNav { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+.CheckoutNav { margin-top: 1.5rem; }
+.CheckoutNames { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+/* One pill: + on top, count, - below. */
+.QuantityControl { display: flex; flex-direction: column; align-items: center; border-radius: 1rem; background: #e0f2fe; color: #0284c7; overflow: hidden; }
+.QuantityControl button { display: flex; align-items: center; justify-content: center; width: 3.5rem; height: 2.75rem; color: inherit; transition: background 0.15s; }
+.QuantityControl button:hover { background: rgba(2, 132, 199, 0.15); }
+.QuantityControl span { font-size: 0.8rem; font-weight: 800; line-height: 1; padding: 0.1rem 0; }
+
+.CheckoutCheck:has(input:disabled) { opacity: 0.45; cursor: not-allowed; }
+
+/* The basket scrolls as a whole on short screens instead of squeezing the item list. */
+.CartPanel { overflow-y: auto; }
+.CartBody { flex-shrink: 0; min-height: 14rem; }
+.CartSummary .PromoSection { margin-top: 0; margin-bottom: 1rem; }
+@media (max-height: 820px), (max-width: 640px) {
+  .CartHeader { padding: 1.25rem 1.5rem; }
+  .CartBody { padding-left: 1.5rem; padding-right: 1.5rem; }
+  .CartSummary { padding: 1rem 1.5rem 1.5rem; }
+  .BillingToggle { margin-bottom: 1.25rem; }
+}
+
+/* Readable, finger-sized icon and text buttons in the basket and checkout. */
+.CartRemoveButton { color: #475569; padding: 0.5rem; min-width: 2.5rem; min-height: 2.5rem; display: inline-flex; align-items: center; justify-content: center; border-radius: 0.75rem; font-size: 0.8rem; font-weight: 700; }
+.CartRemoveButton:hover { color: #dc2626; background: #fef2f2; }
+.CartItemActions { gap: 0.25rem; }
+.FooterLink { display: inline-block; padding: 0.5rem 0; }
+.CheckoutPage h2 { font-size: clamp(1.6rem, 5.5vw, 2.75rem); line-height: 1.05; overflow-wrap: anywhere; }
+
+.CheckoutNav { align-items: stretch; }
+.CheckoutNav .CheckoutButton { width: auto; flex: 1 1 12rem; margin: 0; }
+.CheckoutNav .PrimaryActionButtonCompact { flex: 0 0 auto; justify-content: center; }
+
+/* Error messages are sentences, so they read in normal case rather than spaced capitals. */
+.CheckoutErrors, .CheckoutErrors li, .FormLabel .StatusText { text-transform: none; letter-spacing: normal; font-size: 0.85rem; font-weight: 600; line-height: 1.4; }
+.FormLabel .StatusText { display: block; margin-top: 0.35rem; }

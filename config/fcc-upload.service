@@ -1,0 +1,12 @@
+[Unit]
+Description=FCC JustGo Upload Service
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=fcc-web
+WorkingDirectory=/home/fcc-web/FCCWebsite
+ExecStart=/home/fcc-web/FCCWebsite/venv/bin/python /home/fcc-web/FCCWebsite/scripts/justgo-upload.py
+StandardOutput=journal
+StandardError=journal
+EnvironmentFile=/home/fcc-web/FCCWebsite/.env

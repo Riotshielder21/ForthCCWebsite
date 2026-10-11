@@ -9,12 +9,14 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
-import { getFirestore as getAdminFirestore, Timestamp } from 'firebase-admin/firestore';
+import { getFirestore as getAdminFirestore, Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { PAGE_CONTENT } from './src/constants/pageContent.js';
 import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart } from './src/utils/pricing.js';
-import { orderReport, memberReport, subscriptionWarning } from './src/utils/adminReports.js';
+import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership, DISCLAIMER_VERSION } from './src/utils/checkout.js';
+import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
+import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
 import { FieldPath } from 'firebase-admin/firestore';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation } from './src/utils/stripeReports.js';
@@ -74,11 +76,85 @@ const stripeRequest = async (path, params) => {
   return data;
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null }) => {
+const customerId = (email) => crypto.createHash('sha256').update(normalizeEmail(email)).digest('hex');
+
+const clubYearEnd = () => {
+  const now = new Date();
+  return new Date(now.getMonth() >= 2 ? now.getFullYear() + 1 : now.getFullYear(), 2, 1);
+};
+
+// Returns the person's existing membership, or a conflict when the details contradict a record.
+const toMembershipRecord = (document) => {
+  const data = document.data();
+  return {
+    id: document.id, scaNumber: data.scaNumber || '', email: data.email || '', dob: data.dob || '',
+    firstName: data.firstName || '', lastName: data.lastName || '', status: data.status, validUntil: data.validUntil?.toMillis() || 0,
+    justgo: data.justgoSyncStatus === 'synced' || data.renewalMethod === 'justgo',
+    renewalMethod: data.renewalMethod || '', justgoSyncStatus: data.justgoSyncStatus || '', lastJustgoSync: data.lastJustgoSync?.toMillis() || 0
+  };
+};
+
+const findMembership = async (person) => {
+  const memberships = adminDb.collection('memberships');
+  const [byNumber, byEmail] = await Promise.all([
+    person.scaNumber ? memberships.where('scaNumber', '==', person.scaNumber).limit(5).get() : null,
+    memberships.where('email', '==', contactEmail(person)).limit(50).get()
+  ]);
+  const result = matchMembership(person, { byNumber: byNumber?.docs.map(toMembershipRecord) || [], byEmail: byEmail.docs.map(toMembershipRecord) });
+  const match = result.match;
+  return {
+    conflict: result.conflict, reason: result.reason,
+    existing: match ? { id: match.id, active: membershipActivity(match) === 'active', awaitingRenewal: membershipActivity(match) === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil } : null
+  };
+};
+
+const verifyMemberByName = async (name) => {
+  if (!adminDb) return { verified: false };
+  const snapshot = await adminDb.collection('memberships').where('searchName', '==', normaliseName(name)).limit(5).get();
+  const current = snapshot.docs.map(toMembershipRecord).find((member) => membershipActivity(member) === 'active');
+  return { verified: Boolean(current) };
+};
+
+const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt }) => {
+  const validUntil = Timestamp.fromDate(clubYearEnd());
+  const membershipIds = [];
+  for (const person of order.people || []) {
+    const lines = person.lineIds.map((id) => order.items.find((item) => item.lineId === id)).filter(Boolean);
+    const membershipLine = lines.find(isMembership);
+    // Event tickets stay in the purchase history; privileges are ongoing entitlements.
+    const privileges = lines.filter((item) => !isMembership(item) && item.category !== 'EVENTS')
+      .map((item) => ({ productId: item.id, name: item.name, type: item.type, orderRef, grantedAt: paidAt }));
+    const historyEntry = { orderRef, paidAt, items: lines.map((item) => ({ id: item.id, name: item.name, price: item.price })) };
+    const { id, lineIds, membershipId, existingMember, ...details } = person;
+    membershipIds.push(membershipId);
+    transaction.set(adminDb.collection('memberships').doc(membershipId), {
+      ...(existingMember ? {} : {
+        ...details, email: contactEmail(person), source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`),
+        ...(person.junior ? { phone: person.guardian.phone, address: person.guardian.address, postcode: person.guardian.postcode } : {}),
+        disclaimerVersion: order.disclaimerVersion, disclaimerAcceptedAt: paidAt
+      }),
+      ...(membershipLine ? { status: 'active', validUntil, membershipTier: membershipLine.membershipTier || '', justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.scaNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
+      ...(privileges.length ? { privileges: FieldValue.arrayUnion(...privileges) } : {}),
+      history: FieldValue.arrayUnion(historyEntry),
+      updatedAt: paidAt
+    }, { merge: true });
+  }
+  transaction.set(adminDb.collection('customers').doc(customerId(order.email)), {
+    email: order.email, updatedAt: paidAt, orderRefs: FieldValue.arrayUnion(orderRef),
+    ...(membershipIds.length ? { membershipIds: FieldValue.arrayUnion(...membershipIds) } : {}),
+    ...(vouchers.length ? { vouchers: FieldValue.arrayUnion(...vouchers.map((voucher) => ({
+      code: voucher.code, name: voucher.name, value: voucher.value, orderRef, expiresAt: voucher.expiresAt
+    }))) } : {})
+  }, { merge: true });
+};
+
+const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [] }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     email: email.toLowerCase(),
     items,
+    people,
+    disclaimerVersion: DISCLAIMER_VERSION,
     total: String(total),
     status,
     stripeSessionId,
@@ -139,15 +215,17 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
             transaction.create(adminDb.collection('discountCodes').doc(voucher.code), {
               code: voucher.code, label: voucher.name, discountType: 'credit', discountValue: voucher.value,
               used: false, singleUse: true, excludedCategories: ['MEMBERSHIP'],
-              orderRef, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
+              orderRef, email: order.email, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
             });
           }
         }
         if (discount?.singleUse) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
+        const paidAt = order.paidAt || Timestamp.now();
+        if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt });
         transaction.update(orderDocument, {
-          status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken),
+          status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
           stripePaymentIntentId: session.payment_intent || '', stripeSubscriptionId: session.subscription || '',
-          paidAt: order.paidAt || Timestamp.now(),
+          paidAt,
           emailSendingUntil: Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000))
         });
         return { ...order, vouchers };
@@ -247,8 +325,8 @@ const requireAdmin = async (req, res) => {
   }
 };
 
-const memberCollection = () => adminDb.collection('artifacts').doc(process.env.FCC_APP_ID || 'forth-canoe-default')
-  .collection('public').doc('data').collection('members');
+// One register: JustGo sync and website purchases both write to memberships.
+const memberCollection = () => adminDb.collection('memberships');
 const reportCollection = (kind) => kind === 'orders' ? adminDb.collection('orders') : kind === 'members' ? memberCollection() : null;
 
 const stripeReportRequest = (secret) => async (path, options = {}) => {
@@ -294,7 +372,12 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
     if (cursor) query = query.startAfter(cursor);
     const snapshot = await query.get();
     const documents = snapshot.docs.slice(0, 100);
-    const records = documents.map((document) => (req.query.kind === 'members' ? memberReport : orderReport)(document.id, document.data()));
+    let members = new Map();
+    if (req.query.kind !== 'members') {
+      const ids = [...new Set(documents.flatMap((document) => (document.data().people || []).map((person) => person.membershipId)).filter(Boolean))];
+      if (ids.length) members = new Map((await adminDb.getAll(...ids.map((id) => adminDb.collection('memberships').doc(id)))).filter((document) => document.exists).map((document) => [document.id, document.data()]));
+    }
+    const records = documents.map((document) => (req.query.kind === 'members' ? membershipReport(document.id, document.data()) : orderReport(document.id, document.data(), members)));
     res.json({ records: eventReport ? records.filter((record) => record.items.some((item) => item.category === 'EVENTS'))
       .map((record) => ({ ...record, orderTotal: record.total, items: record.items.filter((item) => item.category === 'EVENTS'),
         total: record.items.filter((item) => item.category === 'EVENTS').reduce((sum, item) => sum + (item.price || 0), 0) })) : records,
@@ -658,7 +741,8 @@ const discountFailure = (discount) => {
 
 const publicDiscount = (discount) => ({
   label: discount.label || 'Discount', discountType: discount.discountType || 'multiplier',
-  discountValue: discount.discountValue ?? 0.25, allowsAnnualStacking: discount.allowsAnnualStacking === true
+  discountValue: discount.discountValue ?? 0.25, allowsAnnualStacking: discount.allowsAnnualStacking === true,
+  productIds: Array.isArray(discount.productIds) ? discount.productIds : []
 });
 
 app.post('/api/discount-codes/validate', rateLimit(30, 60 * 1000), async (req, res) => {
@@ -674,31 +758,177 @@ app.post('/api/discount-codes/validate', rateLimit(30, 60 * 1000), async (req, r
   }
 });
 
+app.post('/api/admin/memberships/:id/justgo', rateLimit(30, 60 * 1000), async (req, res) => {
+  try {
+    if (!await requireAdmin(req, res)) return;
+    if (!adminDb) return res.status(503).json({ error: 'Member storage is not configured.' });
+    const action = req.body.action;
+    if (!['retry', 'manual'].includes(action) || !req.params.id || req.params.id.includes('/')) return res.status(400).json({ error: 'Choose retry or manual.' });
+    const reference = adminDb.collection('memberships').doc(req.params.id);
+    const document = await reference.get();
+    if (!document.exists) return res.status(404).json({ error: 'Membership not found.' });
+    if (document.data().justgoSyncStatus !== 'pending') return res.status(409).json({ error: 'This member is already linked to JustGo.' });
+    const now = Timestamp.now();
+    await reference.set({
+      justgoUpload: action === 'retry'
+        ? { status: 'queued', needsStaff: false, attempts: 0, failures: 0, lastError: '', nextAttemptAt: now }
+        : { status: 'manual', needsStaff: false, nextAttemptAt: null },
+      updatedAt: now
+    }, { merge: true });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not update the JustGo status.' });
+  }
+});
+
+app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
+  try {
+    if (!await requireAdmin(req, res)) return;
+    if (!adminDb) return res.status(503).json({ error: 'Customer storage is not configured.' });
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (!query || query.length > 254) return res.status(400).json({ error: 'Enter the customer email or voucher code.' });
+    let email = normalizeEmail(query);
+    if (!query.includes('@')) {
+      const voucher = await findDiscountCode(query.toUpperCase());
+      if (!voucher?.data().orderRef) return res.status(404).json({ error: 'No voucher with that code.' });
+      email = voucher.data().email || normalizeEmail((await adminDb.collection('orders').doc(voucher.data().orderRef).get()).data()?.email);
+    }
+    if (!email) return res.status(404).json({ error: 'No customer found.' });
+
+    const [byEmail, orderSnapshot, memberSnapshot] = await Promise.all([
+      adminDb.collection('discountCodes').where('email', '==', email).get(),
+      adminDb.collection('orders').where('email', '==', email).limit(50).get(),
+      adminDb.collection('memberships').where('email', '==', email).limit(20).get()
+    ]);
+    // Older vouchers have no email of their own, so they are found through the customer's orders.
+    const known = new Set(byEmail.docs.map((document) => document.id));
+    const olderCodes = orderSnapshot.docs.flatMap((order) => (order.data().vouchers || []).map((voucher) => voucher.code)).filter((code) => !known.has(code));
+    const voucherDocs = [...byEmail.docs.filter((document) => document.data().orderRef)];
+    if (olderCodes.length) voucherDocs.push(...(await adminDb.getAll(...olderCodes.map((code) => adminDb.collection('discountCodes').doc(code)))).filter((document) => document.exists));
+    if (!voucherDocs.length && !orderSnapshot.size && !memberSnapshot.size) return res.status(404).json({ error: 'No customer found.' });
+    const now = Date.now();
+    res.json({
+      email,
+      vouchers: voucherDocs.map((document) => {
+        const data = document.data();
+        return {
+          code: data.code, value: data.discountValue, orderRef: data.orderRef, usedByOrder: data.usedByOrder || '',
+          status: data.used ? 'used' : data.expiresAt?.toMillis() <= now ? 'expired' : data.reservedUntil?.toMillis() > now ? 'in checkout' : 'active',
+          createdAt: data.createdAt?.toMillis() || 0, expiresAt: data.expiresAt?.toMillis() || 0, usedAt: data.usedAt?.toMillis() || 0
+        };
+      }).sort((a, b) => b.createdAt - a.createdAt),
+      memberships: memberSnapshot.docs.map((document) => {
+        const data = document.data();
+        return {
+          id: document.id, name: `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.name || 'Unnamed',
+          membershipTier: data.membershipTier || '', status: data.status === 'active' && data.validUntil?.toMillis() <= now ? 'expired' : data.status || 'unknown',
+          validUntil: data.validUntil?.toMillis() || 0, scaNumber: data.scaNumber || '',
+          privileges: (data.privileges || []).map((privilege) => privilege.name)
+        };
+      }),
+      orders: orderSnapshot.docs.map((document) => {
+        const data = document.data();
+        return { orderRef: document.id, status: data.status, total: data.total, createdAt: data.createdAt?.toMillis() || 0, items: (data.items || []).map((item) => item.name) };
+      }).sort((a, b) => b.createdAt - a.createdAt)
+    });
+  } catch (error) {
+    console.error('Could not load customer record:', error.message);
+    res.status(500).json({ error: 'Could not load the customer record.' });
+  }
+});
+
+app.get('/api/admin/discount-codes', rateLimit(30, 60 * 1000), async (req, res) => {
+  try {
+    if (!await requireAdmin(req, res)) return;
+    if (!adminDb) return res.status(503).json({ error: 'Discount storage is not configured.' });
+    const snapshot = await adminDb.collection('discountCodes').get();
+    const now = Date.now();
+    const codes = snapshot.docs.map((document) => document.data()).filter((data) => !data.orderRef).map((data) => ({
+      code: data.code, label: data.label || '', discountType: data.discountType || 'multiplier',
+      discountValue: data.discountValue ?? 0.25, productIds: Array.isArray(data.productIds) ? data.productIds : [],
+      singleUse: data.singleUse === true, used: data.used === true, active: data.active !== false,
+      expired: data.expiresAt?.toMillis() <= now, expiresAt: data.expiresAt?.toMillis() || 0, createdAt: data.createdAt?.toMillis() || 0
+    })).sort((a, b) => b.createdAt - a.createdAt).slice(0, 500);
+    res.json({ codes });
+  } catch (error) {
+    console.error('Could not list discount codes:', error.message);
+    res.status(500).json({ error: 'Could not load discount codes.' });
+  }
+});
+
+const parseDiscountFields = (body, { requireFutureExpiry }) => {
+  const { label, discountType } = body;
+  const discountValue = Number(body.discountValue);
+  const expiry = body.expiresAt ? new Date(body.expiresAt) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+  const productIds = Array.isArray(body.productIds) ? body.productIds : [];
+  if (typeof label !== 'string' || !label.trim() || label.length > 120 ||
+      !['credit', 'multiplier', 'flat'].includes(discountType) || !Number.isFinite(discountValue) || discountValue <= 0 ||
+      (discountType === 'multiplier' && discountValue > 1) || !Number.isFinite(expiry.getTime()) || (requireFutureExpiry && expiry <= new Date())) {
+    return { error: 'Enter a valid label, discount value and expiry.' };
+  }
+  if (productIds.length > 50 || productIds.some((id) => typeof id !== 'string' || id.length > 100)) {
+    return { error: 'Choose valid products for this code.' };
+  }
+  return { fields: {
+    label: label.trim(), discountType, discountValue, productIds: [...new Set(productIds)],
+    singleUse: discountType === 'credit' || body.singleUse === true, expiresAt: Timestamp.fromDate(expiry)
+  } };
+};
+
+app.patch('/api/admin/discount-codes/:code', rateLimit(30, 60 * 1000), async (req, res) => {
+  try {
+    if (!await requireAdmin(req, res)) return;
+    if (!adminDb) return res.status(503).json({ error: 'Discount storage is not configured.' });
+    const document = await findDiscountCode(String(req.params.code).toUpperCase());
+    if (!document || document.data().orderRef) return res.status(404).json({ error: 'Discount code not found.' });
+    if (typeof req.body.active === 'boolean' && Object.keys(req.body).length === 1) {
+      await document.ref.update({ active: req.body.active });
+      return res.json({ success: true });
+    }
+    const { error, fields } = parseDiscountFields(req.body, { requireFutureExpiry: false });
+    if (error) return res.status(400).json({ error });
+    await document.ref.update(fields);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not update discount code.' });
+  }
+});
+
 app.post('/api/admin/discount-codes', rateLimit(20, 60 * 1000), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
     if (!adminDb) return res.status(503).json({ error: 'Discount storage is not configured.' });
-    const { label, discountType, singleUse = false, expiresAt } = req.body;
+    const { error, fields } = parseDiscountFields(req.body, { requireFutureExpiry: true });
     const code = typeof req.body.code === 'string' ? req.body.code.trim().toUpperCase() : '';
-    const discountValue = Number(req.body.discountValue);
-    const expiry = expiresAt ? new Date(expiresAt) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
-    if (!/^[A-Z0-9-]{3,64}$/.test(code) || typeof label !== 'string' || !label.trim() || label.length > 120 ||
-        !['credit', 'multiplier', 'flat'].includes(discountType) || !Number.isFinite(discountValue) || discountValue <= 0 ||
-        (discountType === 'multiplier' && discountValue > 1) || !Number.isFinite(expiry.getTime()) || expiry <= new Date()) {
-      return res.status(400).json({ error: 'Enter a valid code, label, discount value and future expiry.' });
-    }
+    if (error || !/^[A-Z0-9-]{3,64}$/.test(code)) return res.status(400).json({ error: error || 'Enter a valid code.' });
     if (await findDiscountCode(code)) return res.status(409).json({ error: 'This discount code already exists.' });
     await adminDb.collection('discountCodes').doc(code).create({
-      code, label: label.trim(), discountType, discountValue,
-      singleUse: discountType === 'credit' || singleUse === true, used: false,
+      code, ...fields, used: false, active: true,
       allowsAnnualStacking: req.body.allowsAnnualStacking === true,
       excludedCategories: ['MEMBERSHIP'], createdBy: admin.uid,
-      createdAt: Timestamp.now(), expiresAt: Timestamp.fromDate(expiry)
+      createdAt: Timestamp.now()
     });
     res.json({ success: true, code });
   } catch (error) {
     res.status(error.code === 6 ? 409 : 500).json({ error: error.code === 6 ? 'This discount code already exists.' : 'Could not create discount code.' });
+  }
+});
+
+// Names only, so a returning member can pick themselves; the date of birth is still verified at payment.
+app.post('/api/membership-names', rateLimit(5, 60 * 1000), async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    if (!adminDb || !isValidEmail(email)) return res.json({ names: [] });
+    const snapshot = await adminDb.collection('memberships').where('email', '==', email).limit(10).get();
+    const names = new Map();
+    for (const document of snapshot.docs) {
+      const { firstName, lastName } = document.data();
+      if (firstName && lastName) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName });
+    }
+    res.json({ names: [...names.values()] });
+  } catch (error) {
+    res.json({ names: [] });
   }
 });
 
@@ -709,21 +939,79 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const email = normalizeEmail(req.body.email);
     const { items: requestedItems, billingMode = 'annual' } = req.body;
     if (!process.env.STRIPE_SECRET_KEY) return res.status(503).json({ error: 'Stripe test mode is not configured.' });
-    if (!isValidEmail(email) || !Array.isArray(requestedItems) || requestedItems.length === 0 || requestedItems.length > 100 || !['annual', 'monthly'].includes(billingMode)) {
+    if (!isValidEmail(email) || !Array.isArray(requestedItems) || requestedItems.length === 0 || requestedItems.length > 20 || !['annual', 'monthly'].includes(billingMode)) {
       return res.status(400).json({ error: 'Enter a valid email address and include at least one item.' });
     }
 
     if (!adminDb) return res.status(503).json({ error: 'Order storage is not configured.' });
     const catalogSnapshot = await adminDb.collection('products').get();
     const catalog = resolveCatalogue(PRODUCTS, catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
-    const selected = requestedItems.map((item) => catalog.find((product) => product.id === item.id));
-    if (selected.some((item) => !item || item.type === 'external' || !Number.isFinite(item.basePrice) || item.basePrice < 0) || new Set(selected.map((item) => item.id)).size !== selected.length) {
+    const lineIds = requestedItems.map((item) => typeof item?.lineId === 'string' ? item.lineId.slice(0, 64) : '');
+    const catalogItems = requestedItems.map((item) => catalog.find((product) => product.id === item?.id));
+    if (catalogItems.some((item) => !item || item.type === 'external' || !Number.isFinite(item.basePrice) || item.basePrice < 0) || lineIds.some((id) => !id) || new Set(lineIds).size !== lineIds.length) {
       return res.status(400).json({ error: 'Your basket contains an unavailable item. Please refresh the shop.' });
     }
+    const selected = catalogItems.map((item, index) => ({ ...item, lineId: lineIds[index] }));
     for (const item of selected.filter((product) => product.category === 'EVENTS')) {
       try { validateEventSchedule(item.eventSchedule); }
       catch (error) { return res.status(400).json({ error: `Invalid event schedule for ${item.name}.` }); }
       if (item.type !== 'event-ticket') return res.status(400).json({ error: 'Event tickets must use one-off event pricing.' });
+    }
+    if (!Array.isArray(req.body.people) || req.body.people.length > 20) {
+      return res.status(400).json({ error: 'Add the details for each person in your basket.' });
+    }
+    const sanitized = req.body.people.map(sanitizePerson);
+    const people = sanitized
+      .map((person) => ({ ...person, junior: resolvedKind(person, sanitized, selected) === 'junior' }))
+      .map((person) => person.returning
+        ? { ...person, email: person.email || email, guardian: { ...person.guardian, email: person.guardian.email || email } }
+        : person);
+    const detailErrors = validateCheckout({ lines: selected, people });
+    if (detailErrors.length) return res.status(400).json({ error: detailErrors[0], details: detailErrors });
+    const needsMembership = new Set(peopleNeedingMembership(selected, people).map((person) => person.id));
+    const storedPeople = [];
+    for (const person of withFamilyContacts(people, selected)) {
+      const { existing, conflict, reason } = await findMembership(person);
+      if (conflict) {
+        return res.status(409).json({
+          code: 'identity_conflict', personIds: [person.id],
+          error: reason === 'number'
+            ? `The membership number entered for ${person.firstName} ${person.lastName} does not match the email address or date of birth we hold for it. Check them, or leave the number blank and we will arrange your membership with JustGo for you; JustGo will email you an invitation to accept.`
+            : `A membership under this email already exists for ${person.firstName} ${person.lastName} with a different date of birth. Check the date of birth, or enter your Paddle Scotland membership number.`
+        });
+      }
+      if (person.returning && !existing) {
+        return res.status(409).json({
+          code: 'returning_not_found', personIds: [person.id],
+          error: `We could not match ${person.firstName} ${person.lastName} with that date of birth. Check the date of birth, or enter your full details instead.`
+        });
+      }
+      const buysMembership = person.lineIds.some((id) => isMembership(selected.find((line) => line.lineId === id)));
+      // From 1 March every JustGo member is inactive until the nightly sync confirms their direct-debit renewal.
+      if (existing?.awaitingRenewal && renewalConfirmationOpen() && (buysMembership || needsMembership.has(person.id))) {
+        return res.status(409).json({
+          code: 'renewal_unconfirmed', personIds: [person.id],
+          error: `${person.firstName} ${person.lastName}'s membership renews through JustGo direct debit and is still being confirmed for the new club year. This usually completes within a day, so please try again then or contact secretary@forthcanoeclub.co.uk. There is no need to buy a membership here.`
+        });
+      }
+      if (buysMembership && existing?.active) {
+        const name = `${person.firstName} ${person.lastName}`;
+        return res.status(409).json({
+          code: existing.justgo ? 'renews_via_justgo' : 'membership_active', personIds: [person.id],
+          error: existing.justgo
+            ? `${name} is already an active member and renews through JustGo, so no membership is needed here. Remove the membership from your basket; add-ons can still be bought.`
+            : `${name} is already an active member until ${new Date(existing.validUntil).toLocaleDateString('en-GB')}. Remove the membership from your basket; add-ons can still be bought.`
+        });
+      }
+      if (needsMembership.has(person.id) && !existing?.active) {
+        return res.status(409).json({
+          code: 'membership_required', personIds: [person.id],
+          error: existing?.awaitingRenewal
+            ? `${person.firstName} ${person.lastName}'s JustGo renewal has not been confirmed for this club year, so add-ons cannot be bought yet. If you have renewed, it can take a day to appear; otherwise add a membership to your basket. Questions: secretary@forthcanoeclub.co.uk.`
+            : `${person.firstName} ${person.lastName} needs a Forth Canoe Club membership before buying these items. Add a membership to your basket, or check the membership number or date of birth and email you entered. If you are already a member through JustGo your record can take a day to appear; contact secretary@forthcanoeclub.co.uk.`
+        });
+      }
+      storedPeople.push({ ...person, membershipId: existing?.id || `MEM-${crypto.randomUUID().toUpperCase()}`, existingMember: Boolean(existing) });
     }
     let promo = null;
     const code = typeof req.body.discountCode === 'string' ? req.body.discountCode.trim().toUpperCase() : '';
@@ -745,12 +1033,13 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       reservedDocument = discountDocument.ref;
     }
     const items = pricing.items.map((item) => ({
-      id: item.id, name: item.name, category: item.category, type: item.type, price: item.displayPrice,
+      id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, price: item.displayPrice,
+      ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),
       ...(item.type === 'voucher' ? { voucherValue: item.basePrice } : {}),
       ...(item.category === 'EVENTS' ? { eventSchedule: validateEventSchedule(item.eventSchedule) } : {})
     }));
     const total = pricing.total;
-    await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null });
+    await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null, people: storedPeople });
     const hasRecurringItem = billingMode === 'monthly' && items.some((item) => item.type === 'subscription');
     const oneOffCredit = hasRecurringItem && promo?.discountType === 'credit';
     let coupon;
@@ -922,7 +1211,7 @@ app.post('/api/lists', async (req, res) => {
     }
 
     // Store in Firebase (optional backup)
-    const { db, addDoc, collection, serverTimestamp, verifyMember, generateDiscountCode, saveDiscountCode } = await import('./src/utils/firebase.js');
+    const { db, addDoc, collection, serverTimestamp, generateDiscountCode, saveDiscountCode } = await import('./src/utils/firebase.js');
     await addDoc(collection(db, 'lists'), {
       name,
       email,
@@ -938,7 +1227,7 @@ app.post('/api/lists', async (req, res) => {
     let discountCode = null;
 
     if (listType === 'Volunteer Sign-ups') {
-      verificationResult = await verifyMember(name);
+      verificationResult = await verifyMemberByName(name);
       if (verificationResult.verified) {
         discountCode = generateDiscountCode();
         await saveDiscountCode(name, email, discountCode);

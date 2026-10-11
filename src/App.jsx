@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  Trash2, ShoppingBag, X, ShoppingCart,
+  Trash2, ShoppingBag, X, ShoppingCart, Plus,
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
 import { calculateCart } from './utils/pricing';
+import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft } from './utils/checkout';
+import CheckoutPage from './pages/CheckoutPage';
 import { eventScheduleLabel } from './utils/catalogue';
 import SiteNavigation from './components/SiteNavigation';
 import HomePage from './pages/HomePage';
@@ -26,7 +28,10 @@ import { PRODUCTS } from './constants/products';
 import { PAGE_CONTENT } from './constants/pageContent';
 import './index.css';
 
+const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
 export default function App() {
+  const [initialDraft] = useState(loadDraft);
   const [currentPage, setCurrentPage] = useState(() => {
     if (window.location.pathname === '/admin/reports') return 'admin-reports';
     if (window.location.pathname === '/admin') return 'admin';
@@ -40,18 +45,24 @@ export default function App() {
   });
   const [products, setProducts] = useState(PRODUCTS);
   const [pageContent, setPageContent] = useState({});
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState(() => (initialDraft?.cart || [])
+    .map((line) => { const product = PRODUCTS.find((candidate) => candidate.id === line.id); return product ? { ...product, lineId: line.lineId } : null; })
+    .filter(Boolean));
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [isAnnual, setIsAnnual] = useState(true);
+  const [isAnnual, setIsAnnual] = useState(initialDraft?.isAnnual ?? true);
   const [activeCategory, setActiveCategory] = useState('ALL');
 
   const [promoInput, setPromoInput] = useState('');
   const [activePromo, setActivePromo] = useState(null);
   const [promoError, setPromoError] = useState(null);
 
-  const [checkoutEmail, setCheckoutEmail] = useState('');
+  const [checkoutEmail, setCheckoutEmail] = useState(initialDraft?.email || '');
   const [checkoutError, setCheckoutError] = useState('');
-  const checkoutEmailRef = useRef(null);
+  const [focusPersonId, setFocusPersonId] = useState(null);
+  const pageBeforeCheckout = useRef('membership');
+  const [people, setPeople] = useState(initialDraft?.people || []);
+  const [checkoutErrors, setCheckoutErrors] = useState([]);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
 
   const [toast, setToast] = useState(null);
   const showToast = (message) => {
@@ -76,49 +87,104 @@ export default function App() {
 
   const addToCart = (product) => {
     if (product.type === 'external') return;
-    setCart((prev) => {
-      if (prev.find((item) => item.id === product.id)) return prev;
-      return [...prev, product];
-    });
+    setCart((prev) => [...prev, { ...product, lineId: newId() }]);
     showToast(`${product.name} added to basket`);
   };
 
-  const removeFromCart = (id) => {
-    setCart((prev) => prev.filter((item) => item.id !== id));
+  // Identical items are interchangeable, so reducing always takes the most recently added one and its form goes with it.
+  const removeOneFromCart = (productId) => {
+    setCart((prev) => {
+      const index = prev.map((item) => item.id).lastIndexOf(productId);
+      return index < 0 ? prev : prev.filter((_, position) => position !== index);
+    });
   };
 
-  const handleCheckout = async () => {
-    if (!checkoutEmail.trim()) {
-      setCheckoutError('Enter an email address to receive your receipt.');
-      checkoutEmailRef.current?.focus();
+  // Refresh basket lines when the live catalogue loads; unavailable products drop out.
+  useEffect(() => {
+    setCart((prev) => prev
+      .map((line) => { const product = products.find((candidate) => candidate.id === line.id); return product ? { ...product, lineId: line.lineId } : null; })
+      .filter(Boolean));
+  }, [products]);
+
+  useEffect(() => { setPeople((prev) => assignLines(prev, cart, newId)); }, [cart]);
+
+  // The draft lives in this tab's sessionStorage only, so a customer can return to add a membership.
+  useEffect(() => {
+    if (currentPage === 'payment-success') {
+      clearDraft();
+      setCart([]);
+      setPeople([]);
+      setCheckoutEmail('');
       return;
     }
-    if (!checkoutEmailRef.current?.checkValidity()) {
-      checkoutEmailRef.current?.reportValidity();
-      setCheckoutError('Enter a valid email address to receive your receipt.');
-      return;
-    }
+    if (!cart.length && !people.length && !checkoutEmail) clearDraft();
+    else saveDraft({ email: checkoutEmail, people, cart: cart.map(({ id, lineId }) => ({ id, lineId })), isAnnual });
+  }, [currentPage, cart, people, checkoutEmail, isAnnual]);
+
+  const handleStartCheckout = () => {
     setCheckoutError('');
+    setCheckoutErrors([]);
+    setFocusPersonId(null);
+    if (currentPage !== 'checkout') pageBeforeCheckout.current = currentPage;
+    setIsCartOpen(false);
+    setCurrentPage('checkout');
+  };
+
+  // Hard refresh keeps tab storage, so this is the explicit way to wipe the typed details (the basket stays).
+  const handleResetDetails = () => {
+    if (!window.confirm('Clear all the details you have typed for this checkout?')) return;
+    clearDraft();
+    setCheckoutEmail('');
+    setCheckoutErrors([]);
+    setPeople(assignLines([], cart, newId));
+  };
+
+  const handleBackToBasket = () => {
+    setCheckoutErrors([]);
+    setCurrentPage(pageBeforeCheckout.current);
+    setIsCartOpen(true);
+  };
+
+  const handlePay = async () => {
+    const errors = [
+      ...(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(checkoutEmail.trim()) ? [] : ['Enter a valid email address to receive your receipt.']),
+      ...validateCheckout({ lines: cart, people })
+    ];
+    if (errors.length) {
+      setCheckoutErrors(errors);
+      return;
+    }
+    setCheckoutErrors([]);
+    setCheckoutBusy(true);
     try {
       const response = await fetch(apiUrl('/api/checkout-session'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: checkoutEmail.trim(),
-          items: cart.map((item) => ({ id: item.id })),
+          items: cart.map(({ id, lineId }) => ({ id, lineId })),
+          people,
           discountCode: activePromo?.code || '',
           billingMode: isAnnual ? 'annual' : 'monthly'
         })
       });
       const order = await response.json();
-      if (!response.ok) throw new Error(order.error || 'Could not save your purchase.');
+      if (!response.ok) {
+        if (['membership_required', 'renews_via_justgo', 'membership_active', 'renewal_unconfirmed'].includes(order.code)) {
+          setCheckoutError(order.error);
+          handleBackToBasket();
+        } else {
+          setFocusPersonId(order.personIds?.[0] || null);
+          setCheckoutErrors(order.details || [order.error || 'Could not start payment.']);
+        }
+        return;
+      }
       window.location.href = order.checkoutUrl;
-      return;
     } catch (error) {
-      setCheckoutError(error.message);
-      return;
+      setCheckoutErrors([error.message]);
+    } finally {
+      setCheckoutBusy(false);
     }
-    setIsCartOpen(false);
   };
 
   const handleApplyPromo = async () => {
@@ -132,6 +198,7 @@ export default function App() {
           discountType: validation.discountType,
           discountValue: validation.discountValue,
           allowsAnnualStacking: validation.allowsAnnualStacking === true,
+          productIds: validation.productIds || [],
           code
         });
         setPromoError(null);
@@ -167,7 +234,7 @@ export default function App() {
 
   const calculations = useMemo(() => calculateCart(cart, isAnnual, activePromo), [cart, isAnnual, activePromo]);
 
-  const getPricedItemDetails = (item) => calculations.items.find((pricedItem) => pricedItem.id === item.id)
+  const getPricedItemDetails = (item) => calculations.items.find((pricedItem) => pricedItem.lineId === item.lineId)
     || calculateCart([item], isAnnual).items[0];
 
   const getItemDisplayPrice = (item) => {
@@ -186,6 +253,27 @@ export default function App() {
   const renderPage = () => {
     if (currentPage === 'order-lookup') return <OrderLookupPage />;
     if (currentPage === 'payment-success') return <PaymentSuccessPage />;
+    if (currentPage === 'checkout') {
+      return cart.length ? (
+        <CheckoutPage
+          lines={cart}
+          people={people}
+          onPeopleChange={setPeople}
+          email={checkoutEmail}
+          onEmailChange={setCheckoutEmail}
+          serverErrors={checkoutErrors}
+          focusPersonId={focusPersonId}
+          busy={checkoutBusy}
+          total={calculations.total}
+          onBack={handleBackToBasket}
+          onReset={handleResetDetails}
+          onPay={handlePay}
+          makeId={newId}
+        />
+      ) : (
+        <div className="SectionHero"><p className="text_container">Your basket is empty.</p><button className="PrimaryActionButtonCompact" onClick={() => setCurrentPage('membership')}>Go to the shop</button></div>
+      );
+    }
 
     switch (currentPage) {
       case 'home':
@@ -197,9 +285,11 @@ export default function App() {
             setActiveCategory={setActiveCategory}
             cart={cart}
             addToCart={addToCart}
+            removeOneFromCart={removeOneFromCart}
             getItemDisplayPrice={getItemDisplayPrice}
             getKitHireMonthly={getKitHireMonthly}
             products={products}
+            onNavigate={setCurrentPage}
           />
         );
       case 'admin':
@@ -230,7 +320,7 @@ export default function App() {
         currentPage={currentPage}
         setCurrentPage={setCurrentPage}
         cartCount={cart.length}
-        onCartOpen={() => setIsCartOpen(true)}
+        onCartOpen={currentPage === 'checkout' ? handleBackToBasket : () => setIsCartOpen(true)}
       />
 
       <main>
@@ -293,7 +383,7 @@ export default function App() {
                   </div>
                 ) : (
                   cart.map((item) => (
-                    <div key={item.id} className="CartItemCard">
+                    <div key={item.lineId} className="CartItemCard">
                       <div className="CartItemRow">
                         <div>
                           <h4 className="CartItemTitle">{item.name}</h4>
@@ -305,7 +395,15 @@ export default function App() {
                         <div className="CartItemActions">
                           <span className="CartItemPrice">£{getItemDisplayPrice(item)}</span>
                           <button
-                            onClick={() => removeFromCart(item.id)}
+                            onClick={() => addToCart(item)}
+                            className="CartRemoveButton"
+                            aria-label={`Add another ${item.name}`}
+                            title="Add another"
+                          >
+                            <Plus className="IconMd" />
+                          </button>
+                          <button
+                            onClick={() => removeOneFromCart(item.id)}
                             className="CartRemoveButton"
                             aria-label={`Remove ${item.name} from basket`}
                           >
@@ -317,8 +415,11 @@ export default function App() {
                   ))
                 )}
               </div>
+            </div>
 
-              {cart.length > 0 && (
+            {cart.length > 0 && (
+              <div className="CartSummary">
+                  <div className="CartSummaryInner">
                 <div className="PromoSection">
                   <div className="SpaceY2">
                     <div className="PromoInputRow">
@@ -348,12 +449,6 @@ export default function App() {
                     )}
                   </div>
                 </div>
-              )}
-            </div>
-
-            {cart.length > 0 && (
-              <div className="CartSummary">
-                  <div className="CartSummaryInner">
                   {/* Cost Breakdown Section */}
                   {isAnnual ? (
                     // Annual mode: Only show Year 1 upfront cost
@@ -393,29 +488,14 @@ export default function App() {
                   <div className="CartSummaryTotal">
                     Total £{calculations.total.toFixed(2)}
                   </div>
-                  <label className="FormLabel CartEmailLabel">
-                    Receipt email
-                    <input
-                      ref={checkoutEmailRef}
-                      className="FormInput"
-                      type="email"
-                      required
-                      maxLength={254}
-                      autoComplete="email"
-                      inputMode="email"
-                      value={checkoutEmail}
-                      onChange={(event) => setCheckoutEmail(event.target.value)}
-                      placeholder="you@example.com"
-                    />
-                  </label>
                   {checkoutError && <p className="StatusText StatusTextError">{checkoutError}</p>}
                 </div>
                 <button
-                  onClick={handleCheckout}
+                  onClick={handleStartCheckout}
                   className="CheckoutButton"
                 >
                   <CreditCard className="IconMd" />
-                  Pay & Get Receipt
+                  Checkout
                 </button>
               </div>
             )}

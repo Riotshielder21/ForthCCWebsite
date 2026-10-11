@@ -62,6 +62,23 @@ npx --yes firebase-tools@14.22.0 emulators:exec --only auth,firestore,storage --
 
 The smoke test mocks Stripe; it does not contact Stripe or production Firebase.
 
+## Checkout Flow Test
+
+With the emulators running and `.env.emulator` loaded, seed them, start the API with Stripe mocked, then run the flow test from another terminal. It places orders through the API, confirms payment with a signed webhook, and checks the memberships, customers, vouchers, discount codes, receipts and admin reports it produces.
+
+```bash
+set -a; source .env.emulator; set +a
+node scripts/seed-emulators.js
+PORT=3010 STRIPE_SECRET_KEY=sk_test_local_fixture STRIPE_WEBHOOK_SECRET=whsec_local_only node --import ./scripts/mock-stripe.mjs server.js
+```
+
+```bash
+set -a; source .env.emulator; set +a
+node scripts/test-checkout-flow.js
+```
+
+Use a different `TEST_API_PORT` if you change `PORT`. The test adds records with unique `@example.test` emails and does not remove them.
+
 ## Stripe Webhook Test
 
 For a real sandbox checkout, run the local stack above and forward webhooks:

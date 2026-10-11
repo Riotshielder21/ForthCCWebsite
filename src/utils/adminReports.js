@@ -1,3 +1,5 @@
+import { membershipActivity } from './membership.js';
+
 export const reportDate = (value) => {
   if (!value) return null;
   if (typeof value.toDate === 'function') return value.toDate().toISOString();
@@ -26,7 +28,31 @@ export const memberState = (fields, now = new Date()) => {
 export const subscriptionWarning = (fields) => Boolean(fields.stripeSubscriptionId
   || (fields.items || []).some((item) => item.type === 'subscription'));
 
-export const orderReport = (id, fields) => ({
+// `member` is the person's current membership record: existing members only confirm a few details at checkout,
+// so the rest (contact, emergency, medical) is read from their record.
+const personReport = (person, items, member = {}) => {
+  const junior = person.junior === true || Boolean(member.emergencyNote);
+  const guardian = person.guardian || {};
+  const emergency = person.emergencyContact || {};
+  const memberEmergency = member.emergencyContact || {};
+  const contact = (own, guardianValue, fromRecord) => (junior ? guardianValue : own) || fromRecord || '';
+  return {
+    name: `${person.firstName || ''} ${person.lastName || ''}`.trim(), dob: person.dob || member.dob || '',
+    kind: junior ? 'Under 18' : 'Adult', returningMember: person.returning === true,
+    items: (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId)?.name).filter(Boolean),
+    email: contact(person.email, guardian.email, member.email), phone: contact(person.phone, guardian.phone, member.phone),
+    address: [contact(person.address, guardian.address, member.address), contact(person.postcode, guardian.postcode, member.postcode)].filter(Boolean).join(', '),
+    emergencyContact: person.emergencyNote || member.emergencyNote
+      || [emergency.name || memberEmergency.name, emergency.relationship || memberEmergency.relationship, emergency.phone || memberEmergency.phone].filter(Boolean).join(', '),
+    medical: person.medical || member.medical || '', swimming: person.swimming || member.swimming || '',
+    photoConsent: person.photoConsent === true || member.photoConsent === true,
+    membershipId: person.membershipId || '', existingMember: person.existingMember === true,
+    events: (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId)).filter((item) => item?.category === 'EVENTS')
+      .map((item) => ({ name: String(item.name || item.id || ''), ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {}) }))
+  };
+};
+
+export const orderReport = (id, fields, members = new Map()) => ({
   id,
   email: fields.email || '',
   status: fields.status || 'unknown',
@@ -40,13 +66,71 @@ export const orderReport = (id, fields) => ({
     name: String(item.name || item.id || ''), category: String(item.category || ''),
     type: String(item.type || ''), price: Number.isFinite(Number(item.price)) ? Number(item.price) : null,
     ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {})
-  }))
+  })),
+  people: (Array.isArray(fields.people) ? fields.people : []).map((person) => personReport(person, Array.isArray(fields.items) ? fields.items : [], members.get(person.membershipId) || {}))
 });
 
-export const memberReport = (id, fields) => ({
-  id, name: fields.name || '', email: fields.email || '', scaId: fields.scaId || id,
-  expiry: reportDate(fields.expiry), status: memberState(fields), lastUpdated: reportDate(fields.lastUpdated)
+
+// One register for JustGo-synced and website members; legacy register rows (name, scaId, expiry) map onto the same shape.
+const justgoState = (fields) => {
+  const upload = fields.justgoUpload || {};
+  if (fields.justgoSyncStatus === 'pending') {
+    if (upload.needsStaff) return 'Needs staff upload';
+    if (upload.status === 'invited') return 'Invitation sent';
+    if (upload.status === 'manual') return 'Added by staff, awaiting sync';
+    return 'Awaiting upload';
+  }
+  return fields.justgoSyncStatus === 'synced' || fields.scaNumber || fields.scaId ? 'In JustGo' : 'Not in JustGo';
+};
+
+export const membershipReport = (id, fields, now = new Date()) => {
+  const upload = fields.justgoUpload || {};
+  const emergency = fields.emergencyContact || {};
+  const guardian = fields.guardian || {};
+  const expiry = reportDate(fields.validUntil || fields.expiry);
+  return {
+    id, name: `${fields.firstName || ''} ${fields.lastName || ''}`.trim() || fields.name || '', email: fields.email || '',
+    scaId: fields.scaNumber || fields.scaId || '', tier: fields.membershipTier || '',
+    status: membershipActivity({ status: fields.status, validUntil: expiry, renewalMethod: fields.renewalMethod, justgoSyncStatus: fields.justgoSyncStatus, lastJustgoSync: reportDate(fields.lastJustgoSync) }, now) === 'awaiting-renewal'
+      ? 'Awaiting renewal'
+      : memberState({ status: fields.status, expiry: fields.validUntil || fields.expiry }, now),
+    expiry, lastUpdated: reportDate(fields.updatedAt || fields.lastUpdated), source: fields.source || (fields.scaId ? 'justgo' : ''),
+    justgoSync: fields.justgoSyncStatus || '', scaGiven: fields.scaNumber || '', renewalMethod: fields.renewalMethod || '',
+    justgo: justgoState(fields),
+    uploadAttempts: upload.attempts || 0, uploadFailures: upload.failures || 0, uploadError: upload.lastError || '',
+    inviteExpiresAt: reportDate(upload.inviteExpiresAt), lastUploadAttempt: reportDate(upload.lastAttemptAt),
+    firstName: fields.firstName || '', lastName: fields.lastName || '', postcode: fields.postcode || '',
+    dob: fields.dob || '', phone: fields.phone || '',
+    address: [fields.address, fields.postcode].filter(Boolean).join(', '),
+    emergencyContact: fields.emergencyNote || [emergency.name, emergency.relationship, emergency.phone].filter(Boolean).join(', '),
+    parent: [guardian.name, guardian.relationship, guardian.phone].filter(Boolean).join(', '),
+    medical: fields.medical || '', swimming: fields.swimming || '', photoConsent: fields.photoConsent === true,
+    familyGroup: fields.familyGroup || '', privileges: [...new Set((fields.privileges || []).map((privilege) => String(privilege.name || privilege.productId || '')))],
+    history: (fields.history || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
+  };
+};
+export const memberReport = membershipReport;
+
+export const eventAttendeeHeaders = ['Event', 'Schedule', 'Attendee', 'Date of birth', 'Phone', 'Email', 'Emergency contact', 'Medical', 'Swimming', 'Photo consent', 'Order ID', 'Order status', 'Paid'];
+
+// One row per attendee per event ticket; orders without recorded people still list the ticket.
+export const eventAttendeeRows = (records, scheduleLabel) => records.flatMap((record) => {
+  const attendees = (record.people || []).flatMap((person) => (person.events || []).map((event) => [
+    event.name, event.eventSchedule ? scheduleLabel(event.eventSchedule) : '', person.name, person.dob, person.phone, person.email,
+    person.emergencyContact, person.medical, person.swimming, person.photoConsent ? 'Yes' : 'No', record.id, record.status, record.paidAt
+  ]));
+  return attendees.length ? attendees : (record.items || []).map((item) => [
+    item.name, item.eventSchedule ? scheduleLabel(item.eventSchedule) : '', 'Attendee details not recorded', '', '', record.email, '', '', '', '', record.id, record.status, record.paidAt
+  ]);
 });
+
+export const justgoUploadHeaders = ['Membership ID', 'First name', 'Last name', 'Date of birth', 'Email', 'Phone', 'Address', 'Postcode', 'Tier', 'Valid until', 'JustGo number given', 'Failed attempts', 'Last problem', 'Emergency contact', 'Parent or guardian', 'Medical'];
+
+// The staff list: members the automatic upload could not complete, with everything needed to add them by hand.
+export const justgoUploadRows = (records) => records.filter((record) => record.justgo === 'Needs staff upload').map((record) => [
+  record.id, record.firstName, record.lastName, record.dob, record.email, record.phone, record.address.split(', ')[0] || '', record.postcode,
+  record.tier, record.expiry, record.scaGiven, record.uploadFailures, record.uploadError, record.emergencyContact, record.parent, record.medical
+]);
 
 export const uniqueReportEmails = (records) => [...new Set(records.map((record) => String(record.email || '').trim().toLowerCase())
   .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))].sort();

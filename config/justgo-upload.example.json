@@ -1,0 +1,16 @@
+{
+  "login_url": "https://sca.justgo.com/Account/Login",
+  "login": { "user": "input[name=\"Username\"]", "password": "input[name=\"Password\"]", "submit": "button[type=\"submit\"]", "ready": ".dashboard-container" },
+  "forms": {
+    "new": {
+      "url": "REPLACE with JustGo's add-member page",
+      "fields": { "firstName": "REPLACE", "lastName": "REPLACE", "dob": "REPLACE", "email": "REPLACE", "phone": "REPLACE", "address": "REPLACE", "postcode": "REPLACE" },
+      "submit": "REPLACE", "success": "REPLACE"
+    },
+    "invite": {
+      "url": "REPLACE with JustGo's invite-existing-member page",
+      "fields": { "scaNumber": "REPLACE", "email": "REPLACE" },
+      "submit": "REPLACE", "success": "REPLACE"
+    }
+  }
+}
