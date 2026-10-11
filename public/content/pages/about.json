@@ -1,0 +1,46 @@
+{
+  "eyebrow": "Scottish Charity SC050275",
+  "title": "About Us",
+  "intro": "Forth Canoe Club is a Scottish Charitable Incorporated Organisation (SCIO), charity number SC050275, based at Harrison Park on the Union Canal in Edinburgh.",
+  "charityAction": "Charity Register",
+  "charityUrl": "https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC050275",
+  "tile1Eyebrow": "Our Story",
+  "tile1Title": "The Club",
+  "tile1Body": "Forth Canoe Club is Scotland's Oldest Canoe and Kayak club. We're welcoming, open, and active, catering to paddlers of all ages and abilities. Whether you want to race competitively, explore Scotland's rivers, or simply enjoy time on the water, there's a place for you at FCC.",
+  "tile2Eyebrow": "Community Run",
+  "tile2Title": "Governed by Members",
+  "tile2Body": "As a Scottish Charitable Incorporated Organisation (SCIO), we're run entirely by our members through an elected committee. We hold an Annual General Meeting each year where members shape the club's direction. All surplus funds are reinvested into equipment, coaching, and facilities.",
+  "tile3Eyebrow": "Affiliation",
+  "tile3Title": "Paddle Scotland",
+  "tile3Body": "We are affiliated with Paddle Scotland (formerly SCA) and Paddle UK. Club membership includes PS affiliation, giving you access to coaching awards, insurance, competitions, and events across Scotland.",
+  "tile4Eyebrow": "Safeguarding",
+  "tile4Title": "Safety First",
+  "tile4Body": "We take safeguarding seriously. All coaches hold current PVG disclosures and follow Paddle Scotland safeguarding policies. We have a dedicated Safeguarding Officer to ensure a safe environment for all members, especially young people and vulnerable adults.",
+  "tileLayout": [
+    {
+      "id": "hero",
+      "group": "hero",
+      "type": "existing"
+    },
+    {
+      "id": "tile1",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "tile2",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "tile3",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "tile4",
+      "group": "tiles",
+      "type": "existing"
+    }
+  ]
+}
