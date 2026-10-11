@@ -2,14 +2,15 @@ import React, { useState } from 'react';
 import { ShoppingCart, CheckCircle2, ExternalLink, ChevronDown } from 'lucide-react';
 import { DISCOUNTS, CATEGORIES } from '../constants/products';
 import { usePageContent } from '../utils/PageContentContext';
+import { eventScheduleLabel } from '../utils/catalogue';
 
 export default function MembershipPage({ activeCategory, setActiveCategory, cart, addToCart, getItemDisplayPrice, getKitHireMonthly, products }) {
   const copy = usePageContent('membership');
   const [selectedTier, setSelectedTier] = useState('adult');
   const [tierDropdownOpen, setTierDropdownOpen] = useState(false);
 
-  const membershipTiers = products.filter((product) => product.membershipTier);
-  const nonMembershipProducts = products.filter((product) => !product.membershipTier);
+  const membershipTiers = products.filter((product) => product.category === 'MEMBERSHIP' && product.membershipTier);
+  const nonMembershipProducts = products.filter((product) => product.category !== 'MEMBERSHIP' || !product.membershipTier);
   const selectedMembership = membershipTiers.find(t => t.membershipTier === selectedTier);
   const membershipInCart = membershipTiers.some(t => cart.find(i => i.id === t.id));
 
@@ -27,7 +28,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
       <div className="SectionHero">
         <div className="PageHero">
           <div>
-            <h2 className="PageTitle">{copy.title}</h2>
+            <h2 className="page_heading_bold_1">Membership and Events</h2>
             <p className="PageIntro">{copy.intro}</p>
           </div>
           <div className="CategoryBar">
@@ -45,15 +46,15 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
       </div>
 
       <div className="SectionBottom">
-        <div className="ShopGrid">
+        <div className="shop_catalogue_grid">
           {/* Membership tier card */}
-          {(activeCategory === 'ALL' || activeCategory === 'MEMBERSHIP') && (
-            <div className="ShopItemCard">
-              <div className="ShopItemHeader">
-                <span className="ShopItemEyebrow">{copy.memberEyebrow}</span>
-                <h3 className="ShopItemTitle">{copy.memberTitle}</h3>
+          {selectedMembership && (activeCategory === 'ALL' || activeCategory === 'MEMBERSHIP') && (
+            <div className="shop_product_tile">
+              <div className="shop_product_header">
+                <span className="tile_eyebrow">{copy.memberEyebrow}</span>
+                <h3 className="product_heading_bold">{copy.memberTitle}</h3>
               </div>
-              <p className="ShopItemBody">{copy.memberBody}</p>
+              <p className="shop_product_description">{copy.memberBody}</p>
 
               {/* Tier selector */}
               <div className="DropdownWrapper">
@@ -99,10 +100,10 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                 )}
               </div>
 
-              <div className="ShopItemFooter">
+              <div className="shop_product_footer">
                 <div>
-                  <div className="ShopItemPrice">£{selectedMembership?.basePrice.toFixed(2)}</div>
-                  <div className="ShopItemMeta">{copy.clubYearPriceLabel}</div>
+                  <div className="shop_product_price">£{selectedMembership?.basePrice.toFixed(2)}</div>
+                  <div className="shop_product_meta">{copy.clubYearPriceLabel}</div>
                 </div>
                 <button
                   onClick={handleAddMembership}
@@ -118,35 +119,37 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
 
           {/* All other products */}
           {displayProducts.map((product) => (
-            <div key={product.id} className="ShopItemCard">
-              {product.imageUrl && <img className="ShopItemImage" src={product.imageUrl} alt="" />}
+            <div key={product.id} className="shop_product_tile">
+              {product.imageUrl && <img className="shop_product_image" src={product.imageUrl} alt="" />}
               {product.hasAnnualDiscount && (
-                <div className="ShopItemBadge">
+                <div className="shop_product_badge">
                   Save {(DISCOUNTS.ANNUAL * 100).toFixed(0)}% Annually
                 </div>
               )}
-              <div className="ShopItemHeader">
-                <span className="ShopItemEyebrow">{product.category}</span>
-                <h3 className="ShopItemTitle">{product.name}</h3>
+              <div className="shop_product_header">
+                <span className="tile_eyebrow">{product.category}</span>
+                <h3 className="product_heading_bold">{product.name}</h3>
               </div>
-              <p className="ShopItemBody">{product.description}</p>
-              <div className="ShopItemFooter">
+              <p className="shop_product_description">{product.description}</p>
+              {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
+              <div className="shop_product_footer">
                 <div>
                   {product.type === 'yearly-service' ? (
                     <>
-                      <div className="ShopItemPrice">£{product.basePrice.toFixed(2)}</div>
-                      <div className="ShopItemMeta">{copy.annualPriceLabel}</div>
+                      <div className="shop_product_price">£{product.basePrice.toFixed(2)}</div>
+                      <div className="shop_product_meta">{copy.annualPriceLabel}</div>
                       <div className="KitHireMonthlyLabel">
                         or £{getKitHireMonthly(product)} /month
                       </div>
                     </>
                   ) : (
                     <>
-                      <div className="ShopItemPrice">
+                      <div className="shop_product_price">
                         {product.priceLabel || `£${product.basePrice.toFixed(2)}`}
                       </div>
-                      <div className="ShopItemMeta">
-                        {product.type === 'voucher'
+                      <div className="shop_product_meta">
+                        {product.type === 'event-ticket' ? 'Event / course ticket'
+                          : product.type === 'voucher'
                           ? copy.voucherPriceLabel
                           : product.type === 'annual-oneoff'
                             ? copy.clubYearPriceLabel

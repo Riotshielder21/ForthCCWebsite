@@ -1,110 +1,85 @@
 # Development
 
-Run commands from the repository root in Bash. Use Node 22 LTS and npm; Docker and Stripe CLI are optional for their respective tests.
+Run from the repository root in Bash. Use Node 22 LTS and Java 21 for Firebase emulators.
 
-## Setup
-
-1. Install dependencies and create local configuration without overwriting an existing file:
+## Install
 
 ```bash
 npm ci
-cp -n .env.example .env
+cp .env.example .env
+cp -n .env.emulator.example .env.emulator
 ```
 
-2. Review `.env`. Use a test Firebase project, Stripe test keys, and a test GitHub repository/branch for write operations.
-3. Set `PUBLIC_SITE_URL=http://localhost:3000`.
-4. Remove `NODE_ENV=production` from the local `.env`; Vite chooses its own build mode.
-5. Keep any local service-account key at `google-service-account.json`, ignored by Git. Never share or commit it.
+Use the `demo-fcc` emulators below for local data. Never use production credentials for tests.
 
-Local testing is not isolated automatically: using production credentials can change real Firestore records, send email, create Sheets, or commit to GitHub.
+## Run Locally
 
-## Frontend Only
+Terminal 1: Auth, database and image storage.
 
 ```bash
+npx --yes firebase-tools@14.22.0 emulators:start --only auth,firestore,storage --project demo-fcc --export-on-exit=./emulator-data
+```
+
+Add `--import=./emulator-data` on later runs to restore saved test data.
+
+Terminal 2: seed test records once, then start the API.
+
+```bash
+set -a; source .env.emulator; set +a
+unset NODE_ENV GITHUB_CONTENT_TOKEN STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_REPORT_SECRET_KEY STRIPE_SUBSCRIPTION_ADMIN_KEY
+node scripts/seed-emulators.js
+npm run server
+```
+
+Terminal 3: frontend.
+
+```bash
+set -a; source .env.emulator; set +a
+unset NODE_ENV
 npm run dev
 ```
 
-Open `http://localhost:3000`. Firebase reads use the configured project. API calls require a running backend; Vite does not proxy `/api`.
+Open `http://localhost:3000`. Use **Admin** in the footer, then **Sign in as local test admin**. Emulator UI: `http://localhost:4000`; API: `http://localhost:3002`. Test receipt links are stored in Firestore's `testMail` collection, not emailed.
 
-## Frontend And API
+In remote VS Code, forward ports `3000`, `3002`, `4000`, `8080`, `9099` and `9199` to the same local port numbers. Restart the API after backend edits; Vite reloads frontend edits automatically. Reseeding resets named test fixtures.
 
-Terminal 1, start the API on port 3001:
-
-```bash
-set -a
-source .env
-set +a
-unset NODE_ENV
-PORT=3001 HOST=127.0.0.1 npm run server
-```
-
-Terminal 2, start Vite on port 3000 with the local API URL:
+## Build And Test
 
 ```bash
-VITE_API_BASE_URL=http://localhost:3001 npm run dev
-```
-
-Open `http://localhost:3000/admin`. Check the API separately:
-
-```bash
-curl --fail http://localhost:3001/health
-```
-
-Restart the server after backend changes. Vite reloads frontend edits automatically. For Google sign-in, Firebase Authentication must allow `localhost`; approved editors need the `admin: true` claim.
-
-## Production Build Locally
-
-Stop Vite and the API first; both instructions below use port 3000.
-
-```bash
-set -a
-source .env
-set +a
-unset NODE_ENV
-VITE_API_BASE_URL= npm run build
-PORT=3000 HOST=127.0.0.1 npm run server
-```
-
-Open `http://localhost:3000`. Express serves `dist/` and the API from the same origin. `npm run preview` serves static assets only, not the API.
-
-## Stripe Test
-
-1. Start frontend and API using the two-terminal setup.
-2. In another terminal, run:
-
-```bash
-stripe listen --forward-to localhost:3001/api/stripe/webhook
-```
-
-3. Put the printed signing secret in `.env` as `STRIPE_WEBHOOK_SECRET`, then restart the API.
-4. Use a Stripe test secret key as `STRIPE_SECRET_KEY`.
-5. Pay with `4242 4242 4242 4242`, any future expiry, and any CVC. Never use real card details for this test.
-
-Checkout is not ready for live payments; see [README.md](README.md#current-limitations).
-
-## Checks Before A PR
-
-```bash
+npm test
 npm run build
 node --check server.js
 git diff --check
 ```
 
-Check changed pages on desktop and mobile. For backend changes, optionally build the API image:
+Stop manually running emulators before this isolated API/Storage smoke test:
 
 ```bash
-docker build -t fcc-website-api:local .
-docker run --rm -p 8088:8080 -e PORT=8080 fcc-website-api:local
+set -a; source .env.emulator; set +a
+unset NODE_ENV
+npx --yes firebase-tools@14.22.0 emulators:exec --only auth,firestore,storage --project demo-fcc "node scripts/seed-emulators.js && node scripts/test-emulators.js"
 ```
 
-Open `http://localhost:8088/health`. Without credentials, health can succeed while Firebase/Workspace features remain unavailable. Stop the container with Ctrl+C.
+The smoke test mocks Stripe; it does not contact Stripe or production Firebase.
 
-## Local Troubleshooting
+## Stripe Webhook Test
 
-- `ETARGET` but the npm package exists: retry the install with `--prefer-online --cache /tmp/fcc-npm-cache`; do not delete the lockfile.
-- Port 3000 occupied: stop the existing process or run `npm run dev -- --port 3002` and update `PUBLIC_SITE_URL` for that test.
-- `Unexpected token '<'` from an API request: it probably reached the static frontend instead of Express; check `VITE_API_BASE_URL` and restart Vite.
-- Sign-in works but editing is denied: check the account's `admin` claim, then sign out and back in.
-- Browserslist/bundle-size warnings alone do not mean the build failed; inspect its exit code and final error.
+For a real sandbox checkout, run the local stack above and forward webhooks:
 
-Use [README.md](README.md) for automatic deployment and production recovery. Do not use the legacy VPS installer for Cloud Run/Firebase releases.
+```bash
+stripe listen --forward-to localhost:3002/api/stripe/webhook
+```
+
+In the API terminal, set `STRIPE_SECRET_KEY` to a test key and `STRIPE_WEBHOOK_SECRET` to the CLI's signing secret, then restart the API. Use card `4242 4242 4242 4242`, a future expiry and any CVC. Cancel sandbox subscriptions after testing. Do not send secrets through chat or commit them.
+
+## Basic Debugging
+
+- Orders fail: start the API and Firestore, not only Vite. Check `curl --fail http://localhost:3002/health`.
+- Payment stays pending: check Stripe CLI delivery and the API signing secret. Stripe and Firebase emulators are separate services.
+- API returns HTML: check `VITE_API_BASE_URL` and restart Vite.
+- Admin denied: reseed the local admin, then sign out/in. Real accounts need the Firebase `admin: true` claim.
+- Image upload fails: check Storage emulator/rules and port `9199`.
+- Stripe subscribers unavailable: reporting needs a server-only `STRIPE_REPORT_SECRET_KEY`; local Stripe is not emulated. Use test mode only.
+- Port occupied: choose another frontend port and update `PUBLIC_SITE_URL`.
+
+For configured cloud services instead of emulators, copy [.env.example](.env.example) to an ignored `.env`, use a test project, and set `VITE_API_BASE_URL` to your API URL. See [DEPLOYMENT.md](DEPLOYMENT.md) for releases.

@@ -1,10 +1,12 @@
 ﻿import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
+import { getAuth, GoogleAuthProvider, signInWithCustomToken, onAuthStateChanged, signInWithPopup, setPersistence, browserLocalPersistence, connectAuthEmulator, signInWithEmailAndPassword } from 'firebase/auth';
+import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, serverTimestamp, query, where, getDocs, connectFirestoreEmulator } from 'firebase/firestore';
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { getAnalytics, isSupported } from 'firebase/analytics';
+import { apiUrl } from './api.js';
 
 const runtimeEnv = typeof import.meta.env !== 'undefined' ? import.meta.env : process.env;
+const localEmulators = runtimeEnv.DEV === true && runtimeEnv.VITE_USE_FIREBASE_EMULATORS === 'true';
 
 // Firebase Configuration
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
@@ -29,35 +31,49 @@ try {
   auth = getAuth(app);
   db = getFirestore(app);
   storage = getStorage(app);
-  if (typeof window !== 'undefined') {
+  if (localEmulators) {
+    if (!firebaseConfig.projectId?.startsWith('demo-')) throw new Error('Use a demo- project for local Firebase.');
+    const host = runtimeEnv.VITE_FIREBASE_EMULATOR_HOST || '127.0.0.1';
+    if (!['127.0.0.1', 'localhost'].includes(host)) throw new Error('Firebase emulators must use a loopback host.');
+    if (!auth.emulatorConfig) {
+      connectAuthEmulator(auth, `http://${host}:9099`, { disableWarnings: true });
+      connectFirestoreEmulator(db, host, 8080);
+      connectStorageEmulator(storage, host, 9199);
+    }
+  }
+  if (!localEmulators && typeof window !== 'undefined') {
     isSupported().then((supported) => {
       if (supported) analytics = getAnalytics(app);
     }).catch(() => {});
   }
 } catch (error) {
+  auth = null;
+  db = null;
+  storage = null;
   console.error('Firebase initialization failed:', error);
 }
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'forth-canoe-default';
 
 // Auth Functions
-export const initializeAuth = async () => {
+const performAuthInitialization = async () => {
   if (!auth) return;
+  await auth.authStateReady();
+  if (auth.currentUser) return;
 
   if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
     try {
       await signInWithCustomToken(auth, __initial_auth_token);
     } catch (error) {
       console.error('Custom token auth failed:', error);
-      await signInAnonymously(auth);
-    }
-  } else {
-    try {
-      await signInAnonymously(auth);
-    } catch (error) {
-      console.error('Anonymous auth failed:', error);
     }
   }
+};
+
+let authInitialization = null;
+export const initializeAuth = () => {
+  if (!authInitialization) authInitialization = performAuthInitialization();
+  return authInitialization;
 };
 
 export const setupAuthListener = (callback) => {
@@ -71,6 +87,12 @@ export const setupAuthListener = (callback) => {
 
 export const signInWithWorkspace = async () => {
   if (!auth) throw new Error('Firebase authentication is unavailable.');
+  await initializeAuth();
+  await setPersistence(auth, browserLocalPersistence);
+  if (localEmulators) {
+    const result = await signInWithEmailAndPassword(auth, 'admin@forthcanoeclub.co.uk', 'local-test-password');
+    return result.user;
+  }
 
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ hd: 'forthcanoeclub.co.uk' });
@@ -141,41 +163,14 @@ export const saveDiscountCode = async (name, email, discountCode) => {
 };
 
 export const validateDiscountCode = async (code) => {
-  try {
-    if (!db) {
-      return { valid: false, reason: 'unavailable' };
-    }
-
-    const codesRef = collection(db, 'discountCodes');
-    const q = query(codesRef, where('code', '==', code), where('used', '==', false));
-    const querySnapshot = await getDocs(q);
-
-    if (!querySnapshot.empty) {
-      const codeDoc = querySnapshot.docs[0];
-      const codeData = codeDoc.data();
-
-      // Check if expired
-      if (codeData.expiresAt && codeData.expiresAt.toDate() < new Date()) {
-        return { valid: false, reason: 'expired' };
-      }
-
-      // Support both flat (£ amount off monthly) and multiplier (percentage off)
-      // discountType: 'flat' | 'multiplier'
-      // discountValue: flat = £ amount off monthly, multiplier = decimal (e.g. 0.25 = 25% off)
-      return {
-        valid: true,
-        discountType: codeData.discountType || 'multiplier',
-        discountValue: codeData.discountValue ?? 0.25,
-        label: codeData.label || 'Discount',
-        codeData
-      };
-    }
-
-    return { valid: false, reason: 'not_found' };
-  } catch (error) {
-    console.error('Error validating discount code:', error);
-    return { valid: false, reason: 'error', error: error.message };
-  }
+  const response = await fetch(apiUrl('/api/discount-codes/validate'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Could not validate discount code.');
+  return result;
 };
 
 // Export Firebase instances

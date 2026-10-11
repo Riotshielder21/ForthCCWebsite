@@ -1,56 +1,58 @@
 import React from 'react';
 import { ExternalLink } from 'lucide-react';
 import { usePageContent } from '../utils/PageContentContext';
+import EditablePage from '../components/EditablePage';
 
 export default function AboutPage() {
   const copy = usePageContent('about');
   return (
-    <div className="PageFadeIn">
-      <div className="SectionHero">
-        <div className="ContentPanel ContentPanelMuted">
-          <span className="ShopItemEyebrow">{copy.eyebrow}</span>
-          <h2 className="PageTitle SpaceT2">{copy.title}</h2>
-          <p className="ContentBody ContentBodyIntro">{copy.intro}</p>
+    <EditablePage pageId="about">
+      <div className="SectionHero"><div data-tile-group="hero">
+        <div className="main_tile main_tile_grey" data-tile-id="hero">
+          <span className="tile_eyebrow" data-content-field="eyebrow">{copy.eyebrow}</span>
+          <h2 className="page_heading_bold_2" data-content-field="title">{copy.title}</h2>
+          <p className="text_container text_container_intro" data-content-field="intro">{copy.intro}</p>
           <div className="SpaceT6">
             <a
+              data-link-field="charityUrl"
               href={copy.charityUrl}
               target="_blank"
               rel="noreferrer"
               className="PrimaryActionButton"
             >
-              {copy.charityAction} <ExternalLink className="IconSm" />
+              <span data-content-field="charityAction">{copy.charityAction}</span> <ExternalLink className="IconSm" />
             </a>
           </div>
-        </div>
+        </div></div>
       </div>
 
       <div className="SectionBottom">
-        <div className="CardGrid2">
-          <div className="ContentPanel">
-            <span className="ShopItemEyebrow">{copy.tile1Eyebrow}</span>
-            <h3 className="ContentTitle SpaceT2">{copy.tile1Title}</h3>
-            <p className="ContentBody">{copy.tile1Body}</p>
+        <div className="tile_grid_two" data-tile-group="tiles">
+          <div className="main_tile" data-tile-id="tile1">
+            <span className="tile_eyebrow" data-content-field="tile1Eyebrow">{copy.tile1Eyebrow}</span>
+            <h3 className="tile_heading_bold_2" data-content-field="tile1Title">{copy.tile1Title}</h3>
+            <p className="text_container" data-content-field="tile1Body">{copy.tile1Body}</p>
           </div>
 
-          <div className="ContentPanel">
-            <span className="ShopItemEyebrow">{copy.tile2Eyebrow}</span>
-            <h3 className="ContentTitle SpaceT2">{copy.tile2Title}</h3>
-            <p className="ContentBody">{copy.tile2Body}</p>
+          <div className="main_tile" data-tile-id="tile2">
+            <span className="tile_eyebrow" data-content-field="tile2Eyebrow">{copy.tile2Eyebrow}</span>
+            <h3 className="tile_heading_bold_2" data-content-field="tile2Title">{copy.tile2Title}</h3>
+            <p className="text_container" data-content-field="tile2Body">{copy.tile2Body}</p>
           </div>
 
-          <div className="ContentPanel">
-            <span className="ShopItemEyebrow">{copy.tile3Eyebrow}</span>
-            <h3 className="ContentTitle SpaceT2">{copy.tile3Title}</h3>
-            <p className="ContentBody">{copy.tile3Body}</p>
+          <div className="main_tile" data-tile-id="tile3">
+            <span className="tile_eyebrow" data-content-field="tile3Eyebrow">{copy.tile3Eyebrow}</span>
+            <h3 className="tile_heading_bold_2" data-content-field="tile3Title">{copy.tile3Title}</h3>
+            <p className="text_container" data-content-field="tile3Body">{copy.tile3Body}</p>
           </div>
 
-          <div className="ContentPanel">
-            <span className="ShopItemEyebrow">{copy.tile4Eyebrow}</span>
-            <h3 className="ContentTitle SpaceT2">{copy.tile4Title}</h3>
-            <p className="ContentBody">{copy.tile4Body}</p>
+          <div className="main_tile" data-tile-id="tile4">
+            <span className="tile_eyebrow" data-content-field="tile4Eyebrow">{copy.tile4Eyebrow}</span>
+            <h3 className="tile_heading_bold_2" data-content-field="tile4Title">{copy.tile4Title}</h3>
+            <p className="text_container" data-content-field="tile4Body">{copy.tile4Body}</p>
           </div>
         </div>
       </div>
-    </div>
+    </EditablePage>
   );
 }

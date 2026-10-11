@@ -1,6 +1,5 @@
 import {
   collection,
-  deleteDoc,
   doc,
   onSnapshot,
   serverTimestamp,
@@ -11,6 +10,8 @@ import { db } from './firebase';
 import { storage } from './firebase';
 import { PAGE_CONTENT } from '../constants/pageContent';
 import { apiUrl } from './api';
+import { resolveCatalogue, validateEventSchedule } from './catalogue';
+import { PRODUCTS } from '../constants/products';
 
 export const subscribeToProducts = (onProducts, onError) => {
   if (!db) return () => {};
@@ -18,7 +19,7 @@ export const subscribeToProducts = (onProducts, onError) => {
   return onSnapshot(
     collection(db, 'products'),
     (snapshot) => {
-      onProducts(snapshot.docs.map((productDoc) => ({ id: productDoc.id, ...productDoc.data() })));
+      onProducts(resolveCatalogue(PRODUCTS, snapshot.docs.map((productDoc) => ({ ...productDoc.data(), id: productDoc.id }))));
     },
     onError
   );
@@ -60,15 +61,21 @@ export const saveProduct = async (product) => {
   if (!db) throw new Error('Content database is unavailable.');
 
   const { id, ...productData } = product;
+  if (product.category === 'EVENTS') {
+    productData.type = 'event-ticket';
+    productData.hasAnnualDiscount = false;
+    productData.eventSchedule = validateEventSchedule(product.eventSchedule);
+  }
   await setDoc(doc(db, 'products', id), {
     ...productData,
+    deleted: false,
     updatedAt: serverTimestamp()
   }, { merge: true });
 };
 
 export const removeProduct = async (id) => {
   if (!db) throw new Error('Content database is unavailable.');
-  await deleteDoc(doc(db, 'products', id));
+  await setDoc(doc(db, 'products', id), { deleted: true, updatedAt: serverTimestamp() }, { merge: true });
 };
 
 export const seedProducts = async (products) => {
@@ -81,6 +88,15 @@ export const uploadProductImage = async (productId, file) => {
   if (file.size > 5 * 1024 * 1024) throw new Error('Images must be 5 MB or smaller.');
 
   const imageRef = ref(storage, `products/${productId}/${file.name}`);
+  await uploadBytes(imageRef, file, { contentType: file.type });
+  return getDownloadURL(imageRef);
+};
+
+export const uploadPageImage = async (pageId, tileId, file) => {
+  if (!storage) throw new Error('Image storage is unavailable.');
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Choose a PNG, JPG, or WebP image.');
+  if (file.size > 5 * 1024 * 1024) throw new Error('Images must be 5 MB or smaller.');
+  const imageRef = ref(storage, `pages/${pageId}/${tileId}/${crypto.randomUUID()}`);
   await uploadBytes(imageRef, file, { contentType: file.type });
   return getDownloadURL(imageRef);
 };
