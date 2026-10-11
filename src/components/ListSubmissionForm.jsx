@@ -108,7 +108,7 @@ export default function ListSubmissionForm() {
   return (
     <div className="FormContainer">
       <div className="SpaceB8">
-        <h2 className="FormTitle">
+        <h2 className="form_heading_bold">
           Submit a Form request
         </h2>
         <p className="FormDescription">

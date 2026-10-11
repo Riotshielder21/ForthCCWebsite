@@ -11,6 +11,14 @@ import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-adm
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getFirestore as getAdminFirestore, Timestamp } from 'firebase-admin/firestore';
 import { PAGE_CONTENT } from './src/constants/pageContent.js';
+import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
+import { PRODUCTS } from './src/constants/products.js';
+import { calculateCart } from './src/utils/pricing.js';
+import { orderReport, memberReport, subscriptionWarning } from './src/utils/adminReports.js';
+import { FieldPath } from 'firebase-admin/firestore';
+import { assertLocalFirebase } from './src/utils/localFirebase.js';
+import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation } from './src/utils/stripeReports.js';
+import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -66,7 +74,7 @@ const stripeRequest = async (path, params) => {
   return data;
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '' }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     email: email.toLowerCase(),
@@ -74,6 +82,7 @@ const createFirestoreOrder = async ({ orderRef, email, items, total, status, str
     total: String(total),
     status,
     stripeSessionId,
+    discountCodeId,
     createdAt: Timestamp.now(),
     expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
   });
@@ -100,34 +109,63 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
     }
 
     const event = JSON.parse(req.body.toString());
-    if (event.type === 'checkout.session.completed') {
+    if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
       const session = event.data.object;
+      if (!['paid', 'no_payment_required'].includes(session.payment_status)) return res.json({ received: true });
       const orderRef = session.metadata?.order_ref;
       if (!orderRef || !adminDb) return res.status(400).send('Order metadata is missing.');
-      const document = await adminDb.collection('orders').doc(orderRef).get();
-      if (!document.exists) return res.status(404).send('Order not found.');
-      const fields = document.data();
-      if (fields.status === 'paid' && fields.emailSent === true) {
-        return res.json({ received: true });
-      }
       const accessToken = createAccessToken();
-      const items = fields.items || [];
-      const total = fields.total || '0';
-      await updateFirestoreOrder(orderRef, {
-        status: 'paid',
-        accessTokenHash: hashAccessToken(accessToken),
-        stripePaymentIntentId: session.payment_intent || '',
-        stripeSubscriptionId: session.subscription || '',
-        paidAt: Timestamp.now()
+      const fields = await adminDb.runTransaction(async (transaction) => {
+        const orderDocument = adminDb.collection('orders').doc(orderRef);
+        const document = await transaction.get(orderDocument);
+        if (!document.exists) throw new Error('Order not found.');
+        const order = document.data();
+        if (order.stripeSessionId !== session.id || Math.round(Number(order.total) * 100) !== session.amount_total) {
+          throw new Error('Payment does not match the order.');
+        }
+        if (order.emailSent === true) return null;
+        if (order.emailSendingUntil?.toMillis() > Date.now()) throw new Error('Receipt delivery is already in progress.');
+        const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
+        const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
+        if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
+        const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
+          code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
+          name: item.name,
+          value: item.voucherValue,
+          expiresAt: Timestamp.fromDate(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000))
+        }));
+        if (!order.vouchers) {
+          for (const voucher of vouchers) {
+            transaction.create(adminDb.collection('discountCodes').doc(voucher.code), {
+              code: voucher.code, label: voucher.name, discountType: 'credit', discountValue: voucher.value,
+              used: false, singleUse: true, excludedCategories: ['MEMBERSHIP'],
+              orderRef, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
+            });
+          }
+        }
+        if (discount?.singleUse) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
+        transaction.update(orderDocument, {
+          status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken),
+          stripePaymentIntentId: session.payment_intent || '', stripeSubscriptionId: session.subscription || '',
+          paidAt: order.paidAt || Timestamp.now(),
+          emailSendingUntil: Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000))
+        });
+        return { ...order, vouchers };
       });
-      const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken, items, total });
-      await updateFirestoreOrder(orderRef, { emailSent, ...(emailSent ? { emailSentAt: Timestamp.now() } : {}) });
-      console.log(`Stripe payment confirmed: ${session.id}; receipt email sent: ${emailSent}`);
+      if (!fields) return res.json({ received: true });
+      try {
+        const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken, items: fields.items, total: fields.total, vouchers: fields.vouchers });
+        await updateFirestoreOrder(orderRef, { emailSent, emailSendingUntil: null, ...(emailSent ? { emailSentAt: Timestamp.now() } : {}) });
+        if (!emailSent) throw new Error('Receipt email is not configured.');
+      } catch (error) {
+        await updateFirestoreOrder(orderRef, { emailSendingUntil: null });
+        throw error;
+      }
     }
     res.json({ received: true });
   } catch (error) {
     console.error('Stripe webhook error:', error.message);
-    res.status(400).send('Invalid webhook.');
+    res.status(500).send('Payment processing could not complete.');
   }
 });
 
@@ -141,10 +179,17 @@ let adminAuth;
 let gmailApi;
 let driveApi;
 let sheetsApi;
+const localFirebase = process.env.LOCAL_FIREBASE_EMULATORS === 'true';
+if (localFirebase) assertLocalFirebase(process.env);
 try {
   const credentialsPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || join(__dirname, 'google-service-account.json');
   const credentialsJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  if (credentialsJson || fs.existsSync(credentialsPath)) {
+  if (localFirebase) {
+    const adminApp = getApps()[0] || initializeAdminApp({ projectId: process.env.GCLOUD_PROJECT });
+    adminDb = getAdminFirestore(adminApp);
+    adminAuth = getAdminAuth(adminApp);
+    console.log('Local Firebase emulators enabled. Workspace integrations disabled.');
+  } else if (credentialsJson || fs.existsSync(credentialsPath)) {
     const credentials = credentialsJson
       ? JSON.parse(credentialsJson)
       : JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
@@ -202,6 +247,142 @@ const requireAdmin = async (req, res) => {
   }
 };
 
+const memberCollection = () => adminDb.collection('artifacts').doc(process.env.FCC_APP_ID || 'forth-canoe-default')
+  .collection('public').doc('data').collection('members');
+const reportCollection = (kind) => kind === 'orders' ? adminDb.collection('orders') : kind === 'members' ? memberCollection() : null;
+
+const stripeReportRequest = (secret) => async (path, options = {}) => {
+  const headers = { Authorization: `Bearer ${secret}`, 'Stripe-Version': '2023-10-16' };
+  if (options.body) headers['Content-Type'] = 'application/x-www-form-urlencoded';
+  if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
+  const response = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method: options.method || 'GET', headers, ...(options.body ? { body: options.body } : {}), signal: AbortSignal.timeout(20000)
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || 'Stripe request failed.');
+  return data;
+};
+
+app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
+  if (!await requireAdmin(req, res)) return;
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (req.query.kind === 'subscribers') {
+      if (!adminDb) return res.status(503).json({ error: 'Subscriber import storage is not configured.' });
+      const cursor = req.query.cursor;
+      if (cursor !== undefined && (typeof cursor !== 'string' || !/^sub_[a-zA-Z0-9]+$/.test(cursor))) {
+        return res.status(400).json({ error: 'Invalid Stripe report cursor.' });
+      }
+      const secret = process.env.STRIPE_REPORT_SECRET_KEY || process.env.STRIPE_SECRET_KEY || '';
+      if (!/^(sk|rk)_(test|live)_/.test(secret)) return res.status(503).json({ error: 'Stripe reporting is not configured. Set a server-only Stripe report key with read access.' });
+      const mode = secret.includes('_live_') ? 'live' : 'test';
+      if (localFirebase && mode === 'live') return res.status(400).json({ error: 'Use Stripe test data with local emulators.' });
+      const result = await loadStripeSubscribers(stripeReportRequest(secret), cursor);
+      const records = await importStripeSubscribers(adminDb, result.records, mode, result.checkedAt);
+      return res.json({ ...result, records, mode, imported: records.length, clubYearEnd: nextClubYearEnd() });
+    }
+    if (!adminDb) return res.status(503).json({ error: 'Report storage is not configured.' });
+    const collection = reportCollection(req.query.kind);
+    const eventReport = req.query.kind === 'events';
+    const source = eventReport ? adminDb.collection('orders') : collection;
+    if (!source) return res.status(400).json({ error: 'Choose orders, events or members.' });
+    const cursor = req.query.cursor;
+    if (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 1500 || cursor.includes('/'))) {
+      return res.status(400).json({ error: 'Invalid report cursor.' });
+    }
+    let query = source.orderBy(FieldPath.documentId()).limit(101);
+    if (cursor) query = query.startAfter(cursor);
+    const snapshot = await query.get();
+    const documents = snapshot.docs.slice(0, 100);
+    const records = documents.map((document) => (req.query.kind === 'members' ? memberReport : orderReport)(document.id, document.data()));
+    res.json({ records: eventReport ? records.filter((record) => record.items.some((item) => item.category === 'EVENTS'))
+      .map((record) => ({ ...record, orderTotal: record.total, items: record.items.filter((item) => item.category === 'EVENTS'),
+        total: record.items.filter((item) => item.category === 'EVENTS').reduce((sum, item) => sum + (item.price || 0), 0) })) : records,
+      nextCursor: snapshot.size > 100 ? documents.at(-1).id : null });
+  } catch (error) {
+    console.error('Admin report failed:', error.message);
+    res.status(500).json({ error: 'Could not retrieve report.' });
+  }
+});
+
+app.post('/api/admin/subscribers/:id/club-year-cancellation', rateLimit(10, 60 * 1000), async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  res.set('Cache-Control', 'no-store');
+  try {
+    const { mode, clubCustomerId, confirmId, clubYearEnd, acknowledgeBillingChange } = req.body;
+    const id = req.params.id;
+    if (!adminDb) return res.status(503).json({ error: 'Subscriber registry is not configured.' });
+    if (!/^sub_[a-zA-Z0-9]+$/.test(id) || !['test', 'live'].includes(mode) || typeof clubCustomerId !== 'string'
+      || confirmId !== id || acknowledgeBillingChange !== true || clubYearEnd !== nextClubYearEnd()) {
+      return res.status(400).json({ error: 'Confirm the exact subscription ID, billing change and current club-year end date.' });
+    }
+    if (localFirebase && mode === 'live') return res.status(400).json({ error: 'Live billing changes are disabled with local emulators.' });
+    const secret = process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY || '';
+    if (!/^(sk|rk)_(test|live)_/.test(secret)) return res.status(503).json({ error: 'Subscription scheduling is not configured. Set STRIPE_SUBSCRIPTION_ADMIN_KEY on the server.' });
+    if ((secret.includes('_live_') ? 'live' : 'test') !== mode) return res.status(400).json({ error: 'Stripe write key and report mode do not match.' });
+    const registry = adminDb.collection('stripeSubscriptions').doc(`FCC-${mode}-${id}`);
+    const existing = await registry.get();
+    if (!existing.exists || existing.data().clubCustomerId !== clubCustomerId) {
+      return res.status(409).json({ error: 'Import and verify this subscriber before scheduling cancellation.' });
+    }
+    const result = await scheduleClubYearCancellation(stripeReportRequest(secret), id, clubCustomerId, mode);
+    const checkedAt = new Date().toISOString();
+    const [record] = await importStripeSubscribers(adminDb, [result.record], mode, checkedAt);
+    const batch = adminDb.batch();
+    batch.set(registry, { clubYearCancellationRequestedAt: checkedAt, clubYearCancellationRequestedBy: admin.uid,
+      clubYearEnd: result.clubYearEnd, scheduledCancellationAt: result.cancellationAt }, { merge: true });
+    batch.set(adminDb.collection('adminSubscriptionAudit').doc(`club-year-${mode}-${id}-${result.clubYearEnd.slice(0, 10)}`), {
+      adminUid: admin.uid, stripeSubscriptionId: id, clubCustomerId, mode, cancellationAt: result.cancellationAt,
+      clubYearEnd: result.clubYearEnd, changed: result.changed, checkedAt
+    }, { merge: true });
+    await batch.commit();
+    res.json({ ...result, record, checkedAt });
+  } catch (error) {
+    console.error('Club-year cancellation failed:', error.message);
+    res.status(502).json({ error: 'Could not finish confirming and recording club-year cancellation. Check Stripe and refresh the report before retrying; Stripe may already have accepted the change.' });
+  }
+});
+
+app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (!adminDb) return res.status(503).json({ error: 'Record storage is not configured.' });
+    const collection = reportCollection(req.params.kind);
+    if (!collection || !req.params.id || req.params.id.includes('/') || req.params.id.length > 1500) {
+      return res.status(400).json({ error: 'Invalid report record.' });
+    }
+    if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Type the exact record ID to confirm deletion.' });
+    const reference = collection.doc(req.params.id);
+    const result = await adminDb.runTransaction(async (transaction) => {
+      const document = await transaction.get(reference);
+      if (!document.exists) return { status: 404, error: 'Record not found.' };
+      const fields = document.data();
+      let warning = subscriptionWarning(fields);
+      if (fields.email) {
+        const related = await transaction.get(adminDb.collection('orders').where('email', '==', normalizeEmail(fields.email)).limit(101));
+        warning ||= related.size > 100 || related.docs.some((order) => subscriptionWarning(order.data()));
+      } else if (req.params.kind === 'members') warning = true;
+      if (warning && req.body.acknowledgeStripe !== true) return { status: 409,
+        error: 'Check and cancel any active Stripe subscription before deleting this record. Deleting website data does not stop payments.',
+        requiresStripeAcknowledgement: true, stripeSubscriptionId: fields.stripeSubscriptionId || '' };
+      transaction.delete(reference);
+      transaction.create(adminDb.collection('adminDeletionAudit').doc(), {
+        adminUid: admin.uid, kind: req.params.kind,
+        recordIdHash: crypto.createHash('sha256').update(req.params.id).digest('hex'),
+        stripeAcknowledged: req.body.acknowledgeStripe === true, createdAt: Timestamp.now()
+      });
+      return { status: 200, success: true };
+    });
+    res.status(result.status).json(result);
+  } catch (error) {
+    console.error('Admin deletion failed:', error.message);
+    res.status(500).json({ error: 'Could not delete record.' });
+  }
+});
+
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
@@ -227,6 +408,20 @@ app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) =
         return res.status(400).json({ error: `${definition.label} must be an https URL.` });
       }
       publishedContent[key] = value;
+    }
+    if (content.tileLayout !== undefined) {
+      try {
+        publishedContent.tileLayout = validateTileLayout(pageId, content.tileLayout);
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
+    }
+    if (pageId === 'home' && content.supporterTiles !== undefined) {
+      try {
+        publishedContent.supporterTiles = validateSupporterTiles(content.supporterTiles);
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
     }
 
     const github = createGitHubClient(repository, token);
@@ -448,30 +643,133 @@ app.post('/api/admin/forms', rateLimit(20, 60 * 1000), async (req, res) => {
   }
 });
 
+const findDiscountCode = async (code) => {
+  if (!adminDb) throw new Error('Discount storage is not configured.');
+  const snapshot = await adminDb.collection('discountCodes').where('code', '==', code).limit(1).get();
+  return snapshot.docs[0] || null;
+};
+
+const discountFailure = (discount) => {
+  if (!discount || discount.used || discount.active === false) return 'Invalid or already used code.';
+  if (discount.expiresAt?.toMillis() <= Date.now()) return 'Code expired.';
+  if (discount.singleUse && discount.reservedUntil?.toMillis() > Date.now()) return 'Voucher is already in checkout. Try again later.';
+  return null;
+};
+
+const publicDiscount = (discount) => ({
+  label: discount.label || 'Discount', discountType: discount.discountType || 'multiplier',
+  discountValue: discount.discountValue ?? 0.25, allowsAnnualStacking: discount.allowsAnnualStacking === true
+});
+
+app.post('/api/discount-codes/validate', rateLimit(30, 60 * 1000), async (req, res) => {
+  try {
+    const code = typeof req.body.code === 'string' ? req.body.code.trim().toUpperCase() : '';
+    if (!/^[A-Z0-9-]{3,64}$/.test(code)) return res.json({ valid: false, message: 'Invalid code.' });
+    const document = await findDiscountCode(code);
+    const discount = document?.data();
+    const message = discountFailure(discount);
+    res.json(message ? { valid: false, message } : { valid: true, ...publicDiscount(discount) });
+  } catch (error) {
+    res.status(503).json({ error: 'Could not validate discount code.' });
+  }
+});
+
+app.post('/api/admin/discount-codes', rateLimit(20, 60 * 1000), async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!adminDb) return res.status(503).json({ error: 'Discount storage is not configured.' });
+    const { label, discountType, singleUse = false, expiresAt } = req.body;
+    const code = typeof req.body.code === 'string' ? req.body.code.trim().toUpperCase() : '';
+    const discountValue = Number(req.body.discountValue);
+    const expiry = expiresAt ? new Date(expiresAt) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+    if (!/^[A-Z0-9-]{3,64}$/.test(code) || typeof label !== 'string' || !label.trim() || label.length > 120 ||
+        !['credit', 'multiplier', 'flat'].includes(discountType) || !Number.isFinite(discountValue) || discountValue <= 0 ||
+        (discountType === 'multiplier' && discountValue > 1) || !Number.isFinite(expiry.getTime()) || expiry <= new Date()) {
+      return res.status(400).json({ error: 'Enter a valid code, label, discount value and future expiry.' });
+    }
+    if (await findDiscountCode(code)) return res.status(409).json({ error: 'This discount code already exists.' });
+    await adminDb.collection('discountCodes').doc(code).create({
+      code, label: label.trim(), discountType, discountValue,
+      singleUse: discountType === 'credit' || singleUse === true, used: false,
+      allowsAnnualStacking: req.body.allowsAnnualStacking === true,
+      excludedCategories: ['MEMBERSHIP'], createdBy: admin.uid,
+      createdAt: Timestamp.now(), expiresAt: Timestamp.fromDate(expiry)
+    });
+    res.json({ success: true, code });
+  } catch (error) {
+    res.status(error.code === 6 ? 409 : 500).json({ error: error.code === 6 ? 'This discount code already exists.' : 'Could not create discount code.' });
+  }
+});
+
 app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => {
+  let reservedDocument;
+  const orderRef = `FCC-${crypto.randomUUID().toUpperCase()}`;
   try {
     const email = normalizeEmail(req.body.email);
-    const { items, total, billingMode = 'annual' } = req.body;
+    const { items: requestedItems, billingMode = 'annual' } = req.body;
     if (!process.env.STRIPE_SECRET_KEY) return res.status(503).json({ error: 'Stripe test mode is not configured.' });
-    if (!isValidEmail(email) || !Array.isArray(items) || items.length === 0) {
+    if (!isValidEmail(email) || !Array.isArray(requestedItems) || requestedItems.length === 0 || requestedItems.length > 100 || !['annual', 'monthly'].includes(billingMode)) {
       return res.status(400).json({ error: 'Enter a valid email address and include at least one item.' });
     }
 
-    const orderRef = `FCC-${Date.now().toString(36).toUpperCase()}`;
     if (!adminDb) return res.status(503).json({ error: 'Order storage is not configured.' });
-    await createFirestoreOrder({ orderRef, email, items, total, status: 'pending' });
+    const catalogSnapshot = await adminDb.collection('products').get();
+    const catalog = resolveCatalogue(PRODUCTS, catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
+    const selected = requestedItems.map((item) => catalog.find((product) => product.id === item.id));
+    if (selected.some((item) => !item || item.type === 'external' || !Number.isFinite(item.basePrice) || item.basePrice < 0) || new Set(selected.map((item) => item.id)).size !== selected.length) {
+      return res.status(400).json({ error: 'Your basket contains an unavailable item. Please refresh the shop.' });
+    }
+    for (const item of selected.filter((product) => product.category === 'EVENTS')) {
+      try { validateEventSchedule(item.eventSchedule); }
+      catch (error) { return res.status(400).json({ error: `Invalid event schedule for ${item.name}.` }); }
+      if (item.type !== 'event-ticket') return res.status(400).json({ error: 'Event tickets must use one-off event pricing.' });
+    }
+    let promo = null;
+    const code = typeof req.body.discountCode === 'string' ? req.body.discountCode.trim().toUpperCase() : '';
+    const discountDocument = code ? await findDiscountCode(code) : null;
+    if (code) {
+      const message = discountFailure(discountDocument?.data());
+      if (message) return res.status(400).json({ error: message });
+      promo = publicDiscount(discountDocument.data());
+    }
+    const pricing = calculateCart(selected, billingMode === 'annual', promo);
+    if (promo && pricing.promoDiscountValue <= 0) return res.status(400).json({ error: 'This code does not apply to the items in your basket.' });
+    if (discountDocument?.data().singleUse) {
+      await adminDb.runTransaction(async (transaction) => {
+        const current = await transaction.get(discountDocument.ref);
+        const message = discountFailure(current.data());
+        if (message) throw new Error(message);
+        transaction.update(discountDocument.ref, { reservedByOrder: orderRef, reservedUntil: Timestamp.fromDate(new Date(Date.now() + 65 * 60 * 1000)) });
+      });
+      reservedDocument = discountDocument.ref;
+    }
+    const items = pricing.items.map((item) => ({
+      id: item.id, name: item.name, category: item.category, type: item.type, price: item.displayPrice,
+      ...(item.type === 'voucher' ? { voucherValue: item.basePrice } : {}),
+      ...(item.category === 'EVENTS' ? { eventSchedule: validateEventSchedule(item.eventSchedule) } : {})
+    }));
+    const total = pricing.total;
+    await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null });
+    const hasRecurringItem = billingMode === 'monthly' && items.some((item) => item.type === 'subscription');
+    const oneOffCredit = hasRecurringItem && promo?.discountType === 'credit';
+    let coupon;
+    if (oneOffCredit) {
+      coupon = await stripeRequest('coupons', [['amount_off', String(Math.round(pricing.promoDiscountValue * 100))], ['currency', 'gbp'], ['duration', 'once']]);
+    }
     const lineItems = items.flatMap((item, index) => [
       [`line_items[${index}][price_data][currency]`, 'gbp'],
       [`line_items[${index}][price_data][product_data][name]`, item.name],
-      [`line_items[${index}][price_data][unit_amount]`, String(Math.round(Number(item.price) * 100))],
+      [`line_items[${index}][price_data][unit_amount]`, String(Math.round((oneOffCredit ? pricing.items[index].subtotalPrice : Number(item.price)) * 100))],
       [`line_items[${index}][quantity]`, '1'],
       ...(billingMode === 'monthly' && item.type === 'subscription'
         ? [[`line_items[${index}][price_data][recurring][interval]`, 'month']]
         : [])
     ]);
-    const hasRecurringItem = billingMode === 'monthly' && items.some((item) => item.type === 'subscription');
     const session = await stripeRequest('checkout/sessions', [
       ...lineItems,
+      ...(coupon ? [['discounts[0][coupon]', coupon.id]] : []),
+      ['expires_at', String(Math.floor(Date.now() / 1000) + 3600)],
       ['mode', hasRecurringItem ? 'subscription' : 'payment'],
       ['customer_email', email],
       ['success_url', `${process.env.PUBLIC_SITE_URL || 'http://localhost:3000'}/payment-success?session_id={CHECKOUT_SESSION_ID}`],
@@ -484,17 +782,35 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
 
     res.json({ success: true, orderRef, sessionId: session.id, checkoutUrl: session.url });
   } catch (error) {
+    if (reservedDocument) {
+      try {
+        await adminDb.runTransaction(async (transaction) => {
+          const document = await transaction.get(reservedDocument);
+          if (document.data()?.reservedByOrder === orderRef && !document.data()?.used) {
+            transaction.update(reservedDocument, { reservedByOrder: null, reservedUntil: null });
+          }
+        });
+      } catch (releaseError) {
+        console.error('Could not release voucher reservation:', releaseError.message);
+      }
+    }
     console.error('Error creating Stripe Checkout session:', error.message);
     res.status(500).json({ error: 'Could not start secure checkout.' });
   }
 });
 
-const sendOrderEmail = async ({ email, orderRef, accessToken, items, total }) => {
+const sendOrderEmail = async ({ email, orderRef, accessToken, items, total, vouchers = [] }) => {
+  if (localFirebase) {
+    await adminDb.collection('testMail').add({ email, orderRef, items, total,
+      retrievalUrl: `${process.env.PUBLIC_SITE_URL || 'http://localhost:3000'}/order/${orderRef}.${accessToken}`,
+      vouchers, createdAt: Timestamp.now() });
+    return true;
+  }
   const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
   if (!gmailApi || !sender) return false;
 
   const retrievalUrl = `${process.env.PUBLIC_SITE_URL || 'http://localhost:3000'}/order/${orderRef}.${accessToken}`;
-  const itemLines = items.map((item) => `- ${item.name}: £${Number(item.price).toFixed(2)}`).join('\n');
+  const itemLines = items.map((item) => `- ${item.name}: £${Number(item.price).toFixed(2)}${item.eventSchedule ? ` — ${eventScheduleLabel(item.eventSchedule)}` : ''}`).join('\n');
   const body = [
     'Thank you for your purchase from Forth Canoe Club.',
     '',
@@ -503,6 +819,12 @@ const sendOrderEmail = async ({ email, orderRef, accessToken, items, total }) =>
     '',
     itemLines,
     '',
+    ...vouchers.flatMap((voucher) => [
+      `${voucher.name}: ${voucher.code}`,
+      `Value: £${Number(voucher.value).toFixed(2)}. Valid until ${voucher.expiresAt.toDate().toLocaleDateString('en-GB')}.`,
+      'Valid on all items except membership. One use only; any unused value is forfeited.',
+      ''
+    ]),
     `Retrieve your receipt and subscription information: ${retrievalUrl}`,
     '',
     'For help, contact secretary@forthcanoeclub.co.uk.'

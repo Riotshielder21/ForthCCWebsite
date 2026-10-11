@@ -1,3 +1,5 @@
+import { defaultTileLayout, getSupporterTiles } from '../utils/pageTiles.js';
+
 const field = (label, value, multiline = false) => ({ label, value, multiline });
 
 export const PAGE_CONTENT = {
@@ -60,9 +62,9 @@ export const PAGE_CONTENT = {
     }
   },
   membership: {
-    label: 'Membership & Shop',
+    label: 'Membership & Events',
     fields: {
-      title: field('Page heading', 'Store & Subscriptions'),
+      title: field('Page heading', 'Membership and Events'),
       intro: field('Page introduction', 'The club year runs from 1 March. Membership and annual kit hire cover the current club year, while annual subscriptions are prorated to the next 1 March renewal.', true),
       memberEyebrow: field('Membership tile label', 'MEMBERSHIP'),
       memberTitle: field('Membership tile heading', 'Club Membership Via Website'),
@@ -113,7 +115,11 @@ export const PAGE_CONTENT = {
       touringTitle: field('Flat Water Touring tile heading', 'Flat Water Touring'),
       touringBody: field('Flat Water Touring tile text', 'Relaxed paddling on lochs and slow rivers. Explore the Scottish landscape by boat. Perfect for those wanting to escape without the competitive edge.', true),
       surfTitle: field('Surf Kayaking tile heading', 'Surf Kayaking'),
-      surfBody: field('Surf Kayaking tile text', 'Ride sea swells and enjoy coastal paddling. FCC has produced world-class surf kayakers including Neil Baxter. Feel the adrenaline and fresh sea air.', true)
+      surfBody: field('Surf Kayaking tile text', 'Ride sea swells and enjoy coastal paddling. FCC has produced world-class surf kayakers including Neil Baxter. Feel the adrenaline and fresh sea air.', true),
+      canoeTitle: field('Tile 8 title', ''),
+      canoeBody: field('Tile 8 description', '', true),
+      paddleboardingTitle: field('Tile 9 title', ''),
+      paddleboardingBody: field('Tile 9 description', '', true)
     }
   },
   volunteering: {
@@ -209,6 +215,11 @@ export const PAGE_CONTENT = {
 };
 
 export const getPageCopy = (pageId, saved = {}) => {
+  saved = saved || {};
   const fields = PAGE_CONTENT[pageId]?.fields || {};
-  return Object.fromEntries(Object.entries(fields).map(([key, definition]) => [key, saved[key] ?? definition.value]));
+  return {
+    ...Object.fromEntries(Object.entries(fields).map(([key, definition]) => [key, saved[key] ?? definition.value])),
+    ...(pageId === 'home' ? { supporterTiles: getSupporterTiles(saved.supporterTiles, saved.sponsors ?? fields.sponsors.value) } : {}),
+    ...(pageId !== 'membership' ? { tileLayout: saved.tileLayout ?? defaultTileLayout(pageId) } : {})
+  };
 };

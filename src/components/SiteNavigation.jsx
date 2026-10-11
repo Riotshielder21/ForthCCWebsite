@@ -2,20 +2,29 @@ import React, { useState } from 'react';
 import { ShoppingCart, Menu, X } from 'lucide-react';
 import fccLogoMark from '../assets/fcc-logo-mark.svg';
 
-const NAV_ITEMS = ['HOME', 'Membership', 'Beginners', 'Disciplines', 'Volunteering', 'About', 'Contact Us', 'Access Project'];
+const NAV_ITEMS = [
+  { id: 'home', label: 'HOME' },
+  { id: 'membership', label: 'Membership & Events' },
+  { id: 'beginners', label: 'Beginners' },
+  { id: 'disciplines', label: 'Disciplines' },
+  { id: 'volunteering', label: 'Volunteering' },
+  { id: 'about', label: 'About' },
+  { id: 'contact-us', label: 'Contact Us' },
+  { id: 'access-project', label: 'Access Project' }
+];
 
 export default function SiteNavigation({ currentPage, setCurrentPage, cartCount, onCartOpen }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleNav = (item) => {
-    setCurrentPage(item.toLowerCase().replace(/\s+/g, '-'));
+    setCurrentPage(item);
     setMobileOpen(false);
   };
 
   return (
     <nav className="SiteHeader">
       <div className="SiteHeaderInner">
-        <button className="BrandLockup" onClick={() => handleNav('HOME')} aria-label="Go to home page">
+        <button className="BrandLockup" onClick={() => handleNav('home')} aria-label="Go to home page">
           <div className="BrandMarkWrap">
             <img src={fccLogoMark} alt="FCC" className="BrandMark" />
           </div>
@@ -27,11 +36,11 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
         <div className="TopNav">
           {NAV_ITEMS.map((item) => (
             <button
-              key={item}
-              onClick={() => handleNav(item)}
-              className={`TopNavButton ${currentPage === item.toLowerCase().replace(/\s+/g, '-') ? 'TopNavButtonActive' : 'TopNavButtonIdle'}`}
+              key={item.id}
+              onClick={() => handleNav(item.id)}
+              className={`TopNavButton ${currentPage === item.id ? 'TopNavButtonActive' : 'TopNavButtonIdle'}`}
             >
-              {item}
+              {item.label}
             </button>
           ))}
           <button
@@ -74,11 +83,11 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
         <div className="MobileMenu">
           {NAV_ITEMS.map((item) => (
             <button
-              key={item}
-              onClick={() => handleNav(item)}
-              className={`TopNavButton ${currentPage === item.toLowerCase().replace(/\s+/g, '-') ? 'TopNavButtonActive' : 'TopNavButtonIdle'}`}
+              key={item.id}
+              onClick={() => handleNav(item.id)}
+              className={`TopNavButton ${currentPage === item.id ? 'TopNavButtonActive' : 'TopNavButtonIdle'}`}
             >
-              {item}
+              {item.label}
             </button>
           ))}
         </div>

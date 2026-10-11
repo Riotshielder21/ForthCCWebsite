@@ -103,7 +103,7 @@ export default function FormComponent({
   return (
     <div className="FormContainer">
           <div className="SpaceB8">
-        <h2 className="FormTitle">
+        <h2 className="form_heading_bold">
           {title}
         </h2>
         <p className="FormDescription">

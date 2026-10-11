@@ -16,7 +16,7 @@ export const VALID_PROMO_CODES = {
 };
 
 // Product categories
-export const CATEGORIES = ['ALL', 'MEMBERSHIP', 'SERVICES', 'SUBSCRIPTIONS', 'VOUCHERS'];
+export const CATEGORIES = ['ALL', 'MEMBERSHIP', 'SERVICES', 'SUBSCRIPTIONS', 'VOUCHERS', 'EVENTS'];
 
 // All available products
 export const PRODUCTS = [

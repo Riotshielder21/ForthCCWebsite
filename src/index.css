@@ -44,33 +44,37 @@
   }
 
   .SiteHeaderInner {
-    @apply max-w-7xl mx-auto px-6 h-16 flex justify-between items-center;
+    @apply max-w-7xl mx-auto px-4 sm:px-6 h-16 flex justify-between items-center gap-3;
   }
 
   .BrandLockup {
-    @apply flex items-center gap-4 cursor-pointer text-left;
+    @apply flex shrink-0 items-center gap-2 sm:gap-3 cursor-pointer text-left;
   }
 
   .BrandMarkWrap {
-    @apply bg-white p-1 rounded-lg;
+    @apply shrink-0 bg-white p-1 rounded-lg;
   }
 
   .BrandTitle {
-    @apply text-lg leading-tight uppercase;
+    @apply text-base sm:text-lg leading-tight uppercase whitespace-nowrap;
     font-family: var(--fcc-font-display);
     font-weight: 900;
     letter-spacing: var(--fcc-letter-tight);
   }
 
   .TopNav {
-    @apply hidden lg:flex items-center gap-6;
+    @apply hidden lg:flex items-center gap-1 xl:gap-3;
+  }
+
+  .TopNav .CartToggleButton {
+    @apply shrink-0 ml-2;
   }
 
   .TopNavButton {
-    @apply px-4 py-2 rounded-full transition-all;
+    @apply shrink-0 px-2 xl:px-3 py-2 rounded-full transition-all whitespace-nowrap;
     font-size: 11px;
     font-weight: 900;
-    letter-spacing: 0.18em;
+    letter-spacing: 0;
   }
 
   .TopNavButtonActive {
@@ -98,18 +102,18 @@
     @apply flex flex-col md:flex-row justify-between items-start md:items-center gap-8;
   }
 
-  .ContentPanel {
+  .main_tile {
     @apply p-6 md:p-8 rounded-2xl border;
     border-color: #f1f5f9;
     background: var(--fcc-color-surface);
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
   }
 
-  .ContentPanelMuted {
+  .main_tile_grey {
     background: var(--fcc-color-surface-subtle);
   }
 
-  .ContentTitle {
+  .tile_heading_bold_1, .tile_heading_bold_2, .tile_heading_bold_spacious, .tile_heading_bold_compact {
     @apply mb-3 uppercase;
     font-family: var(--fcc-font-display);
     font-size: clamp(1.5rem, 3vw, 2rem);
@@ -119,33 +123,37 @@
     color: var(--fcc-color-ink);
   }
 
-  .ContentBody {
+  .tile_heading_bold_2 { @apply mt-2; }
+  .tile_heading_bold_spacious { @apply mb-6; }
+  .tile_heading_bold_compact { @apply mb-1; }
+
+  .text_container {
     @apply text-sm font-medium leading-relaxed;
     color: var(--fcc-color-copy);
   }
 
-  .ContentBody a, .ContentBody button {
+  .text_container a, .text_container button {
     font-weight: 700;
     color: var(--fcc-color-ink);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
 
-  .ContentBody ul {
+  .text_container ul {
     @apply space-y-2 mt-3;
   }
 
-  .ContentBody li {
+  .text_container li {
     @apply flex gap-2.5;
   }
 
-  .ContentBody li::before {
+  .text_container li::before {
     content: '';
     @apply flex-shrink-0 w-1.5 h-1.5 rounded-full mt-1.5;
     background: var(--fcc-color-accent);
   }
 
-  .PageTitle {
+  .page_heading_bold_1, .page_heading_bold_2 {
     @apply mb-4 uppercase;
     font-family: var(--fcc-font-display);
     font-size: clamp(3rem, 7vw, 4.5rem);
@@ -154,6 +162,8 @@
     letter-spacing: var(--fcc-letter-tight);
     color: var(--fcc-color-ink);
   }
+
+  .page_heading_bold_2 { @apply mt-2; }
 
   .PageIntro {
     @apply max-w-lg font-medium;
@@ -181,21 +191,21 @@
     @apply text-slate-400 hover:text-slate-900;
   }
 
-  .ShopGrid {
+  .shop_catalogue_grid {
     @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8;
   }
 
-  .ShopItemCard {
+  .shop_product_tile {
     @apply bg-white border rounded-2xl p-7 flex flex-col h-full relative transition-all duration-500 hover:shadow-xl;
     border-color: #f1f5f9;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   }
 
-  .ShopItemCard:hover .IconActionButton:not(.IconActionButtonActive) {
+  .shop_product_tile:hover .IconActionButton:not(.IconActionButtonActive) {
     @apply scale-110;
   }
 
-  .ShopItemBadge {
+  .shop_product_badge {
     @apply absolute top-8 right-8 px-3 py-1 rounded-full uppercase;
     background: var(--fcc-color-accent-soft);
     color: #0284c7;
@@ -204,15 +214,15 @@
     letter-spacing: 0.18em;
   }
 
-  .ShopItemHeader {
+  .shop_product_header {
     @apply mb-6;
   }
 
-  .ShopItemImage {
+  .shop_product_image {
     @apply w-full aspect-[16/9] object-cover rounded-xl mb-6;
   }
 
-  .ShopItemEyebrow {
+  .tile_eyebrow {
     @apply uppercase;
     color: #0ea5e9;
     font-size: 10px;
@@ -220,7 +230,7 @@
     letter-spacing: 0.2em;
   }
 
-  .ShopItemTitle {
+  .product_heading_bold {
     @apply mt-2 uppercase leading-tight;
     color: var(--fcc-color-ink);
     font-family: var(--fcc-font-display);
@@ -229,16 +239,16 @@
     letter-spacing: var(--fcc-letter-tight);
   }
 
-  .ShopItemBody {
+  .shop_product_description {
     @apply text-sm font-medium mb-8 flex-grow;
     color: var(--fcc-color-copy);
   }
 
-  .ShopItemFooter {
+  .shop_product_footer {
     @apply flex justify-between items-end;
   }
 
-  .ShopItemPrice {
+  .shop_product_price {
     color: var(--fcc-color-ink);
     font-family: var(--fcc-font-display);
     font-size: 2.25rem;
@@ -246,7 +256,7 @@
     line-height: 1;
   }
 
-  .ShopItemMeta {
+  .shop_product_meta {
     @apply mt-1 uppercase;
     color: #94a3b8;
     font-size: 10px;
@@ -300,7 +310,7 @@
   }
 
   .FooterLinks {
-    @apply flex gap-8 uppercase;
+    @apply flex flex-wrap gap-x-8 gap-y-4 uppercase;
     font-size: 10px;
     font-weight: 900;
     letter-spacing: 0.18em;
@@ -514,45 +524,45 @@
 
   /* ─── Grid Layouts ──────────────────────────────── */
 
-  .CardGrid2 {
+  .tile_grid_two {
     @apply grid grid-cols-1 md:grid-cols-2 gap-6;
   }
 
-  .CardGrid2Lg {
+  .tile_grid_two_desktop {
     @apply grid grid-cols-1 lg:grid-cols-2 gap-8;
   }
 
-  .CardGrid3 {
+  .tile_grid_three {
     @apply grid grid-cols-1 md:grid-cols-3 gap-8;
   }
 
-  .DisciplineGrid {
+  .discipline_tile_grid {
     @apply grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6;
   }
 
-  .SponsorGrid {
+  .sponsor_grid {
     @apply grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3;
   }
 
   /* ─── Content Variants ──────────────────────────── */
 
-  .ContentBodyIntro {
+  .text_container_intro {
     @apply max-w-2xl;
   }
 
-  .ContentBodyNote {
+  .text_container_note {
     @apply text-xs;
   }
 
-  .ContentBodyGrow {
+  .text_container_grow {
     @apply flex-grow;
   }
 
-  .ContentPanelFlex {
+  .main_tile_flex {
     @apply flex flex-col;
   }
 
-  .ContentTitleLg {
+  .tile_heading_large_bold_1, .tile_heading_large_bold_2 {
     @apply mb-3 uppercase;
     font-family: var(--fcc-font-display);
     font-size: clamp(2rem, 4vw, 2.5rem);
@@ -561,6 +571,8 @@
     letter-spacing: var(--fcc-letter-tight);
     color: var(--fcc-color-ink);
   }
+
+  .tile_heading_large_bold_2 { @apply mt-2 mb-4; }
 
   .EyebrowRow {
     @apply flex items-center gap-2 mb-2;
@@ -573,20 +585,22 @@
     background: var(--fcc-color-ink);
   }
 
-  .MissionHeading {
+  .mission_heading_bold_1, .mission_heading_bold_2 {
     @apply font-black text-sm uppercase tracking-tight;
     color: var(--fcc-color-ink);
   }
 
+  .mission_heading_bold_2 { @apply mb-1; }
+
   /* ─── Sponsor Cards ─────────────────────────────── */
 
-  .SponsorCard {
+  .sponsor_subtile {
     @apply bg-white rounded-2xl border p-5 flex items-center justify-center text-center hover:shadow-md transition-all;
     border-color: #f1f5f9;
     min-height: 90px;
   }
 
-  .SponsorName {
+  .sponsor_name {
     @apply uppercase leading-tight;
     font-size: 10px;
     font-weight: 900;
@@ -847,7 +861,7 @@
     @apply flex items-center justify-between gap-4 mb-5;
   }
 
-  .AdminListHeader .ContentTitle {
+  .AdminListHeader .tile_heading_bold_1, .AdminListHeader .tile_heading_bold_2 {
     @apply mb-0;
   }
 
@@ -895,32 +909,90 @@
     @apply w-full max-h-48 object-cover rounded-xl;
   }
 
+  .AdminEventSchedule { min-width: 0; border: 0; margin: 16px 0; padding: 0; }
+  .AdminEventTimes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+
   .AdminFormBuilder {
     @apply max-w-3xl;
-  }
-
-  .AdminPageEditorGrid {
-    @apply grid grid-cols-1 xl:grid-cols-2 gap-6 items-start;
-  }
-
-  .AdminPageFields {
-    @apply space-y-4 max-h-[75vh] overflow-y-auto pr-2;
-  }
-
-  .AdminPageSelector {
-    @apply flex items-center gap-3 min-w-56;
-  }
-
-  .AdminPagePreview {
-    @apply w-full min-h-[680px] border rounded-xl bg-slate-50;
-    border-color: var(--fcc-color-border);
   }
 
   .AdminPreserveLines {
     white-space: pre-line;
   }
 
-  .FormTitle {
+  .AdminPreviewActions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 16px 0; }
+  .PageEditorToolbar {
+    position: sticky; top: 0; z-index: 40; display: flex; flex-wrap: wrap;
+    align-items: center; gap: 8px; padding: 12px 24px; background: #fff;
+    border-bottom: 2px solid #00a8e8; color: var(--fcc-color-ink); font-size: 13px;
+  }
+  .EditorModeSwitch { display: inline-flex; gap: 8px; align-items: center; padding: 8px; font-weight: 700; white-space: nowrap; }
+  .EditorModeSwitch input { width: 18px; height: 18px; accent-color: #008e63; }
+  .EditorCommand, .EditorIconButton {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 40px; padding: 8px 12px; border: 1px solid #ccd5dc; border-radius: 6px;
+    color: var(--fcc-color-ink); background: #fff; font-weight: 700;
+  }
+  .EditorIconButton { width: 40px; padding: 0; flex-shrink: 0; }
+  .EditorPublish { background: #087c56; border-color: #087c56; color: #fff; }
+  .EditorCommand:disabled, .EditorIconButton:disabled { opacity: .55; cursor: wait; }
+  .EditorStatus { flex-basis: 100%; overflow-wrap: anywhere; }
+  .EditorError { color: #b42318; }
+  .tile_group_single { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  .tile_editor { position: relative; min-width: 0; display: flex; flex-direction: column; }
+  .tile_editor > .main_tile, .tile_editor > .shop_product_tile, .tile_editor > .sponsor_subtile { flex: 1; height: auto; min-height: 0; min-width: 0; }
+  .tile_editor_active { outline: 1px dashed #81a3b6; border-radius: 8px; }
+  .tile_editor_controls {
+    position: relative; height: 42px; flex-shrink: 0; padding: 0 4px 0 12px;
+    display: flex; gap: 4px; align-items: center; z-index: 5;
+  }
+  .tile_editor_number { margin-right: auto; font-size: 12px; font-weight: 700; }
+  .tile_editor_controls .EditorIconButton { width: 36px; min-height: 36px; border-color: transparent; }
+  .TileRemove { color: #d92d20; }
+  .tile_editor_drag_handle { touch-action: none; cursor: grab; }
+  .tile_editor_dragging { z-index: 30; opacity: .65; }
+  .tile_group_drop_target { outline: 2px dashed #00a8e8; outline-offset: 4px; }
+  .text_inline_editor { outline: none; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
+  .text_inline_editor:hover { box-shadow: 0 1px 0 #00a8e8; }
+  .text_inline_editor:focus { background: #e8f6fc; box-shadow: 0 0 0 2px #00a8e8; border-radius: 2px; }
+  .text_inline_editor:empty::before { content: attr(data-placeholder); color: #60717b; font-size: 14px; font-weight: 400; text-transform: none; }
+  .page_edit_canvas [data-content-field="sponsors"] { display: block; }
+  .sponsor_editor_tile .sponsor_subtile { width: 100%; min-height: 90px; }
+  .sponsor_logo { display: block; width: 100%; height: 50px; object-fit: contain; }
+  .sponsor_grid_editing { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+  .sponsor_editor_tile .tile_editor_controls { padding: 0 2px 0 6px; gap: 0; }
+  .sponsor_editor_tile .tile_editor_number { font-size: 11px; }
+  .sponsor_editor_tile .tile_editor_controls .EditorIconButton { width: 30px; }
+  .sponsor_editor_tile .tile_editor_settings input[type="file"] { max-width: 100%; }
+  .page_edit_canvas a { cursor: text; }
+  .tile_editor_settings { position: relative; z-index: 10; padding: 16px; flex-shrink: 0; min-width: 0; border-bottom: 1px solid #ccd5dc; background: #f5fafc; }
+  .tile_editor_settings .FormLabel { font-size: 11px; letter-spacing: 0; overflow-wrap: anywhere; }
+  .tile_editor_settings .FormInput { min-width: 0; }
+  .tile_presentation_settings { display: grid; gap: 12px; }
+  .tile_style_options { margin: 0; padding: 0; border: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+  .tile_style_options legend { font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 8px; }
+  .tile_style_options label { display: inline-flex; align-items: center; gap: 6px; padding: 6px; border: 1px solid #ccd5dc; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .tile_style_options label:has(input:checked) { border-color: #008e63; }
+  .tile_style_options input { accent-color: #008e63; }
+  .tile_style_swatch { width: 18px; height: 18px; border: 1px solid #a6b5bf; border-radius: 3px; }
+  .tile_style_swatch-default { background: linear-gradient(90deg, var(--fcc-color-surface) 50%, var(--fcc-color-surface-subtle) 50%); }
+  .tile_style_swatch-white { background: var(--fcc-color-surface); }
+  .tile_style_swatch-grey { background: var(--fcc-color-surface-subtle); }
+  .main_tile_white > .main_tile, .main_tile_white > .shop_product_tile, .main_tile_white > .sponsor_subtile { background: var(--fcc-color-surface); }
+  .main_tile_grey_override > .main_tile, .main_tile_grey_override > .shop_product_tile, .main_tile_grey_override > .sponsor_subtile { background: var(--fcc-color-surface-subtle); }
+  .tile_add_area { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; padding: 12px; }
+  .tile_add_button { width: 64px; height: 56px; display: grid; place-items: center; border: 2px dashed #81a3b6; border-radius: 8px; color: #087c56; background: #fff; }
+  .tile_type_menu { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tile_type_menu button { display: flex; gap: 8px; align-items: center; padding: 12px; border: 1px solid #ccd5dc; border-radius: 6px; background: #fff; text-transform: capitalize; }
+  .main_tile_image { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; border-radius: 6px; }
+  .tile_image_placeholder { width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center; background: #eef4f7; color: #3e718c; border: 1px dashed #81a3b6; }
+  .EditablePage [class^="tile_heading_"], .EditablePage [class^="page_heading_"], .EditablePage .product_heading_bold { overflow-wrap: anywhere; }
+  @media (max-width: 600px) {
+    .PageEditorToolbar { padding: 8px; gap: 6px; }
+    .EditorCommand { font-size: 12px; padding: 8px; }
+  }
+
+  .form_heading_bold {
     @apply text-3xl font-black uppercase mb-2;
     color: var(--fcc-color-ink);
     letter-spacing: -0.05em;
@@ -1035,7 +1107,11 @@
   /* ─── Mobile Navigation ─────────────────────────── */
 
   .MobileNavControls {
-    @apply flex items-center gap-3 lg:hidden;
+    @apply flex items-center gap-1 sm:gap-3 lg:hidden;
+  }
+
+  .MobileNavControls .CartToggleButton {
+    @apply ml-0;
   }
 
   .MobileMenu {
@@ -1078,9 +1154,9 @@
 
   /* ─── Layout Modifiers ──────────────────────────── */
 
-  .CardSpanFull { @apply md:col-span-2; }
+  .tile_width_full { @apply md:col-span-2; }
 
-  .CardGrid3Lg {
+  .tile_grid_three_desktop {
     @apply grid grid-cols-1 lg:grid-cols-3 gap-8;
   }
 
@@ -1094,7 +1170,7 @@
 
   /* ─── Content Modifiers ─────────────────────────── */
 
-  .ContentBodySpaced {
+  .text_container_spaced {
     @apply space-y-3;
   }
 
@@ -1107,7 +1183,7 @@
     @apply underline;
   }
 
-  .ContentBodyStrong {
+  .text_container_strong {
     @apply font-bold;
     color: var(--fcc-color-copy);
   }
@@ -1124,6 +1200,42 @@
 
   .MobileMenu .TopNavButton {
     @apply text-left;
+  }
+
+  .AdminReports { max-width: 1280px; margin: 0 auto; padding: 24px; }
+  .ReportsHeader { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .ReportsTabs { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid #ccd5dc; margin-top: 24px; }
+  .ReportsTabs button { display: flex; align-items: center; gap: 8px; padding: 12px; border-bottom: 3px solid transparent; font-weight: 700; }
+  .ReportsTabs .is-selected { border-color: #008e63; }
+  .ReportsFilters, .ReportsExports { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 0; }
+  .ReportsFilters label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .ReportsSearch { flex: 1; min-width: 220px; }
+  .ReportsSearch input, .ReportsFilters select { border: 1px solid #ccd5dc; background: #fff; border-radius: 6px; padding: 10px; min-width: 0; }
+  .ReportsSearch input { width: 100%; }
+  .ReportsExports { border-top: 1px solid #e0e7ec; }
+  .ReportNotice { color: #52636d; font-size: 13px; line-height: 1.6; margin: 8px 0 16px; }
+  .ReportsTableWrap { overflow-x: auto; width: 100%; border-top: 1px solid #ccd5dc; }
+  .ReportsTable { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+  .ReportsTable th { padding: 12px; background: #edf4f7; font-size: 12px; }
+  .ReportsTable td { padding: 12px; border-bottom: 1px solid #e0e7ec; vertical-align: top; min-width: 100px; max-width: 240px; overflow-wrap: anywhere; }
+  .ReportsTable tbody tr:nth-child(even) { background: #fff; }
+  .ReportsRowActions { display: flex; gap: 6px; }
+  .ReportWarning { display: inline-block; color: #a24614; background: #fff3e6; padding: 3px 6px; font-size: 11px; margin-top: 6px; }
+  .ReportsModalBackdrop { position: fixed; inset: 0; z-index: 90; background: #0007; display: grid; place-items: center; padding: 16px; }
+  .ReportsDialog { background: #fff; border-radius: 8px; padding: 24px; width: min(640px, 100%); max-height: 90dvh; overflow-y: auto; }
+  .ReportRecordId, .ReportDetails dd { overflow-wrap: anywhere; }
+  .ReportDetails { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; font-size: 13px; margin: 20px 0; }
+  .ReportDetails dt { font-weight: 700; overflow-wrap: anywhere; }
+  .ReportItems { margin: 20px 0; font-size: 14px; }
+  .ReportDeleteWarning { display: flex; align-items: flex-start; gap: 10px; background: #fff3e6; border-left: 3px solid #c75b14; padding: 16px; font-size: 13px; }
+  .ReportDeleteWarning > svg { flex-shrink: 0; }
+  .ReportDeleteWarning label { display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; }
+  .ReportDeleteWarning input { margin-top: 3px; }
+  @media (max-width: 600px) {
+    .AdminReports { padding: 16px; }
+    .ReportsDialog { padding: 16px; }
+    .ReportsFilters label { flex-wrap: wrap; }
+    .ReportsSearch { min-width: 100%; }
   }
 
   /* ─── Mission Section Extras ────────────────────── */

@@ -1,5 +1,6 @@
 import React from 'react';
 import { CheckCircle2, ArrowLeft } from 'lucide-react';
+import { eventScheduleLabel } from '../utils/catalogue';
 
 export default function ReceiptPage({ cart, calculations, voucherCodes, activePromo, isAnnual, getPricedItemDetails, onClose, orderRef, emailSent }) {
   const orderDate = new Date().toLocaleDateString('en-GB', {
@@ -13,7 +14,7 @@ export default function ReceiptPage({ cart, calculations, voucherCodes, activePr
           {/* Header */}
           <div className="ReceiptHeader">
             <CheckCircle2 className="ReceiptCheckIcon" />
-            <h2 className="PageTitle">Order<br />Complete</h2>
+            <h2 className="page_heading_bold_1">Order<br />Complete</h2>
             <p className="PageIntroCentered">Thank you for your purchase. {emailSent ? 'A receipt and secure retrieval link have been emailed to you.' : 'Your receipt is saved, but email delivery is not configured yet.'}</p>
           </div>
 
@@ -49,6 +50,7 @@ export default function ReceiptPage({ cart, calculations, voucherCodes, activePr
                       <p className="ReceiptItemMeta">
                         {details.label}
                       </p>
+                      {item.eventSchedule && <p className="ReceiptItemMeta">{eventScheduleLabel(item.eventSchedule)}</p>}
                     </div>
                     <p className="ReceiptItemPrice">
                       £{details.displayPrice.toFixed(2)}

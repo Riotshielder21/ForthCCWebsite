@@ -19,6 +19,7 @@ build/
 .env
 .env.*
 !.env.example
+!.env.emulator.example
 serviceAccountKey.json
 serviceaccount.json
 google-service-account.json
@@ -52,6 +53,7 @@ yarn-error.log*
 firebase-debug.log
 firebase-debug.*.log
 .firebase/
+emulator-data/
 
 # Backups
 *.tar.gz
