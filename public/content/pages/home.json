@@ -1,0 +1,164 @@
+{
+  "welcomeTitle": "Welcome",
+  "welcome1": "Welcome to Forth Canoe Club. We're a local, open, active, and friendly kayaking / canoeing club, right in the heart of Edinburgh. We can't wait to have you join us on the water!",
+  "welcome2": "If you're a complete beginner or a bit scared to start, don't let that get in the way — that's what we're here for!",
+  "welcome3": "We also cater to experienced, adventurous paddlers, already involved in a specific discipline or keen to compete.",
+  "welcome3Link": "All are most welcome members.",
+  "welcome3After": ".",
+  "welcome4Before": "Total beginners might find the easiest way to get started is at one of our",
+  "welcome4Link": "open nights",
+  "welcome4After": "— usually held on the first Thursday of every month.",
+  "welcome5Before": "Any questions,",
+  "welcome5Link": "get in touch",
+  "welcome5After": ".",
+  "startTitle": "Where to Start",
+  "startIntro": "Here are a few useful details:",
+  "start1": "marks our clubhouse on Edinburgh's Union Canal, where many of our activities take place.",
+  "start1Link": "This map",
+  "start1Url": "https://maps.app.goo.gl/forthcanoeclub",
+  "start2Before": "Our",
+  "start2Link": "contact details are here",
+  "start2After": ".",
+  "start3": "Children need to be 8 or older to join a kids class or to paddle in a one-person boat. Children under 8 can come to an open night, paddling together with a supervising adult in an open canoe.",
+  "start4": "Young people under 16 must be supervised by an accompanying adult at club nights.",
+  "start5Before": "Information about our classes is on the",
+  "start5Link": "disciplines page",
+  "start5After": ".",
+  "charityEyebrow": "Registered Scottish Charity SC050275",
+  "missionTitle": "Our Mission",
+  "missionIntro": "Forth Canoe Club is a registered Scottish Charity (SC050275) and is set up for the advancement of public participation in sport. In particular we seek to do the following:",
+  "mission1": "Foster, develop and advance public participation in paddle sports",
+  "mission2Title": "Organise recreational and competitive activities",
+  "mission2": "For the practice of the sport of canoeing and kayaking. We support club members to gain awards, provide training and coaching, and provide opportunities for members to try different water sports activities.",
+  "mission3Title": "Increase participation for individuals with disabilities",
+  "mission3": "To strive to increase participation in sport and recreation for individuals with disabilities or those facing barriers to other sports, by creating supportive environments, providing necessary resources, and championing adaptive sports initiatives.",
+  "charityLink": "View on Charity Register",
+  "charityUrl": "https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC050275",
+  "quick1Eyebrow": "Get Started",
+  "quick1Title": "New to Paddling?",
+  "quick1Body": "Come along to one of our beginner sessions — no experience needed. We provide all kit and coaching. Your first 3 trial sessions are free.",
+  "quick1Action": "Beginners",
+  "quick2Eyebrow": "Membership",
+  "quick2Title": "Join the Club",
+  "quick2Body": "Membership runs from 1 March each year. Subscribe for coached sessions, kit hire and access to our full programme of events and trips.",
+  "quick2Action": "Membership",
+  "quick3Eyebrow": "Get Involved",
+  "quick3Title": "",
+  "quick3Body": "Our club runs on volunteers. Help with coaching, events, maintenance or administration and earn discount codes for your membership.",
+  "quick3Action": "Volunteering",
+  "supportersEyebrow": "Thank You",
+  "supportersTitle": "Massive Thank You to All Our Access Project & Club Supporters",
+  "sponsors": "Garfield Weston Foundation | https://garfieldweston.org/\nPaddle Scotland | https://www.paddlescotland.org.uk/\nSportScotland | https://sportscotland.org.uk/\nCity of Edinburgh Council | https://www.edinburgh.gov.uk/\nAndy Jackson Fund for Access | https://www.andyjacksonfund.org.uk/\nAnalog Devices | https://www.analog.com/\nBoroughmuir High School | https://boroughmuirhighschool.org/\nNational Lottery Community Fund | https://www.tnlcommunityfund.org.uk/\nScottish Building Society | https://www.scottishbs.co.uk/",
+  "locationEyebrow": "Find Us",
+  "locationTitle": "Harrison Park, Polwarth",
+  "locationBody": "Edinburgh EH11 1ED — On the Union Canal, just west of the city centre.",
+  "tileLayout": [
+    {
+      "id": "welcome",
+      "group": "intro",
+      "type": "existing",
+      "appearance": "default",
+      "width": "default"
+    },
+    {
+      "id": "start",
+      "group": "intro",
+      "type": "existing"
+    },
+    {
+      "id": "mission",
+      "group": "mission",
+      "type": "existing"
+    },
+    {
+      "id": "quick1",
+      "group": "quick",
+      "type": "existing"
+    },
+    {
+      "id": "quick2",
+      "group": "quick",
+      "type": "existing"
+    },
+    {
+      "id": "quick3",
+      "group": "quick",
+      "type": "existing"
+    },
+    {
+      "id": "supporters",
+      "group": "supporters",
+      "type": "existing"
+    },
+    {
+      "id": "location",
+      "group": "location",
+      "type": "existing"
+    }
+  ],
+  "supporterTiles": [
+    {
+      "id": "supporter-1",
+      "name": "Garfield Weston Foundation",
+      "url": "https://garfieldweston.org/",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "supporter-2",
+      "name": "Paddle Scotland",
+      "url": "https://www.paddlescotland.org.uk/",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "supporter-3",
+      "name": "SportScotland",
+      "url": "https://sportscotland.org.uk/",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "supporter-4",
+      "name": "City of Edinburgh Council",
+      "url": "https://www.edinburgh.gov.uk/",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "supporter-5",
+      "name": "Andy Jackson Fund for Access",
+      "url": "https://www.andyjacksonfund.org.uk/",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "supporter-6",
+      "name": "Analog Devices",
+      "url": "https://www.analog.com/",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "supporter-7",
+      "name": "Boroughmuir High School",
+      "url": "https://boroughmuirhighschool.org/",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "supporter-8",
+      "name": "National Lottery Community Fund",
+      "url": "https://www.tnlcommunityfund.org.uk/",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "supporter-9",
+      "name": "Scottish Building Society",
+      "url": "https://www.scottishbs.co.uk/",
+      "imageUrl": "",
+      "alt": ""
+    }
+  ]
+}
