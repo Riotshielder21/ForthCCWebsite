@@ -62,38 +62,106 @@ async def run_sync():
         finally:
             await browser.close()
 
+def parse_date(value):
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime((value or "").strip(), fmt)
+        except ValueError:
+            continue
+    return None
+
+def pick(row, *names):
+    for name in names:
+        value = (row.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+def match_key(email, dob, first, last):
+    return f"{email.lower()}|{dob}|{first.lower()} {last.lower()}".strip()
+
 async def sync_to_firestore(csv_path):
     print("Starting Firestore sync...")
-    app_id = "forth-canoe-default"
-    
-    with open(csv_path, mode='r', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        batch = db.batch()
-        count = 0
-        
-        for row in reader:
-            sca_id = row.get('Membership Number') or row.get('Member ID')
-            expiry = row.get('Expiry Date')
-            name = row.get('First Name', '') + " " + row.get('Last Name', '')
+    memberships = db.collection("memberships")
 
-            if sca_id:
-                doc_ref = db.collection("artifacts").document(app_id).collection("public").document("data").collection("members").document(str(sca_id))
-                
-                batch.set(doc_ref, {
-                    "scaId": sca_id,
-                    "name": name,
-                    "expiry": expiry,
-                    "lastUpdated": firestore.SERVER_TIMESTAMP,
-                    "status": "Active"
+    # JustGo only supplies simple identity fields. Match each row to an existing record (a member who
+    # joined on the website, or an earlier sync) so one person never has two records, and never overwrite
+    # anything the website holds (subscriptions, privileges, history, safety details).
+    by_number, by_person = {}, {}
+    for doc in memberships.stream():
+        data = doc.to_dict()
+        if data.get("scaNumber"):
+            by_number[str(data["scaNumber"])] = doc
+        by_person[match_key(data.get("email", ""), data.get("dob", ""), data.get("firstName", ""), data.get("lastName", ""))] = doc
+
+    with open(csv_path, mode='r', encoding='utf-8-sig') as f:
+        batch = db.batch()
+        writes = created = linked = 0
+
+        for row in csv.DictReader(f):
+            number = pick(row, 'Membership Number', 'Member ID')
+            if not number:
+                continue
+            first, last = pick(row, 'First Name'), pick(row, 'Last Name')
+            email = pick(row, 'Email').lower()
+            dob_date = parse_date(pick(row, 'Date of Birth', 'DOB'))
+            dob = dob_date.strftime("%Y-%m-%d") if dob_date else ""
+            valid_until = parse_date(pick(row, 'Expiry Date'))
+
+            existing = by_number.get(number) or by_person.get(match_key(email, dob, first, last))
+            current = existing.to_dict() if existing else {}
+            reference = existing.reference if existing else memberships.document(f"sca-{number}")
+
+            # JustGo is the authority on whether someone is a current member, and becomes their renewal method.
+            # The exception is a website purchase awaiting upload that runs later than JustGo's record: keep it
+            # active until the upload lands, but still link the JustGo number.
+            held_until = current.get("validUntil")
+            held_until = held_until.replace(tzinfo=None) if held_until else None
+            website_ahead = current.get("justgoSyncStatus") == "pending" and held_until and (not valid_until or held_until > valid_until)
+            fields = {
+                "scaNumber": number,
+                "lastJustgoSync": firestore.SERVER_TIMESTAMP,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            }
+            if not website_ahead:
+                fields.update({
+                    "validUntil": valid_until,
+                    "status": "active" if not valid_until or valid_until >= datetime.now() else "expired",
+                    "justgoSyncStatus": "synced",
+                    "renewalMethod": "justgo",
+                    "justgoUpload": {"status": "done", "needsStaff": False, "nextAttemptAt": None},
                 })
-                count += 1
-                
-                if count % 400 == 0:
-                    batch.commit()
-                    batch = db.batch()
+            # Identity and optional contact columns fill gaps only.
+            optional = {
+                "firstName": first, "lastName": last, "email": email, "dob": dob,
+                "phone": pick(row, 'Phone', 'Mobile'), "address": pick(row, 'Address', 'Address 1'), "postcode": pick(row, 'Postcode'),
+                "emergencyContact": {
+                    "name": pick(row, 'Emergency Contact Name', 'Emergency Contact'),
+                    "phone": pick(row, 'Emergency Contact Phone', 'Emergency Contact Number'),
+                },
+            }
+            for key, value in optional.items():
+                if key == "emergencyContact":
+                    if (value["name"] or value["phone"]) and not current.get("emergencyContact"):
+                        fields[key] = value
+                elif value and not current.get(key):
+                    fields[key] = value
+            if not existing:
+                fields["source"] = "justgo"
+                fields["createdAt"] = firestore.SERVER_TIMESTAMP
+            name_for_search = f"{fields.get('firstName') or current.get('firstName', '')} {fields.get('lastName') or current.get('lastName', '')}"
+            fields["searchName"] = " ".join(name_for_search.lower().split())
+
+            batch.set(reference, fields, merge=True)
+            created += 0 if existing else 1
+            linked += 1 if existing else 0
+            writes += 1
+            if writes % 400 == 0:
+                batch.commit()
+                batch = db.batch()
 
         batch.commit()
-        print(f"Sync complete. {count} members updated.")
+        print(f"Sync complete. {writes} members updated ({created} new, {linked} matched to existing records).")
 
 if __name__ == "__main__":
     asyncio.run(run_sync())

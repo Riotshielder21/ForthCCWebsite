@@ -36,9 +36,9 @@ try {
     const host = runtimeEnv.VITE_FIREBASE_EMULATOR_HOST || '127.0.0.1';
     if (!['127.0.0.1', 'localhost'].includes(host)) throw new Error('Firebase emulators must use a loopback host.');
     if (!auth.emulatorConfig) {
-      connectAuthEmulator(auth, `http://${host}:9099`, { disableWarnings: true });
-      connectFirestoreEmulator(db, host, 8080);
-      connectStorageEmulator(storage, host, 9199);
+      connectAuthEmulator(auth, `http://${host}:${Number(runtimeEnv.VITE_FIREBASE_AUTH_EMULATOR_PORT) || 9099}`, { disableWarnings: true });
+      connectFirestoreEmulator(db, host, Number(runtimeEnv.VITE_FIREBASE_FIRESTORE_EMULATOR_PORT) || 8080);
+      connectStorageEmulator(storage, host, Number(runtimeEnv.VITE_FIREBASE_STORAGE_EMULATOR_PORT) || 9199);
     }
   }
   if (!localEmulators && typeof window !== 'undefined') {
@@ -105,31 +105,6 @@ export const signInWithWorkspace = async () => {
   }
 
   return result.user;
-};
-
-// Member Verification Functions
-export const verifyMember = async (name) => {
-  try {
-    if (!db) {
-      return { verified: false, error: 'database_unavailable' };
-    }
-
-    const membersRef = collection(db, 'artifacts', appId, 'public', 'data', 'members');
-    const q = query(membersRef, where('name', '>=', name), where('name', '<=', name + '\uf8ff'));
-    const querySnapshot = await getDocs(q);
-
-    // Look for exact name match (case-insensitive)
-    const member = querySnapshot.docs.find(doc => {
-      const memberName = doc.data().name?.toLowerCase().trim();
-      const searchName = name.toLowerCase().trim();
-      return memberName === searchName;
-    });
-
-    return member ? { verified: true, memberData: member.data() } : { verified: false };
-  } catch (error) {
-    console.error('Error verifying member:', error);
-    return { verified: false, error: error.message };
-  }
 };
 
 export const generateDiscountCode = () => {

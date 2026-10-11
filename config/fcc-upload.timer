@@ -1,0 +1,10 @@
+[Unit]
+Description=FCC JustGo Upload Timer
+Requires=fcc-upload.service
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target

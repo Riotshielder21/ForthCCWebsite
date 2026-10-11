@@ -22,9 +22,9 @@ for (const product of PRODUCTS) {
   const { id, ...fields } = product;
   batch.set(db.collection('products').doc(id), fields);
 }
-const members = db.collection('artifacts').doc('forth-canoe-default').collection('public').doc('data').collection('members');
-batch.set(members.doc('test-current'), { name: 'Test Current Member', email: 'member@example.com', scaId: 'TEST-1', status: 'Active', expiry: '01/03/2099', lastUpdated: Timestamp.now() });
-batch.set(members.doc('test-expired'), { name: 'Test Expired Member', scaId: 'TEST-2', status: 'Active', expiry: '01/03/2020', lastUpdated: Timestamp.now() });
+const inYear = (year) => Timestamp.fromDate(new Date(`${year}-03-01T00:00:00Z`));
+batch.set(db.collection('memberships').doc('test-current'), { firstName: 'Test', lastName: 'Current', searchName: 'test current', email: 'member@example.com', scaNumber: 'TEST-1', status: 'active', validUntil: inYear(2099), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: Timestamp.now(), updatedAt: Timestamp.now() });
+batch.set(db.collection('memberships').doc('test-expired'), { firstName: 'Test', lastName: 'Expired', searchName: 'test expired', scaNumber: 'TEST-2', status: 'active', validUntil: inYear(2020), source: 'justgo', justgoSyncStatus: 'synced', updatedAt: Timestamp.now() });
 for (const [id, fields] of Object.entries({
   'TEST-MEMBERSHIP': { email: 'member@example.com', status: 'paid', total: '30', items: [{ name: 'Adult membership', category: 'MEMBERSHIP', type: 'annual-oneoff', price: 30 }] },
   'TEST-SUBSCRIPTION': { email: 'subscriber@example.com', status: 'paid', total: '25', stripeSubscriptionId: 'sub_local_test', items: [{ name: 'Monthly sessions', category: 'SUBSCRIPTIONS', type: 'subscription', price: 25 }] },

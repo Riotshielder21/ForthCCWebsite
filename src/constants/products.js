@@ -3,18 +3,6 @@ export const DISCOUNTS = {
   ANNUAL: 0.20
 };
 
-// Promo codes with their benefits
-// discountType: 'flat' = £ amount off monthly price, 'multiplier' = percentage off (0.25 = 25%)
-// When a flat discount is applied, annual = discounted monthly × 12 (no annual discount stacking)
-// a seperate special category of codes that apply a flat discount that also allows annual
-//  discount stacking is availible as a "special" discount
-export const VALID_PROMO_CODES = {
-  'VOLUNTEER20': { label: 'Volunteer 20+ Hours', discountType: 'flat', discountValue: 5.00 },
-  'VOLUNTEER40': { label: 'Volunteer 40+ Hours', discountType: 'flat', discountValue: 10.00 },
-  'SaverSupreme': { label: 'Saver Supreme', discountType: 'multiplier', discountValue: 0.20 },
-  'SpecialFlat5': { label: 'Special £5 Off', discountType: 'flat', discountValue: 5.00, allowsAnnualStacking: true }
-};
-
 // Product categories
 export const CATEGORIES = ['ALL', 'MEMBERSHIP', 'SERVICES', 'SUBSCRIPTIONS', 'VOUCHERS', 'EVENTS'];
 

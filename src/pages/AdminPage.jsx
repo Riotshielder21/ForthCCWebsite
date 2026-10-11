@@ -3,6 +3,7 @@ import { ImagePlus, LogOut, Save, Trash2, FileText } from 'lucide-react';
 import { removeProduct, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
+import DiscountCodesPanel from '../components/DiscountCodesPanel';
 import { apiUrl } from '../utils/api';
 import { validateEventSchedule, eventScheduleLabel } from '../utils/catalogue';
 
@@ -207,6 +208,7 @@ export default function AdminPage({ products, onNavigate }) {
             <p className="text_container text_container_note"><ImagePlus className="IconSm" /> PNG, JPG, or WebP up to 5 MB.</p>
           </form>
         </div>
+        <DiscountCodesPanel adminUser={adminUser} products={products} />
         <form className="main_tile AdminFormBuilder SpaceT6" onSubmit={handleCreateForm}>
           <div className="AdminListHeader"><div><span className="tile_eyebrow">Google Workspace</span><h3 className="tile_heading_bold_2">Create a form</h3></div></div>
           <p className="text_container SpaceB4">Creates one response spreadsheet in the current club-year folder on the Shared Drive.</p>

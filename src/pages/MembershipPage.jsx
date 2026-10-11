@@ -1,21 +1,39 @@
 import React, { useState } from 'react';
-import { ShoppingCart, CheckCircle2, ExternalLink, ChevronDown } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, ExternalLink, ChevronDown, Pencil } from 'lucide-react';
 import { DISCOUNTS, CATEGORIES } from '../constants/products';
-import { usePageContent } from '../utils/PageContentContext';
+import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { eventScheduleLabel } from '../utils/catalogue';
 
-export default function MembershipPage({ activeCategory, setActiveCategory, cart, addToCart, getItemDisplayPrice, getKitHireMonthly, products }) {
+export default function MembershipPage({ activeCategory, setActiveCategory, cart, addToCart, removeOneFromCart, getItemDisplayPrice, getKitHireMonthly, products, onNavigate }) {
   const copy = usePageContent('membership');
+  const { adminUser } = usePageEditor();
   const [selectedTier, setSelectedTier] = useState('adult');
   const [tierDropdownOpen, setTierDropdownOpen] = useState(false);
 
   const membershipTiers = products.filter((product) => product.category === 'MEMBERSHIP' && product.membershipTier);
   const nonMembershipProducts = products.filter((product) => product.category !== 'MEMBERSHIP' || !product.membershipTier);
   const selectedMembership = membershipTiers.find(t => t.membershipTier === selectedTier);
-  const membershipInCart = membershipTiers.some(t => cart.find(i => i.id === t.id));
+  const countInCart = (id) => cart.filter((line) => line.id === id).length;
+  const purchaseControl = (product, onAdd) => {
+    const count = countInCart(product.id);
+    if (!count) {
+      return (
+        <button onClick={onAdd} className="IconActionButton" aria-label={`Add ${product.name} to basket`} title="Add to basket">
+          <ShoppingCart className="IconXl" />
+        </button>
+      );
+    }
+    return (
+      <div className="QuantityControl" role="group" aria-label={`${product.name}: ${count} in basket`}>
+        <button onClick={onAdd} aria-label={`Add another ${product.name}`} title="Add another"><Plus className="IconLg" /></button>
+        <span aria-hidden="true">{count}</span>
+        <button onClick={() => removeOneFromCart(product.id)} aria-label={`Remove one ${product.name}`} title="Remove one"><Minus className="IconLg" /></button>
+      </div>
+    );
+  };
 
   const handleAddMembership = () => {
-    if (!selectedMembership || membershipInCart) return;
+    if (!selectedMembership) return;
     addToCart(selectedMembership);
   };
 
@@ -30,6 +48,11 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
           <div>
             <h2 className="page_heading_bold_1">Membership and Events</h2>
             <p className="PageIntro">{copy.intro}</p>
+            {adminUser && (
+              <button type="button" className="PrimaryActionButtonCompact" onClick={() => { onNavigate?.('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+                <Pencil className="IconSm" /> Edit shop
+              </button>
+            )}
           </div>
           <div className="CategoryBar">
             {CATEGORIES.map((cat) => (
@@ -105,14 +128,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                   <div className="shop_product_price">£{selectedMembership?.basePrice.toFixed(2)}</div>
                   <div className="shop_product_meta">{copy.clubYearPriceLabel}</div>
                 </div>
-                <button
-                  onClick={handleAddMembership}
-                  className={`${membershipInCart ? 'IconActionButton IconActionButtonActive' : 'IconActionButton'}`}
-                  aria-label={membershipInCart ? `${selectedMembership.name} is in basket` : `Add ${selectedMembership.name} to basket`}
-                  title={membershipInCart ? 'Already in basket' : 'Add to basket'}
-                >
-                  {membershipInCart ? <CheckCircle2 className="IconXl" /> : <ShoppingCart className="IconXl" />}
-                </button>
+                {purchaseControl(selectedMembership, handleAddMembership)}
               </div>
             </div>
           )}
@@ -162,16 +178,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                   <a href={product.externalLink} target="_blank" rel="noreferrer" className="PrimaryActionButton">
                     {copy.externalAction} <ExternalLink className="IconSm" />
                   </a>
-                ) : (
-                  <button
-                    onClick={() => addToCart(product)}
-                    className={`${cart.find((i) => i.id === product.id) ? 'IconActionButton IconActionButtonActive' : 'IconActionButton'}`}
-                    aria-label={cart.find((i) => i.id === product.id) ? `${product.name} is in basket` : `Add ${product.name} to basket`}
-                    title={cart.find((i) => i.id === product.id) ? 'Already in basket' : 'Add to basket'}
-                  >
-                    {cart.find((i) => i.id === product.id) ? <CheckCircle2 className="IconXl" /> : <ShoppingCart className="IconXl" />}
-                  </button>
-                )}
+                ) : purchaseControl(product, () => addToCart(product))}
               </div>
             </div>
           ))}

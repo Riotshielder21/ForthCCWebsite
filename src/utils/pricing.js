@@ -8,7 +8,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
   const monthsRemaining = Math.max(1, (nextClubYearStart.getFullYear() - now.getFullYear()) * 12 + 2 - now.getMonth());
   const clubYear = { now, nextClubYearStart, monthsRemaining };
   const items = cart.map((item) => {
-    const promoEligible = item.category !== 'MEMBERSHIP';
+    const promoEligible = promo?.productIds?.length ? promo.productIds.includes(item.id) : item.category !== 'MEMBERSHIP';
     const flat = promoEligible && promo?.discountType === 'flat' && item.type === 'subscription';
     const monthly = flat ? Math.max(0, item.basePrice - promo.discountValue) : item.basePrice;
     const annualRate = item.hasAnnualDiscount && (!flat || promo.allowsAnnualStacking) ? 1 - DISCOUNTS.ANNUAL : 1;
