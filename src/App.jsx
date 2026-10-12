@@ -63,6 +63,7 @@ export default function App() {
   const [people, setPeople] = useState(initialDraft?.people || []);
   const [checkoutErrors, setCheckoutErrors] = useState([]);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
 
   const [toast, setToast] = useState(null);
   const showToast = (message) => {
@@ -110,16 +111,17 @@ export default function App() {
 
   // The draft lives in this tab's sessionStorage only, so a customer can return to add a membership.
   useEffect(() => {
-    if (currentPage === 'payment-success') {
+    if (currentPage === 'payment-success' && paymentConfirmed) {
       clearDraft();
       setCart([]);
       setPeople([]);
       setCheckoutEmail('');
+      setPaymentConfirmed(false);
       return;
     }
     if (!cart.length && !people.length && !checkoutEmail) clearDraft();
     else saveDraft({ email: checkoutEmail, people, cart: cart.map(({ id, lineId }) => ({ id, lineId })), isAnnual });
-  }, [currentPage, cart, people, checkoutEmail, isAnnual]);
+  }, [currentPage, paymentConfirmed, cart, people, checkoutEmail, isAnnual]);
 
   const handleStartCheckout = () => {
     setCheckoutError('');
@@ -252,7 +254,10 @@ export default function App() {
 
   const renderPage = () => {
     if (currentPage === 'order-lookup') return <OrderLookupPage />;
-    if (currentPage === 'payment-success') return <PaymentSuccessPage />;
+    if (currentPage === 'payment-success') return <PaymentSuccessPage
+      onPaymentConfirmed={setPaymentConfirmed}
+      onReturnToBasket={() => { setCurrentPage('membership'); setIsCartOpen(true); }}
+    />;
     if (currentPage === 'checkout') {
       return cart.length ? (
         <CheckoutPage

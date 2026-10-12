@@ -84,10 +84,14 @@ Use a different `TEST_API_PORT` if you change `PORT`. The test adds records with
 For a real sandbox checkout, run the local stack above and forward webhooks:
 
 ```bash
-stripe listen --forward-to localhost:3002/api/stripe/webhook
+stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired,payment_intent.payment_failed --forward-to localhost:3002/api/stripe/webhook
 ```
 
-In the API terminal, set `STRIPE_SECRET_KEY` to a test key and `STRIPE_WEBHOOK_SECRET` to the CLI's signing secret, then restart the API. Use card `4242 4242 4242 4242`, a future expiry and any CVC. Cancel sandbox subscriptions after testing. Do not send secrets through chat or commit them.
+For a Dashboard webhook endpoint, subscribe to those same five events. The `reporting.*` events are unrelated to checkout and are not needed. One endpoint handles all of these events; its signing secret is specific to that endpoint and mode, so use the test secret for sandbox and the live secret only for a live deployment.
+
+`PUBLIC_SITE_URL` is the canonical frontend origin. If the same API serves other approved frontend domains, list their origins in `PUBLIC_SITE_URLS` separated by commas. Stripe returns and receipt links use the checkout origin only when it is on this allowlist; other origins fall back to the canonical site.
+
+In the API terminal, set `STRIPE_SECRET_KEY` to a test key and `STRIPE_WEBHOOK_SECRET` to the CLI's signing secret, then restart the API. Use card `4242 4242 4242 4242`, a future expiry and any CVC. Failed attempts remain retryable; expired sessions retain their saved order contents, and the basket is cleared only after the webhook confirms payment. Cancel sandbox subscriptions after testing. Do not send secrets through chat or commit them.
 
 ## Basic Debugging
 
@@ -96,7 +100,7 @@ In the API terminal, set `STRIPE_SECRET_KEY` to a test key and `STRIPE_WEBHOOK_S
 - API returns HTML: check `VITE_API_BASE_URL` and restart Vite.
 - Admin denied: reseed the local admin, then sign out/in. Real accounts need the Firebase `admin: true` claim.
 - Image upload fails: check Storage emulator/rules and port `9199`.
-- Stripe subscribers unavailable: reporting needs a server-only `STRIPE_REPORT_SECRET_KEY`; local Stripe is not emulated. Use test mode only.
+- Stripe subscribers unavailable: reporting and live subscription validation need a server-only `STRIPE_REPORT_SECRET_KEY` with read access in the matching Stripe mode; local Stripe is not emulated. Use test mode only.
 - Port occupied: choose another frontend port and update `PUBLIC_SITE_URL`.
 
 For configured cloud services instead of emulators, copy [.env.example](.env.example) to an ignored `.env`, use a test project, and set `VITE_API_BASE_URL` to your API URL. See [DEPLOYMENT.md](DEPLOYMENT.md) for releases.

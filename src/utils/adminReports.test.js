@@ -52,6 +52,13 @@ test('one membership report covers JustGo and website records', () => {
   const synced = membershipReport('sca-1', { scaNumber: '1', firstName: 'Jo', lastName: 'Sync', source: 'justgo', status: 'active', validUntil: '2099-03-01' });
   assert.equal(synced.name, 'Jo Sync');
   assert.equal(synced.status, 'Current');
+  const awaitingRenewal = membershipReport('sca-2', {
+    scaNumber: '2', firstName: 'Sam', lastName: 'Renewal', status: 'active', validUntil: '2099-03-01',
+    renewalMethod: 'justgo', justgoSyncStatus: 'synced', lastJustgoSync: '2026-02-28T12:00:00.000Z'
+  }, new Date('2026-10-10T12:00:00Z'));
+  assert.equal(awaitingRenewal.status, 'Awaiting renewal');
+  assert.equal(awaitingRenewal.lastJustgoSync, '2026-02-28T12:00:00.000Z');
+  assert.equal(awaitingRenewal.renewalMethod, 'justgo');
   const legacy = membershipReport('L1', { scaId: 'L1', name: 'Legacy Name', expiry: '01/03/2020', status: 'Active' });
   assert.equal(legacy.status, 'Expired');
   assert.equal(legacy.scaId, 'L1');
