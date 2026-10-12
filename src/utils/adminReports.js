@@ -94,7 +94,7 @@ export const membershipReport = (id, fields, now = new Date()) => {
     status: membershipActivity({ status: fields.status, validUntil: expiry, renewalMethod: fields.renewalMethod, justgoSyncStatus: fields.justgoSyncStatus, lastJustgoSync: reportDate(fields.lastJustgoSync) }, now) === 'awaiting-renewal'
       ? 'Awaiting renewal'
       : memberState({ status: fields.status, expiry: fields.validUntil || fields.expiry }, now),
-    expiry, lastUpdated: reportDate(fields.updatedAt || fields.lastUpdated), source: fields.source || (fields.scaId ? 'justgo' : ''),
+    expiry, lastUpdated: reportDate(fields.updatedAt || fields.lastUpdated), lastJustgoSync: reportDate(fields.lastJustgoSync), source: fields.source || (fields.scaId ? 'justgo' : ''),
     justgoSync: fields.justgoSyncStatus || '', scaGiven: fields.scaNumber || '', renewalMethod: fields.renewalMethod || '',
     justgo: justgoState(fields),
     uploadAttempts: upload.attempts || 0, uploadFailures: upload.failures || 0, uploadError: upload.lastError || '',

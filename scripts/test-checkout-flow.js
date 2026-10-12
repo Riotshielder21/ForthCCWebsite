@@ -58,15 +58,19 @@ const build = (productIds, fillers) => {
   const people = assignLines([], lines, makeId).map((person, index) => ({ ...person, ...(fillers[index] || {}) }));
   return { lines, people };
 };
-const checkout = (emailAddress, { lines, people }, extra = {}) => call('POST', '/api/checkout-session', { body: {
-  email: emailAddress, items: lines.map(({ id, lineId }) => ({ id, lineId })), people, billingMode: 'annual', ...extra } });
-const pay = async (orderRef) => {
-  const order = (await db.collection('orders').doc(orderRef).get()).data();
-  const payload = JSON.stringify({ type: 'checkout.session.completed', data: { object: {
-    id: order.stripeSessionId, payment_status: 'paid', amount_total: Math.round(Number(order.total) * 100), metadata: { order_ref: orderRef }, payment_intent: `pi_${orderRef}` } } });
+const checkout = (emailAddress, { lines, people }, extra = {}, headers = {}) => call('POST', '/api/checkout-session', { body: {
+  email: emailAddress, items: lines.map(({ id, lineId }) => ({ id, lineId })), people, billingMode: 'annual', ...extra }, headers });
+const sendWebhook = async (event) => {
+  const payload = JSON.stringify(event);
   const timestamp = Math.floor(Date.now() / 1000);
   const signature = `t=${timestamp},v1=${createHmac('sha256', webhookSecret).update(`${timestamp}.${payload}`).digest('hex')}`;
   return call('POST', '/api/stripe/webhook', { raw: payload, headers: { 'stripe-signature': signature } });
+};
+const pay = async (orderRef) => {
+  const order = (await db.collection('orders').doc(orderRef).get()).data();
+  return sendWebhook({ type: 'checkout.session.completed', data: { object: {
+    id: order.stripeSessionId, payment_status: 'paid', amount_total: Math.round(Number(order.total) * 100),
+    metadata: { order_ref: orderRef }, payment_intent: `pi_${orderRef}`, subscription: order.stripeSubscriptionId || '' } } });
 };
 const buy = async (emailAddress, basket, extra) => {
   const result = await checkout(emailAddress, basket, extra);
@@ -91,6 +95,45 @@ console.log(`Checkout flow test, run ${run}`);
 
 await test('admin endpoints reject anonymous requests', async () => {
   for (const path of ['/api/admin/reports?kind=orders', '/api/admin/customer?q=a@b.co', '/api/admin/discount-codes']) assert.equal((await call('GET', path)).status, 401);
+});
+
+await test('Stripe returns to an approved checkout origin and rejects unapproved origins', async () => {
+  const basket = build(['vouchers'], []);
+  const approvedEmail = email('origin-approved');
+  const approved = await checkout(approvedEmail, basket, {}, { Origin: 'https://staging.example.test' });
+  assert.equal(approved.status, 200);
+  assert.equal((await db.collection('orders').doc(approved.json.orderRef).get()).data().siteUrl, 'https://staging.example.test');
+  const unapprovedEmail = email('origin-unapproved');
+  const unapproved = await checkout(unapprovedEmail, basket, {}, { Origin: 'https://attacker.example.test' });
+  assert.equal(unapproved.status, 200);
+  assert.equal((await db.collection('orders').doc(unapproved.json.orderRef).get()).data().siteUrl, 'https://fccwebsite-23cfc.web.app');
+});
+
+await test('paid checkout returns a private itemized receipt shared with the email copy', async () => {
+  const receiptEmail = email('receipt');
+  const details = adultDetails({ firstName: 'Receipt', lastName: 'Member', email: receiptEmail });
+  const started = await checkout(receiptEmail, build(['membership-adult', 'keyhire'], [details]));
+  assert.equal(started.status, 200);
+  const checkoutUrl = new URL(started.json.checkoutUrl);
+  const successUrl = new URL(checkoutUrl.searchParams.get('return_url'));
+  const receiptToken = successUrl.searchParams.get('receipt_token');
+  assert.match(receiptToken, /^[a-f0-9]{64}$/);
+  const orderRef = started.json.orderRef;
+  const order = (await db.collection('orders').doc(orderRef).get()).data();
+  const receiptPath = `/api/checkout-receipt?session_id=${order.stripeSessionId}&receipt_token=${receiptToken}`;
+  assert.equal((await call('GET', receiptPath)).status, 409, 'receipt details are hidden until paid');
+  assert.equal((await pay(orderRef)).status, 200);
+  const response = await call('GET', receiptPath);
+  assert.equal(response.status, 200);
+  assert.equal(response.json.receipt.payerEmail, receiptEmail);
+  assert.deepEqual(response.json.receipt.people.map((person) => [person.name, person.email]), [['Receipt Member', receiptEmail]]);
+  assert.equal(response.json.receipt.people[0].memberships[0].name, 'CLUB MEMBERSHIP — ADULT');
+  assert.equal(response.json.receipt.people[0].addOns[0].name, 'Boathouse Access');
+  assert.match(response.json.copy, /Membership:/);
+  assert.match(response.json.copy, /Add-ons:/);
+  const mail = (await db.collection('testMail').where('orderRef', '==', orderRef).get()).docs[0].data();
+  assert.ok(mail.body.startsWith(response.json.copy), 'email and website use the same receipt copy');
+  assert.equal((await call('GET', `${receiptPath.slice(0, receiptPath.indexOf('&receipt_token='))}&receipt_token=${'0'.repeat(64)}`)).status, 404);
 });
 
 await test('voucher-only purchase needs no membership and creates a voucher on the customer record', async () => {
@@ -249,6 +292,56 @@ await test('an active member cannot buy a second membership, and JustGo members 
   assert.equal(viaJustgo.json.code, 'renews_via_justgo');
   assert.match(viaJustgo.json.error, /JustGo/);
   assert.equal((await checkout(email('synced'), build(['keyhire'], [synced]))).status, 200, 'add-ons are still allowed');
+});
+
+await test('Stripe subscription status is checked before treating a member as active', async () => {
+  const coachingEmail = email('coaching-cancelled');
+  const coachingDetails = adultDetails({ firstName: 'Coaching', lastName: 'Cancelled', email: coachingEmail });
+  await buy(coachingEmail, build(['membership-adult', 'blue-sub'], [coachingDetails]), { billingMode: 'monthly' });
+  const [coachingMember] = await membershipsFor(coachingEmail);
+  assert.equal(coachingMember.stripeMembershipSubscriptionId, '', 'a coaching subscription is not the member subscription');
+  assert.equal((await checkout(coachingEmail, build(['keyhire'], [coachingDetails]))).status, 200,
+    'a canceled coaching plan does not invalidate the separately paid membership');
+
+  const activeEmail = email('stripe-active');
+  const activeDetails = adultDetails({ firstName: 'Stripe', lastName: 'Active', email: activeEmail });
+  await db.collection('memberships').doc(`stripe-active-${run}`).set({
+    firstName: activeDetails.firstName, lastName: activeDetails.lastName, dob: activeDetails.dob, email: activeEmail,
+    status: 'active', validUntil: new Date('2099-03-01T00:00:00Z'), source: 'website', renewalMethod: 'website',
+    stripeMembershipSubscriptionId: 'sub_e2e_active', stripeMembershipMode: 'test'
+  });
+  const duplicate = await checkout(activeEmail, build(['membership-adult'], [activeDetails]));
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.json.code, 'membership_active');
+
+  const cancelledEmail = email('stripe-cancelled');
+  const cancelledDetails = adultDetails({ firstName: 'Stripe', lastName: 'Cancelled', email: cancelledEmail });
+  const cancelledOrder = `legacy-stripe-order-${run}`;
+  await db.collection('orders').doc(cancelledOrder).set({ stripeSubscriptionId: 'sub_e2e_cancelled', stripeMode: 'test',
+    items: [{ category: 'MEMBERSHIP', type: 'subscription' }] });
+  await db.collection('memberships').doc(`stripe-cancelled-${run}`).set({
+    firstName: cancelledDetails.firstName, lastName: cancelledDetails.lastName, dob: cancelledDetails.dob, email: cancelledEmail,
+    status: 'active', validUntil: new Date('2099-03-01T00:00:00Z'), source: 'website', renewalMethod: 'website',
+    history: [{ orderRef: cancelledOrder }]
+  });
+  const addOn = await checkout(cancelledEmail, build(['keyhire'], [cancelledDetails]));
+  assert.equal(addOn.status, 409);
+  assert.equal(addOn.json.code, 'membership_required');
+  assert.equal((await db.collection('memberships').doc(`stripe-cancelled-${run}`).get()).data().stripeMembershipSubscriptionId, 'sub_e2e_cancelled');
+  assert.equal((await checkout(cancelledEmail, build(['membership-adult'], [cancelledDetails]))).status, 200,
+    'a canceled subscriber may buy a replacement membership');
+
+  const noSubscriptionEmail = email('stripe-unlinked-history');
+  const noSubscriptionDetails = adultDetails({ firstName: 'Legacy', lastName: 'Member', email: noSubscriptionEmail });
+  const ordinaryOrder = `legacy-annual-order-${run}`;
+  await db.collection('orders').doc(ordinaryOrder).set({ items: [{ category: 'MEMBERSHIP', type: 'annual-oneoff' }] });
+  await db.collection('memberships').doc(`legacy-no-sub-${run}`).set({
+    firstName: noSubscriptionDetails.firstName, lastName: noSubscriptionDetails.lastName, dob: noSubscriptionDetails.dob,
+    email: noSubscriptionEmail, status: 'active', validUntil: new Date('2099-03-01T00:00:00Z'),
+    history: [{ orderRef: ordinaryOrder }]
+  });
+  assert.equal((await checkout(noSubscriptionEmail, build(['keyhire'], [noSubscriptionDetails]))).status, 200);
+  assert.equal((await db.collection('memberships').doc(`legacy-no-sub-${run}`).get()).data().stripeMembershipSubscriptionId, '');
 });
 
 await test('JustGo members are inactive until the sync confirms their renewal in the club year', async () => {
@@ -416,7 +509,7 @@ await test('reports: one member register holds website and JustGo members, compl
   const report = await call('GET', '/api/admin/reports?kind=members', { headers: admin });
   assert.equal(report.status, 200);
   const mine = report.json.records.filter((record) => record.email.endsWith(`.${run}@example.test`));
-  assert.equal(mine.length, 1 + 2 + 3 + 1 + 1 + 1, 'alex 1, parent 2 children, family 3, synced member 1, visitor 1, unconfirmed member 1');
+  assert.equal(mine.length, 1 + 2 + 3 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1, 'alex 1, parent 2 children, family 3, synced member 1, visitor 1, unconfirmed member 1, Stripe members 2, coaching member 1, receipt member 1, legacy member 1');
   const alex = mine.find((record) => record.id === shared.alexMembership);
   assert.equal(alex.name, 'Alex Adult');
   assert.equal(alex.tier, 'adult');
@@ -445,6 +538,44 @@ await test('reports: one member register holds website and JustGo members, compl
   const everyone = report.json.records;
   assert.ok(everyone.some((record) => record.name === 'Test Current' && record.source === 'justgo' && record.status === 'Current'), 'JustGo-synced members are in the same register');
   assert.ok(everyone.some((record) => record.name === 'Test Expired' && record.status === 'Expired'));
+});
+
+await test('payment failures and expired sessions retain order contents and expose status for retry', async () => {
+  const emailAddress = email('retry');
+  const basket = build(['membership-adult'], [adultDetails({ email: emailAddress })]);
+  const started = await checkout(emailAddress, basket);
+  assert.equal(started.status, 200);
+  const orderRef = started.json.orderRef;
+  const orderRefDoc = db.collection('orders').doc(orderRef);
+  const before = (await orderRefDoc.get()).data();
+  const failure = await sendWebhook({ type: 'payment_intent.payment_failed', data: { object: {
+    id: `pi_failed_${run}`, metadata: { order_ref: orderRef }, last_payment_error: { code: 'card_declined', decline_code: 'generic_decline' }
+  } } });
+  assert.equal(failure.status, 200);
+  const afterFailure = (await orderRefDoc.get()).data();
+  assert.equal(afterFailure.status, 'pending', 'a failed attempt stays retryable');
+  assert.equal(afterFailure.lastPaymentFailureCode, 'card_declined');
+  assert.deepEqual(afterFailure.items, before.items);
+  assert.deepEqual(afterFailure.people, before.people);
+
+  const expired = await sendWebhook({ type: 'checkout.session.expired', data: { object: {
+    id: before.stripeSessionId, metadata: { order_ref: orderRef }
+  } } });
+  assert.equal(expired.status, 200);
+  const afterExpiry = (await orderRefDoc.get()).data();
+  assert.equal(afterExpiry.status, 'expired');
+  assert.deepEqual(afterExpiry.items, before.items);
+  assert.deepEqual(afterExpiry.people, before.people);
+  assert.equal((await call('GET', `/api/checkout-status?session_id=${before.stripeSessionId}`)).json.status, 'expired');
+
+  const asyncEmail = email('async-failure');
+  const asyncStart = await checkout(asyncEmail, build(['membership-adult'], [adultDetails({ email: asyncEmail })]));
+  const asyncOrder = (await db.collection('orders').doc(asyncStart.json.orderRef).get()).data();
+  const asyncFailure = await sendWebhook({ type: 'checkout.session.async_payment_failed', data: { object: {
+    id: asyncOrder.stripeSessionId, metadata: { order_ref: asyncStart.json.orderRef }
+  } } });
+  assert.equal(asyncFailure.status, 200);
+  assert.equal((await db.collection('orders').doc(asyncStart.json.orderRef).get()).data().status, 'payment_failed');
 });
 
 await test('every paid order produced a receipt email record', async () => {
