@@ -11,6 +11,7 @@ import { storage } from './firebase';
 import { PAGE_CONTENT } from '../constants/pageContent';
 import { apiUrl } from './api';
 import { resolveCatalogue, validateEventSchedule } from './catalogue';
+import { cleanStockFields } from './inventory';
 import { PRODUCTS } from '../constants/products';
 
 export const subscribeToProducts = (onProducts, onError) => {
@@ -68,6 +69,8 @@ export const saveProduct = async (product) => {
   }
   await setDoc(doc(db, 'products', id), {
     ...productData,
+    ...cleanStockFields(product),
+    ...(product.category === 'MERCHANDISE' ? { type: 'merchandise', hasAnnualDiscount: false } : {}),
     deleted: false,
     updatedAt: serverTimestamp()
   }, { merge: true });
