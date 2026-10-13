@@ -140,6 +140,11 @@
     text-underline-offset: 2px;
   }
 
+  .text_container .PrimaryActionButtonCompact, .text_container .PrimaryActionButton {
+    color: #fff;
+    text-decoration: none;
+  }
+
   .text_container ul {
     @apply space-y-2 mt-3;
   }
@@ -1310,8 +1315,6 @@
   .ReceiptWrapper { @apply max-w-2xl mx-auto; }
   .ReceiptHeader { @apply text-center mb-12; }
   .ReceiptCheckIcon { @apply w-16 h-16 mx-auto mb-4 text-emerald-500; }
-  .ReceiptEmailCopy { @apply mt-8 p-5 sm:p-8 text-left; color: var(--fcc-color-ink); }
-  .ReceiptEmailCopy pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 14px; line-height: 1.65; }
   .PageIntroCentered { @apply max-w-lg font-medium mx-auto; color: var(--fcc-color-copy); }
   .ReceiptActions { @apply mt-8 flex flex-col sm:flex-row gap-4; }
   .ReceiptItemList { @apply space-y-4 mb-8; }
