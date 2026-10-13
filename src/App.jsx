@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  Trash2, ShoppingBag, X, ShoppingCart, Plus,
+  Trash2, ShoppingBag, X, ShoppingCart, Plus, Minus,
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
@@ -8,6 +8,7 @@ import { calculateCart } from './utils/pricing';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft } from './utils/checkout';
 import CheckoutPage from './pages/CheckoutPage';
 import { eventScheduleLabel } from './utils/catalogue';
+import { itemLabel, productLimits } from './utils/inventory';
 import SiteNavigation from './components/SiteNavigation';
 import HomePage from './pages/HomePage';
 import MembershipPage from './pages/MembershipPage';
@@ -44,6 +45,7 @@ export default function App() {
     return 'home';
   });
   const [products, setProducts] = useState(PRODUCTS);
+  const [availability, setAvailability] = useState({});
   const [pageContent, setPageContent] = useState({});
   const [cart, setCart] = useState(() => (initialDraft?.cart || [])
     .map((line) => { const product = PRODUCTS.find((candidate) => candidate.id === line.id); return product ? { ...product, lineId: line.lineId } : null; })
@@ -85,24 +87,47 @@ export default function App() {
     console.error('Page content unavailable:', error);
   }), []);
 
-  const addToCart = (product) => {
+  const refreshAvailability = () => fetch(apiUrl('/api/availability'), { cache: 'no-store' })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((result) => { if (result?.availability) setAvailability(result.availability); })
+    .catch(() => {});
+  useEffect(() => { refreshAvailability(); }, [currentPage, isCartOpen]);
+
+  // How many more of a product (and size) can be added; unlimited products return Infinity.
+  const stockLeft = (product, size = '') => {
+    const remaining = availability[product.id]?.remaining;
+    if (!remaining) return Infinity;
+    const inBasket = cart.filter((line) => line.id === product.id && (line.size || '') === size).length;
+    return Math.max(0, (remaining[product.category === 'MERCHANDISE' ? size : 'all'] ?? 0) - inBasket);
+  };
+
+  const addToCart = (product, size = '') => {
     if (product.type === 'external') return;
-    setCart((prev) => [...prev, { ...product, lineId: newId() }]);
-    showToast(`${product.name} added to basket`);
+    const label = itemLabel({ ...product, size });
+    if (stockLeft(product, size) <= 0) {
+      showToast(`${label} is sold out`);
+      return;
+    }
+    setCart((prev) => [...prev, { ...product, lineId: newId(), ...(size ? { size } : {}) }]);
+    showToast(`${label} added to basket`);
   };
 
   // Identical items are interchangeable, so reducing always takes the most recently added one and its form goes with it.
-  const removeOneFromCart = (productId) => {
+  const removeOneFromCart = (productId, size = '') => {
     setCart((prev) => {
-      const index = prev.map((item) => item.id).lastIndexOf(productId);
+      const index = prev.map((item) => `${item.id}|${item.size || ''}`).lastIndexOf(`${productId}|${size}`);
       return index < 0 ? prev : prev.filter((_, position) => position !== index);
     });
   };
 
-  // Refresh basket lines when the live catalogue loads; unavailable products drop out.
+  // Refresh basket lines when the live catalogue loads; unavailable products and withdrawn sizes drop out.
   useEffect(() => {
     setCart((prev) => prev
-      .map((line) => { const product = products.find((candidate) => candidate.id === line.id); return product ? { ...product, lineId: line.lineId } : null; })
+      .map((line) => {
+        const product = products.find((candidate) => candidate.id === line.id);
+        if (!product || (product.category === 'MERCHANDISE' && !Object.hasOwn(productLimits(product) || {}, line.size))) return null;
+        return { ...product, lineId: line.lineId, ...(line.size ? { size: line.size } : {}) };
+      })
       .filter(Boolean));
   }, [products]);
 
@@ -170,8 +195,9 @@ export default function App() {
       });
       const order = await response.json();
       if (!response.ok) {
-        if (['membership_required', 'renews_via_justgo', 'membership_active', 'renewal_unconfirmed'].includes(order.code)) {
+        if (['membership_required', 'renews_via_justgo', 'membership_active', 'renewal_unconfirmed', 'sold_out'].includes(order.code)) {
           setCheckoutError(order.error);
+          if (order.code === 'sold_out') refreshAvailability();
           handleBackToBasket();
         } else {
           setFocusPersonId(order.personIds?.[0] || null);
@@ -234,6 +260,21 @@ export default function App() {
 
   const calculations = useMemo(() => calculateCart(cart, isAnnual, activePromo), [cart, isAnnual, activePromo]);
 
+  const cartGroups = useMemo(() => {
+    const groups = new Map();
+    for (const line of cart) {
+      const key = `${line.id}|${line.size || ''}`;
+      if (groups.has(key)) groups.get(key).lines.push(line);
+      else groups.set(key, { key, item: line, lines: [line] });
+    }
+    return [...groups.values()];
+  }, [cart]);
+
+  const removeAllFromCart = (productId, size = '') => setCart((prev) => prev.filter((line) => line.id !== productId || (line.size || '') !== size));
+  const clearCart = () => {
+    if (window.confirm('Remove everything from your basket?')) setCart([]);
+  };
+
   const getPricedItemDetails = (item) => calculations.items.find((pricedItem) => pricedItem.lineId === item.lineId)
     || calculateCart([item], isAnnual).items[0];
 
@@ -284,6 +325,8 @@ export default function App() {
             activeCategory={activeCategory}
             setActiveCategory={setActiveCategory}
             cart={cart}
+            availability={availability}
+            stockLeft={stockLeft}
             addToCart={addToCart}
             removeOneFromCart={removeOneFromCart}
             getItemDisplayPrice={getItemDisplayPrice}
@@ -376,36 +419,50 @@ export default function App() {
               </div>
 
               <div className="CartItemList">
+                {cart.length > 0 && (
+                  <button type="button" onClick={clearCart} className="CartClearButton">Clear basket</button>
+                )}
                 {cart.length === 0 ? (
                   <div className="CartEmptyState">
                     <ShoppingBag />
                     <p className="CartEmptyText">Basket is empty</p>
                   </div>
                 ) : (
-                  cart.map((item) => (
-                    <div key={item.lineId} className="CartItemCard">
+                  cartGroups.map(({ key, item, lines }) => (
+                    <div key={key} className="CartItemCard">
                       <div className="CartItemRow">
                         <div>
-                          <h4 className="CartItemTitle">{item.name}</h4>
+                          <h4 className="CartItemTitle">{itemLabel(item)}</h4>
                           {item.eventSchedule && <p className="text_container text_container_note">{eventScheduleLabel(item.eventSchedule)}</p>}
                           <span className="CartItemMeta">
                             {getItemBillingLabel(item)}
                           </span>
                         </div>
                         <div className="CartItemActions">
-                          <span className="CartItemPrice">£{getItemDisplayPrice(item)}</span>
+                          <span className="CartItemPrice">£{lines.reduce((sum, line) => sum + Number(getItemDisplayPrice(line)), 0).toFixed(2)}</span>
                           <button
-                            onClick={() => addToCart(item)}
+                            onClick={() => removeOneFromCart(item.id, item.size || '')}
                             className="CartRemoveButton"
-                            aria-label={`Add another ${item.name}`}
+                            aria-label={`Remove one ${itemLabel(item)}`}
+                            title="Remove one"
+                          >
+                            <Minus className="IconMd" />
+                          </button>
+                          <span className="CartItemQuantity" aria-label={`${lines.length} in basket`}>{lines.length}</span>
+                          <button
+                            onClick={() => addToCart(item, item.size || '')}
+                            className="CartRemoveButton"
+                            disabled={stockLeft(item, item.size || '') <= 0}
+                            aria-label={`Add another ${itemLabel(item)}`}
                             title="Add another"
                           >
                             <Plus className="IconMd" />
                           </button>
                           <button
-                            onClick={() => removeOneFromCart(item.id)}
+                            onClick={() => removeAllFromCart(item.id, item.size || '')}
                             className="CartRemoveButton"
-                            aria-label={`Remove ${item.name} from basket`}
+                            aria-label={`Remove all ${itemLabel(item)} from basket`}
+                            title="Remove all"
                           >
                             <Trash2 className="IconMd" />
                           </button>
