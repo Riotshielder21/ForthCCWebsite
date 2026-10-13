@@ -10,7 +10,7 @@ export const FAMILY_MAX = 5;
 export const FAMILY_ADULT_MAX = 2;
 export const FAMILY_DEFAULT = 3;
 
-export const needsPerson = (item) => item.type !== 'voucher' && item.type !== 'external';
+export const needsPerson = (item) => item.type !== 'voucher' && item.type !== 'external' && item.category !== 'MERCHANDISE';
 export const isMembership = (item) => item.category === 'MEMBERSHIP';
 export const isFamilyMembership = (item) => item.membershipTier === 'family';
 

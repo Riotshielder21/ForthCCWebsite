@@ -1,4 +1,5 @@
 import { membershipActivity } from './membership.js';
+import { itemLabel } from './inventory.js';
 
 export const reportDate = (value) => {
   if (!value) return null;
@@ -39,7 +40,7 @@ const personReport = (person, items, member = {}) => {
   return {
     name: `${person.firstName || ''} ${person.lastName || ''}`.trim(), dob: person.dob || member.dob || '',
     kind: junior ? 'Under 18' : 'Adult', returningMember: person.returning === true,
-    items: (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId)?.name).filter(Boolean),
+    items: (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId)).filter(Boolean).map(itemLabel),
     email: contact(person.email, guardian.email, member.email), phone: contact(person.phone, guardian.phone, member.phone),
     address: [contact(person.address, guardian.address, member.address), contact(person.postcode, guardian.postcode, member.postcode)].filter(Boolean).join(', '),
     emergencyContact: person.emergencyNote || member.emergencyNote
@@ -63,7 +64,7 @@ export const orderReport = (id, fields, members = new Map()) => ({
   stripePaymentIntentId: fields.stripePaymentIntentId || '',
   subscriptionWarning: subscriptionWarning(fields),
   items: (Array.isArray(fields.items) ? fields.items : []).map((item) => ({
-    name: String(item.name || item.id || ''), category: String(item.category || ''),
+    name: itemLabel(item), category: String(item.category || ''),
     type: String(item.type || ''), price: Number.isFinite(Number(item.price)) ? Number(item.price) : null,
     ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {})
   })),

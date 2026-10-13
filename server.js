@@ -21,6 +21,7 @@ import { buildReceiptSummary, receiptEmailCopy } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation, stripeSubscriberReport } from './src/utils/stripeReports.js';
 import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
+import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProblem, withHold, itemLabel, isMerchandise } from './src/utils/inventory.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -214,12 +215,13 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
   }, { merge: true });
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [], siteUrl = '', billingMode = 'annual', receiptViewTokenHash = '' }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [], siteUrl = '', billingMode = 'annual', receiptViewTokenHash = '', stockProductIds = [] }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     email: email.toLowerCase(),
     items,
     people,
+    stockProductIds,
     disclaimerVersion: DISCLAIMER_VERSION,
     total: String(total),
     status,
@@ -237,6 +239,39 @@ const updateFirestoreOrder = async (orderRef, fields) => {
   await adminDb.collection('orders').doc(orderRef).update(fields);
 };
 
+const stockReference = (productId) => adminDb.collection('stock').doc(productId);
+const limitedProductIds = (items) => [...new Set(items.filter((item) => item.category === 'EVENTS' || isMerchandise(item)).map((item) => item.id))];
+const readStock = (transaction, productIds) => productIds.length
+  ? transaction.getAll(...productIds.map(stockReference))
+  : Promise.resolve([]);
+const dropHold = (transaction, snapshot, orderRef) => {
+  if (snapshot.data()?.holds?.[orderRef]) transaction.update(snapshot.ref, new FieldPath('holds', orderRef), FieldValue.delete());
+};
+
+/** Takes stock for every limited line in one transaction; throws a `soldOut` error when any line cannot be supplied. */
+const reserveStock = async (orderRef, selected, catalog) => {
+  const productIds = limitedProductIds(selected).filter((id) => productLimits(catalog.find((product) => product.id === id)));
+  if (!productIds.length) return [];
+  await adminDb.runTransaction(async (transaction) => {
+    const snapshots = await readStock(transaction, productIds);
+    const now = Date.now();
+    snapshots.forEach((snapshot, index) => {
+      const product = catalog.find((candidate) => candidate.id === productIds[index]);
+      const holds = snapshot.data()?.holds || {};
+      const wanted = wantedQuantities(selected.filter((line) => line.id === product.id));
+      const problem = stockProblem(product, holds, wanted, now);
+      if (problem) throw Object.assign(new Error(problem), { soldOut: true, productId: product.id });
+      transaction.set(snapshot.ref, { holds: withHold(holds, orderRef, wanted, now) });
+    });
+  });
+  return productIds;
+};
+
+const releaseStock = (orderRef, productIds) => productIds.length ? adminDb.runTransaction(async (transaction) => {
+  const snapshots = await readStock(transaction, productIds);
+  snapshots.forEach((snapshot) => dropHold(transaction, snapshot, orderRef));
+}) : Promise.resolve();
+
 /** Terminal checkout failures update status but keep the saved order for support and retries. */
 const recordUnsuccessfulCheckout = async (session, status) => {
   const orderRef = session.metadata?.order_ref;
@@ -250,6 +285,8 @@ const recordUnsuccessfulCheckout = async (session, status) => {
     if (order.status !== 'pending') return;
     const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
     const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
+    const stock = await readStock(transaction, order.stockProductIds || []);
+    stock.forEach((snapshot) => dropHold(transaction, snapshot, orderRef));
     const timestamp = Timestamp.now();
     transaction.update(orderDocument, { status, ...(status === 'expired' ? { expiredAt: timestamp } : { paymentFailedAt: timestamp }) });
     if (discountDocument && discount?.reservedByOrder === orderRef && !discount.used) {
@@ -315,6 +352,7 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
         }
         if (order.emailSent === true) return null;
         if (order.emailSendingUntil?.toMillis() > Date.now()) throw new Error('Receipt delivery is already in progress.');
+        const stock = await readStock(transaction, order.stockProductIds || []);
         const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
         const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
         if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
@@ -334,6 +372,10 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
           }
         }
         if (discount?.singleUse) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
+        // Paid stock holds never lapse; rebuilt from the order in case the reservation was already cleared.
+        stock.forEach((snapshot) => transaction.set(snapshot.ref, {
+          holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
+        }));
         const paidAt = order.paidAt || Timestamp.now();
         if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt,
           stripeSubscriptionId: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test' });
@@ -567,6 +609,9 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       if (warning && req.body.acknowledgeStripe !== true) return { status: 409,
         error: 'Check and cancel any active Stripe subscription before deleting this record. Deleting website data does not stop payments.',
         requiresStripeAcknowledgement: true, stripeSubscriptionId: fields.stripeSubscriptionId || '' };
+      // Removing a refunded order returns its tickets and stock to the shop.
+      const stock = req.params.kind === 'orders' ? await readStock(transaction, limitedProductIds(fields.items || [])) : [];
+      stock.forEach((snapshot) => dropHold(transaction, snapshot, req.params.id));
       transaction.delete(reference);
       transaction.create(adminDb.collection('adminDeletionAudit').doc(), {
         adminUid: admin.uid, kind: req.params.kind,
@@ -1048,6 +1093,26 @@ app.post('/api/membership-names', rateLimit(5, 60 * 1000), async (req, res) => {
   }
 });
 
+/** Remaining stock for limited products, so the shop can hide anything sold out. */
+app.get('/api/availability', rateLimit(60, 60 * 1000), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!adminDb) return res.json({ availability: {} });
+  try {
+    const [productSnapshot, stockSnapshot] = await Promise.all([adminDb.collection('products').get(), adminDb.collection('stock').get()]);
+    const catalog = resolveCatalogue(PRODUCTS, productSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
+    const holdsById = new Map(stockSnapshot.docs.map((document) => [document.id, document.data().holds || {}]));
+    const availability = {};
+    for (const product of catalog) {
+      const remaining = remainingStock(product, holdsById.get(product.id));
+      if (remaining) availability[product.id] = { remaining, soldOut: isSoldOut(remaining) };
+    }
+    res.json({ availability });
+  } catch (error) {
+    console.error('Could not load availability:', error.message);
+    res.status(503).json({ error: 'Availability is unavailable.' });
+  }
+});
+
 app.get('/api/checkout-status', rateLimit(30, 60 * 1000), async (req, res) => {
   const sessionId = typeof req.query.session_id === 'string' ? req.query.session_id : '';
   if (!/^cs_[a-zA-Z0-9_]+$/.test(sessionId)) return res.status(400).json({ error: 'Invalid Checkout Session.' });
@@ -1091,6 +1156,7 @@ app.get('/api/checkout-receipt', rateLimit(20, 60 * 1000), async (req, res) => {
 
 app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => {
   let reservedDocument;
+  let reservedStockIds = [];
   const orderRef = `FCC-${crypto.randomUUID().toUpperCase()}`;
   try {
     const email = normalizeEmail(req.body.email);
@@ -1108,7 +1174,10 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     if (catalogItems.some((item) => !item || item.type === 'external' || !Number.isFinite(item.basePrice) || item.basePrice < 0) || lineIds.some((id) => !id) || new Set(lineIds).size !== lineIds.length) {
       return res.status(400).json({ error: 'Your basket contains an unavailable item. Please refresh the shop.' });
     }
-    const selected = catalogItems.map((item, index) => ({ ...item, lineId: lineIds[index] }));
+    const selected = catalogItems.map((item, index) => ({ ...item, lineId: lineIds[index],
+      ...(isMerchandise(item) ? { size: typeof requestedItems[index]?.size === 'string' ? requestedItems[index].size.trim().slice(0, 40) : '' } : {}) }));
+    const unsized = selected.find((item) => isMerchandise(item) && !Object.hasOwn(productLimits(item) || {}, item.size));
+    if (unsized) return res.status(400).json({ error: `Choose an available size for ${unsized.name}.` });
     for (const item of selected.filter((product) => product.category === 'EVENTS')) {
       try { validateEventSchedule(item.eventSchedule); }
       catch (error) { return res.status(400).json({ error: `Invalid event schedule for ${item.name}.` }); }
@@ -1196,13 +1265,15 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
     const items = pricing.items.map((item) => ({
       id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, price: item.displayPrice,
+      ...(item.size ? { size: item.size } : {}),
       ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),
       ...(item.type === 'voucher' ? { voucherValue: item.basePrice } : {}),
       ...(item.category === 'EVENTS' ? { eventSchedule: validateEventSchedule(item.eventSchedule) } : {})
     }));
     const total = pricing.total;
+    reservedStockIds = await reserveStock(orderRef, selected, catalog);
     await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null,
-      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken) });
+      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds });
     const hasRecurringItem = billingMode === 'monthly' && items.some((item) => item.type === 'subscription');
     const oneOffCredit = hasRecurringItem && promo?.discountType === 'credit';
     let coupon;
@@ -1211,7 +1282,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
     const lineItems = items.flatMap((item, index) => [
       [`line_items[${index}][price_data][currency]`, 'gbp'],
-      [`line_items[${index}][price_data][product_data][name]`, item.name],
+      [`line_items[${index}][price_data][product_data][name]`, itemLabel(item)],
       [`line_items[${index}][price_data][unit_amount]`, String(Math.round((oneOffCredit ? pricing.items[index].subtotalPrice : Number(item.price)) * 100))],
       [`line_items[${index}][quantity]`, '1'],
       ...(billingMode === 'monthly' && item.type === 'subscription'
@@ -1248,6 +1319,9 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       }
     }
     console.error('Error creating Stripe Checkout session:', error.message);
+    try { await releaseStock(orderRef, reservedStockIds); }
+    catch (releaseError) { console.error('Could not release stock hold:', releaseError.message); }
+    if (error.soldOut) return res.status(409).json({ code: 'sold_out', productId: error.productId, error: error.message });
     res.status(500).json({ error: 'Could not start secure checkout.' });
   }
 });
