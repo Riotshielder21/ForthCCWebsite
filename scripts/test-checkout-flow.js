@@ -578,6 +578,61 @@ await test('payment failures and expired sessions retain order contents and expo
   assert.equal((await db.collection('orders').doc(asyncStart.json.orderRef).get()).data().status, 'payment_failed');
 });
 
+await test('merchandise sizes and event capacity limit sales, expiry releases holds and deleting a refunded order frees stock', async () => {
+  const tee = `E2E-TEE-${run}`;
+  await db.collection('products').doc(tee).set({ name: 'Club tee', category: 'MERCHANDISE', type: 'merchandise', basePrice: 15, description: 'Tee',
+    variants: [{ size: 'S', stock: 1 }, { size: 'M', stock: 2 }], deleted: false });
+  const shirt = (size, n) => ({ id: tee, lineId: `${tee}-${size}-${n}`, size });
+  const order = (who, items) => call('POST', '/api/checkout-session', { body: { email: who, items, people: [], billingMode: 'annual' } });
+  const stock = async (id) => (await call('GET', '/api/availability')).json.availability[id];
+
+  assert.deepEqual((await stock(tee)).remaining, { S: 1, M: 2 });
+  assert.equal((await order(email('tee-none'), [{ id: tee, lineId: `${tee}-x` }])).status, 400, 'a size is required');
+  assert.equal((await order(email('tee-bad'), [shirt('XXL', 1)])).status, 400, 'only listed sizes are sold');
+
+  const first = await order(email('tee-1'), [shirt('S', 1), shirt('M', 1)]);
+  assert.equal(first.status, 200, first.text);
+  assert.deepEqual((await stock(tee)).remaining, { S: 0, M: 1 });
+  const overSell = await order(email('tee-2'), [shirt('S', 2)]);
+  assert.equal(overSell.status, 409);
+  assert.equal(overSell.json.code, 'sold_out');
+
+  const lastM = await order(email('tee-3'), [shirt('M', 2)]);
+  assert.equal(lastM.status, 200);
+  assert.equal((await stock(tee)).soldOut, true, 'every size is reserved');
+  const lastOrder = (await db.collection('orders').doc(lastM.json.orderRef).get()).data();
+  const expired = await sendWebhook({ type: 'checkout.session.expired', data: { object: { id: lastOrder.stripeSessionId, metadata: { order_ref: lastM.json.orderRef } } } });
+  assert.equal(expired.status, 200);
+  assert.deepEqual((await stock(tee)).remaining, { S: 0, M: 1 }, 'an expired session returns its reservation');
+
+  assert.equal((await pay(first.json.orderRef)).status, 200);
+  assert.deepEqual((await stock(tee)).remaining, { S: 0, M: 1 }, 'paying keeps the stock taken');
+  const paidOrder = (await db.collection('orders').doc(first.json.orderRef).get()).data();
+  assert.deepEqual(paidOrder.items.map((item) => item.size).sort(), ['M', 'S']);
+  const report = (await call('GET', '/api/admin/reports?kind=orders', { headers: admin })).json.records.find((record) => record.id === first.json.orderRef);
+  assert.deepEqual(report.items.map((item) => item.name).sort(), ['Club tee (M)', 'Club tee (S)']);
+
+  const remove = (orderRef) => call('DELETE', `/api/admin/records/orders/${orderRef}`, { headers: admin, body: { confirmId: orderRef, acknowledgeStripe: true } });
+  assert.equal((await remove(first.json.orderRef)).status, 200);
+  assert.deepEqual((await stock(tee)).remaining, { S: 1, M: 2 }, 'deleting the refunded order returns its stock');
+
+  const eventId = `E2E-CAP-${run}`;
+  const schedule = { mode: 'single', startDate: '2099-05-01', startTime: '10:00', endTime: '12:00', timeZone: 'Europe/London' };
+  await db.collection('products').doc(eventId).set({ name: 'Capacity course', category: 'EVENTS', type: 'event-ticket', basePrice: 20, eventSchedule: schedule, capacity: 1 });
+  const ticket = (n) => {
+    const line = { id: eventId, lineId: `${eventId}-${n}`, name: 'Capacity course', category: 'EVENTS', type: 'event-ticket', basePrice: 20 };
+    return { lines: [line], people: assignLines([], [line], makeId).map((person) => ({ ...person, returning: true, firstName: 'Alex', lastName: 'Adult', dob: yearsAgo(35), disclaimerAccepted: true })) };
+  };
+  const firstTicket = await buy(shared.alex, ticket(1));
+  assert.equal((await stock(eventId)).soldOut, true, 'a full event leaves the shop');
+  const full = await checkout(shared.alex, ticket(2));
+  assert.equal(full.status, 409);
+  assert.equal(full.json.code, 'sold_out');
+  assert.equal((await remove(firstTicket)).status, 200);
+  assert.equal((await stock(eventId)).soldOut, false, 'a freed place returns the event to the shop');
+  assert.equal((await checkout(shared.alex, ticket(3))).status, 200);
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));
