@@ -58,7 +58,7 @@
       "group": "intro",
       "type": "existing",
       "appearance": "grey",
-      "width": "wide"
+      "width": "standard"
     },
     {
       "id": "start",
