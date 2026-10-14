@@ -43,7 +43,7 @@
   "quick2Body": "Membership runs from 1 March each year. Subscribe for coached sessions, kit hire and access to our full programme of events and trips.",
   "quick2Action": "Membership",
   "quick3Eyebrow": "Get Involved",
-  "quick3Title": "",
+  "quick3Title": "Volunteer",
   "quick3Body": "Our club runs on volunteers. Help with coaching, events, maintenance or administration and earn discount codes for your membership.",
   "quick3Action": "Volunteering",
   "supportersEyebrow": "Thank You",
@@ -53,6 +53,13 @@
   "locationTitle": "Harrison Park, Polwarth",
   "locationBody": "Edinburgh EH11 1ED — On the Union Canal, just west of the city centre.",
   "tileLayout": [
+    {
+      "id": "welcome",
+      "group": "intro",
+      "type": "existing",
+      "appearance": "grey",
+      "width": "wide"
+    },
     {
       "id": "start",
       "group": "intro",
