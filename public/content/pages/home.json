@@ -54,16 +54,18 @@
   "locationBody": "Edinburgh EH11 1ED — On the Union Canal, just west of the city centre.",
   "tileLayout": [
     {
-      "id": "welcome",
+      "id": "start",
       "group": "intro",
       "type": "existing",
       "appearance": "grey",
       "width": "standard"
     },
     {
-      "id": "start",
+      "id": "welcome",
       "group": "intro",
-      "type": "existing"
+      "type": "existing",
+      "appearance": "grey",
+      "width": "standard"
     },
     {
       "id": "mission",
