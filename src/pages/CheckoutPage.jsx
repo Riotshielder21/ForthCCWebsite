@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import {
   addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, personKind, familyRole, resolvedKind, FAMILY_ADULT_MAX,
-  normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT
+  normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT
 } from '../utils/checkout';
 import { apiUrl } from '../utils/api';
 
@@ -212,7 +212,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     </div>
                   </fieldset>
                 )}
-                <label className="CheckoutCheck"><input type="checkbox" checked={person.photoConsent} onChange={check('photoConsent')} /> Photo and video consent</label>
+                <label className="CheckoutCheck"><input type="checkbox" checked={person.photoConsent} onChange={check('photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
               </>
             )}
             <label className="CheckoutCheck"><input type="checkbox" checked={person.disclaimerAccepted} onChange={check('disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
@@ -243,7 +243,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     </div>
                     <label className="FormLabel">Medical conditions or notes<textarea className="FormInput" rows="2" maxLength={1000} value={member.medical} onChange={memberField(member.id, 'medical')} /></label>
                     <p className="CartItemMeta">{member.junior ? 'Parents are their emergency contact.' : 'Shares the family contact details and family emergency contact.'}</p>
-                    <label className="CheckoutCheck"><input type="checkbox" checked={member.photoConsent} onChange={memberCheck(member.id, 'photoConsent')} /> Photo and video consent</label>
+                    <label className="CheckoutCheck"><input type="checkbox" checked={member.photoConsent} onChange={memberCheck(member.id, 'photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
                     <label className="CheckoutCheck"><input type="checkbox" checked={member.disclaimerAccepted} onChange={memberCheck(member.id, 'disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
                   </section>
                 ))}
