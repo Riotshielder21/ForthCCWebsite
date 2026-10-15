@@ -86,8 +86,8 @@ test('draft storage round-trips and ignores corrupt data', () => {
   assert.equal(loadDraft(storage), null);
 });
 
-const rec = (over) => ({ id: 'r1', email: 'p@example.com', dob: '2012-03-04', firstName: 'Sam', lastName: 'Lee', scaNumber: '', status: 'active', validUntil: 0, ...over });
-const who = (over) => ({ firstName: 'Sam', lastName: 'Lee', dob: '2012-03-04', scaNumber: '', ...over });
+const rec = (over) => ({ id: 'r1', email: 'p@example.com', dob: '2012-03-04', firstName: 'Sam', lastName: 'Lee', affiliationNumber: '', status: 'active', validUntil: 0, ...over });
+const who = (over) => ({ firstName: 'Sam', lastName: 'Lee', dob: '2012-03-04', affiliationNumber: '', ...over });
 
 test('siblings sharing a guardian email are separate people', () => {
   const result = matchMembership(who({ firstName: 'Alex', dob: '2014-06-01' }), { byEmail: [rec({})] });
@@ -112,13 +112,13 @@ test('email, date of birth and name together match an existing record', () => {
 });
 
 test('membership number is primary but must agree with the date of birth', () => {
-  const byNumber = [rec({ id: 'j1', scaNumber: '123', email: '' })];
-  assert.equal(matchMembership(who({ scaNumber: '123', firstName: 'Samuel' }), { byNumber }).match.id, 'j1');
-  assert.equal(matchMembership(who({ scaNumber: '123', dob: '2000-01-01' }), { byNumber }).reason, 'number');
+  const byNumber = [rec({ id: 'j1', affiliationNumber: '123', email: '' })];
+  assert.equal(matchMembership(who({ affiliationNumber: '123', firstName: 'Samuel' }), { byNumber }).match.id, 'j1');
+  assert.equal(matchMembership(who({ affiliationNumber: '123', dob: '2000-01-01' }), { byNumber }).reason, 'number');
 });
 
 test('an unknown membership number falls back to the email check', () => {
-  assert.equal(matchMembership(who({ scaNumber: '999' }), { byNumber: [], byEmail: [rec({})] }).match.id, 'r1');
+  assert.equal(matchMembership(who({ affiliationNumber: '999' }), { byNumber: [], byEmail: [rec({})] }).match.id, 'r1');
 });
 
 test('an active record is preferred over an expired one', () => {
