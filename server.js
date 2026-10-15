@@ -22,8 +22,10 @@ import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation, stripeSubscriberReport } from './src/utils/stripeReports.js';
 import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
 import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProblem, withHold, itemLabel, isMerchandise } from './src/utils/inventory.js';
+import { deletionAuditEntry } from './src/utils/privacy.js';
 import { CURRENT_MEMBERSHIP_VERSION } from './src/utils/schema.js';
 import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from './src/utils/households.js';
+import { registerGdprRoutes } from './src/server/gdpr.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 
@@ -701,6 +703,8 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       return res.status(400).json({ error: 'Invalid report record.' });
     }
     if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Type the exact record ID to confirm deletion.' });
+    const auditSecret = process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
+    if (!auditSecret) return res.status(503).json({ error: 'Deletion audit is not configured. Set AUDIT_LOOKUP_SECRET.' });
     const reference = collection.doc(req.params.id);
     const result = await adminDb.runTransaction(async (transaction) => {
       const document = await transaction.get(reference);
@@ -719,9 +723,8 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       stock.forEach((snapshot) => dropHold(transaction, snapshot, req.params.id));
       transaction.delete(reference);
       transaction.create(adminDb.collection('adminDeletionAudit').doc(), {
-        adminUid: admin.uid, kind: req.params.kind,
-        recordIdHash: crypto.createHash('sha256').update(req.params.id).digest('hex'),
-        stripeAcknowledged: req.body.acknowledgeStripe === true, createdAt: Timestamp.now()
+        ...deletionAuditEntry({ kind: req.params.kind, id: req.params.id, fields, secret: auditSecret, adminUid: admin.uid, stripeAcknowledged: req.body.acknowledgeStripe === true }),
+        createdAt: Timestamp.now()
       });
       return { status: 200, success: true };
     });
@@ -732,7 +735,9 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
   }
 });
 
+registerGdprRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
 registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
+
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);

@@ -650,6 +650,114 @@ await test('merchandise sizes and event capacity limit sales, expiry releases ho
   assert.equal((await checkout(shared.alex, ticket(3))).status, 200);
 });
 
+await test('deleted orders keep a masked audit entry and GDPR erasure removes a person everywhere but keeps the accounts', async () => {
+  const erase = (body) => call('POST', '/api/admin/gdpr/erase', { headers: admin, body });
+  const preview = (body) => call('POST', '/api/admin/gdpr/preview', { headers: admin, body });
+  const remove = (orderRef) => call('DELETE', `/api/admin/records/orders/${orderRef}`, { headers: admin, body: { confirmId: orderRef, acknowledgeStripe: true } });
+  const customerCount = async (who) => (await db.collection('customers').where('email', '==', who).get()).size;
+
+  const gdpr = email('gdpr');
+  const details = adultDetails({ firstName: 'Gail', lastName: 'Erase', dob: yearsAgo(41, 3, 3), email: gdpr });
+  const membershipOrder = await buy(gdpr, build(['membership-adult'], [details]));
+  const addOnOrder = await buy(gdpr, build(['keyhire'], [{ returning: true, firstName: 'Gail', lastName: 'Erase', dob: details.dob, disclaimerAccepted: true }]));
+  assert.equal((await remove(addOnOrder)).status, 200);
+  const audit = (await db.collection('adminDeletionAudit').where('recordId', '==', addOnOrder).get()).docs[0].data();
+  assert.equal(audit.summary.maskedEmail, 'g***@e***.test');
+  assert.equal(audit.summary.people[0].name, 'G*** E***');
+  assert.equal(audit.summary.total, 50);
+  assert.equal(JSON.stringify(audit.summary).includes(gdpr), false, 'the summary holds no readable email');
+  assert.equal(audit.snapshot.email, gdpr, 'the hidden snapshot allows recovery until erasure');
+
+  const identity = { email: gdpr, firstName: 'Gail', lastName: 'Erase', dob: details.dob };
+  const found = await preview(identity);
+  assert.equal(found.status, 200, found.text);
+  assert.equal(found.json.people.length, 1);
+  assert.equal(found.json.deletedRecords.length, 1, 'already-deleted records are found by email, name and date of birth');
+  const wrong = await preview({ ...identity, dob: yearsAgo(40, 3, 3) });
+  assert.deepEqual([wrong.json.people.length, wrong.json.deletedRecords.length], [0, 0]);
+  assert.equal((await erase(identity)).status, 400, 'confirmation is required');
+
+  const total = (await db.collection('orders').doc(membershipOrder).get()).data().total;
+  const erased = await erase({ ...identity, scope: 'person', confirm: 'ERASE' });
+  assert.equal(erased.status, 200, erased.text);
+  assert.equal(erased.json.erased, 1);
+  assert.equal((await membershipsFor(gdpr)).length, 0);
+  const kept = (await db.collection('orders').doc(membershipOrder).get()).data();
+  assert.deepEqual([kept.email, kept.total, kept.items.length, kept.people[0].erased, kept.people[0].firstName], ['***', total, 1, true, undefined]);
+  assert.equal(await customerCount(gdpr), 0);
+  const purged = (await db.collection('adminDeletionAudit').where('recordId', '==', addOnOrder).get()).docs[0].data();
+  assert.deepEqual([purged.snapshot, purged.personalDataErased], [null, true]);
+  const trail = (await db.collection('adminDeletionAudit').where('kind', '==', 'gdpr-erasure').get()).docs.map((document) => document.data()).find((entry) => entry.summary.ordersRedacted.includes(membershipOrder));
+  assert.ok(trail, 'the erasure itself is recorded');
+  assert.equal(JSON.stringify(trail.summary).includes(gdpr), false);
+  assert.equal((await erase({ ...identity, scope: 'person', confirm: 'ERASE' })).status, 404, 'nothing is left to erase');
+
+  const family = email('gdpr-family');
+  const familyLines = [{ ...lineFor('membership-family', 0), lineId: `gdpr-family-${run}` }];
+  const familyDetails = [adultDetails({ email: family, firstName: 'Drew', lastName: 'Famly' }),
+    { firstName: 'Casey', lastName: 'Famly', dob: yearsAgo(37), swimming: 'confident', junior: false, disclaimerAccepted: true, photoConsent: true, medical: '' },
+    { firstName: 'Kit', lastName: 'Famly', dob: yearsAgo(9), swimming: 'basic', junior: true, disclaimerAccepted: true, photoConsent: false, medical: '' }];
+  const familyBasket = { lines: familyLines, people: assignLines([], familyLines, makeId).map((person, index) => ({ ...person, ...familyDetails[index] })) };
+  const familyOrder = await buy(family, familyBasket);
+  const people = await membershipsFor(family);
+  const parent = people.find((record) => record.firstName === 'Drew');
+  const kid = people.find((record) => record.firstName === 'Kit');
+  const shown = await preview({ membershipId: parent.id });
+  assert.deepEqual([shown.json.family.length, shown.json.remaining.length], [3, 2]);
+  assert.equal((await erase({ membershipId: parent.id, confirm: 'ERASE' })).json.requiresFamilyChoice, true);
+  const missing = await erase({ membershipId: parent.id, scope: 'person', confirm: 'ERASE' });
+  assert.equal(missing.status, 400);
+  assert.equal(missing.json.requiresSharedDetails, true);
+  assert.equal((await membershipsFor(family)).length, 3, 'nothing was erased');
+
+  const sharedDetails = { contactName: 'Sam New', contactRelationship: 'Parent', phone: '07700 900999', email: email('gdpr-new'), address: '9 New Road', postcode: 'EH9 9ZZ',
+    emergencyName: 'Pat New', emergencyPhone: '07700 900888', emergencyRelationship: 'Friend' };
+  const only = await erase({ membershipId: parent.id, scope: 'person', confirm: 'ERASE', sharedDetails });
+  assert.equal(only.status, 200, only.text);
+  const stayed = await membershipsFor(sharedDetails.email);
+  assert.equal(stayed.length, 2, 'the rest of the family moves to the new shared details');
+  assert.ok(stayed.every((record) => record.household.address === '9 New Road' && record.household.emergencyContact.name === 'Pat New'
+    && record.household.contactName === 'Sam New'));
+  assert.equal((await db.collection('orders').doc(familyOrder).get()).data().email, '***', 'the removed household contact email is redacted');
+
+  const everyone = await erase({ membershipId: kid.id, scope: 'family', confirm: 'ERASE' });
+  assert.equal(everyone.status, 200, everyone.text);
+  assert.equal(everyone.json.erased, 2);
+  assert.equal((await membershipsFor(sharedDetails.email)).length, 0);
+  assert.equal((await db.collection('orders').doc(familyOrder).get()).data().email, '***');
+  assert.equal(await customerCount(family), 0);
+
+  const subscriber = email('gdpr-sub');
+  const subDetails = adultDetails({ firstName: 'Sub', lastName: 'Erase', dob: yearsAgo(44, 4, 4), email: subscriber });
+  await buy(subscriber, build(['membership-adult', 'blue-sub'], [subDetails]), { billingMode: 'monthly' });
+  const [subscriberRecord] = await membershipsFor(subscriber);
+  const cancelled = await erase({ membershipId: subscriberRecord.id, scope: 'person', confirm: 'ERASE' });
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal(cancelled.json.subscriptionsCancelled, 1);
+  assert.ok(cancelled.json.manual.some((step) => /Stripe/.test(step)));
+});
+
+await test('consent and policy wording is recorded as numbered versions that follow changes', async () => {
+  const listing = await call('GET', '/api/admin/policies', { headers: admin });
+  assert.equal(listing.status, 200);
+  assert.equal(listing.json.live, true, 'run the test API with WEBSITE_ISLIVE=true');
+  const byKey = new Map(listing.json.policies.map((policy) => [policy.policyKey, policy]));
+  assert.ok(byKey.get('participation-disclaimer').currentVersion >= 1);
+  assert.ok(byKey.get('photo-video-consent').currentVersion >= 1);
+  for (const key of ['privacy-notice', 'data-retention', 'first-aid-and-safety']) assert.equal(byKey.get(key).currentVersion, 0, `${key} is registered but not yet written`);
+  const first = listing.json.versions.find((version) => version.policyKey === 'participation-disclaimer' && version.version === 1);
+  assert.match(first.text, /participation and safety disclaimer/);
+  assert.equal(first.supersedesVersion, null);
+  assert.deepEqual((await call('POST', '/api/admin/policies/sync', { headers: admin })).json.recorded, [], 'unchanged wording adds no version');
+
+  await db.collection('policies').doc('participation-disclaimer').set({ currentHash: 'older wording' }, { merge: true });
+  const changed = await call('POST', '/api/admin/policies/sync', { headers: admin });
+  assert.deepEqual(changed.json.recorded.map((entry) => `${entry.key}@${entry.version}`), [`participation-disclaimer@${byKey.get('participation-disclaimer').currentVersion + 1}`]);
+  const next = (await db.collection('policyVersions').doc(`participation-disclaimer@${byKey.get('participation-disclaimer').currentVersion + 1}`).get()).data();
+  assert.equal(next.supersedesVersion, byKey.get('participation-disclaimer').currentVersion);
+  assert.equal((await call('GET', '/api/admin/policies')).status, 401, 'policy records are admin only');
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));

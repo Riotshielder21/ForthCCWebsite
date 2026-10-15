@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock } from 'lucide-react';
+import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, ShieldX } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl } from '../utils/api';
 import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows } from '../utils/adminReports';
 import { eventScheduleLabel } from '../utils/catalogue';
 import CustomerVouchers from '../components/CustomerVouchers';
+import GdprErasurePanel from '../components/GdprErasurePanel';
 
 const detailValue = (value) => {
   if (value === true) return 'Yes';
@@ -47,6 +48,7 @@ export default function AdminReportsPage({ onNavigate }) {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [tierFilter, setTierFilter] = useState('all');
   const [selected, setSelected] = useState(null);
+  const [erasure, setErasure] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [confirmation, setConfirmation] = useState('');
   const [stripeRequired, setStripeRequired] = useState(false);
@@ -236,6 +238,7 @@ export default function AdminReportsPage({ onNavigate }) {
     </div>
     <div className="ReportsExports"><span>{filtered.length} matching records</span>
       <button className="EditorCommand" disabled={!filtered.length || loading} onClick={exportRecords}><Download size={18} /> Download report CSV</button>
+      {kind === 'members' && <button className="EditorCommand" onClick={() => setErasure({ lookup: true })}><ShieldX size={18} /> GDPR erasure lookup</button>}
       {kind === 'members' && <button className="EditorCommand" disabled={!justgoUploadRows(filtered).length || loading} onClick={() => download(`fcc-justgo-staff-upload-${new Date().toISOString().slice(0, 10)}.csv`, reportCsv(justgoUploadHeaders, justgoUploadRows(filtered)))}><Download size={18} /> Staff upload list ({justgoUploadRows(filtered).length})</button>}
       <button className="EditorCommand" disabled={!emails.length || loading} onClick={() => download(`fcc-${kind}-emails.csv`, reportCsv(['Email'], emails.map((email) => [email])))}><Mail size={18} /> Export emails ({emails.length})</button>
     </div>
@@ -286,6 +289,7 @@ export default function AdminReportsPage({ onNavigate }) {
           {error && <p className="StatusTextError" role="alert">{error}</p>}
           <button className="EditorCommand" type="submit" disabled={scheduleBusy || scheduleConfirmation !== selected.id || !scheduleAcknowledged}><CalendarClock size={18} /> {scheduleBusy ? 'Confirming with Stripe…' : 'Schedule club-year end'}</button>
         </form>}
+        {kind === 'members' && <button className="EditorCommand TileRemove" onClick={() => { setErasure({ membershipId: selected.id, name: selected.name }); setSelected(null); }}><ShieldX size={18} /> GDPR erasure</button>}
         {!['subscribers', 'events'].includes(kind) && <button className="EditorCommand TileRemove" onClick={() => beginDelete(selected)}><Trash2 size={18} /> Delete this record</button>}</>}
       {deleting && <form onSubmit={(event) => { event.preventDefault(); deleteRecord(); }}>
         <p className="ReportNotice">Permanently deletes this {kind === 'orders' ? 'order' : 'member-register'} record only. Other customer records, Firebase login accounts, vouchers, Google Sheets, emails, and Stripe subscriptions remain unchanged. This is not complete customer erasure. Check retention requirements first.</p>
@@ -295,5 +299,6 @@ export default function AdminReportsPage({ onNavigate }) {
         <button className="EditorCommand TileRemove" type="submit" disabled={deleteBusy || confirmation !== deleting.id || (stripeRequired && !stripeAcknowledged)}><Trash2 size={18} /> {deleteBusy ? 'Deleting…' : 'Permanently delete record'}</button>
       </form>}
     </section></div>}
+    {erasure && <GdprErasurePanel adminUser={adminUser} start={erasure} onClose={() => setErasure(null)} onErased={() => load()} />}
   </div>;
 }
