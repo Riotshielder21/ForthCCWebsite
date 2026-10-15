@@ -79,7 +79,18 @@ const buy = async (emailAddress, basket, extra) => {
   assert.equal(webhook.status, 200, `webhook failed: ${webhook.text}`);
   return result.json.orderRef;
 };
-const membershipsFor = async (emailAddress) => (await db.collection('memberships').where('email', '==', emailAddress).get()).docs.map((document) => ({ id: document.id, ...document.data() }));
+const membershipsFor = async (emailAddress) => {
+  const [legacy, households] = await Promise.all([
+    db.collection('memberships').where('email', '==', emailAddress).get(),
+    db.collection('households').where('email', '==', emailAddress).get()
+  ]);
+  const householdById = new Map(households.docs.map((document) => [document.id, { id: document.id, ...document.data() }]));
+  const householdMembers = (await Promise.all(households.docs.map((household) =>
+    db.collection('memberships').where('householdId', '==', household.id).get()
+  ))).flatMap((snapshot) => snapshot.docs);
+  return [...new Map([...legacy.docs, ...householdMembers].map((document) => [document.id, document])).values()]
+    .map((document) => ({ id: document.id, ...document.data(), household: householdById.get(document.data().householdId) || {} }));
+};
 
 const results = [];
 const test = async (name, fn) => {
@@ -187,15 +198,18 @@ await test('adult membership plus boat hire is recorded on the membership, custo
   assert.equal(membership.lastName, 'Adult');
   assert.equal(membership.status, 'active');
   assert.equal(membership.membershipTier, 'adult');
-  assert.equal(membership.address, '1 River Road');
-  assert.equal(membership.emergencyContact.name, 'Pat Friend');
+  assert.equal(membership.household.address, '1 River Road');
+  assert.equal(membership.household.emergencyContact.name, 'Pat Friend');
+  assert.equal(Object.hasOwn(membership, 'email'), false);
   assert.equal(membership.medical, 'Asthma');
   assert.equal(membership.justgoSyncStatus, 'pending');
   assert.deepEqual([membership.justgoUpload.status, membership.justgoUpload.mode, membership.justgoUpload.attempts], ['queued', 'new', 0], 'queued for the automatic JustGo upload');
   assert.ok(membership.validUntil.toDate() > new Date());
   assert.deepEqual(membership.privileges.map((entry) => entry.productId), ['boat-hire']);
   assert.equal(membership.history.length, 1);
-  assert.equal(membership.disclaimerVersion, 1);
+  assert.equal(membership.consents.disclaimer.policyKey, 'participation-disclaimer');
+  assert.ok(membership.consents.disclaimer.version >= 1, 'the wording version shown at checkout is recorded');
+  assert.equal(membership.consents.photoVideo.accepted, true);
   shared.alexMembership = membership.id;
   const order = (await db.collection('orders').doc(shared.adultOrder).get()).data();
   assert.equal(order.status, 'paid');
@@ -207,10 +221,12 @@ await test('adult membership plus boat hire is recorded on the membership, custo
   assert.deepEqual(customer.json.memberships[0].privileges, ['ANNUAL BOAT & KIT HIRE']);
 });
 
-await test('name lookup reveals only names, and nothing for unknown emails', async () => {
-  const known = await call('POST', '/api/membership-names', { body: { email: shared.alex } });
-  assert.deepEqual(known.json, { names: [{ firstName: 'Alex', lastName: 'Adult' }] });
-  assert.deepEqual((await call('POST', '/api/membership-names', { body: { email: email('nobody') } })).json, { names: [] });
+await test('an email only reveals that a record exists, names need the matching date of birth', async () => {
+  const lookup = (body) => call('POST', '/api/membership-names', { body });
+  assert.deepEqual((await lookup({ email: shared.alex })).json, { exists: true, names: [] });
+  assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(36) })).json, { exists: true, names: [] });
+  assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(35) })).json, { exists: true, names: [{ firstName: 'Alex', lastName: 'Adult' }] });
+  assert.deepEqual((await lookup({ email: email('nobody'), dob: yearsAgo(35) })).json, { exists: false, names: [] });
 });
 
 await test('a returning member can add an add-on with only name and date of birth', async () => {
@@ -237,6 +253,22 @@ await test('full details for an existing member are matched, not duplicated', as
   assert.equal((await membershipsFor(shared.alex)).length, 1);
 });
 
+await test('a junior can join the household of a member parent or guardian', async () => {
+  const parentEmail = email('member-guardian');
+  const parent = adultDetails({ firstName: 'Parent', lastName: 'Member', email: parentEmail });
+  await buy(parentEmail, build(['membership-adult'], [parent]));
+  await buy(parentEmail, build(['membership-junior'], [juniorDetails({
+    guardian: { ...juniorDetails().guardian, name: 'Parent Member', email: parentEmail }
+  })]));
+  const records = await membershipsFor(parentEmail);
+  assert.equal(records.length, 2);
+  assert.equal(records[0].householdId, records[1].householdId);
+  const household = records[0].household;
+  assert.equal(household.contactName, 'Parent Member');
+  assert.equal(household.contactRelationship, 'Parent');
+  assert.equal(household.emergencyContact.name, 'Pat Friend');
+});
+
 await test('junior membership uses the parent contact details', async () => {
   const parent = email('parent');
   shared.parent = parent;
@@ -245,9 +277,9 @@ await test('junior membership uses the parent contact details', async () => {
   const [membership] = await membershipsFor(parent);
   assert.equal(membership.firstName, 'Jamie');
   assert.equal(membership.membershipTier, 'junior');
-  assert.equal(membership.phone, '07700 900333');
-  assert.equal(membership.address, '9 Parent Street');
-  assert.equal(membership.guardian.name, 'Parent Person');
+  assert.equal(membership.household.phone, '07700 900333');
+  assert.equal(membership.household.address, '9 Parent Street');
+  assert.equal(membership.household.contactName, 'Parent Person');
   const order = (await db.collection('orders').doc(orderRef).get()).data();
   assert.equal(order.people[0].junior, true);
 });
@@ -259,6 +291,129 @@ await test('a sibling on the same parent email becomes a separate record', async
   assert.deepEqual(records.map((record) => record.firstName).sort(), ['Jamie', 'Robin']);
 });
 
+await test('siblings buying separate junior memberships together share one household', async () => {
+  const parentEmail = email('batch-parent');
+  const guardian = { ...juniorDetails().guardian, email: parentEmail };
+  const basket = build(['membership-junior', 'membership-junior'], [
+    juniorDetails({ firstName: 'One', guardian }),
+    juniorDetails({ firstName: 'Two', dob: yearsAgo(10, 3, 3), guardian })
+  ]);
+  await buy(parentEmail, basket);
+  const records = await membershipsFor(parentEmail);
+  assert.equal(records.length, 2);
+  assert.equal(records[0].householdId, records[1].householdId);
+});
+
+await test('junior members share a household only when their guardian matches, in checkout, Firestore and reports', async () => {
+  const guardianA = {
+    name: 'Morgan Guardian', phone: '07700 900441', email: email('guardian-morgan'), relationship: 'Parent',
+    address: '41 Shared Road', postcode: 'EH4 4AA'
+  };
+  const guardianB = {
+    name: 'Riley Guardian', phone: '07700 900552', email: email('guardian-riley'), relationship: 'Grandparent',
+    address: '52 Separate Road', postcode: 'EH5 5BB'
+  };
+  const buyer = email('junior-households');
+  const basket = build(['membership-junior', 'membership-junior', 'membership-junior'], [
+    juniorDetails({ firstName: 'Morgan', lastName: 'Sibling', guardian: guardianA }),
+    juniorDetails({ firstName: 'Taylor', lastName: 'Sibling', dob: yearsAgo(10, 4, 4), guardian: guardianA }),
+    juniorDetails({ firstName: 'Riley', lastName: 'Other', dob: yearsAgo(11, 7, 7), guardian: guardianB })
+  ]);
+  const orderRef = await buy(buyer, basket);
+  const order = (await db.collection('orders').doc(orderRef).get()).data();
+  const memberships = await Promise.all(order.people.map(async (person) => {
+    const snapshot = await db.collection('memberships').doc(person.membershipId).get();
+    return { id: snapshot.id, ...snapshot.data(), household: (await db.collection('households').doc(snapshot.data().householdId).get()).data() };
+  }));
+  const morgan = memberships.find((record) => record.firstName === 'Morgan');
+  const taylor = memberships.find((record) => record.firstName === 'Taylor');
+  const riley = memberships.find((record) => record.firstName === 'Riley');
+  assert.equal(morgan.householdId, taylor.householdId, 'siblings with the same named guardian share contact data');
+  assert.notEqual(morgan.householdId, riley.householdId, 'different guardians remain separate households');
+  assert.deepEqual(
+    [morgan.household.contactName, morgan.household.email, morgan.household.phone, morgan.household.address, morgan.household.postcode],
+    ['Morgan Guardian', guardianA.email, guardianA.phone, guardianA.address, guardianA.postcode]
+  );
+  assert.deepEqual(
+    [riley.household.contactName, riley.household.contactRelationship, riley.household.email, riley.household.phone],
+    ['Riley Guardian', 'Grandparent', guardianB.email, guardianB.phone]
+  );
+  for (const member of memberships) {
+    assert.equal(Object.hasOwn(member, 'email'), false, 'a junior membership does not copy the child email');
+    assert.equal(Object.hasOwn(member, 'phone'), false, 'a junior membership does not copy the child phone');
+    assert.equal(Object.hasOwn(member, 'guardian'), false, 'guardian details live on the household');
+    assert.equal(Object.hasOwn(member.household, 'emergencyContact'), false, 'the guardian is the junior emergency contact');
+  }
+
+  const orders = (await call('GET', '/api/admin/reports?kind=orders', { headers: admin })).json.records;
+  const report = orders.find((record) => record.id === orderRef);
+  assert.equal(report.status, 'paid');
+  assert.equal(report.people.length, 3);
+  assert.deepEqual(
+    [report.people.find((person) => person.name === 'Morgan Sibling').emergencyContact,
+      report.people.find((person) => person.name === 'Taylor Sibling').emergencyContact,
+      report.people.find((person) => person.name === 'Riley Other').emergencyContact],
+    ['Morgan Guardian, Parent, 07700 900441', 'Morgan Guardian, Parent, 07700 900441', 'Riley Guardian, Grandparent, 07700 900552']
+  );
+  const memberRows = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records;
+  const morganRow = memberRows.find((record) => record.name === 'Morgan Sibling');
+  const taylorRow = memberRows.find((record) => record.name === 'Taylor Sibling');
+  const rileyRow = memberRows.find((record) => record.name === 'Riley Other');
+  assert.deepEqual([morganRow.email, taylorRow.email, rileyRow.email], [guardianA.email, guardianA.email, guardianB.email]);
+  assert.deepEqual([morganRow.parent, taylorRow.parent, rileyRow.parent], [
+    'Morgan Guardian, Parent, 07700 900441', 'Morgan Guardian, Parent, 07700 900441', 'Riley Guardian, Grandparent, 07700 900552'
+  ]);
+  shared.juniorHouseholdOrder = orderRef;
+  shared.juniorHouseholdEmails = [guardianA.email, guardianB.email];
+});
+
+await test('multiple copies of shop services can be bought by different members in one mixed basket', async () => {
+  const buyer = email('multi-quantity');
+  const basket = build([
+    'membership-adult', 'membership-adult',
+    'boat-hire', 'boat-hire',
+    'keyhire', 'keyhire',
+    'gold-sub'
+  ], [
+    adultDetails({ firstName: 'Quinn', lastName: 'Quantity', email: email('quantity-quinn') }),
+    adultDetails({ firstName: 'Avery', lastName: 'Quantity', email: email('quantity-avery'), phone: '07700 900663', address: '63 Double Road', postcode: 'EH6 6CC' })
+  ]);
+  assert.equal(basket.people.length, 2);
+  const orderRef = await buy(buyer, basket);
+  const order = (await db.collection('orders').doc(orderRef).get()).data();
+  assert.equal(order.status, 'paid');
+  assert.equal(order.items.length, 7);
+  assert.deepEqual(
+    ['membership-adult', 'boat-hire', 'keyhire', 'gold-sub'].map((id) => order.items.filter((item) => item.id === id).length),
+    [2, 2, 2, 1]
+  );
+  const now = new Date();
+  const monthsRemaining = Math.max(1, (now.getMonth() >= 2 ? 1 : 0) * 12 + 2 - now.getMonth());
+  const boatPrice = monthsRemaining <= 4 ? 51 : 85;
+  const goldPrice = Math.round(30 * monthsRemaining * 0.8 * 100) / 100;
+  assert.equal(Number(order.total), 60 + boatPrice * 2 + 100 + goldPrice, 'each member and product line is priced, including the annual gold subscription');
+  assert.equal(Number(order.total), order.items.reduce((total, item) => total + Number(item.price), 0));
+  assert.deepEqual(
+    order.people.map((person) => person.lineIds.map((lineId) => order.items.find((item) => item.lineId === lineId).id).sort())
+      .sort((a, b) => a[0].localeCompare(b[0])),
+    [['boat-hire', 'keyhire', 'membership-adult'], ['boat-hire', 'gold-sub', 'keyhire', 'membership-adult']]
+  );
+  const members = await Promise.all(order.people.map(async (person) =>
+    (await db.collection('memberships').doc(person.membershipId).get()).data()
+  ));
+  assert.equal(members.length, 2);
+  assert.ok(members.every((member) => member.privileges.some((privilege) => privilege.productId === 'boat-hire')
+    && member.privileges.some((privilege) => privilege.productId === 'keyhire')));
+  const report = (await call('GET', '/api/admin/reports?kind=orders', { headers: admin })).json.records.find((record) => record.id === orderRef);
+  assert.deepEqual(
+    ['ANNUAL BOAT & KIT HIRE', 'Boathouse Access', 'GOLD SUBSCRIPTION'].map((name) => report.items.filter((item) => item.name === name).length),
+    [2, 2, 1]
+  );
+  assert.ok(report.items.every((item) => typeof item.price === 'number'));
+  assert.deepEqual(report.people.map((person) => person.items.length).sort(), [3, 4]);
+  shared.multiQuantityOrder = orderRef;
+});
+
 await test('same name and email with a different date of birth is flagged, not duplicated', async () => {
   const basket = build(['membership-junior'], [juniorDetails({ dob: yearsAgo(11, 8, 8), guardian: { ...juniorDetails().guardian, email: shared.parent } })]);
   const result = await checkout(shared.parent, basket);
@@ -268,8 +423,8 @@ await test('same name and email with a different date of birth is flagged, not d
 });
 
 await test('a membership number must agree with the date of birth', async () => {
-  await db.collection('memberships').doc('sca-E2E-1').set({ scaNumber: `E2E-${run}`, firstName: 'Sam', lastName: 'Synced', email: email('synced'), dob: yearsAgo(40, 2, 2), status: 'active', validUntil: new Date(Date.now() + 90 * 86400000), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: new Date() });
-  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), scaNumber: `E2E-${run}` };
+  await db.collection('memberships').doc('sca-E2E-1').set({ affiliationNumber: `E2E-${run}`, firstName: 'Sam', lastName: 'Synced', email: email('synced'), dob: yearsAgo(40, 2, 2), status: 'active', validUntil: new Date(Date.now() + 90 * 86400000), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: new Date() });
+  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), affiliationNumber: `E2E-${run}` };
   const bad = await checkout(email('synced'), build(['boat-hire'], [{ ...synced, dob: yearsAgo(41, 2, 2) }]));
   assert.equal(bad.status, 409);
   assert.equal(bad.json.code, 'identity_conflict');
@@ -286,7 +441,7 @@ await test('an active member cannot buy a second membership, and JustGo members 
   const again = await checkout(shared.alex, build(['membership-adult'], [adultDetails({ email: shared.alex })]));
   assert.equal(again.status, 409);
   assert.equal(again.json.code, 'membership_active');
-  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), scaNumber: `E2E-${run}` };
+  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), affiliationNumber: `E2E-${run}` };
   const viaJustgo = await checkout(email('synced'), build(['membership-adult'], [synced]));
   assert.equal(viaJustgo.status, 409);
   assert.equal(viaJustgo.json.code, 'renews_via_justgo');
@@ -349,7 +504,7 @@ await test('JustGo members are inactive until the sync confirms their renewal in
   const yearStart = new Date(now.getMonth() >= 2 ? now.getFullYear() : now.getFullYear() - 1, 2, 1);
   const lapsed = email('unconfirmed');
   const details = adultDetails({ firstName: 'Lou', lastName: 'Unconfirmed', dob: yearsAgo(45, 7, 7), email: lapsed });
-  await db.collection('memberships').doc(`sca-E2E-U-${run}`).set({ scaNumber: `E2E-U-${run}`, firstName: 'Lou', lastName: 'Unconfirmed', email: lapsed, dob: details.dob, status: 'active',
+  await db.collection('memberships').doc(`sca-E2E-U-${run}`).set({ affiliationNumber: `E2E-U-${run}`, firstName: 'Lou', lastName: 'Unconfirmed', email: lapsed, dob: details.dob, status: 'active',
     validUntil: new Date(now.getTime() + 90 * 86400000), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: new Date(yearStart.getTime() - 86400000) });
   const addOn = await checkout(lapsed, build(['boat-hire'], [details]));
   assert.equal(addOn.status, 409);
@@ -365,10 +520,10 @@ await test('JustGo members are inactive until the sync confirms their renewal in
 
 await test('a person with a membership number we do not hold is invited through JustGo', async () => {
   const visitor = email('visitor');
-  const basket = build(['membership-adult'], [{ ...adultDetails({ firstName: 'Vic', lastName: 'Visitor', email: visitor }), scaNumber: `PS-${run}` }]);
+  const basket = build(['membership-adult'], [{ ...adultDetails({ firstName: 'Vic', lastName: 'Visitor', email: visitor }), affiliationNumber: `PS-${run}` }]);
   await buy(visitor, basket);
   const [record] = await membershipsFor(visitor);
-  assert.equal(record.scaNumber, `PS-${run}`);
+  assert.equal(record.affiliationNumber, `PS-${run}`);
   assert.deepEqual([record.justgoUpload.status, record.justgoUpload.mode], ['queued', 'invite']);
   shared.visitorMembership = record.id;
 });
@@ -403,13 +558,14 @@ await test('family membership shares contact details and notes parents as the ch
   const orderRef = await buy(family, basket);
   const records = await membershipsFor(family);
   assert.equal(records.length, 3);
-  assert.equal(new Set(records.map((record) => record.familyGroup)).size, 1);
-  assert.ok(records.every((record) => record.address === '1 River Road' && record.phone === '07700 900111'));
+  assert.equal(new Set(records.map((record) => record.householdId)).size, 1);
+  assert.ok(records.every((record) => record.household.address === '1 River Road' && record.household.phone === '07700 900111'));
   const kid = records.find((record) => record.firstName === 'Kit');
-  assert.equal(kid.emergencyNote, 'Parents are the emergency contact');
+  assert.equal(Object.hasOwn(kid, 'emergencyNote'), false);
+  assert.equal(kid.household.emergencyContact.name, 'Pat Friend');
   assert.equal(kid.medical, 'Hay fever');
   assert.equal(kid.photoConsent, false);
-  assert.equal(records.find((record) => record.firstName === 'Casey').emergencyContact.name, 'Pat Friend');
+  assert.equal(records.find((record) => record.firstName === 'Casey').household.emergencyContact.name, 'Pat Friend');
   shared.familyOrder = orderRef;
   shared.family = family;
 });
@@ -460,8 +616,22 @@ await test('discount codes: create, edit, scope, disable, apply', async () => {
 
 await test('a voucher is accepted once, taken off the price, then shows as used', async () => {
   const member = { returning: true, firstName: 'Alex', lastName: 'Adult', dob: yearsAgo(35), disclaimerAccepted: true };
-  const orderRef = await buy(shared.alex, build(['boat-hire'], [member]), { discountCode: shared.voucherCode });
-  assert.equal(Number((await db.collection('orders').doc(orderRef).get()).data().total), 25);
+  const courseId = `E2E-VOUCHER-COURSE-${run}`;
+  const course = {
+    id: courseId, name: 'Voucher-funded week course', category: 'EVENTS', type: 'event-ticket', basePrice: 75,
+    capacity: 4, eventSchedule: { mode: 'consecutive', startDate: '2027-07-12', startTime: '09:00',
+      endTime: '16:00', days: 5, timeZone: 'Europe/London' }
+  };
+  const { id: _courseId, ...courseFields } = course;
+  await db.collection('products').doc(courseId).set(courseFields);
+  const line = { ...course, lineId: `${courseId}-line` };
+  const people = assignLines([], [line], makeId).map((person) => ({ ...person, ...member }));
+  const orderRef = await buy(shared.alex, { lines: [line], people }, { discountCode: shared.voucherCode });
+  const paidOrder = (await db.collection('orders').doc(orderRef).get()).data();
+  assert.equal(Number(paidOrder.total), 15);
+  assert.equal(paidOrder.items[0].eventSchedule.days, 5);
+  assert.equal(paidOrder.people.length, 1);
+  shared.voucherRedemptionOrder = orderRef;
   const customer = await call('GET', `/api/admin/customer?q=${encodeURIComponent(shared.gifter)}`, { headers: admin });
   assert.equal(customer.json.vouchers[0].status, 'used');
   assert.equal(customer.json.vouchers[0].usedByOrder, orderRef);
@@ -499,30 +669,47 @@ await test('reports: orders list shows each person and what they bought', async 
   assert.equal(kit.emergencyContact, 'Parents are the emergency contact');
   assert.equal(kit.address, '1 River Road, EH1 1AA');
   assert.deepEqual(kit.items, ['CLUB MEMBERSHIP — FAMILY']);
+  const drew = family.people.find((person) => person.name === 'Drew Adult');
+  const casey = family.people.find((person) => person.name === 'Casey Adult');
+  assert.deepEqual([drew.emergencyContact, casey.emergencyContact], [
+    'Pat Friend, Friend, 07700 900222', 'Pat Friend, Friend, 07700 900222'
+  ]);
+  assert.ok(family.people.every((person) => person.address === '1 River Road, EH1 1AA'
+    && person.items.includes('CLUB MEMBERSHIP — FAMILY')), 'every family member reports the same household contact and membership');
   const alex = report.json.records.find((record) => record.id === shared.adultOrder);
   assert.equal(alex.people[0].medical, 'Asthma');
   assert.deepEqual(alex.items.map((item) => item.name), ['CLUB MEMBERSHIP — ADULT', 'ANNUAL BOAT & KIT HIRE']);
   assert.ok(alex.items.every((item) => typeof item.price === 'number'));
+  const voucherPurchase = report.json.records.find((record) => record.id === shared.voucherOrder);
+  assert.equal(voucherPurchase.status, 'paid');
+  assert.equal(voucherPurchase.people.length, 0, 'a gift voucher purchase does not create a membership');
+  assert.deepEqual(voucherPurchase.items.map((item) => [item.name, item.price]), [['Course place voucher', 60]]);
+  const voucherRedemption = report.json.records.find((record) => record.id === shared.voucherRedemptionOrder);
+  assert.deepEqual(voucherRedemption.items.map((item) => item.name), ['Voucher-funded week course']);
+  assert.equal(voucherRedemption.total, 15);
+  const multiQuantity = report.json.records.find((record) => record.id === shared.multiQuantityOrder);
+  assert.equal(multiQuantity.items.length, 7);
+  assert.equal(multiQuantity.people.length, 2);
 });
 
 await test('reports: one member register holds website and JustGo members, complete and readable', async () => {
   const report = await call('GET', '/api/admin/reports?kind=members', { headers: admin });
   assert.equal(report.status, 200);
   const mine = report.json.records.filter((record) => record.email.endsWith(`.${run}@example.test`));
-  assert.equal(mine.length, 1 + 2 + 3 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1, 'alex 1, parent 2 children, family 3, synced member 1, visitor 1, unconfirmed member 1, Stripe members 2, coaching member 1, receipt member 1, legacy member 1');
+  assert.equal(mine.length, 1 + 2 + 3 + 3 + 1 + 1 + 1 + 2 + 1 + 1 + 1 + 2, 'alex 1, parent 2 children, family 3, guardian-grouped juniors 3, synced member 1, visitor 1, unconfirmed member 1, Stripe members 2, coaching member 1, receipt member 1, legacy member 1, multi-quantity members 2');
   const alex = mine.find((record) => record.id === shared.alexMembership);
   assert.equal(alex.name, 'Alex Adult');
   assert.equal(alex.tier, 'adult');
   assert.equal(alex.status, 'Current');
   assert.deepEqual(alex.privileges.sort(), ['ANNUAL BOAT & KIT HIRE', 'Boathouse Access', 'BLUE SUBSCRIPTION'].sort());
-  assert.equal(alex.history.length, 5, 'membership, key hire, subscription, voucher-paid hire and the event ticket');
+  assert.equal(alex.history.length, 5, 'membership, key hire, subscription, voucher-paid course and the event ticket');
   assert.ok(alex.history.every((entry) => entry.orderRef && entry.paidAt && entry.items.length));
   assert.equal(alex.justgoSync, 'pending');
   assert.equal(alex.address, '1 River Road, EH1 1AA');
   for (const record of mine) for (const [key, value] of Object.entries(record)) {
     if (!['privileges', 'history', 'photoConsent'].includes(key)) assert.ok(['string', 'object', 'number'].includes(typeof value) && !Array.isArray(value) || value === null, `${key} is displayable`);
   }
-  assert.ok(mine.some((record) => record.familyGroup));
+  assert.ok(mine.some((record) => record.householdId));
   assert.equal(alex.source, 'website');
   assert.equal(alex.renewalMethod, 'website');
   assert.equal(alex.justgo, 'Awaiting upload');
@@ -631,6 +818,114 @@ await test('merchandise sizes and event capacity limit sales, expiry releases ho
   assert.equal((await remove(firstTicket)).status, 200);
   assert.equal((await stock(eventId)).soldOut, false, 'a freed place returns the event to the shop');
   assert.equal((await checkout(shared.alex, ticket(3))).status, 200);
+});
+
+await test('deleted orders keep a masked audit entry and GDPR erasure removes a person everywhere but keeps the accounts', async () => {
+  const erase = (body) => call('POST', '/api/admin/gdpr/erase', { headers: admin, body });
+  const preview = (body) => call('POST', '/api/admin/gdpr/preview', { headers: admin, body });
+  const remove = (orderRef) => call('DELETE', `/api/admin/records/orders/${orderRef}`, { headers: admin, body: { confirmId: orderRef, acknowledgeStripe: true } });
+  const customerCount = async (who) => (await db.collection('customers').where('email', '==', who).get()).size;
+
+  const gdpr = email('gdpr');
+  const details = adultDetails({ firstName: 'Gail', lastName: 'Erase', dob: yearsAgo(41, 3, 3), email: gdpr });
+  const membershipOrder = await buy(gdpr, build(['membership-adult'], [details]));
+  const addOnOrder = await buy(gdpr, build(['keyhire'], [{ returning: true, firstName: 'Gail', lastName: 'Erase', dob: details.dob, disclaimerAccepted: true }]));
+  assert.equal((await remove(addOnOrder)).status, 200);
+  const audit = (await db.collection('adminDeletionAudit').where('recordId', '==', addOnOrder).get()).docs[0].data();
+  assert.equal(audit.summary.maskedEmail, 'g***@e***.test');
+  assert.equal(audit.summary.people[0].name, 'G*** E***');
+  assert.equal(audit.summary.total, 50);
+  assert.equal(JSON.stringify(audit.summary).includes(gdpr), false, 'the summary holds no readable email');
+  assert.equal(audit.snapshot.email, gdpr, 'the hidden snapshot allows recovery until erasure');
+
+  const identity = { email: gdpr, firstName: 'Gail', lastName: 'Erase', dob: details.dob };
+  const found = await preview(identity);
+  assert.equal(found.status, 200, found.text);
+  assert.equal(found.json.people.length, 1);
+  assert.equal(found.json.deletedRecords.length, 1, 'already-deleted records are found by email, name and date of birth');
+  const wrong = await preview({ ...identity, dob: yearsAgo(40, 3, 3) });
+  assert.deepEqual([wrong.json.people.length, wrong.json.deletedRecords.length], [0, 0]);
+  assert.equal((await erase(identity)).status, 400, 'confirmation is required');
+
+  const total = (await db.collection('orders').doc(membershipOrder).get()).data().total;
+  const erased = await erase({ ...identity, scope: 'person', confirm: 'ERASE' });
+  assert.equal(erased.status, 200, erased.text);
+  assert.equal(erased.json.erased, 1);
+  assert.equal((await membershipsFor(gdpr)).length, 0);
+  const kept = (await db.collection('orders').doc(membershipOrder).get()).data();
+  assert.deepEqual([kept.email, kept.total, kept.items.length, kept.people[0].erased, kept.people[0].firstName], ['***', total, 1, true, undefined]);
+  assert.equal(await customerCount(gdpr), 0);
+  const purged = (await db.collection('adminDeletionAudit').where('recordId', '==', addOnOrder).get()).docs[0].data();
+  assert.deepEqual([purged.snapshot, purged.personalDataErased], [null, true]);
+  const trail = (await db.collection('adminDeletionAudit').where('kind', '==', 'gdpr-erasure').get()).docs.map((document) => document.data()).find((entry) => entry.summary.ordersRedacted.includes(membershipOrder));
+  assert.ok(trail, 'the erasure itself is recorded');
+  assert.equal(JSON.stringify(trail.summary).includes(gdpr), false);
+  assert.equal((await erase({ ...identity, scope: 'person', confirm: 'ERASE' })).status, 404, 'nothing is left to erase');
+
+  const family = email('gdpr-family');
+  const familyLines = [{ ...lineFor('membership-family', 0), lineId: `gdpr-family-${run}` }];
+  const familyDetails = [adultDetails({ email: family, firstName: 'Drew', lastName: 'Famly' }),
+    { firstName: 'Casey', lastName: 'Famly', dob: yearsAgo(37), swimming: 'confident', junior: false, disclaimerAccepted: true, photoConsent: true, medical: '' },
+    { firstName: 'Kit', lastName: 'Famly', dob: yearsAgo(9), swimming: 'basic', junior: true, disclaimerAccepted: true, photoConsent: false, medical: '' }];
+  const familyBasket = { lines: familyLines, people: assignLines([], familyLines, makeId).map((person, index) => ({ ...person, ...familyDetails[index] })) };
+  const familyOrder = await buy(family, familyBasket);
+  const people = await membershipsFor(family);
+  const parent = people.find((record) => record.firstName === 'Drew');
+  const kid = people.find((record) => record.firstName === 'Kit');
+  const shown = await preview({ membershipId: parent.id });
+  assert.deepEqual([shown.json.family.length, shown.json.remaining.length], [3, 2]);
+  assert.equal((await erase({ membershipId: parent.id, confirm: 'ERASE' })).json.requiresFamilyChoice, true);
+  const missing = await erase({ membershipId: parent.id, scope: 'person', confirm: 'ERASE' });
+  assert.equal(missing.status, 400);
+  assert.equal(missing.json.requiresSharedDetails, true);
+  assert.equal((await membershipsFor(family)).length, 3, 'nothing was erased');
+
+  const sharedDetails = { contactName: 'Sam New', contactRelationship: 'Parent', phone: '07700 900999', email: email('gdpr-new'), address: '9 New Road', postcode: 'EH9 9ZZ',
+    emergencyName: 'Pat New', emergencyPhone: '07700 900888', emergencyRelationship: 'Friend' };
+  const only = await erase({ membershipId: parent.id, scope: 'person', confirm: 'ERASE', sharedDetails });
+  assert.equal(only.status, 200, only.text);
+  const stayed = await membershipsFor(sharedDetails.email);
+  assert.equal(stayed.length, 2, 'the rest of the family moves to the new shared details');
+  assert.ok(stayed.every((record) => record.household.address === '9 New Road' && record.household.emergencyContact.name === 'Pat New'
+    && record.household.contactName === 'Sam New'));
+  assert.equal((await db.collection('orders').doc(familyOrder).get()).data().email, '***', 'the removed household contact email is redacted');
+
+  const everyone = await erase({ membershipId: kid.id, scope: 'family', confirm: 'ERASE' });
+  assert.equal(everyone.status, 200, everyone.text);
+  assert.equal(everyone.json.erased, 2);
+  assert.equal((await membershipsFor(sharedDetails.email)).length, 0);
+  assert.equal((await db.collection('orders').doc(familyOrder).get()).data().email, '***');
+  assert.equal(await customerCount(family), 0);
+
+  const subscriber = email('gdpr-sub');
+  const subDetails = adultDetails({ firstName: 'Sub', lastName: 'Erase', dob: yearsAgo(44, 4, 4), email: subscriber });
+  await buy(subscriber, build(['membership-adult', 'blue-sub'], [subDetails]), { billingMode: 'monthly' });
+  const [subscriberRecord] = await membershipsFor(subscriber);
+  const cancelled = await erase({ membershipId: subscriberRecord.id, scope: 'person', confirm: 'ERASE' });
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal(cancelled.json.subscriptionsCancelled, 1);
+  assert.ok(cancelled.json.manual.some((step) => /Stripe/.test(step)));
+});
+
+await test('consent and policy wording is recorded as numbered versions that follow changes', async () => {
+  const listing = await call('GET', '/api/admin/policies', { headers: admin });
+  assert.equal(listing.status, 200);
+  assert.equal(listing.json.live, true, 'run the test API with WEBSITE_ISLIVE=true');
+  const byKey = new Map(listing.json.policies.map((policy) => [policy.policyKey, policy]));
+  assert.ok(byKey.get('participation-disclaimer').currentVersion >= 1);
+  assert.ok(byKey.get('photo-video-consent').currentVersion >= 1);
+  for (const key of ['privacy-notice', 'data-retention', 'first-aid-and-safety']) assert.equal(byKey.get(key).currentVersion, 0, `${key} is registered but not yet written`);
+  const first = listing.json.versions.find((version) => version.policyKey === 'participation-disclaimer' && version.version === 1);
+  assert.match(first.text, /participation and safety disclaimer/);
+  assert.equal(first.supersedesVersion, null);
+  assert.deepEqual((await call('POST', '/api/admin/policies/sync', { headers: admin })).json.recorded, [], 'unchanged wording adds no version');
+
+  await db.collection('policies').doc('participation-disclaimer').set({ currentHash: 'older wording' }, { merge: true });
+  const changed = await call('POST', '/api/admin/policies/sync', { headers: admin });
+  assert.deepEqual(changed.json.recorded.map((entry) => `${entry.key}@${entry.version}`), [`participation-disclaimer@${byKey.get('participation-disclaimer').currentVersion + 1}`]);
+  const next = (await db.collection('policyVersions').doc(`participation-disclaimer@${byKey.get('participation-disclaimer').currentVersion + 1}`).get()).data();
+  assert.equal(next.supersedesVersion, byKey.get('participation-disclaimer').currentVersion);
+  assert.equal((await call('GET', '/api/admin/policies')).status, 401, 'policy records are admin only');
 });
 
 await test('every paid order produced a receipt email record', async () => {

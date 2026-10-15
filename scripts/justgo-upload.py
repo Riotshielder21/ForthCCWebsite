@@ -75,6 +75,27 @@ class PlaywrightUploader:
                 await browser.close()
         return {"inviteExpiresAt": None}
 
+def upload_details(database, member):
+    household_id = member.get("householdId")
+    if not household_id:
+        return member
+    document = database.collection("households").document(household_id).get()
+    if not document.exists:
+        raise UploadError(f"Household {household_id} is missing.")
+    household = document.to_dict()
+    if not household.get("email"):
+        raise UploadError(f"Household {household_id} has no contact email.")
+    return {
+        **member,
+        "contactName": household.get("contactName", ""),
+        "contactRelationship": household.get("contactRelationship", ""),
+        "email": household.get("email", ""),
+        "phone": household.get("phone", ""),
+        "address": household.get("address", ""),
+        "postcode": household.get("postcode", ""),
+        "emergencyContact": household.get("emergencyContact", {}),
+    }
+
 
 def load_uploader():
     try:
@@ -126,7 +147,7 @@ async def process_queue(database, uploader, now=None):
         state["attempts"] = int(state.get("attempts", 0)) + 1
         member["justgoUpload"] = state
         try:
-            result = await uploader.upload(member) or {}
+            result = await uploader.upload(upload_details(database, member)) or {}
         except UploadError as error:
             state = after_failure(state, str(error), now)
             summary["failed"] += 1

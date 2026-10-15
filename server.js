@@ -14,7 +14,7 @@ import { PAGE_CONTENT } from './src/constants/pageContent.js';
 import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart } from './src/utils/pricing.js';
-import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership, DISCLAIMER_VERSION } from './src/utils/checkout.js';
+import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
 import { buildReceiptSummary, receiptEmailCopy } from './src/utils/receipt.js';
@@ -22,6 +22,12 @@ import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation, stripeSubscriberReport } from './src/utils/stripeReports.js';
 import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
 import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProblem, withHold, itemLabel, isMerchandise } from './src/utils/inventory.js';
+import { deletionAuditEntry } from './src/utils/privacy.js';
+import { CURRENT_MEMBERSHIP_VERSION } from './src/utils/schema.js';
+import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from './src/utils/households.js';
+import { registerGdprRoutes } from './src/server/gdpr.js';
+import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
+import { isLive, liveReadinessProblems } from './src/utils/live.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -100,7 +106,7 @@ const clubYearEnd = () => {
 const toMembershipRecord = (document) => {
   const data = document.data();
   return {
-    id: document.id, scaNumber: data.scaNumber || '', email: data.email || '', dob: data.dob || '',
+    id: document.id, affiliationNumber: data.affiliationNumber || '', email: data.email || '', householdId: data.householdId || '', dob: data.dob || '',
     firstName: data.firstName || '', lastName: data.lastName || '', status: data.status, validUntil: data.validUntil?.toMillis() || 0,
     justgo: data.justgoSyncStatus === 'synced' || data.renewalMethod === 'justgo',
     renewalMethod: data.renewalMethod || '', justgoSyncStatus: data.justgoSyncStatus || '', lastJustgoSync: data.lastJustgoSync?.toMillis() || 0,
@@ -141,11 +147,38 @@ const stripeSubscriptionIsActive = async (member) => {
 
 const findMembership = async (person) => {
   const memberships = adminDb.collection('memberships');
-  const [byNumber, byEmail] = await Promise.all([
-    person.scaNumber ? memberships.where('scaNumber', '==', person.scaNumber).limit(5).get() : null,
-    memberships.where('email', '==', contactEmail(person)).limit(50).get()
+  const [byNumber, byEmail, households] = await Promise.all([
+    person.affiliationNumber ? memberships.where('affiliationNumber', '==', person.affiliationNumber).limit(5).get() : null,
+    memberships.where('email', '==', contactEmail(person)).limit(50).get(),
+    adminDb.collection('households').where('email', '==', contactEmail(person)).limit(50).get()
   ]);
-  const result = matchMembership(person, { byNumber: byNumber?.docs.map(toMembershipRecord) || [], byEmail: byEmail.docs.map(toMembershipRecord) });
+  const householdMembers = (await Promise.all(households.docs.map((household) =>
+    memberships.where('householdId', '==', household.id).limit(50).get()
+  ))).flatMap((snapshot) => snapshot.docs);
+  const candidateDocuments = [...new Map([...byEmail.docs, ...(byNumber?.docs || []), ...householdMembers]
+    .map((document) => [document.id, document])).values()];
+  const otherHouseholdIds = [...new Set(candidateDocuments.map((document) => document.data().householdId)
+    .filter((id) => id && !households.docs.some((household) => household.id === id)))];
+  const otherHouseholds = otherHouseholdIds.length
+    ? await adminDb.getAll(...otherHouseholdIds.map((id) => adminDb.collection('households').doc(id)))
+    : [];
+  const householdById = new Map([...households.docs, ...otherHouseholds].filter((document) => document.exists)
+    .map((document) => [document.id, document.data()]));
+  const asMatchRecord = (document) => {
+    const data = document.data();
+    return { ...toMembershipRecord(document), email: data.email || householdById.get(data.householdId)?.email || '' };
+  };
+  const contactName = person.junior ? person.guardian.name : `${person.firstName} ${person.lastName}`;
+  const matchingHouseholds = households.docs.filter((household) =>
+    normaliseName(household.data().contactName) === normaliseName(contactName));
+  const recordsById = new Map(candidateDocuments.map((document) => {
+    const record = asMatchRecord(document);
+    return [record.id, record];
+  }));
+  const result = matchMembership(person, {
+    byNumber: (byNumber?.docs || []).map(asMatchRecord),
+    byEmail: [...recordsById.values()]
+  });
   const match = result.match;
   let stripeActive = true;
   try {
@@ -157,7 +190,9 @@ const findMembership = async (person) => {
   const activity = match ? membershipActivity(match) : 'inactive';
   return {
     conflict: result.conflict, reason: result.reason,
-    existing: match ? { id: match.id, active: stripeActive && activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil } : null
+    contactHouseholdId: matchingHouseholds.length === 1 ? matchingHouseholds[0].id : '',
+    existing: match ? { id: match.id, householdId: match.householdId,
+      active: stripeActive && activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil } : null
   };
 };
 
@@ -176,9 +211,31 @@ const verifyMemberByName = async (name) => {
   return { verified: false };
 };
 
-const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripeSubscriptionId = '', stripeMode = 'test' }) => {
+const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripeSubscriptionId = '', stripeMode = 'test', householdSnapshots = new Map() }) => {
   const validUntil = Timestamp.fromDate(clubYearEnd());
   const membershipIds = [];
+  const households = new Map();
+  for (const person of order.people || []) {
+    if (!person.householdId) continue;
+    const group = households.get(person.householdId) || [];
+    group.push(person);
+    households.set(person.householdId, group);
+  }
+  for (const [householdId, people] of households) {
+    const reference = adminDb.collection('households').doc(householdId);
+    const existing = householdSnapshots.get(householdId)?.data();
+    if (existing) {
+      const junior = people.find((person) => person.junior);
+      const update = { updatedAt: paidAt };
+      if (junior && normaliseName(existing.contactName) === normaliseName(junior.guardian?.name) && junior.guardian?.relationship) {
+        update.contactRelationship = junior.guardian.relationship;
+      }
+      transaction.set(reference, update, { merge: true });
+    } else {
+      const { id: _id, ...fields } = householdForPerson(people[0], householdId, paidAt);
+      transaction.set(reference, fields);
+    }
+  }
   for (const person of order.people || []) {
     const lines = person.lineIds.map((id) => order.items.find((item) => item.lineId === id)).filter(Boolean);
     const membershipLine = lines.find(isMembership);
@@ -186,15 +243,22 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
     const privileges = lines.filter((item) => !isMembership(item) && item.category !== 'EVENTS')
       .map((item) => ({ productId: item.id, name: item.name, type: item.type, orderRef, grantedAt: paidAt }));
     const historyEntry = { orderRef, paidAt, items: lines.map((item) => ({ id: item.id, name: item.name, price: item.price })) };
-    const { id, lineIds, membershipId, existingMember, ...details } = person;
+    const { id, lineIds, membershipId, existingMember, householdId, ...details } = person;
+    for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
     membershipIds.push(membershipId);
     transaction.set(adminDb.collection('memberships').doc(membershipId), {
       ...(existingMember ? {} : {
-        ...details, email: contactEmail(person), source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`),
-        ...(person.junior ? { phone: person.guardian.phone, address: person.guardian.address, postcode: person.guardian.postcode } : {}),
-        disclaimerVersion: order.disclaimerVersion, disclaimerAcceptedAt: paidAt
+        ...details, source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`)
       }),
-      ...(membershipLine ? { status: 'active', validUntil, membershipTier: membershipLine.membershipTier || '', justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.scaNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
+      schemaVersion: CURRENT_MEMBERSHIP_VERSION,
+      ...(householdId ? { householdId } : {}),
+      ...Object.fromEntries(HOUSEHOLD_MEMBER_FIELDS.map((key) => [key, FieldValue.delete()])),
+      // Consent is recorded against the wording version shown at checkout; the disclaimer is re-accepted on every purchase.
+      consents: {
+        disclaimer: { ...order.policyVersions?.disclaimer, acceptedAt: paidAt, by: person.junior ? 'guardian' : 'self' },
+        ...(existingMember ? {} : { photoVideo: { ...order.policyVersions?.photoVideo, accepted: person.photoConsent === true, recordedAt: paidAt, by: person.junior ? 'guardian' : 'self' } })
+      },
+      ...(membershipLine ? { status: 'active', validUntil, membershipTier: membershipLine.membershipTier || '', justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.affiliationNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
       ...(stripeSubscriptionId && membershipLine?.type === 'subscription'
         ? { stripeMembershipSubscriptionId: stripeSubscriptionId, stripeMembershipMode: stripeMode }
         : {}),
@@ -215,14 +279,14 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
   }, { merge: true });
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [], siteUrl = '', billingMode = 'annual', receiptViewTokenHash = '', stockProductIds = [] }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [], siteUrl = '', billingMode = 'annual', receiptViewTokenHash = '', stockProductIds = [], policyVersions = null }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     email: email.toLowerCase(),
     items,
     people,
     stockProductIds,
-    disclaimerVersion: DISCLAIMER_VERSION,
+    policyVersions,
     total: String(total),
     status,
     stripeSessionId,
@@ -355,6 +419,30 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
         const stock = await readStock(transaction, order.stockProductIds || []);
         const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
         const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
+        const memberIds = [...new Set((order.people || []).map((person) => person.membershipId).filter(Boolean))];
+        const memberDocuments = memberIds.length
+          ? await transaction.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id)))
+          : [];
+        const memberHouseholds = new Map(memberDocuments.filter((member) => member.exists)
+          .map((member) => [member.id, member.data().householdId || '']));
+        const groups = new Map();
+        for (const person of order.people || []) {
+          const key = householdGroupKey(person);
+          const group = groups.get(key) || [];
+          group.push(person);
+          groups.set(key, group);
+        }
+        for (const group of groups.values()) {
+          const householdIds = [...new Set(group.map((person) => person.householdId || memberHouseholds.get(person.membershipId)).filter(Boolean))];
+          if (householdIds.length > 1) throw new Error('Checkout people reference different households.');
+          const householdId = householdIds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
+          group.forEach((person) => { person.householdId = householdId; });
+        }
+        const householdIds = [...new Set((order.people || []).map((person) => person.householdId).filter(Boolean))];
+        const householdDocuments = householdIds.length
+          ? await transaction.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id)))
+          : [];
+        const householdSnapshots = new Map(householdDocuments.map((household) => [household.id, household]));
         if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
         const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
           code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
@@ -378,8 +466,9 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
         }));
         const paidAt = order.paidAt || Timestamp.now();
         if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt,
-          stripeSubscriptionId: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test' });
+          stripeSubscriptionId: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test', householdSnapshots });
         transaction.update(orderDocument, {
+          people: order.people || [],
           status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
           stripePaymentIntentId: session.payment_intent || '', stripeSubscriptionId: session.subscription || '',
           paidAt,
@@ -531,11 +620,24 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
     const snapshot = await query.get();
     const documents = snapshot.docs.slice(0, 100);
     let members = new Map();
+    let households = new Map();
     if (req.query.kind !== 'members') {
       const ids = [...new Set(documents.flatMap((document) => (document.data().people || []).map((person) => person.membershipId)).filter(Boolean))];
       if (ids.length) members = new Map((await adminDb.getAll(...ids.map((id) => adminDb.collection('memberships').doc(id)))).filter((document) => document.exists).map((document) => [document.id, document.data()]));
     }
-    const records = documents.map((document) => (req.query.kind === 'members' ? membershipReport(document.id, document.data()) : orderReport(document.id, document.data(), members)));
+    const householdIds = [...new Set((req.query.kind === 'members'
+      ? documents.map((document) => document.data().householdId)
+      : [...members.values()].map((member) => member.householdId)).filter(Boolean))];
+    if (householdIds.length) {
+      households = new Map((await adminDb.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id))))
+        .filter((document) => document.exists).map((document) => [document.id, document.data()]));
+      if (req.query.kind !== 'members') {
+        members = new Map([...members].map(([id, member]) => [id, { ...member, household: households.get(member.householdId) || {} }]));
+      }
+    }
+    const records = documents.map((document) => (req.query.kind === 'members'
+      ? membershipReport(document.id, document.data(), new Date(), households.get(document.data().householdId) || {})
+      : orderReport(document.id, document.data(), members)));
     res.json({ records: eventReport ? records.filter((record) => record.items.some((item) => item.category === 'EVENTS'))
       .map((record) => ({ ...record, orderTotal: record.total, items: record.items.filter((item) => item.category === 'EVENTS'),
         total: record.items.filter((item) => item.category === 'EVENTS').reduce((sum, item) => sum + (item.price || 0), 0) })) : records,
@@ -596,6 +698,8 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       return res.status(400).json({ error: 'Invalid report record.' });
     }
     if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Type the exact record ID to confirm deletion.' });
+    const auditSecret = process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
+    if (!auditSecret) return res.status(503).json({ error: 'Deletion audit is not configured. Set AUDIT_LOOKUP_SECRET.' });
     const reference = collection.doc(req.params.id);
     const result = await adminDb.runTransaction(async (transaction) => {
       const document = await transaction.get(reference);
@@ -614,9 +718,8 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       stock.forEach((snapshot) => dropHold(transaction, snapshot, req.params.id));
       transaction.delete(reference);
       transaction.create(adminDb.collection('adminDeletionAudit').doc(), {
-        adminUid: admin.uid, kind: req.params.kind,
-        recordIdHash: crypto.createHash('sha256').update(req.params.id).digest('hex'),
-        stripeAcknowledged: req.body.acknowledgeStripe === true, createdAt: Timestamp.now()
+        ...deletionAuditEntry({ kind: req.params.kind, id: req.params.id, fields, secret: auditSecret, adminUid: admin.uid, stripeAcknowledged: req.body.acknowledgeStripe === true }),
+        createdAt: Timestamp.now()
       });
       return { status: 200, success: true };
     });
@@ -626,6 +729,9 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
     res.status(500).json({ error: 'Could not delete record.' });
   }
 });
+
+registerGdprRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
+registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
@@ -956,17 +1062,22 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
     }
     if (!email) return res.status(404).json({ error: 'No customer found.' });
 
-    const [byEmail, orderSnapshot, memberSnapshot] = await Promise.all([
+    const [byEmail, orderSnapshot, memberSnapshot, householdSnapshot] = await Promise.all([
       adminDb.collection('discountCodes').where('email', '==', email).get(),
       adminDb.collection('orders').where('email', '==', email).limit(50).get(),
-      adminDb.collection('memberships').where('email', '==', email).limit(20).get()
+      adminDb.collection('memberships').where('email', '==', email).limit(20).get(),
+      adminDb.collection('households').where('email', '==', email).limit(50).get()
     ]);
+    const householdMembers = (await Promise.all(householdSnapshot.docs.map((household) =>
+      adminDb.collection('memberships').where('householdId', '==', household.id).limit(50).get()
+    ))).flatMap((snapshot) => snapshot.docs);
+    const allMembers = [...new Map([...memberSnapshot.docs, ...householdMembers].map((document) => [document.id, document])).values()];
     // Older vouchers have no email of their own, so they are found through the customer's orders.
     const known = new Set(byEmail.docs.map((document) => document.id));
     const olderCodes = orderSnapshot.docs.flatMap((order) => (order.data().vouchers || []).map((voucher) => voucher.code)).filter((code) => !known.has(code));
     const voucherDocs = [...byEmail.docs.filter((document) => document.data().orderRef)];
     if (olderCodes.length) voucherDocs.push(...(await adminDb.getAll(...olderCodes.map((code) => adminDb.collection('discountCodes').doc(code)))).filter((document) => document.exists));
-    if (!voucherDocs.length && !orderSnapshot.size && !memberSnapshot.size) return res.status(404).json({ error: 'No customer found.' });
+    if (!voucherDocs.length && !orderSnapshot.size && !allMembers.length) return res.status(404).json({ error: 'No customer found.' });
     const now = Date.now();
     res.json({
       email,
@@ -978,12 +1089,12 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
           createdAt: data.createdAt?.toMillis() || 0, expiresAt: data.expiresAt?.toMillis() || 0, usedAt: data.usedAt?.toMillis() || 0
         };
       }).sort((a, b) => b.createdAt - a.createdAt),
-      memberships: memberSnapshot.docs.map((document) => {
+      memberships: allMembers.map((document) => {
         const data = document.data();
         return {
           id: document.id, name: `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.name || 'Unnamed',
           membershipTier: data.membershipTier || '', status: data.status === 'active' && data.validUntil?.toMillis() <= now ? 'expired' : data.status || 'unknown',
-          validUntil: data.validUntil?.toMillis() || 0, scaNumber: data.scaNumber || '',
+          validUntil: data.validUntil?.toMillis() || 0, affiliationNumber: data.affiliationNumber || '',
           privileges: (data.privileges || []).map((privilege) => privilege.name)
         };
       }),
@@ -1076,20 +1187,30 @@ app.post('/api/admin/discount-codes', rateLimit(20, 60 * 1000), async (req, res)
   }
 });
 
-// Names only, so a returning member can pick themselves; the date of birth is still verified at payment.
-app.post('/api/membership-names', rateLimit(5, 60 * 1000), async (req, res) => {
+// Says whether a membership exists for an email; names are only returned for a matching date of birth.
+app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
-    if (!adminDb || !isValidEmail(email)) return res.json({ names: [] });
-    const snapshot = await adminDb.collection('memberships').where('email', '==', email).limit(10).get();
+    const dob = typeof req.body.dob === 'string' ? req.body.dob.trim() : '';
+    if (!adminDb || !isValidEmail(email)) return res.json({ exists: false, names: [] });
+    const [legacy, households] = await Promise.all([
+      adminDb.collection('memberships').where('email', '==', email).limit(10).get(),
+      adminDb.collection('households').where('email', '==', email).limit(50).get()
+    ]);
+    const householdMembers = (await Promise.all(households.docs.map((household) =>
+      adminDb.collection('memberships').where('householdId', '==', household.id).limit(50).get()
+    ))).flatMap((snapshot) => snapshot.docs.map((document) => document.data()));
+    const records = [...new Map([...legacy.docs.map((document) => document.data()), ...householdMembers]
+      .filter(({ firstName, lastName }) => firstName && lastName)
+      .map((record) => [`${record.firstName} ${record.lastName}|${record.dob || ''}`, record])).values()];
     const names = new Map();
-    for (const document of snapshot.docs) {
-      const { firstName, lastName } = document.data();
-      if (firstName && lastName) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+      for (const { firstName, lastName, dob: held } of records) if (held === dob) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName });
     }
-    res.json({ names: [...names.values()] });
+    res.json({ exists: records.length > 0, names: [...names.values()] });
   } catch (error) {
-    res.json({ names: [] });
+    console.error('Membership email lookup failed:', error.message);
+    res.status(503).json({ error: 'Membership lookup is unavailable.' });
   }
 });
 
@@ -1197,7 +1318,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const needsMembership = new Set(peopleNeedingMembership(selected, people).map((person) => person.id));
     const storedPeople = [];
     for (const person of withFamilyContacts(people, selected)) {
-      const { existing, conflict, reason, validationError } = await findMembership(person);
+      const { existing, conflict, reason, validationError, contactHouseholdId } = await findMembership(person);
       if (validationError) {
         return res.status(503).json({ error: 'We could not confirm your Stripe direct-debit subscription. Your basket is unchanged; please try again shortly.' });
       }
@@ -1240,7 +1361,24 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
             : `${person.firstName} ${person.lastName} needs a Forth Canoe Club membership before buying these items. Add a membership to your basket, or check the membership number or date of birth and email you entered. If you are already a member through JustGo your record can take a day to appear; contact secretary@forthcanoeclub.co.uk.`
         });
       }
-      storedPeople.push({ ...person, membershipId: existing?.id || `MEM-${crypto.randomUUID().toUpperCase()}`, existingMember: Boolean(existing) });
+      storedPeople.push({ ...person, membershipId: existing?.id || `MEM-${crypto.randomUUID().toUpperCase()}`,
+        existingMember: Boolean(existing), ...((existing?.householdId || contactHouseholdId)
+          ? { householdId: existing?.householdId || contactHouseholdId } : {}) });
+    }
+    const householdGroups = new Map();
+    for (const person of storedPeople) {
+      const key = householdGroupKey(person);
+      const group = householdGroups.get(key) || [];
+      group.push(person);
+      householdGroups.set(key, group);
+    }
+    for (const group of householdGroups.values()) {
+      const existingHouseholds = [...new Set(group.map((person) => person.householdId).filter(Boolean))];
+      if (existingHouseholds.length > 1) {
+        return res.status(409).json({ error: 'The family members are linked to different households. Contact the club before continuing.' });
+      }
+      const householdId = existingHouseholds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
+      group.forEach((person) => { person.householdId = householdId; });
     }
     let promo = null;
     const code = typeof req.body.discountCode === 'string' ? req.body.discountCode.trim().toUpperCase() : '';
@@ -1272,8 +1410,9 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }));
     const total = pricing.total;
     reservedStockIds = await reserveStock(orderRef, selected, catalog);
+    const policyVersions = await currentCheckoutPolicies(adminDb, isLive());
     await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null,
-      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds });
+      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions });
     const hasRecurringItem = billingMode === 'monthly' && items.some((item) => item.type === 'subscription');
     const oneOffCredit = hasRecurringItem && promo?.discountType === 'credit';
     let coupon;
@@ -1512,6 +1651,24 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
+// Records changed consent and policy wording after each release once the site is live; repeated hourly in case the website deployed after this instance started.
+const recordPolicyVersions = async () => {
+  try {
+    const recorded = await syncPolicies(adminDb, { distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL });
+    if (recorded.length) console.log('Recorded policy versions:', recorded.map(({ key, version }) => `${key}@${version}`).join(', '));
+    const currentVersions = Object.fromEntries((await adminDb.collection('policies').get()).docs.map((document) => [document.id, document.data().currentVersion || 0]));
+    liveReadinessProblems({ currentVersions }).forEach((problem) => console.warn(`Not ready for live: ${problem}`));
+  } catch (error) {
+    console.error('Policy sync failed:', error.message);
+  }
+};
+if (adminDb && isLive()) {
+  recordPolicyVersions();
+  setInterval(recordPolicyVersions, 60 * 60 * 1000).unref();
+} else if (adminDb) {
+  console.log('WEBSITE_ISLIVE is not true: consent and policy wording is not versioned and consent records show pre-live.');
+}
+
 app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   console.log(`ðŸŽ¯ FCC Website running at http://127.0.0.1:${PORT}`);
   console.log(`ðŸ“ Serving from: ${__dirname}/dist`);
