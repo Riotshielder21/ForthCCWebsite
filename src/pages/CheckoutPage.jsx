@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import {
   addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, personKind, familyRole, resolvedKind, FAMILY_ADULT_MAX,
@@ -12,7 +12,10 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const addOnLines = lines.filter((line) => needsPerson(line) && !isMembership(line));
   const [stepKey, setStepKey] = useState('email');
   const [errors, setErrors] = useState([]);
-  const [names, setNames] = useState([]);
+  const [emailKnown, setEmailKnown] = useState(false);
+  // Per person: the date of birth typed to unlock matching names, and what the lookup found.
+  const [dobChecks, setDobChecks] = useState({});
+  const receiptEmailCopied = useRef(false);
 
   // Family members are filled in on their family membership's page, so they get no step of their own.
   const stepPeople = useMemo(() => people.filter((candidate) => familyRole(candidate, people, lines) !== 'member'), [people, lines]);
@@ -41,14 +44,33 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const nested = (group, key) => (event) => update(person.id, (candidate) => ({ ...candidate, [group]: { ...candidate[group], [key]: event.target.value } }));
   const check = (key) => (event) => update(person.id, (candidate) => ({ ...candidate, [key]: event.target.checked }));
 
-  const fetchNames = async () => {
+  const lookupMembers = async (dob = '') => {
     try {
-      const response = await fetch(apiUrl('/api/membership-names'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim() }) });
+      const response = await fetch(apiUrl('/api/membership-names'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim(), ...(dob ? { dob } : {}) }) });
       const result = await response.json();
-      setNames(Array.isArray(result.names) ? result.names : []);
+      return { exists: result.exists === true, names: Array.isArray(result.names) ? result.names : [] };
     } catch {
-      setNames([]);
+      return { exists: false, names: [] };
     }
+  };
+
+  const checkDob = async (personId) => {
+    const dob = dobChecks[personId]?.dob;
+    if (!dob) return;
+    setDobChecks((current) => ({ ...current, [personId]: { ...current[personId], busy: true } }));
+    const { names } = await lookupMembers(dob);
+    setDobChecks((current) => ({ ...current, [personId]: { dob, names, checked: true } }));
+  };
+
+  // The receipt email is offered once as the first person's membership email; after that it is their own field.
+  const copyReceiptEmail = () => {
+    const first = stepPeople[0];
+    if (!first || first.returning || receiptEmailCopied.current) return;
+    receiptEmailCopied.current = true;
+    const receipt = email.trim();
+    update(first.id, (candidate) => resolvedKind(candidate, people, lines) === 'junior'
+      ? (candidate.guardian.email ? candidate : { ...candidate, guardian: { ...candidate.guardian, email: receipt } })
+      : (candidate.email ? candidate : { ...candidate, email: receipt }));
   };
 
   const go = async (direction) => {
@@ -56,7 +78,11 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
       let problems = [];
       if (current === 'email') {
         if (!EMAIL.test(email.trim())) problems = ['Enter a valid email address to receive your receipt.'];
-        else if (people.length) await fetchNames();
+        else if (people.length) {
+          setDobChecks({});
+          setEmailKnown((await lookupMembers()).exists);
+          copyReceiptEmail();
+        }
       } else if (person) {
         problems = [
           ...personDetailErrors(person, personLabel(person), lines, new Date(), role),
@@ -97,7 +123,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const canRemove = person && !held(person).some(isMembership) && (!person.lineIds.length || people.length > 1);
   const removeMember = (id) => onPeopleChange(people.filter((candidate) => candidate.id !== id));
   const taken = new Set(people.filter((candidate) => candidate.returning && candidate.id !== person?.id).map((candidate) => normaliseName(`${candidate.firstName} ${candidate.lastName}`)));
-  const choices = names.filter((name) => !taken.has(normaliseName(`${name.firstName} ${name.lastName}`)));
+  const dobCheck = (person && dobChecks[person.id]) || {};
+  const choices = (dobCheck.names || []).filter((name) => !taken.has(normaliseName(`${name.firstName} ${name.lastName}`)));
   const role = person ? familyRole(person, people, lines) : null;
   const minor = person ? resolvedKind(person, people, lines) === 'junior' : false;
   const fixedTier = person ? role === 'primary' || held(person).some((line) => ['junior', 'adult'].includes(line.membershipTier)) : true;
@@ -123,9 +150,9 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
       <div className="main_tile">
         {current === 'email' && (
           <div className="CheckoutDetails">
-            <h2 className="page_heading_bold_1">Your contact email</h2>
-            <p className="text_container">Your receipt and any voucher codes are sent here. If you already have a membership under this email, you can pick your name on the next page instead of typing everything again.</p>
-            <label className="FormLabel">Email
+            <h2 className="page_heading_bold_1">Your receipt email</h2>
+            <p className="text_container">We send your receipt and any voucher codes here. This is only the receipt address, so it can be different from the email on your membership. You will be asked for the membership email next.</p>
+            <label className="FormLabel">Receipt email
               <input className="FormInput" type="email" required maxLength={254} autoComplete="email" value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder="you@example.com" />
             </label>
           </div>
@@ -137,17 +164,25 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
             {canRemove && <button type="button" className="PrimaryActionButtonCompact" onClick={() => removePerson(person)}>Cancel and remove this person</button>}
             <p className="CartItemMeta">{memberships.length ? memberships.map(lineLabel).join(', ') : 'Existing member. Add-ons are chosen on a later step.'}</p>
 
-            {!person.returning && !person.firstName && choices.length > 0 && (
+            {!person.returning && !person.firstName && emailKnown && (
               <div className="CheckoutSection">
-                <h4 className="CartItemTitle">Already a member? Choose your name</h4>
-                <div className="CheckoutNames">
-                  {choices.map((name) => (
-                    <button key={`${name.firstName} ${name.lastName}`} type="button" className="PrimaryActionButtonCompact"
-                      onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName }))}>
-                      {name.firstName} {name.lastName}
-                    </button>
-                  ))}
-                </div>
+                <h4 className="CartItemTitle">We already hold a membership under this email</h4>
+                <p className="text_container">If that is you, enter your date of birth and we will show your name so you do not have to type everything again. This may not be you, for example someone else could share this email. If so, just fill in the form below as a new entry.</p>
+                <label className="FormLabel">Date of birth
+                  <input className="FormInput" type="date" value={dobCheck.dob || ''} onChange={(event) => setDobChecks((current) => ({ ...current, [person.id]: { dob: event.target.value, names: [], checked: false } }))} />
+                </label>
+                <button type="button" className="PrimaryActionButtonCompact" disabled={!dobCheck.dob || dobCheck.busy} onClick={() => checkDob(person.id)}>{dobCheck.busy ? 'Checking…' : 'Check'}</button>
+                {dobCheck.checked && choices.length > 0 && (
+                  <div className="CheckoutNames">
+                    {choices.map((name) => (
+                      <button key={`${name.firstName} ${name.lastName}`} type="button" className="PrimaryActionButtonCompact"
+                        onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob }))}>
+                        {name.firstName} {name.lastName}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {dobCheck.checked && !choices.length && <p className="CartItemMeta" role="status">No membership matches that date of birth. Carry on with the form below.</p>}
                 <p className="CartItemMeta">Someone new? Just fill in the form below.</p>
               </div>
             )}

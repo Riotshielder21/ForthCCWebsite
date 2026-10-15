@@ -1182,20 +1182,30 @@ app.post('/api/admin/discount-codes', rateLimit(20, 60 * 1000), async (req, res)
   }
 });
 
-// Names only, so a returning member can pick themselves; the date of birth is still verified at payment.
-app.post('/api/membership-names', rateLimit(5, 60 * 1000), async (req, res) => {
+// Says whether a membership exists for an email; names are only returned for a matching date of birth.
+app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
-    if (!adminDb || !isValidEmail(email)) return res.json({ names: [] });
-    const snapshot = await adminDb.collection('memberships').where('email', '==', email).limit(10).get();
+    const dob = typeof req.body.dob === 'string' ? req.body.dob.trim() : '';
+    if (!adminDb || !isValidEmail(email)) return res.json({ exists: false, names: [] });
+    const [legacy, households] = await Promise.all([
+      adminDb.collection('memberships').where('email', '==', email).limit(10).get(),
+      adminDb.collection('households').where('email', '==', email).limit(50).get()
+    ]);
+    const householdMembers = (await Promise.all(households.docs.map((household) =>
+      adminDb.collection('memberships').where('householdId', '==', household.id).limit(50).get()
+    ))).flatMap((snapshot) => snapshot.docs.map((document) => document.data()));
+    const records = [...new Map([...legacy.docs.map((document) => document.data()), ...householdMembers]
+      .filter(({ firstName, lastName }) => firstName && lastName)
+      .map((record) => [`${record.firstName} ${record.lastName}|${record.dob || ''}`, record])).values()];
     const names = new Map();
-    for (const document of snapshot.docs) {
-      const { firstName, lastName } = document.data();
-      if (firstName && lastName) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+      for (const { firstName, lastName, dob: held } of records) if (held === dob) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName });
     }
-    res.json({ names: [...names.values()] });
+    res.json({ exists: records.length > 0, names: [...names.values()] });
   } catch (error) {
-    res.json({ names: [] });
+    console.error('Membership email lookup failed:', error.message);
+    res.status(503).json({ error: 'Membership lookup is unavailable.' });
   }
 });
 

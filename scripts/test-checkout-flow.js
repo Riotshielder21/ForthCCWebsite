@@ -221,10 +221,12 @@ await test('adult membership plus boat hire is recorded on the membership, custo
   assert.deepEqual(customer.json.memberships[0].privileges, ['ANNUAL BOAT & KIT HIRE']);
 });
 
-await test('name lookup reveals only names, and nothing for unknown emails', async () => {
-  const known = await call('POST', '/api/membership-names', { body: { email: shared.alex } });
-  assert.deepEqual(known.json, { names: [{ firstName: 'Alex', lastName: 'Adult' }] });
-  assert.deepEqual((await call('POST', '/api/membership-names', { body: { email: email('nobody') } })).json, { names: [] });
+await test('an email only reveals that a record exists, names need the matching date of birth', async () => {
+  const lookup = (body) => call('POST', '/api/membership-names', { body });
+  assert.deepEqual((await lookup({ email: shared.alex })).json, { exists: true, names: [] });
+  assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(36) })).json, { exists: true, names: [] });
+  assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(35) })).json, { exists: true, names: [{ firstName: 'Alex', lastName: 'Adult' }] });
+  assert.deepEqual((await lookup({ email: email('nobody'), dob: yearsAgo(35) })).json, { exists: false, names: [] });
 });
 
 await test('a returning member can add an add-on with only name and date of birth', async () => {
