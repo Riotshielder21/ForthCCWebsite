@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
 import { calculateCart } from './pricing.js';
+import { PRODUCTS } from '../constants/products.js';
 
 test('first saved product preserves starter catalogue; overrides and deletions stay explicit', () => {
   const defaults = [{ id: 'starter', name: 'Starter' }, { id: 'other' }];
@@ -38,4 +39,20 @@ test('weekly courses keep the same weekday and local times across month and dayl
   assert.ok(eventScheduleLabel(schedule).includes('5 weeks'));
   assert.ok(eventScheduleLabel(schedule).includes('15:00–17:00 weekly'));
   for (const weeks of [0, 61, 1.5, undefined]) assert.throws(() => validateEventSchedule({ ...schedule, weeks }));
+});
+
+test('course-place voucher purchase value can be applied as scoped credit to a course item', () => {
+  const voucher = PRODUCTS.find(({ id }) => id === 'vouchers');
+  const course = { id: 'course-place', category: 'EVENTS', type: 'event-ticket', basePrice: 75 };
+  const purchase = calculateCart([voucher], false);
+  const redemption = calculateCart([course], false, {
+    discountType: 'credit',
+    discountValue: purchase.items[0].displayPrice,
+    productIds: [course.id]
+  });
+
+  assert.equal(purchase.total, 60);
+  assert.equal(redemption.items[0].promoEligible, true);
+  assert.equal(redemption.items[0].promoSaving, 60);
+  assert.equal(redemption.total, 15);
 });

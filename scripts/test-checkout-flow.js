@@ -253,6 +253,22 @@ await test('full details for an existing member are matched, not duplicated', as
   assert.equal((await membershipsFor(shared.alex)).length, 1);
 });
 
+await test('a junior can join the household of a member parent or guardian', async () => {
+  const parentEmail = email('member-guardian');
+  const parent = adultDetails({ firstName: 'Parent', lastName: 'Member', email: parentEmail });
+  await buy(parentEmail, build(['membership-adult'], [parent]));
+  await buy(parentEmail, build(['membership-junior'], [juniorDetails({
+    guardian: { ...juniorDetails().guardian, name: 'Parent Member', email: parentEmail }
+  })]));
+  const records = await membershipsFor(parentEmail);
+  assert.equal(records.length, 2);
+  assert.equal(records[0].householdId, records[1].householdId);
+  const household = records[0].household;
+  assert.equal(household.contactName, 'Parent Member');
+  assert.equal(household.contactRelationship, 'Parent');
+  assert.equal(household.emergencyContact.name, 'Pat Friend');
+});
+
 await test('junior membership uses the parent contact details', async () => {
   const parent = email('parent');
   shared.parent = parent;
@@ -273,6 +289,129 @@ await test('a sibling on the same parent email becomes a separate record', async
   await buy(shared.parent, basket);
   const records = await membershipsFor(shared.parent);
   assert.deepEqual(records.map((record) => record.firstName).sort(), ['Jamie', 'Robin']);
+});
+
+await test('siblings buying separate junior memberships together share one household', async () => {
+  const parentEmail = email('batch-parent');
+  const guardian = { ...juniorDetails().guardian, email: parentEmail };
+  const basket = build(['membership-junior', 'membership-junior'], [
+    juniorDetails({ firstName: 'One', guardian }),
+    juniorDetails({ firstName: 'Two', dob: yearsAgo(10, 3, 3), guardian })
+  ]);
+  await buy(parentEmail, basket);
+  const records = await membershipsFor(parentEmail);
+  assert.equal(records.length, 2);
+  assert.equal(records[0].householdId, records[1].householdId);
+});
+
+await test('junior members share a household only when their guardian matches, in checkout, Firestore and reports', async () => {
+  const guardianA = {
+    name: 'Morgan Guardian', phone: '07700 900441', email: email('guardian-morgan'), relationship: 'Parent',
+    address: '41 Shared Road', postcode: 'EH4 4AA'
+  };
+  const guardianB = {
+    name: 'Riley Guardian', phone: '07700 900552', email: email('guardian-riley'), relationship: 'Grandparent',
+    address: '52 Separate Road', postcode: 'EH5 5BB'
+  };
+  const buyer = email('junior-households');
+  const basket = build(['membership-junior', 'membership-junior', 'membership-junior'], [
+    juniorDetails({ firstName: 'Morgan', lastName: 'Sibling', guardian: guardianA }),
+    juniorDetails({ firstName: 'Taylor', lastName: 'Sibling', dob: yearsAgo(10, 4, 4), guardian: guardianA }),
+    juniorDetails({ firstName: 'Riley', lastName: 'Other', dob: yearsAgo(11, 7, 7), guardian: guardianB })
+  ]);
+  const orderRef = await buy(buyer, basket);
+  const order = (await db.collection('orders').doc(orderRef).get()).data();
+  const memberships = await Promise.all(order.people.map(async (person) => {
+    const snapshot = await db.collection('memberships').doc(person.membershipId).get();
+    return { id: snapshot.id, ...snapshot.data(), household: (await db.collection('households').doc(snapshot.data().householdId).get()).data() };
+  }));
+  const morgan = memberships.find((record) => record.firstName === 'Morgan');
+  const taylor = memberships.find((record) => record.firstName === 'Taylor');
+  const riley = memberships.find((record) => record.firstName === 'Riley');
+  assert.equal(morgan.householdId, taylor.householdId, 'siblings with the same named guardian share contact data');
+  assert.notEqual(morgan.householdId, riley.householdId, 'different guardians remain separate households');
+  assert.deepEqual(
+    [morgan.household.contactName, morgan.household.email, morgan.household.phone, morgan.household.address, morgan.household.postcode],
+    ['Morgan Guardian', guardianA.email, guardianA.phone, guardianA.address, guardianA.postcode]
+  );
+  assert.deepEqual(
+    [riley.household.contactName, riley.household.contactRelationship, riley.household.email, riley.household.phone],
+    ['Riley Guardian', 'Grandparent', guardianB.email, guardianB.phone]
+  );
+  for (const member of memberships) {
+    assert.equal(Object.hasOwn(member, 'email'), false, 'a junior membership does not copy the child email');
+    assert.equal(Object.hasOwn(member, 'phone'), false, 'a junior membership does not copy the child phone');
+    assert.equal(Object.hasOwn(member, 'guardian'), false, 'guardian details live on the household');
+    assert.equal(Object.hasOwn(member.household, 'emergencyContact'), false, 'the guardian is the junior emergency contact');
+  }
+
+  const orders = (await call('GET', '/api/admin/reports?kind=orders', { headers: admin })).json.records;
+  const report = orders.find((record) => record.id === orderRef);
+  assert.equal(report.status, 'paid');
+  assert.equal(report.people.length, 3);
+  assert.deepEqual(
+    [report.people.find((person) => person.name === 'Morgan Sibling').emergencyContact,
+      report.people.find((person) => person.name === 'Taylor Sibling').emergencyContact,
+      report.people.find((person) => person.name === 'Riley Other').emergencyContact],
+    ['Morgan Guardian, Parent, 07700 900441', 'Morgan Guardian, Parent, 07700 900441', 'Riley Guardian, Grandparent, 07700 900552']
+  );
+  const memberRows = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records;
+  const morganRow = memberRows.find((record) => record.name === 'Morgan Sibling');
+  const taylorRow = memberRows.find((record) => record.name === 'Taylor Sibling');
+  const rileyRow = memberRows.find((record) => record.name === 'Riley Other');
+  assert.deepEqual([morganRow.email, taylorRow.email, rileyRow.email], [guardianA.email, guardianA.email, guardianB.email]);
+  assert.deepEqual([morganRow.parent, taylorRow.parent, rileyRow.parent], [
+    'Morgan Guardian, Parent, 07700 900441', 'Morgan Guardian, Parent, 07700 900441', 'Riley Guardian, Grandparent, 07700 900552'
+  ]);
+  shared.juniorHouseholdOrder = orderRef;
+  shared.juniorHouseholdEmails = [guardianA.email, guardianB.email];
+});
+
+await test('multiple copies of shop services can be bought by different members in one mixed basket', async () => {
+  const buyer = email('multi-quantity');
+  const basket = build([
+    'membership-adult', 'membership-adult',
+    'boat-hire', 'boat-hire',
+    'keyhire', 'keyhire',
+    'gold-sub'
+  ], [
+    adultDetails({ firstName: 'Quinn', lastName: 'Quantity', email: email('quantity-quinn') }),
+    adultDetails({ firstName: 'Avery', lastName: 'Quantity', email: email('quantity-avery'), phone: '07700 900663', address: '63 Double Road', postcode: 'EH6 6CC' })
+  ]);
+  assert.equal(basket.people.length, 2);
+  const orderRef = await buy(buyer, basket);
+  const order = (await db.collection('orders').doc(orderRef).get()).data();
+  assert.equal(order.status, 'paid');
+  assert.equal(order.items.length, 7);
+  assert.deepEqual(
+    ['membership-adult', 'boat-hire', 'keyhire', 'gold-sub'].map((id) => order.items.filter((item) => item.id === id).length),
+    [2, 2, 2, 1]
+  );
+  const now = new Date();
+  const monthsRemaining = Math.max(1, (now.getMonth() >= 2 ? 1 : 0) * 12 + 2 - now.getMonth());
+  const boatPrice = monthsRemaining <= 4 ? 51 : 85;
+  const goldPrice = Math.round(30 * monthsRemaining * 0.8 * 100) / 100;
+  assert.equal(Number(order.total), 60 + boatPrice * 2 + 100 + goldPrice, 'each member and product line is priced, including the annual gold subscription');
+  assert.equal(Number(order.total), order.items.reduce((total, item) => total + Number(item.price), 0));
+  assert.deepEqual(
+    order.people.map((person) => person.lineIds.map((lineId) => order.items.find((item) => item.lineId === lineId).id).sort())
+      .sort((a, b) => a[0].localeCompare(b[0])),
+    [['boat-hire', 'keyhire', 'membership-adult'], ['boat-hire', 'gold-sub', 'keyhire', 'membership-adult']]
+  );
+  const members = await Promise.all(order.people.map(async (person) =>
+    (await db.collection('memberships').doc(person.membershipId).get()).data()
+  ));
+  assert.equal(members.length, 2);
+  assert.ok(members.every((member) => member.privileges.some((privilege) => privilege.productId === 'boat-hire')
+    && member.privileges.some((privilege) => privilege.productId === 'keyhire')));
+  const report = (await call('GET', '/api/admin/reports?kind=orders', { headers: admin })).json.records.find((record) => record.id === orderRef);
+  assert.deepEqual(
+    ['ANNUAL BOAT & KIT HIRE', 'Boathouse Access', 'GOLD SUBSCRIPTION'].map((name) => report.items.filter((item) => item.name === name).length),
+    [2, 2, 1]
+  );
+  assert.ok(report.items.every((item) => typeof item.price === 'number'));
+  assert.deepEqual(report.people.map((person) => person.items.length).sort(), [3, 4]);
+  shared.multiQuantityOrder = orderRef;
 });
 
 await test('same name and email with a different date of birth is flagged, not duplicated', async () => {
@@ -477,8 +616,22 @@ await test('discount codes: create, edit, scope, disable, apply', async () => {
 
 await test('a voucher is accepted once, taken off the price, then shows as used', async () => {
   const member = { returning: true, firstName: 'Alex', lastName: 'Adult', dob: yearsAgo(35), disclaimerAccepted: true };
-  const orderRef = await buy(shared.alex, build(['boat-hire'], [member]), { discountCode: shared.voucherCode });
-  assert.equal(Number((await db.collection('orders').doc(orderRef).get()).data().total), 25);
+  const courseId = `E2E-VOUCHER-COURSE-${run}`;
+  const course = {
+    id: courseId, name: 'Voucher-funded week course', category: 'EVENTS', type: 'event-ticket', basePrice: 75,
+    capacity: 4, eventSchedule: { mode: 'consecutive', startDate: '2027-07-12', startTime: '09:00',
+      endTime: '16:00', days: 5, timeZone: 'Europe/London' }
+  };
+  const { id: _courseId, ...courseFields } = course;
+  await db.collection('products').doc(courseId).set(courseFields);
+  const line = { ...course, lineId: `${courseId}-line` };
+  const people = assignLines([], [line], makeId).map((person) => ({ ...person, ...member }));
+  const orderRef = await buy(shared.alex, { lines: [line], people }, { discountCode: shared.voucherCode });
+  const paidOrder = (await db.collection('orders').doc(orderRef).get()).data();
+  assert.equal(Number(paidOrder.total), 15);
+  assert.equal(paidOrder.items[0].eventSchedule.days, 5);
+  assert.equal(paidOrder.people.length, 1);
+  shared.voucherRedemptionOrder = orderRef;
   const customer = await call('GET', `/api/admin/customer?q=${encodeURIComponent(shared.gifter)}`, { headers: admin });
   assert.equal(customer.json.vouchers[0].status, 'used');
   assert.equal(customer.json.vouchers[0].usedByOrder, orderRef);
@@ -516,30 +669,47 @@ await test('reports: orders list shows each person and what they bought', async 
   assert.equal(kit.emergencyContact, 'Parents are the emergency contact');
   assert.equal(kit.address, '1 River Road, EH1 1AA');
   assert.deepEqual(kit.items, ['CLUB MEMBERSHIP — FAMILY']);
+  const drew = family.people.find((person) => person.name === 'Drew Adult');
+  const casey = family.people.find((person) => person.name === 'Casey Adult');
+  assert.deepEqual([drew.emergencyContact, casey.emergencyContact], [
+    'Pat Friend, Friend, 07700 900222', 'Pat Friend, Friend, 07700 900222'
+  ]);
+  assert.ok(family.people.every((person) => person.address === '1 River Road, EH1 1AA'
+    && person.items.includes('CLUB MEMBERSHIP — FAMILY')), 'every family member reports the same household contact and membership');
   const alex = report.json.records.find((record) => record.id === shared.adultOrder);
   assert.equal(alex.people[0].medical, 'Asthma');
   assert.deepEqual(alex.items.map((item) => item.name), ['CLUB MEMBERSHIP — ADULT', 'ANNUAL BOAT & KIT HIRE']);
   assert.ok(alex.items.every((item) => typeof item.price === 'number'));
+  const voucherPurchase = report.json.records.find((record) => record.id === shared.voucherOrder);
+  assert.equal(voucherPurchase.status, 'paid');
+  assert.equal(voucherPurchase.people.length, 0, 'a gift voucher purchase does not create a membership');
+  assert.deepEqual(voucherPurchase.items.map((item) => [item.name, item.price]), [['Course place voucher', 60]]);
+  const voucherRedemption = report.json.records.find((record) => record.id === shared.voucherRedemptionOrder);
+  assert.deepEqual(voucherRedemption.items.map((item) => item.name), ['Voucher-funded week course']);
+  assert.equal(voucherRedemption.total, 15);
+  const multiQuantity = report.json.records.find((record) => record.id === shared.multiQuantityOrder);
+  assert.equal(multiQuantity.items.length, 7);
+  assert.equal(multiQuantity.people.length, 2);
 });
 
 await test('reports: one member register holds website and JustGo members, complete and readable', async () => {
   const report = await call('GET', '/api/admin/reports?kind=members', { headers: admin });
   assert.equal(report.status, 200);
   const mine = report.json.records.filter((record) => record.email.endsWith(`.${run}@example.test`));
-  assert.equal(mine.length, 1 + 2 + 3 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1, 'alex 1, parent 2 children, family 3, synced member 1, visitor 1, unconfirmed member 1, Stripe members 2, coaching member 1, receipt member 1, legacy member 1');
+  assert.equal(mine.length, 1 + 2 + 3 + 3 + 1 + 1 + 1 + 2 + 1 + 1 + 1 + 2, 'alex 1, parent 2 children, family 3, guardian-grouped juniors 3, synced member 1, visitor 1, unconfirmed member 1, Stripe members 2, coaching member 1, receipt member 1, legacy member 1, multi-quantity members 2');
   const alex = mine.find((record) => record.id === shared.alexMembership);
   assert.equal(alex.name, 'Alex Adult');
   assert.equal(alex.tier, 'adult');
   assert.equal(alex.status, 'Current');
   assert.deepEqual(alex.privileges.sort(), ['ANNUAL BOAT & KIT HIRE', 'Boathouse Access', 'BLUE SUBSCRIPTION'].sort());
-  assert.equal(alex.history.length, 5, 'membership, key hire, subscription, voucher-paid hire and the event ticket');
+  assert.equal(alex.history.length, 5, 'membership, key hire, subscription, voucher-paid course and the event ticket');
   assert.ok(alex.history.every((entry) => entry.orderRef && entry.paidAt && entry.items.length));
   assert.equal(alex.justgoSync, 'pending');
   assert.equal(alex.address, '1 River Road, EH1 1AA');
   for (const record of mine) for (const [key, value] of Object.entries(record)) {
     if (!['privileges', 'history', 'photoConsent'].includes(key)) assert.ok(['string', 'object', 'number'].includes(typeof value) && !Array.isArray(value) || value === null, `${key} is displayable`);
   }
-  assert.ok(mine.some((record) => record.familyGroup));
+  assert.ok(mine.some((record) => record.householdId));
   assert.equal(alex.source, 'website');
   assert.equal(alex.renewalMethod, 'website');
   assert.equal(alex.justgo, 'Awaiting upload');
