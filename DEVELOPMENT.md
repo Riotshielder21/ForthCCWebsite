@@ -46,6 +46,8 @@ Open `http://localhost:3000`. Use **Admin** in the footer, then **Sign in as loc
 
 In remote VS Code, forward ports `3000`, `3002`, `4000`, `8080`, `9099` and `9199` to the same local port numbers. Restart the API after backend edits; Vite reloads frontend edits automatically. Reseeding resets named test fixtures.
 
+The emulator seed also creates paid example orders for each purchasable starter product, plus family and sibling households, a five-day course, multiple shirt sizes, mixed carts and a voucher. These synthetic records are visible in the Reports page and are only written after the local-emulator guard succeeds.
+
 ## Build And Test
 
 ```bash
