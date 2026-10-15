@@ -79,7 +79,18 @@ const buy = async (emailAddress, basket, extra) => {
   assert.equal(webhook.status, 200, `webhook failed: ${webhook.text}`);
   return result.json.orderRef;
 };
-const membershipsFor = async (emailAddress) => (await db.collection('memberships').where('email', '==', emailAddress).get()).docs.map((document) => ({ id: document.id, ...document.data() }));
+const membershipsFor = async (emailAddress) => {
+  const [legacy, households] = await Promise.all([
+    db.collection('memberships').where('email', '==', emailAddress).get(),
+    db.collection('households').where('email', '==', emailAddress).get()
+  ]);
+  const householdById = new Map(households.docs.map((document) => [document.id, { id: document.id, ...document.data() }]));
+  const householdMembers = (await Promise.all(households.docs.map((household) =>
+    db.collection('memberships').where('householdId', '==', household.id).get()
+  ))).flatMap((snapshot) => snapshot.docs);
+  return [...new Map([...legacy.docs, ...householdMembers].map((document) => [document.id, document])).values()]
+    .map((document) => ({ id: document.id, ...document.data(), household: householdById.get(document.data().householdId) || {} }));
+};
 
 const results = [];
 const test = async (name, fn) => {
@@ -187,15 +198,18 @@ await test('adult membership plus boat hire is recorded on the membership, custo
   assert.equal(membership.lastName, 'Adult');
   assert.equal(membership.status, 'active');
   assert.equal(membership.membershipTier, 'adult');
-  assert.equal(membership.address, '1 River Road');
-  assert.equal(membership.emergencyContact.name, 'Pat Friend');
+  assert.equal(membership.household.address, '1 River Road');
+  assert.equal(membership.household.emergencyContact.name, 'Pat Friend');
+  assert.equal(Object.hasOwn(membership, 'email'), false);
   assert.equal(membership.medical, 'Asthma');
   assert.equal(membership.justgoSyncStatus, 'pending');
   assert.deepEqual([membership.justgoUpload.status, membership.justgoUpload.mode, membership.justgoUpload.attempts], ['queued', 'new', 0], 'queued for the automatic JustGo upload');
   assert.ok(membership.validUntil.toDate() > new Date());
   assert.deepEqual(membership.privileges.map((entry) => entry.productId), ['boat-hire']);
   assert.equal(membership.history.length, 1);
-  assert.equal(membership.disclaimerVersion, 1);
+  assert.equal(membership.consents.disclaimer.policyKey, 'participation-disclaimer');
+  assert.ok(membership.consents.disclaimer.version >= 1, 'the wording version shown at checkout is recorded');
+  assert.equal(membership.consents.photoVideo.accepted, true);
   shared.alexMembership = membership.id;
   const order = (await db.collection('orders').doc(shared.adultOrder).get()).data();
   assert.equal(order.status, 'paid');
@@ -245,9 +259,9 @@ await test('junior membership uses the parent contact details', async () => {
   const [membership] = await membershipsFor(parent);
   assert.equal(membership.firstName, 'Jamie');
   assert.equal(membership.membershipTier, 'junior');
-  assert.equal(membership.phone, '07700 900333');
-  assert.equal(membership.address, '9 Parent Street');
-  assert.equal(membership.guardian.name, 'Parent Person');
+  assert.equal(membership.household.phone, '07700 900333');
+  assert.equal(membership.household.address, '9 Parent Street');
+  assert.equal(membership.household.contactName, 'Parent Person');
   const order = (await db.collection('orders').doc(orderRef).get()).data();
   assert.equal(order.people[0].junior, true);
 });
@@ -268,8 +282,8 @@ await test('same name and email with a different date of birth is flagged, not d
 });
 
 await test('a membership number must agree with the date of birth', async () => {
-  await db.collection('memberships').doc('sca-E2E-1').set({ scaNumber: `E2E-${run}`, firstName: 'Sam', lastName: 'Synced', email: email('synced'), dob: yearsAgo(40, 2, 2), status: 'active', validUntil: new Date(Date.now() + 90 * 86400000), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: new Date() });
-  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), scaNumber: `E2E-${run}` };
+  await db.collection('memberships').doc('sca-E2E-1').set({ affiliationNumber: `E2E-${run}`, firstName: 'Sam', lastName: 'Synced', email: email('synced'), dob: yearsAgo(40, 2, 2), status: 'active', validUntil: new Date(Date.now() + 90 * 86400000), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: new Date() });
+  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), affiliationNumber: `E2E-${run}` };
   const bad = await checkout(email('synced'), build(['boat-hire'], [{ ...synced, dob: yearsAgo(41, 2, 2) }]));
   assert.equal(bad.status, 409);
   assert.equal(bad.json.code, 'identity_conflict');
@@ -286,7 +300,7 @@ await test('an active member cannot buy a second membership, and JustGo members 
   const again = await checkout(shared.alex, build(['membership-adult'], [adultDetails({ email: shared.alex })]));
   assert.equal(again.status, 409);
   assert.equal(again.json.code, 'membership_active');
-  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), scaNumber: `E2E-${run}` };
+  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), affiliationNumber: `E2E-${run}` };
   const viaJustgo = await checkout(email('synced'), build(['membership-adult'], [synced]));
   assert.equal(viaJustgo.status, 409);
   assert.equal(viaJustgo.json.code, 'renews_via_justgo');
@@ -349,7 +363,7 @@ await test('JustGo members are inactive until the sync confirms their renewal in
   const yearStart = new Date(now.getMonth() >= 2 ? now.getFullYear() : now.getFullYear() - 1, 2, 1);
   const lapsed = email('unconfirmed');
   const details = adultDetails({ firstName: 'Lou', lastName: 'Unconfirmed', dob: yearsAgo(45, 7, 7), email: lapsed });
-  await db.collection('memberships').doc(`sca-E2E-U-${run}`).set({ scaNumber: `E2E-U-${run}`, firstName: 'Lou', lastName: 'Unconfirmed', email: lapsed, dob: details.dob, status: 'active',
+  await db.collection('memberships').doc(`sca-E2E-U-${run}`).set({ affiliationNumber: `E2E-U-${run}`, firstName: 'Lou', lastName: 'Unconfirmed', email: lapsed, dob: details.dob, status: 'active',
     validUntil: new Date(now.getTime() + 90 * 86400000), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: new Date(yearStart.getTime() - 86400000) });
   const addOn = await checkout(lapsed, build(['boat-hire'], [details]));
   assert.equal(addOn.status, 409);
@@ -365,10 +379,10 @@ await test('JustGo members are inactive until the sync confirms their renewal in
 
 await test('a person with a membership number we do not hold is invited through JustGo', async () => {
   const visitor = email('visitor');
-  const basket = build(['membership-adult'], [{ ...adultDetails({ firstName: 'Vic', lastName: 'Visitor', email: visitor }), scaNumber: `PS-${run}` }]);
+  const basket = build(['membership-adult'], [{ ...adultDetails({ firstName: 'Vic', lastName: 'Visitor', email: visitor }), affiliationNumber: `PS-${run}` }]);
   await buy(visitor, basket);
   const [record] = await membershipsFor(visitor);
-  assert.equal(record.scaNumber, `PS-${run}`);
+  assert.equal(record.affiliationNumber, `PS-${run}`);
   assert.deepEqual([record.justgoUpload.status, record.justgoUpload.mode], ['queued', 'invite']);
   shared.visitorMembership = record.id;
 });
@@ -403,13 +417,14 @@ await test('family membership shares contact details and notes parents as the ch
   const orderRef = await buy(family, basket);
   const records = await membershipsFor(family);
   assert.equal(records.length, 3);
-  assert.equal(new Set(records.map((record) => record.familyGroup)).size, 1);
-  assert.ok(records.every((record) => record.address === '1 River Road' && record.phone === '07700 900111'));
+  assert.equal(new Set(records.map((record) => record.householdId)).size, 1);
+  assert.ok(records.every((record) => record.household.address === '1 River Road' && record.household.phone === '07700 900111'));
   const kid = records.find((record) => record.firstName === 'Kit');
-  assert.equal(kid.emergencyNote, 'Parents are the emergency contact');
+  assert.equal(Object.hasOwn(kid, 'emergencyNote'), false);
+  assert.equal(kid.household.emergencyContact.name, 'Pat Friend');
   assert.equal(kid.medical, 'Hay fever');
   assert.equal(kid.photoConsent, false);
-  assert.equal(records.find((record) => record.firstName === 'Casey').emergencyContact.name, 'Pat Friend');
+  assert.equal(records.find((record) => record.firstName === 'Casey').household.emergencyContact.name, 'Pat Friend');
   shared.familyOrder = orderRef;
   shared.family = family;
 });

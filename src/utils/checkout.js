@@ -16,7 +16,7 @@ export const isFamilyMembership = (item) => item.membershipTier === 'family';
 
 export const blankPerson = (id) => ({
   id, lineIds: [], returning: false, junior: false, firstName: '', lastName: '', dob: '', email: '', phone: '', address: '', postcode: '',
-  scaNumber: '', swimming: '', medical: '', photoConsent: false, disclaimerAccepted: false,
+  affiliationNumber: '', swimming: '', medical: '', photoConsent: false, disclaimerAccepted: false,
   emergencyContact: { name: '', phone: '', relationship: '' },
   guardian: { name: '', phone: '', email: '', relationship: '', address: '', postcode: '' }
 });
@@ -101,7 +101,7 @@ export const sanitizePerson = (person) => ({
   firstName: text(person?.firstName, 80), lastName: text(person?.lastName, 80), dob: text(person?.dob, 10),
   email: text(person?.email, 254).toLowerCase(), phone: text(person?.phone, 40),
   address: text(person?.address, 300), postcode: text(person?.postcode, 12),
-  scaNumber: text(person?.scaNumber, 40), swimming: text(person?.swimming, 20), medical: text(person?.medical, 1000),
+  affiliationNumber: text(person?.affiliationNumber, 40), swimming: text(person?.swimming, 20), medical: text(person?.medical, 1000),
   photoConsent: person?.photoConsent === true, disclaimerAccepted: person?.disclaimerAccepted === true,
   emergencyContact: { name: text(person?.emergencyContact?.name, 120), phone: text(person?.emergencyContact?.phone, 40), relationship: text(person?.emergencyContact?.relationship, 60) },
   guardian: { name: text(person?.guardian?.name, 120), phone: text(person?.guardian?.phone, 40), email: text(person?.guardian?.email, 254).toLowerCase(), relationship: text(person?.guardian?.relationship, 60), address: text(person?.guardian?.address, 300), postcode: text(person?.guardian?.postcode, 12) }
@@ -165,12 +165,12 @@ export const personDetailErrors = (person, label, lines, now = new Date(), role 
   if (!person.returning && role !== 'member') {
     if (kind === 'junior') {
       const { name, phone, email, address, postcode } = person.guardian;
-      if (!name || !phone || !address || !postcode || !EMAIL.test(email)) errors.push(`${label}: parent/guardian name, phone, email, address and postcode are required.`);
+      if (!name || !person.guardian.relationship || !phone || !address || !postcode || !EMAIL.test(email)) errors.push(`${label}: parent/guardian name, relationship, phone, email, address and postcode are required.`);
     } else {
       if (!person.phone) errors.push(`${label}: phone number is required.`);
       if (!person.address || !person.postcode) errors.push(`${label}: address and postcode are required.`);
       if (!EMAIL.test(person.email)) errors.push(`${label}: a valid email is required.`);
-      if (!person.emergencyContact.name || !person.emergencyContact.phone) errors.push(`${label}: emergency contact name and phone are required.`);
+      if (!person.emergencyContact.name || !person.emergencyContact.relationship || !person.emergencyContact.phone) errors.push(`${label}: emergency contact name, relationship and phone are required.`);
     }
   }
   return errors;
@@ -217,7 +217,7 @@ const bestRecord = (records, now) => records.find((record) => record.status === 
 // Membership number is primary but must agree with the date of birth and email when the record has them.
 // `conflict` means the same name is on this email with another date of birth: likely a typo, not a new person.
 export const matchMembership = (person, { byNumber = [], byEmail = [] }, now = Date.now()) => {
-  if (person.scaNumber && byNumber.length) {
+  if (person.affiliationNumber && byNumber.length) {
     const email = contactEmail(person);
     const agreeing = byNumber.filter((record) => (!record.dob || record.dob === person.dob) && (!record.email || !email || record.email === email));
     if (!agreeing.length) return { match: null, conflict: byNumber[0], reason: 'number' };

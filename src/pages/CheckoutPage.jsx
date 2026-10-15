@@ -176,10 +176,10 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                   <label className="FormLabel">Last name<input className="FormInput" required maxLength={80} autoComplete="off" value={person.lastName} onChange={field('lastName')} /></label>
                   <label className="FormLabel">Date of birth<input className="FormInput" type="date" required aria-label="Date of birth" aria-invalid={Boolean(ageProblem(person, lines, role))} value={person.dob} onChange={field('dob')} />{ageProblem(person, lines, role) && <span className="StatusText StatusTextError">{ageProblem(person, lines, role)}</span>}</label>
                   {role !== 'member' && !minor && <label className="FormLabel">Phone<input className="FormInput" type="tel" required maxLength={40} value={person.phone} onChange={field('phone')} /></label>}
-                  {role !== 'member' && !minor && <label className="FormLabel">Email<input className="FormInput" type="email" required maxLength={254} value={person.email} onChange={field('email')} /></label>}
+                  {role !== 'member' && !minor && <label className="FormLabel">Membership email<input className="FormInput" type="email" required maxLength={254} value={person.email} onChange={field('email')} /></label>}
                   {role !== 'member' && !minor && <label className="FormLabel">Address<input className="FormInput" required maxLength={300} value={person.address} onChange={field('address')} /></label>}
                   {role !== 'member' && !minor && <label className="FormLabel">Postcode<input className="FormInput" required maxLength={12} value={person.postcode} onChange={field('postcode')} /></label>}
-                  {!role && <label className="FormLabel">Paddle Scotland / JustGo membership number (if you have one)<input className="FormInput" maxLength={40} value={person.scaNumber} onChange={field('scaNumber')} /></label>}
+                  {!role && <label className="FormLabel">Paddle Scotland / JustGo membership number (if you have one)<input className="FormInput" maxLength={40} value={person.affiliationNumber} onChange={field('affiliationNumber')} /></label>}
                   <label className="FormLabel">Swimming ability
                     <select className="FormInput" required value={person.swimming} onChange={field('swimming')}>
                       <option value="">Choose</option>
@@ -195,9 +195,9 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     <legend>Parent / guardian (contact details and emergency contact)</legend>
                     <div className="CheckoutGrid">
                       <label className="FormLabel">Name<input className="FormInput" required maxLength={120} value={person.guardian.name} onChange={nested('guardian', 'name')} /></label>
-                      <label className="FormLabel">Relationship<input className="FormInput" maxLength={60} value={person.guardian.relationship} onChange={nested('guardian', 'relationship')} /></label>
+                      <label className="FormLabel">Relationship<input className="FormInput" required maxLength={60} value={person.guardian.relationship} onChange={nested('guardian', 'relationship')} /></label>
                       <label className="FormLabel">Phone<input className="FormInput" type="tel" required maxLength={40} value={person.guardian.phone} onChange={nested('guardian', 'phone')} /></label>
-                      <label className="FormLabel">Email<input className="FormInput" type="email" required maxLength={254} value={person.guardian.email} onChange={nested('guardian', 'email')} /></label>
+                      <label className="FormLabel">Membership email<input className="FormInput" type="email" required maxLength={254} value={person.guardian.email} onChange={nested('guardian', 'email')} /></label>
                       <label className="FormLabel">Address<input className="FormInput" required maxLength={300} value={person.guardian.address} onChange={nested('guardian', 'address')} /></label>
                       <label className="FormLabel">Postcode<input className="FormInput" required maxLength={12} value={person.guardian.postcode} onChange={nested('guardian', 'postcode')} /></label>
                     </div>
@@ -207,7 +207,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     <legend>{role === 'primary' ? 'Family emergency contact' : 'Emergency contact'}</legend>
                     <div className="CheckoutGrid">
                       <label className="FormLabel">Name<input className="FormInput" required maxLength={120} value={person.emergencyContact.name} onChange={nested('emergencyContact', 'name')} /></label>
-                      <label className="FormLabel">Relationship<input className="FormInput" maxLength={60} value={person.emergencyContact.relationship} onChange={nested('emergencyContact', 'relationship')} /></label>
+                      <label className="FormLabel">Relationship<input className="FormInput" required maxLength={60} value={person.emergencyContact.relationship} onChange={nested('emergencyContact', 'relationship')} /></label>
                       <label className="FormLabel">Phone<input className="FormInput" type="tel" required maxLength={40} value={person.emergencyContact.phone} onChange={nested('emergencyContact', 'phone')} /></label>
                     </div>
                   </fieldset>
