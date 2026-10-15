@@ -1,6 +1,6 @@
-export const DISCLAIMER_VERSION = 1;
-// Placeholder wording: replace with the club's approved disclaimer and bump DISCLAIMER_VERSION.
+// Placeholder wording: replace with the club's approved disclaimer; the new wording is recorded as the next policy version after release.
 export const DISCLAIMER_TEXT = 'I confirm the details given are correct and I accept the Forth Canoe Club participation and safety disclaimer. For under-18s, the parent/guardian accepts on their behalf.';
+export const PHOTO_CONSENT_TEXT = 'Photo and video consent';
 export const SWIMMING_LEVELS = [
   ['non-swimmer', 'Non-swimmer'],
   ['basic', 'Can swim a short distance'],

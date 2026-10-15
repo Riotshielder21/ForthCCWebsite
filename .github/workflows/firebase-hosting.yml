@@ -58,6 +58,7 @@ jobs:
             GOOGLE_SHARED_DRIVE_ID=0APxBZiGs6yEGUk9PVA
             GOOGLE_FORMS_ROOT_FOLDER_ID=1_ptxNQkgpJdogsjDZ4Wbqb310LCEJI4Z
             PUBLIC_SITE_URL=https://forthcanoeclub.co.uk
+            WEBSITE_ISLIVE=${{ secrets.WEBSITE_ISLIVE || 'false' }}
           secrets: |-
             GITHUB_CONTENT_TOKEN=github-content-token:latest
             FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account-json:latest
