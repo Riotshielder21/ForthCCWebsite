@@ -43,8 +43,7 @@
 ## Security review (outstanding)
 
 1. Remove or secure the legacy `/api/orders` endpoint that can create unpaid "paid" orders.
-2. Bound the in-memory rate-limit map.
-3. Add analytics consent controls.
-4. Protect receipt tokens in URLs (no-store, referrer policy, no logging).
-5. Restrict CORS and add browser security headers.
-6. Restore and secure public list submissions: the volunteering form posts to `/api/lists`, but the server currently has no matching route. Then add form-submit tests and example data for Equipment Needed, Volunteer Sign-ups, Event Participants, Maintenance Tasks and Other.
+2. Add analytics consent controls.
+3. Protect receipt tokens in URLs (no-store, referrer policy, no logging).
+4. Restrict CORS and add browser security headers.
+5. Restore and secure public list submissions: the volunteering form posts to `/api/lists`, but the server currently has no matching route. Then add form-submit tests and example data for Equipment Needed, Volunteer Sign-ups, Event Participants, Maintenance Tasks and Other.

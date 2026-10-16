@@ -1,4 +1,5 @@
 ﻿import express from 'express';
+import { rateLimit as expressRateLimit, ipKeyGenerator } from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { domainToASCII } from 'url';
@@ -34,16 +35,15 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const requestWindows = new Map();
-const rateLimit = (limit, windowMs) => (req, res, next) => {
-  const key = `${req.ip}:${req.path}`;
-  const now = Date.now();
-  const recent = (requestWindows.get(key) || []).filter((time) => now - time < windowMs);
-  if (recent.length >= limit) return res.status(429).json({ error: 'Too many requests. Try again shortly.' });
-  recent.push(now);
-  requestWindows.set(key, recent);
-  next();
-};
+const rateLimit = (limit, windowMs) => expressRateLimit({
+  windowMs,
+  limit,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => `${ipKeyGenerator(req.ip || '')}:${req.path}`,
+  validate: { xForwardedForHeader: false },
+  message: { error: 'Too many requests. Try again shortly.' }
+});
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isValidEmail = (value) => {
