@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import {
   addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, personKind, familyRole, resolvedKind, FAMILY_ADULT_MAX,
-  normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT
+  displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT
 } from '../utils/checkout';
 import { apiUrl } from '../utils/api';
 
@@ -33,7 +33,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   }, [focusPersonId, serverErrors]);
   useEffect(() => { window.scrollTo({ top: 0 }); }, [current]);
 
-  const personLabel = (candidate) => [candidate.firstName, candidate.lastName].filter(Boolean).join(' ') || `Person ${people.indexOf(candidate) + 1}`;
+  const personLabel = (candidate) => displayName(candidate) || `Person ${people.indexOf(candidate) + 1}`;
   const held = (candidate) => candidate.lineIds.map((id) => lines.find((line) => line.lineId === id)).filter(Boolean);
   const lineLabel = (line) => {
     const same = lines.filter((candidate) => candidate.id === line.id);
@@ -176,7 +176,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                   <div className="CheckoutNames">
                     {choices.map((name) => (
                       <button key={`${name.firstName} ${name.lastName}`} type="button" className="PrimaryActionButtonCompact"
-                        onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob }))}>
+                        onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob, verifiedDob: dobCheck.dob }))}>
                         {name.firstName} {name.lastName}
                       </button>
                     ))}
@@ -189,12 +189,12 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
 
             {person.returning ? (
               <>
-                <p className="text_container"><strong>{person.firstName} {person.lastName}</strong></p>
+                <p className="text_container"><strong>{displayName(person)}</strong></p>
                 <label className="FormLabel">Confirm date of birth
                   <input className="FormInput" type="date" required value={person.dob} onChange={field('dob')} />
                 </label>
                 <p className="CartItemMeta">We match this with your membership record. We never show other details.</p>
-                <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: false, firstName: '', lastName: '', dob: '' }))}>This is not me / enter full details</button>
+                <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: false, firstName: '', lastName: '', dob: '', verifiedDob: '' }))}>This is not me / enter full details</button>
               </>
             ) : (
               <>

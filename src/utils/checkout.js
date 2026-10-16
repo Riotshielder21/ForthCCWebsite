@@ -92,6 +92,13 @@ export const toggleFamilyLine = (people, lineId, personId) => people.map((person
   ? { ...person, lineIds: person.lineIds.includes(lineId) ? person.lineIds.filter((id) => id !== lineId) : [...person.lineIds, lineId] }
   : person);
 
+/** A returning member's name came from our records, so it stays masked (`J*** S***`) unless the date of birth that unlocked it is entered. */
+export const displayName = (person) => {
+  const name = [person?.firstName, person?.lastName].filter(Boolean).join(' ');
+  if (!person?.returning || (person.verifiedDob && person.dob === person.verifiedDob)) return name;
+  return name.split(/\s+/).filter(Boolean).map((word) => `${word[0]}***`).join(' ');
+};
+
 const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 
 export const sanitizePerson = (person) => ({
