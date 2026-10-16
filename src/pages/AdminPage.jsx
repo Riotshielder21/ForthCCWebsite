@@ -4,6 +4,7 @@ import { removeProduct, saveProduct, seedProducts, uploadProductImage } from '..
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
 import DiscountCodesPanel from '../components/DiscountCodesPanel';
+import VolunteersPanel from '../components/VolunteersPanel';
 import { apiUrl } from '../utils/api';
 import { validateEventSchedule, eventScheduleLabel } from '../utils/catalogue';
 import { cleanStockFields } from '../utils/inventory';
@@ -254,6 +255,7 @@ export default function AdminPage({ products, onNavigate }) {
           </form>
         </div>
         <DiscountCodesPanel adminUser={adminUser} products={products} />
+        <VolunteersPanel adminUser={adminUser} />
         <form className="main_tile AdminFormBuilder SpaceT6" onSubmit={handleCreateForm}>
           <div className="AdminListHeader"><div><span className="tile_eyebrow">Google Workspace</span><h3 className="tile_heading_bold_2">Create a form</h3></div></div>
           <p className="text_container SpaceB4">Creates one response spreadsheet in the current club-year folder on the Shared Drive.</p>

@@ -30,6 +30,7 @@ import { registerGdprRoutes } from './src/server/gdpr.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
+import { registerVolunteerRoutes } from './src/server/volunteers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -240,21 +241,6 @@ const findMembership = async (person) => {
     existing: match ? { id: match.id, householdId: match.householdId,
       active: stripeActive && activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil } : null
   };
-};
-
-const verifyMemberByName = async (name) => {
-  if (!adminDb) return { verified: false };
-  const snapshot = await adminDb.collection('memberships').where('searchName', '==', normaliseName(name)).limit(5).get();
-  for (const member of snapshot.docs.map(toMembershipRecord)) {
-    if (membershipActivity(member) !== 'active') continue;
-    try {
-      if (await stripeSubscriptionIsActive(member)) return { verified: true };
-    } catch (error) {
-      console.error('Stripe volunteer membership validation failed:', error.message);
-      return { verified: false };
-    }
-  }
-  return { verified: false };
 };
 
 const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripeSubscriptionId = '', stripeMode = 'test', householdSnapshots = new Map() }) => {
@@ -523,6 +509,9 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
         return { ...order, vouchers };
       });
       if (!fields) return res.json({ received: true });
+      // A volunteer who was inducted before joining gets their code once this purchase makes them a member.
+      try { await settleVolunteersFor([fields.email, ...(fields.people || []).map(contactEmail)].map(normalizeEmail)); }
+      catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
       try {
         const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken, items: fields.items, people: fields.people, total: fields.total,
           vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode });
@@ -782,6 +771,8 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
 
 registerGdprRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
 registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
+const { settleVolunteersFor } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
+  toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
@@ -1516,33 +1507,28 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
   }
 });
 
+/** Sends a plain-text email through Workspace; the emulator stack writes it to `testMail` instead. */
+const sendEmail = async ({ to, subject, body, record = {} }) => {
+  if (localFirebase) {
+    await adminDb.collection('testMail').add({ email: to, subject, body, ...record, createdAt: Timestamp.now() });
+    return true;
+  }
+  const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
+  if (!gmailApi || !sender) return false;
+  const raw = [`From: Forth Canoe Club <${sender}>`, `To: ${to}`, `Subject: ${subject.replace(/[\r\n]/g, ' ')}`,
+    'Content-Type: text/plain; charset=utf-8', '', body].join('\r\n');
+  await gmailApi.users.messages.send({ userId: 'me', requestBody: { raw: Buffer.from(raw).toString('base64url') } });
+  return true;
+};
+
 const sendOrderEmail = async ({ email, orderRef, accessToken, items, people = [], total, vouchers = [], siteUrl = '', billingMode = 'annual' }) => {
   const orderSiteUrl = siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
   const receipt = buildReceiptSummary(orderRef, { email, items, people, total, vouchers, billingMode });
   const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${accessToken}`;
   const body = [receiptEmailCopy(receipt), '', `Retrieve your receipt and subscription information: ${retrievalUrl}`, '',
     'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n');
-  if (localFirebase) {
-    await adminDb.collection('testMail').add({ email, orderRef, items, people, total, receipt, body, retrievalUrl, vouchers, createdAt: Timestamp.now() });
-    return true;
-  }
-  const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
-  if (!gmailApi || !sender) return false;
-
-  const raw = [
-    `From: Forth Canoe Club <${sender}>`,
-    `To: ${email}`,
-    'Subject: Your Forth Canoe Club purchase',
-    'Content-Type: text/plain; charset=utf-8',
-    '',
-    body
-  ].join('\r\n');
-
-  await gmailApi.users.messages.send({
-    userId: 'me',
-    requestBody: { raw: Buffer.from(raw).toString('base64url') }
-  });
-  return true;
+  return sendEmail({ to: email, subject: 'Your Forth Canoe Club purchase', body,
+    record: { orderRef, items, people, total, receipt, retrievalUrl, vouchers } });
 };
 
 app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => {
@@ -1570,78 +1556,6 @@ app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => 
     if (error.code === 404) return res.status(404).json({ error: 'Order not found.' });
     console.error('Error retrieving order:', error);
     res.status(500).json({ error: 'Could not retrieve order.' });
-  }
-});
-
-// API Routes
-app.post('/api/lists', async (req, res) => {
-  try {
-    const { name, email, listType, items, notes } = req.body;
-
-    // Validate required fields
-    if (!name || !email || !listType || !items || !Array.isArray(items)) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    // Store in Firebase (optional backup)
-    const { db, addDoc, collection, serverTimestamp, generateDiscountCode, saveDiscountCode } = await import('./src/utils/firebase.js');
-    await addDoc(collection(db, 'lists'), {
-      name,
-      email,
-      listType,
-      items,
-      notes: notes || '',
-      timestamp: serverTimestamp(),
-      status: 'pending'
-    });
-
-    // Handle volunteer verification and discount code generation
-    let verificationResult = { verified: false };
-    let discountCode = null;
-
-    if (listType === 'Volunteer Sign-ups') {
-      verificationResult = await verifyMemberByName(name);
-      if (verificationResult.verified) {
-        discountCode = generateDiscountCode();
-        await saveDiscountCode(name, email, discountCode);
-      }
-    }
-
-    // Add to Google Sheets if available
-    if (sheets) {
-      const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-      if (spreadsheetId) {
-        const values = [
-          [
-            new Date().toISOString(),
-            name,
-            email,
-            listType,
-            items.join('; '),
-            notes || '',
-            verificationResult.verified ? 'VERIFIED' : 'UNVERIFIED',
-            discountCode || ''
-          ]
-        ];
-
-        await sheets.spreadsheets.values.append({
-          spreadsheetId,
-          range: 'Lists!A:H',
-          valueInputOption: 'RAW',
-          resource: { values }
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      message: 'List submitted successfully',
-      verification: verificationResult,
-      discountCode: discountCode
-    });
-  } catch (error) {
-    console.error('Error submitting list:', error);
-    res.status(500).json({ error: 'Failed to submit list' });
   }
 });
 

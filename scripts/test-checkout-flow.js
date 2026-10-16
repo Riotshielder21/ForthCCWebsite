@@ -954,6 +954,99 @@ await test('receipt links are never cached or sent as a referrer, and the unpaid
   assert.equal((await db.collection('orders').where('email', '==', email('legacy')).get()).size, 0);
 });
 
+const LIST_EXAMPLES = {
+  'Equipment Needed': ['What equipment do you need?: 2 paddles, 1 buoyancy aid', 'What date do you need it by?: 14 March'],
+  'Volunteer Sign-ups': ['Which activities would you like to help with?: coaching', 'When are you available?: Thursday evenings'],
+  'Event Participants': ['Which event?: Loch Lomond paddle', 'How many people are attending?: 3'],
+  'Maintenance Tasks': ['What needs doing?: Fix the boat rack', 'Where is it?: boathouse'],
+  Other: ['Tell us what you would like to add: =HYPERLINK("http://example.test")']
+};
+
+await test('every volunteering-page list type is stored, and bad submissions are rejected', async () => {
+  for (const [category, items] of Object.entries(LIST_EXAMPLES)) {
+    const submitter = email(`list-${category.split(' ')[0].toLowerCase()}`);
+    const response = await call('POST', '/api/lists', { body: { name: 'List Tester', email: submitter, category, items, notes: 'From the flow test' } });
+    assert.equal(response.status, 200, `${category}: ${response.text}`);
+    assert.deepEqual(response.json, { success: true });
+    const stored = (await db.collection('lists').where('email', '==', submitter).get()).docs.map((document) => document.data());
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].listType, category);
+    assert.deepEqual(stored[0].items, items, 'answers are stored as written');
+  }
+  for (const body of [
+    { name: 'X', email: 'bad', category: 'Other', items: ['a'] }, { name: 'X', email: email('bad-type'), category: 'Admin', items: ['a'] },
+    { name: 'X', email: email('no-items'), category: 'Other', items: [] }, { name: 'X'.repeat(200), email: email('long'), category: 'Other', items: ['a'] }
+  ]) assert.equal((await call('POST', '/api/lists', { body })).status, 400, JSON.stringify(body).slice(0, 50));
+});
+
+await test('a volunteer is linked to a member only when the name and email both match, and gets no code from the form', async () => {
+  const memberEmail = email('volunteer-member');
+  await buy(memberEmail, build(['membership-adult'], [adultDetails({ firstName: 'Vera', lastName: 'Volunteer', email: memberEmail })]));
+  const [member] = await membershipsFor(memberEmail);
+  const matched = await call('POST', '/api/lists', { body: { name: 'vera  volunteer', email: memberEmail.toUpperCase(), category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
+  const nameOnly = await call('POST', '/api/lists', { body: { name: 'Vera Volunteer', email: email('impostor'), category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
+  assert.deepEqual(matched.json, { success: true });
+  assert.deepEqual(nameOnly.json, { success: true }, 'the response does not reveal whether a member matched');
+  const linked = (await db.collection('lists').where('email', '==', memberEmail).get()).docs[0];
+  assert.equal(linked.data().memberId, member.id);
+  assert.equal(linked.data().discountCode, null);
+  assert.equal((await db.collection('memberships').doc(member.id).get()).data().volunteer.inducted, false);
+  assert.equal((await db.collection('lists').where('email', '==', email('impostor')).get()).docs[0].data().memberId, null);
+  assert.equal((await db.collection('discountCodes').where('email', '==', memberEmail).get()).size, 0);
+  shared.volunteerSignup = linked.id;
+  shared.volunteerEmail = memberEmail;
+  shared.volunteerMemberId = member.id;
+});
+
+await test('ticking "inducted" on a member volunteer issues and emails one thank-you code', async () => {
+  assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { body: { inducted: true } })).status, 401);
+  const listed = await call('GET', '/api/admin/volunteers', { headers: admin });
+  assert.equal(listed.status, 200);
+  const row = listed.json.volunteers.find((volunteer) => volunteer.id === shared.volunteerSignup);
+  assert.equal(row.memberStatus, 'active');
+  assert.equal(row.inducted, false);
+  const inducted = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { inducted: true } });
+  assert.equal(inducted.json.outcome, 'issued', inducted.text);
+  const signup = (await db.collection('lists').doc(shared.volunteerSignup).get()).data();
+  assert.match(signup.discountCode, /^VOL-[0-9A-F]{10}$/);
+  assert.equal(signup.codeEmailed, true);
+  const code = (await db.collection('discountCodes').doc(signup.discountCode).get()).data();
+  assert.equal(code.discountType, 'multiplier');
+  assert.equal(code.singleUse, true);
+  assert.deepEqual(code.excludedCategories, ['MEMBERSHIP']);
+  const mail = (await db.collection('testMail').where('signupId', '==', shared.volunteerSignup).get()).docs.map((document) => document.data());
+  assert.equal(mail.length, 1);
+  assert.equal(mail[0].email, shared.volunteerEmail);
+  assert.ok(mail[0].body.includes(signup.discountCode));
+  assert.equal((await db.collection('memberships').doc(shared.volunteerMemberId).get()).data().volunteer.inducted, true);
+  assert.equal((await call('POST', '/api/discount-codes/validate', { body: { code: signup.discountCode } })).json.valid, true, 'the code works in the shop');
+
+  const again = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { inducted: true } });
+  assert.equal(again.json.outcome, 'issued');
+  assert.equal((await db.collection('testMail').where('signupId', '==', shared.volunteerSignup).get()).size, 1, 'no second code or email');
+  assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { inducted: false } })).status, 409);
+});
+
+await test('a non-member volunteer inducted first gets their code when a membership is bought for them', async () => {
+  const volunteerEmail = email('volunteer-joiner');
+  await call('POST', '/api/lists', { body: { name: 'Nina Newcomer', email: volunteerEmail, category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
+  const signupId = (await db.collection('lists').where('email', '==', volunteerEmail).get()).docs[0].id;
+  const pending = await call('PATCH', `/api/admin/volunteers/${signupId}`, { headers: admin, body: { inducted: true } });
+  assert.equal(pending.json.outcome, 'awaiting-membership');
+  assert.equal((await db.collection('lists').doc(signupId).get()).data().discountCode, null);
+  const listed = (await call('GET', '/api/admin/volunteers', { headers: admin })).json.volunteers.find((volunteer) => volunteer.id === signupId);
+  assert.equal(listed.memberStatus, 'not a member');
+
+  await buy(volunteerEmail, build(['vouchers'], []));
+  assert.equal((await db.collection('lists').doc(signupId).get()).data().discountCode, null, 'a non-membership purchase does not count');
+  // Someone else pays: the volunteer's own contact email on the membership is what links them.
+  await buy(email('volunteer-payer'), build(['membership-adult'], [adultDetails({ firstName: 'Nina', lastName: 'Newcomer', email: volunteerEmail })]));
+  const signup = (await db.collection('lists').doc(signupId).get()).data();
+  assert.match(signup.discountCode || '', /^VOL-/);
+  assert.ok(signup.memberId);
+  assert.equal((await db.collection('testMail').where('signupId', '==', signupId).get()).size, 1);
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));

@@ -157,5 +157,19 @@ for (const product of PRODUCTS.filter((item) => item.type !== 'external')) {
     items: [item], people, createdAt: Timestamp.now()
   });
 }
+// One example of every volunteering-page list, plus volunteer sign-ups in each induction state for the admin panel.
+const listEntry = (id, fields) => batch.set(db.collection('lists').doc(id), { status: 'pending', notes: '', createdAt: Timestamp.now(), ...fields });
+listEntry('TEST-LIST-EQUIPMENT', { name: 'Harper Example', email: 'harper-example@example.test', listType: 'Equipment Needed',
+  items: ['What equipment do you need?: 2 paddles, 1 buoyancy aid', 'What date do you need it by?: 14 March'] });
+listEntry('TEST-LIST-EVENT', { name: 'Harper Example', email: 'harper-example@example.test', listType: 'Event Participants',
+  items: ['Which event?: Loch Lomond paddle', 'How many people are attending?: 3'] });
+listEntry('TEST-LIST-MAINTENANCE', { name: 'Morgan Contact', email: 'morgan-contact@example.test', listType: 'Maintenance Tasks',
+  items: ['What needs doing?: Fix the boat rack', 'Where is it?: boathouse'] });
+listEntry('TEST-LIST-OTHER', { name: 'Morgan Contact', email: 'morgan-contact@example.test', listType: 'Other',
+  items: ['Tell us what you would like to add: A night paddle'], notes: 'Happy to help organise' });
+listEntry('TEST-VOLUNTEER-MEMBER', { name: 'Test Current', email: 'member@example.com', listType: 'Volunteer Sign-ups', memberId: 'test-current',
+  inducted: false, discountCode: null, items: ['Which activities would you like to help with?: coaching', 'When are you available?: Thursday evenings'] });
+listEntry('TEST-VOLUNTEER-NONMEMBER', { name: 'Vic Visitor', email: 'vic-visitor@example.test', listType: 'Volunteer Sign-ups', memberId: null,
+  inducted: true, discountCode: null, items: ['Which activities would you like to help with?: events', 'When are you available?: weekends'] });
 await batch.commit();
-console.log('Seeded local demo products, households, members, mixed baskets, course attendees and test admin. No production services contacted.');
+console.log('Seeded local demo products, households, members, mixed baskets, course attendees, list submissions and test admin. No production services contacted.');

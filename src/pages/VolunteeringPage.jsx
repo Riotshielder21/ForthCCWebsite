@@ -27,15 +27,9 @@ const VOLUNTEER_QUESTIONS = {
 
 const VOLUNTEER_CATEGORIES = Object.keys(VOLUNTEER_QUESTIONS);
 
-const handleVolunteerSuccess = (result, formData) => {
-  if (formData.category === 'Volunteer Sign-ups') {
-    if (result.verification?.verified) {
-      return `Thank you for volunteering! Your discount code is: ${result.discountCode}`;
-    }
-    return 'Submitted successfully! Note: Your name was not found in our member database. Please contact us if you believe this is an error.';
-  }
-  return 'List submitted successfully!';
-};
+const handleVolunteerSuccess = (result, formData) => formData.category === 'Volunteer Sign-ups'
+  ? 'Thank you for volunteering! We will be in touch about an induction. Members are emailed a thank-you discount code once their induction is complete.'
+  : 'Submitted successfully!';
 
 export default function VolunteeringPage() {
   const copy = usePageContent('volunteering');

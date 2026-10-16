@@ -1088,23 +1088,6 @@
     @apply font-medium mb-2;
   }
 
-  .DiscountCodeTitle {
-    @apply text-sm font-bold uppercase mb-1;
-    letter-spacing: 0.18em;
-    color: #065f46;
-  }
-
-  .DiscountCodeValue {
-    @apply text-2xl font-black;
-    letter-spacing: 0.08em;
-    color: var(--fcc-color-ink);
-  }
-
-  .DiscountCodeHint {
-    @apply text-xs mt-1;
-    color: #059669;
-  }
-
   .FormSpinner {
     @apply w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin;
   }
@@ -1115,10 +1098,6 @@
 
   .AlertError {
     @apply bg-red-50 text-red-700 border border-red-200;
-  }
-
-  .DiscountCodeBox {
-    @apply bg-white p-3 rounded-lg border-2 border-dashed border-emerald-300;
   }
 
   /* ─── Mobile Navigation ─────────────────────────── */

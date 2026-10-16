@@ -1,6 +1,6 @@
 ﻿import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithCustomToken, onAuthStateChanged, signInWithPopup, setPersistence, browserLocalPersistence, connectAuthEmulator, signInWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, serverTimestamp, query, where, getDocs, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import { apiUrl } from './api.js';
@@ -105,36 +105,6 @@ export const signInWithWorkspace = async () => {
   }
 
   return result.user;
-};
-
-export const generateDiscountCode = () => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let code = 'VOL';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
-};
-
-export const saveDiscountCode = async (name, email, discountCode) => {
-  try {
-    if (!db) {
-      return { success: false, error: 'database_unavailable' };
-    }
-
-    await addDoc(collection(db, 'discountCodes'), {
-      name,
-      email,
-      code: discountCode,
-      used: false,
-      createdAt: serverTimestamp(),
-      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // 1 year expiry
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error saving discount code:', error);
-    return { success: false, error: error.message };
-  }
 };
 
 export const validateDiscountCode = async (code) => {
