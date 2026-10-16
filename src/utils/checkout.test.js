@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem
+  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem, displayName
 } from './checkout.js';
 
 const now = new Date(2026, 9, 11);
@@ -430,4 +430,13 @@ test('checkout rejects duplicate people, missing items, and duplicate membership
 
   const noItems = complete({ ...blankPerson('empty'), lineIds: [] });
   assert.match(validateCheckout({ lines: [line], people: [noItems], now }).join(' '), /has no items/);
+});
+
+test('a returning member name stays masked until the unlocking date of birth is entered', () => {
+  const picked = { returning: true, firstName: 'Jane', lastName: 'Smith', dob: '1990-02-03', verifiedDob: '1990-02-03' };
+  assert.equal(displayName(picked), 'Jane Smith');
+  assert.equal(displayName({ ...picked, dob: '' }), 'J*** S***');
+  assert.equal(displayName({ ...picked, dob: '1990-02-04' }), 'J*** S***');
+  assert.equal(displayName({ ...picked, verifiedDob: undefined }), 'J*** S***');
+  assert.equal(displayName({ returning: false, firstName: 'New', lastName: 'Person', dob: '' }), 'New Person');
 });
