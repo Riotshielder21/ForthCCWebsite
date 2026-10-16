@@ -544,6 +544,11 @@ try {
 
 const createAccessToken = () => crypto.randomBytes(32).toString('hex');
 const hashAccessToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+const generateOrderRef = () => {
+  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const randomValue = crypto.randomInt(0, alphabet.length ** 8);
+  return `FCC-${randomValue.toString(alphabet.length).toUpperCase().padStart(8, '0')}`;
+};
 const ORDER_ACCESS_DAYS = 90;
 
 const currentClubYear = () => {
@@ -1287,6 +1292,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       return res.status(400).json({ error: 'Enter a valid email address and include at least one item.' });
     }
 
+    const orderRef = generateOrderRef();
     if (!adminDb) return res.status(503).json({ error: 'Order storage is not configured.' });
     const catalogSnapshot = await adminDb.collection('products').get();
     const catalog = resolveCatalogue(PRODUCTS, catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
@@ -1504,7 +1510,7 @@ app.post('/api/orders', rateLimit(10, 60 * 1000), async (req, res) => {
       return res.status(503).json({ error: 'Order storage is not configured.' });
     }
 
-    const orderRef = `FCC-${Date.now().toString(36).toUpperCase()}`;
+    const orderRef = generateOrderRef();
     const accessToken = createAccessToken();
     await adminDb.collection('orders').doc(orderRef).create({
       email: normalizeEmail(email),
