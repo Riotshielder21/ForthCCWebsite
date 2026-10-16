@@ -1,0 +1,27 @@
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: ['src/components/**', 'src/pages/**', 'src/styles/**', 'src/*.jsx', 'src/*.js', 'index.html', 'public/**']
+
+backend:
+  - changed-files:
+      - any-glob-to-any-file: ['server.js', 'src/server/**', 'src/utils/**']
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: ['**/*.test.js', 'scripts/test-*.js']
+
+scripts:
+  - changed-files:
+      - any-glob-to-any-file: ['scripts/**', 'bin/**']
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: ['**/*.md']
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ['.github/**', 'firebase.json', '.firebaserc']
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file: ['package.json', 'package-lock.json', 'requirements*.txt']
