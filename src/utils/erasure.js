@@ -51,7 +51,7 @@ const REQUIRED_SHARED = [['contactName', 'a contact name'], ['contactRelationshi
 /** Problems with the replacement shared details required when a family member is erased but the family stays. */
 export const sharedDetailsErrors = (details = {}) => [
   ...REQUIRED_SHARED.filter(([key]) => !String(details[key] || '').trim()).map(([, label]) => `Enter ${label}.`),
-  ...(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(details.email || '').trim()) ? [] : ['Enter a valid email address.'])
+  ...(/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(String(details.email || '').trim()) ? [] : ['Enter a valid email address.'])
 ];
 
 /** The update applied to each remaining family member so none still points at the erased person's details. */

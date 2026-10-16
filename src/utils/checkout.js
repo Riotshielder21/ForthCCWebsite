@@ -107,7 +107,7 @@ export const sanitizePerson = (person) => ({
   guardian: { name: text(person?.guardian?.name, 120), phone: text(person?.guardian?.phone, 40), email: text(person?.guardian?.email, 254).toLowerCase(), relationship: text(person?.guardian?.relationship, 60), address: text(person?.guardian?.address, 300), postcode: text(person?.guardian?.postcode, 12) }
 });
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 
 // The first age-related problem for a person, or '' (also shown inline next to the date of birth).
 export const ageProblem = (person, lines, role = null, now = new Date()) => {

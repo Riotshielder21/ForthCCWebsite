@@ -147,7 +147,7 @@ export const justgoUploadRows = (records) => records.filter((record) => record.j
 ]);
 
 export const uniqueReportEmails = (records) => [...new Set(records.map((record) => String(record.email || '').trim().toLowerCase())
-  .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))].sort();
+  .filter((email) => /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(email)))].sort();
 
 export const reportCsv = (headers, rows) => [headers, ...rows].map((row) => row.map((value) => {
   const text = String(value ?? '');
