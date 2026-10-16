@@ -65,22 +65,29 @@ app.use(compression());
 app.use(cors());
 app.use(express.static('dist'));
 
-const stripeRequest = async (path, params) => {
+const stripeRequest = async (path, params, method = 'POST') => {
   const secretKey = process.env.STRIPE_SECRET_KEY || '';
   if (!secretKey.startsWith('sk_test_')) {
     throw new Error('Stripe checkout requires a test-mode secret key. Live payments are disabled.');
   }
   const response = await fetch(`https://api.stripe.com/v1/${path}`, {
-    method: 'POST',
+    method,
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded'
     },
-    body: new URLSearchParams(params)
+    ...(method === 'GET' ? {} : { body: new URLSearchParams(params) })
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || 'Stripe request failed.');
   return data;
+};
+
+// Checkout is tied to a Stripe customer holding the email given at the start, so Stripe shows it read-only
+// and subscriptions cannot end up under a different address from the order.
+const stripeCustomerFor = async (email) => {
+  const existing = await stripeRequest(`customers?${new URLSearchParams({ email, limit: '1' })}`, null, 'GET');
+  return existing.data?.[0]?.id || (await stripeRequest('customers', [['email', email]])).id;
 };
 
 const customerId = (email) => crypto.createHash('sha256').update(normalizeEmail(email)).digest('hex');
@@ -1439,7 +1446,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       ...(coupon ? [['discounts[0][coupon]', coupon.id]] : []),
       ['expires_at', String(Math.floor(Date.now() / 1000) + 3600)],
       ['mode', hasRecurringItem ? 'subscription' : 'payment'],
-      ['customer_email', email],
+      ['customer', await stripeCustomerFor(email)],
       ...(!hasRecurringItem ? [['payment_intent_data[metadata][order_ref]', orderRef]] : []),
       ['success_url', `${siteUrl}/payment-success?session_id={CHECKOUT_SESSION_ID}&receipt_token=${receiptViewToken}`],
       ['cancel_url', `${siteUrl}/membership`],
