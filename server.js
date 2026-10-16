@@ -29,6 +29,7 @@ import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from '
 import { registerGdprRoutes } from './src/server/gdpr.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
+import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -60,9 +61,47 @@ const isValidEmail = (value) => {
   return labels.length > 1 && labels.every((label) => label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
 };
 
-// Middleware
+// Cloud Run sits behind one Google front end; trusting that hop gives each visitor their own rate-limit bucket.
+app.set('trust proxy', process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : (process.env.K_SERVICE ? 1 : false));
+app.disable('x-powered-by');
+
+const corsOrigins = allowedOrigins(process.env);
+const allowLocalhostOrigins = !isLive() || process.env.LOCAL_FIREBASE_EMULATORS === 'true';
+// Pages are framed by nobody; the full script/connect policy is report-only until it has been checked in browsers.
+const PAGE_CSP_REPORT_ONLY = [
+  "default-src 'self'", "script-src 'self' https://www.googletagmanager.com https://apis.google.com",
+  "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:",
+  "connect-src 'self' https://*.googleapis.com https://*.google-analytics.com https://*.analytics.google.com https://*.run.app",
+  "frame-src https://*.firebaseapp.com https://*.web.app", "form-action 'self' https://checkout.stripe.com"
+].join('; ');
+
 app.use(compression());
-app.use(cors());
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()'
+  });
+  if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  if (req.path.startsWith('/api/')) {
+    res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  } else {
+    res.set('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
+    res.set('Content-Security-Policy-Report-Only', PAGE_CSP_REPORT_ONLY);
+  }
+  // Receipt links carry their access token in the URL: never cache them or leak them in a Referer header.
+  if (/^\/(order\/|payment-success|api\/orders\/|api\/checkout-receipt)/.test(req.path)) {
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+  }
+  next();
+});
+app.use(cors({
+  origin: (origin, callback) => callback(null, isAllowedOrigin(origin, corsOrigins, { allowLocalhost: allowLocalhostOrigins })),
+  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 600
+}));
 app.use(express.static('dist'));
 
 const stripeRequest = async (path, params, method = 'POST') => {
@@ -97,11 +136,11 @@ const checkoutSiteOrigin = (req) => {
   const configuredSite = process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
   let defaultOrigin = 'http://localhost:3000';
   try { defaultOrigin = new URL(configuredSite).origin; } catch { /* use the local default */ }
-  const allowedOrigins = [configuredSite, ...(process.env.PUBLIC_SITE_URLS || '').split(',')]
+  const siteOrigins = [configuredSite, ...(process.env.PUBLIC_SITE_URLS || '').split(',')]
     .map((url) => { try { return new URL(url.trim()).origin; } catch { return ''; } })
     .filter(Boolean);
   const requestedOrigin = req.get('origin');
-  return allowedOrigins.includes(requestedOrigin) ? requestedOrigin : defaultOrigin;
+  return siteOrigins.includes(requestedOrigin) ? requestedOrigin : defaultOrigin;
 };
 
 const clubYearEnd = () => {
@@ -501,8 +540,7 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
   }
 });
 
-app.use(express.json());
-app.use(express.static('dist'));
+app.use(express.json({ limit: '100kb' }));
 
 // Google Sheets API Setup
 let sheets;
@@ -1506,44 +1544,6 @@ const sendOrderEmail = async ({ email, orderRef, accessToken, items, people = []
   });
   return true;
 };
-
-app.post('/api/orders', rateLimit(10, 60 * 1000), async (req, res) => {
-  try {
-    const { email, items, total, receipt } = req.body;
-    if (!isValidEmail(email) || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'Enter a valid email address and include at least one item.' });
-    }
-    if (!adminDb) {
-      return res.status(503).json({ error: 'Order storage is not configured.' });
-    }
-
-    const orderRef = generateOrderRef();
-    const accessToken = createAccessToken();
-    await adminDb.collection('orders').doc(orderRef).create({
-      email: normalizeEmail(email),
-      accessTokenHash: hashAccessToken(accessToken),
-      receipt: receipt || {},
-      items,
-      total: String(total),
-      status: 'paid',
-      emailSent: false,
-      createdAt: Timestamp.now(),
-      expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
-    });
-
-    let emailSent = false;
-    try {
-      emailSent = await sendOrderEmail({ email, orderRef, accessToken, items, total });
-    } catch (emailError) {
-      console.error('Order stored but email could not be sent:', emailError.message);
-    }
-
-    res.json({ success: true, orderRef, accessToken, emailSent });
-  } catch (error) {
-    console.error('Error creating order:', error);
-    res.status(500).json({ error: 'Could not save order.' });
-  }
-});
 
 app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => {
   try {

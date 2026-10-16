@@ -928,6 +928,32 @@ await test('consent and policy wording is recorded as numbered versions that fol
   assert.equal((await call('GET', '/api/admin/policies')).status, 401, 'policy records are admin only');
 });
 
+await test('API responses carry security headers and CORS only answers approved origins', async () => {
+  const approved = await call('GET', '/api/availability', { headers: { Origin: 'https://staging.example.test' } });
+  const headers = (await new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port: apiPort, path: '/api/availability',
+    headers: { Origin: 'https://staging.example.test' } }, (response) => { response.resume(); resolve(response.headers); }).on('error', reject)));
+  assert.equal(approved.status, 200);
+  assert.equal(headers['access-control-allow-origin'], 'https://staging.example.test');
+  assert.equal(headers['x-content-type-options'], 'nosniff');
+  assert.equal(headers['x-frame-options'], 'DENY');
+  assert.match(headers['content-security-policy'], /default-src 'none'/);
+  assert.equal(headers['x-powered-by'], undefined);
+  const blocked = await new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port: apiPort, path: '/api/availability',
+    headers: { Origin: 'https://attacker.example.test' } }, (response) => { response.resume(); resolve(response.headers); }).on('error', reject));
+  assert.equal(blocked['access-control-allow-origin'], undefined);
+});
+
+await test('receipt links are never cached or sent as a referrer, and the unpaid order endpoint is gone', async () => {
+  for (const path of ['/api/orders/FCC-NOPE.token', '/api/checkout-receipt?session_id=cs_x&receipt_token=y', '/order/FCC-NOPE.token', '/payment-success?receipt_token=y']) {
+    const headers = await new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port: apiPort, path }, (response) => { response.resume(); resolve(response.headers); }).on('error', reject));
+    assert.equal(headers['cache-control'], 'no-store', path);
+    assert.equal(headers['referrer-policy'], 'no-referrer', path);
+  }
+  const legacy = await call('POST', '/api/orders', { body: { email: email('legacy'), items: [{ id: 'keyhire' }], total: '0' } });
+  assert.equal(legacy.status, 404);
+  assert.equal((await db.collection('orders').where('email', '==', email('legacy')).get()).size, 0);
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));
