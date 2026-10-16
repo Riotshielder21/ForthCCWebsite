@@ -57,6 +57,7 @@ jobs:
             GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk
             GOOGLE_SHARED_DRIVE_ID=0APxBZiGs6yEGUk9PVA
             GOOGLE_FORMS_ROOT_FOLDER_ID=1_ptxNQkgpJdogsjDZ4Wbqb310LCEJI4Z
+            WEBSITE_ISLIVE=${{ secrets.WEBSITE_ISLIVE || 'false' }}
             PUBLIC_SITE_URL=https://fccwebsite-23cfc.web.app
           secrets: |-
             GITHUB_CONTENT_TOKEN=github-content-token:latest

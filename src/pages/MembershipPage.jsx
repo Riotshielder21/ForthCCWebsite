@@ -3,31 +3,34 @@ import { ShoppingCart, Plus, Minus, ExternalLink, ChevronDown, Pencil } from 'lu
 import { DISCOUNTS, CATEGORIES } from '../constants/products';
 import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { eventScheduleLabel } from '../utils/catalogue';
+import { productLimits } from '../utils/inventory';
 
-export default function MembershipPage({ activeCategory, setActiveCategory, cart, addToCart, removeOneFromCart, getItemDisplayPrice, getKitHireMonthly, products, onNavigate }) {
+export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, getKitHireMonthly, products, onNavigate }) {
   const copy = usePageContent('membership');
   const { adminUser } = usePageEditor();
   const [selectedTier, setSelectedTier] = useState('adult');
   const [tierDropdownOpen, setTierDropdownOpen] = useState(false);
+  const [sizeChoice, setSizeChoice] = useState({});
 
   const membershipTiers = products.filter((product) => product.category === 'MEMBERSHIP' && product.membershipTier);
   const nonMembershipProducts = products.filter((product) => product.category !== 'MEMBERSHIP' || !product.membershipTier);
   const selectedMembership = membershipTiers.find(t => t.membershipTier === selectedTier);
-  const countInCart = (id) => cart.filter((line) => line.id === id).length;
-  const purchaseControl = (product, onAdd) => {
-    const count = countInCart(product.id);
+  const countInCart = (id, size = '') => cart.filter((line) => line.id === id && (line.size || '') === size).length;
+  const purchaseControl = (product, onAdd, size = '') => {
+    const count = countInCart(product.id, size);
+    const soldOut = stockLeft(product, size) <= 0;
     if (!count) {
       return (
-        <button onClick={onAdd} className="IconActionButton" aria-label={`Add ${product.name} to basket`} title="Add to basket">
+        <button onClick={onAdd} disabled={soldOut} className="IconActionButton" aria-label={`Add ${product.name}${size ? ` (${size})` : ''} to basket`} title={soldOut ? 'Sold out' : 'Add to basket'}>
           <ShoppingCart className="IconXl" />
         </button>
       );
     }
     return (
-      <div className="QuantityControl" role="group" aria-label={`${product.name}: ${count} in basket`}>
-        <button onClick={onAdd} aria-label={`Add another ${product.name}`} title="Add another"><Plus className="IconLg" /></button>
+      <div className="QuantityControl" role="group" aria-label={`${product.name}${size ? ` (${size})` : ''}: ${count} in basket`}>
+        <button onClick={() => removeOneFromCart(product.id, size)} aria-label={`Remove one ${product.name}`} title="Remove one"><Minus className="IconLg" /></button>
         <span aria-hidden="true">{count}</span>
-        <button onClick={() => removeOneFromCart(product.id)} aria-label={`Remove one ${product.name}`} title="Remove one"><Minus className="IconLg" /></button>
+        <button onClick={onAdd} disabled={soldOut} aria-label={`Add another ${product.name}`} title={soldOut ? 'No more available' : 'Add another'}><Plus className="IconLg" /></button>
       </div>
     );
   };
@@ -37,8 +40,9 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
     addToCart(selectedMembership);
   };
 
+  // Sold-out events and merchandise leave the shop until an admin frees a place.
   const displayProducts = nonMembershipProducts.filter(
-    (p) => activeCategory === 'ALL' || p.category === activeCategory
+    (p) => (activeCategory === 'ALL' || p.category === activeCategory) && !availability[p.id]?.soldOut
   );
 
   return (
@@ -134,7 +138,14 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
           )}
 
           {/* All other products */}
-          {displayProducts.map((product) => (
+          {displayProducts.map((product) => {
+            const merchandise = product.category === 'MERCHANDISE';
+            const remaining = availability[product.id]?.remaining;
+            const sizes = merchandise ? Object.keys(productLimits(product) || {}) : [];
+            const inStock = (size) => !remaining || (remaining[size] ?? 0) > 0;
+            const size = merchandise ? (sizeChoice[product.id] && inStock(sizeChoice[product.id]) ? sizeChoice[product.id] : sizes.find(inStock) || sizes[0] || '') : '';
+            const placesLeft = product.category === 'EVENTS' ? remaining?.all : null;
+            return (
             <div key={product.id} className="shop_product_tile">
               {product.imageUrl && <img className="shop_product_image" src={product.imageUrl} alt="" />}
               {product.hasAnnualDiscount && (
@@ -148,6 +159,14 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
               </div>
               <p className="shop_product_description">{product.description}</p>
               {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
+              {placesLeft > 0 && placesLeft <= 5 && <p className="text_container SpaceB4" role="status">Only {placesLeft} {placesLeft === 1 ? 'place' : 'places'} left</p>}
+              {merchandise && sizes.length > 0 && (
+                <label className="FormLabel SpaceB4">Size
+                  <select className="FormInput" value={size} onChange={(event) => setSizeChoice((current) => ({ ...current, [product.id]: event.target.value }))}>
+                    {sizes.map((option) => <option key={option} value={option} disabled={!inStock(option)}>{option}{inStock(option) ? '' : ' (sold out)'}</option>)}
+                  </select>
+                </label>
+              )}
               <div className="shop_product_footer">
                 <div>
                   {product.type === 'yearly-service' ? (
@@ -167,6 +186,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                         {product.type === 'event-ticket' ? 'Event / course ticket'
                           : product.type === 'voucher'
                           ? copy.voucherPriceLabel
+                          : product.type === 'merchandise' ? 'Per item'
                           : product.type === 'annual-oneoff'
                             ? copy.clubYearPriceLabel
                             : copy.monthlyPriceLabel}
@@ -178,10 +198,11 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                   <a href={product.externalLink} target="_blank" rel="noreferrer" className="PrimaryActionButton">
                     {copy.externalAction} <ExternalLink className="IconSm" />
                   </a>
-                ) : purchaseControl(product, () => addToCart(product))}
+                ) : purchaseControl(product, () => addToCart(product, size), size)}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

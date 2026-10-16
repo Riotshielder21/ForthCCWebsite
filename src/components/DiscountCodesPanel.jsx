@@ -44,6 +44,8 @@ export default function DiscountCodesPanel({ adminUser, products }) {
   useEffect(() => { load(); }, [load]);
 
   const update = (field, value) => setDraft((current) => ({ ...current, [field]: value }));
+  // Fixed-amount codes default to single use; the admin can still untick flat ones.
+  const changeType = (discountType) => setDraft((current) => ({ ...current, discountType, singleUse: discountType === 'multiplier' ? current.singleUse : true }));
   const toggleProduct = (id) => update('productIds', draft.productIds.includes(id)
     ? draft.productIds.filter((candidate) => candidate !== id)
     : [...draft.productIds, id]);
@@ -108,7 +110,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
           <label className="FormLabel">Code<input className="FormInput" required disabled={Boolean(editing)} pattern="[A-Za-z0-9-]{3,64}" maxLength={64} value={draft.code} onChange={(event) => update('code', event.target.value.toUpperCase())} /></label>
           <label className="FormLabel">Label shown to customers<input className="FormInput" required maxLength={120} value={draft.label} onChange={(event) => update('label', event.target.value)} /></label>
           <label className="FormLabel">Type
-            <select className="FormInput" value={draft.discountType} onChange={(event) => update('discountType', event.target.value)}>
+            <select className="FormInput" value={draft.discountType} onChange={(event) => changeType(event.target.value)}>
               {TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
@@ -123,7 +125,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
             <label key={product.id} className="CheckoutCheck"><input type="checkbox" checked={draft.productIds.includes(product.id)} onChange={() => toggleProduct(product.id)} /> {product.name}</label>
           ))}
         </fieldset>
-        <label className="CheckoutCheck"><input type="checkbox" checked={draft.singleUse} onChange={(event) => update('singleUse', event.target.checked)} /> Single use (disabled after one order)</label>
+        <label className="CheckoutCheck"><input type="checkbox" checked={draft.singleUse || draft.discountType === 'credit'} disabled={draft.discountType === 'credit'} onChange={(event) => update('singleUse', event.target.checked)} /> Single use (disabled after one order){draft.discountType === 'credit' ? ' - always on for this type' : ''}</label>
         {message && <p className="StatusText StatusTextSuccess">{message}</p>}
         {error && <p className="StatusText StatusTextError">{error}</p>}
         <button className="FormSubmitButton" type="submit">{editing ? `Save changes to ${editing}` : 'Create discount code'}</button>
