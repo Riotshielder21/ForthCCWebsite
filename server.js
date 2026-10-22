@@ -18,6 +18,7 @@ import { calculateCart } from './src/utils/pricing.js';
 import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
+import { buildRawEmail } from './src/utils/mail.js';
 import { buildReceiptSummary, receiptEmailCopy } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation, stripeSubscriberReport } from './src/utils/stripeReports.js';
@@ -557,7 +558,8 @@ try {
     adminAuth = getAdminAuth(adminApp);
     const workspaceAuth = new google.auth.GoogleAuth({
       credentials,
-      subject: process.env.GOOGLE_WORKSPACE_DELEGATED_USER || undefined,
+      // Domain-wide delegation only works when the impersonated user is passed as a client option.
+      clientOptions: { subject: process.env.GOOGLE_WORKSPACE_DELEGATED_USER || undefined },
       scopes: [
         'https://www.googleapis.com/auth/gmail.send',
         'https://www.googleapis.com/auth/drive',
@@ -918,19 +920,12 @@ const sendContentPrNotification = async (pullRequest, requestedBy) => {
   const recipient = process.env.GITHUB_PR_NOTIFICATION_EMAIL || 'Riotshielder21@gmail.com';
   const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
   if (!gmailApi || !sender || !recipient) return false;
-  const raw = [
-    `From: Forth Canoe Club Website <${sender}>`,
-    `To: ${recipient}`,
-    `Subject: Website changes need your review: PR #${pullRequest.number}`,
-    'Content-Type: text/plain; charset=utf-8',
-    '',
-    `An administrator (${requestedBy}) submitted website content for review.`,
-    '',
-    `Review and merge the pull request to publish the changes: ${pullRequest.html_url}`,
-    '',
-    'The approved main-branch workflow deploys the website to Firebase.'
-  ].join('\r\n');
   try {
+    const raw = buildRawEmail({ fromName: 'Forth Canoe Club Website', from: sender, to: recipient,
+      subject: `Website changes need your review: PR #${pullRequest.number}`,
+      body: [`An administrator (${requestedBy}) submitted website content for review.`, '',
+        `Review and merge the pull request to publish the changes: ${pullRequest.html_url}`, '',
+        'The approved main-branch workflow deploys the website to Firebase.'].join('\n') });
     await gmailApi.users.messages.send({
       userId: 'me',
       requestBody: { raw: Buffer.from(raw).toString('base64url') }
@@ -1514,10 +1509,12 @@ const sendEmail = async ({ to, subject, body, record = {} }) => {
     return true;
   }
   const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
-  if (!gmailApi || !sender) return false;
-  const raw = [`From: Forth Canoe Club <${sender}>`, `To: ${to}`, `Subject: ${subject.replace(/[\r\n]/g, ' ')}`,
-    'Content-Type: text/plain; charset=utf-8', '', body].join('\r\n');
-  await gmailApi.users.messages.send({ userId: 'me', requestBody: { raw: Buffer.from(raw).toString('base64url') } });
+  if (!gmailApi || !sender) {
+    console.error('Email not sent: set GOOGLE_WORKSPACE_DELEGATED_USER (and a service account with domain-wide delegation).');
+    return false;
+  }
+  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body });
+  await gmailApi.users.messages.send({ userId: 'me', requestBody: { raw } });
   return true;
 };
 
