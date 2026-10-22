@@ -173,8 +173,8 @@ test('annual subscription totals and savings use the remaining club-year months'
   assert.equal(march.recurringMonthlyTotal, 0);
 });
 
-test('yearly-service pricing changes at the four-month club-year boundary', () => {
-  const yearlyService = { id: 'annual-service', category: 'SERVICES', type: 'yearly-service', basePrice: 85 };
+test('prorated service pricing changes at the four-month club-year boundary', () => {
+  const yearlyService = { id: 'annual-service', category: 'SERVICES', type: 'yearly-service', pricingMode: 'prorated', basePrice: 85 };
   const october = calculateCart([yearlyService], false, null, new Date(2026, 9, 31));
   const november = calculateCart([yearlyService], false, null, new Date(2026, 10, 1));
   assert.deepEqual([october.items[0].clubYear.monthsRemaining, october.subtotal, october.annualSaving], [5, 85, 0]);
@@ -212,8 +212,8 @@ test('a scoped multiplier discounts every duplicate line with a matching product
   assert.equal(result.total, 153);
 });
 
-test('seasonal yearly-service savings are calculated before voucher credit is applied', () => {
-  const yearlyService = { id: 'annual-service', category: 'SERVICES', type: 'yearly-service', basePrice: 85 };
+test('seasonal prorated service savings are calculated before voucher credit is applied', () => {
+  const yearlyService = { id: 'annual-service', category: 'SERVICES', type: 'yearly-service', pricingMode: 'prorated', basePrice: 85 };
   const result = calculateCart([yearlyService], false, { discountType: 'credit', discountValue: 20 }, new Date(2026, 10, 1));
   assert.equal(result.subtotal, 51);
   assert.equal(result.items[0].displayPrice, 31);

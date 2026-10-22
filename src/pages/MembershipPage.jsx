@@ -7,7 +7,7 @@ import { isTripEvent } from '../utils/tripDiscount';
 import { bookingsClosed, formatDate } from '../utils/eventRoster';
 import { productLimits } from '../utils/inventory';
 
-export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, getKitHireMonthly, products, onNavigate }) {
+export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, onNavigate }) {
   const copy = usePageContent('membership');
   const { adminUser } = usePageEditor();
   const [selectedTier, setSelectedTier] = useState('adult');
@@ -176,13 +176,11 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
               )}
               <div className="shop_product_footer">
                 <div>
-                  {product.type === 'yearly-service' ? (
+                  {product.pricingMode === 'prorated' ? (
                     <>
-                      <div className="shop_product_price">£{product.basePrice.toFixed(2)}</div>
+                      <div className="shop_product_price">£{getItemDisplayPrice(product)}</div>
                       <div className="shop_product_meta">{copy.annualPriceLabel}</div>
-                      <div className="KitHireMonthlyLabel">
-                        or £{getKitHireMonthly(product)} /month
-                      </div>
+                      {Number(getItemDisplayPrice(product)) < product.basePrice && <div className="KitHireMonthlyLabel">Reduced from £{product.basePrice.toFixed(2)} for the rest of the club year</div>}
                     </>
                   ) : (
                     <>
@@ -194,10 +192,12 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                           : product.type === 'voucher'
                           ? copy.voucherPriceLabel
                           : product.type === 'merchandise' ? 'Per item'
-                          : product.type === 'annual-oneoff'
-                            ? copy.clubYearPriceLabel
-                            : copy.monthlyPriceLabel}
+                          : product.pricingMode === 'subscription'
+                            ? copy.monthlyPriceLabel
+                          : product.type === 'yearly-service' ? copy.annualPriceLabel
+                            : copy.clubYearPriceLabel}
                       </div>
+                      {product.pricingMode === 'subscription' && !product.allowMonthly && <div className="KitHireMonthlyLabel">Paid up front to 1 March</div>}
                     </>
                   )}
                 </div>

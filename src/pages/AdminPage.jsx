@@ -9,7 +9,7 @@ import VolunteersPanel from '../components/VolunteersPanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
 import EventRosterControl from '../components/EventRosterControl';
 import { apiUrl } from '../utils/api';
-import { validateEventSchedule, eventScheduleLabel } from '../utils/catalogue';
+import { validateEventSchedule, eventScheduleLabel, normaliseProduct } from '../utils/catalogue';
 import { cleanStockFields } from '../utils/inventory';
 import { cleanEventDetails } from '../utils/eventRoster';
 
@@ -19,7 +19,9 @@ const EMPTY_PRODUCT = {
   category: 'SERVICES',
   basePrice: 0,
   description: '',
-  type: 'annual-oneoff',
+  type: 'yearly-service',
+  pricingMode: 'fixed',
+  allowMonthly: false,
   hasAnnualDiscount: false,
   imageUrl: '',
   capacity: '',
@@ -28,7 +30,8 @@ const EMPTY_PRODUCT = {
   leaderName: '', leaderEmail: '', closeDate: '', membershipRequired: true
 };
 
-const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description', 'type', 'imageUrl'];
+const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description', 'imageUrl'];
+const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorated: 60% when 4 or fewer months of the club year remain', subscription: 'Subscription: monthly price, charged to 1 March' };
 
 export default function AdminPage({ products, onNavigate }) {
   const editor = usePageEditor();
@@ -42,12 +45,14 @@ export default function AdminPage({ products, onNavigate }) {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [formDraft, setFormDraft] = useState({ name: '', description: '', fields: 'Name\nEmail\nResponse' });
 
-  const updateDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value,
-    ...(field === 'category' && value === 'EVENTS' ? { type: 'event-ticket', hasAnnualDiscount: false } : {}),
-    ...(field === 'category' && value === 'MERCHANDISE' ? { type: 'merchandise', hasAnnualDiscount: false } : {}),
-    ...(field === 'category' && value !== 'EVENTS' && current.type === 'event-ticket' ? { type: 'annual-oneoff' } : {}),
-    ...(field === 'category' && value !== 'MERCHANDISE' && current.type === 'merchandise' ? { type: 'annual-oneoff' } : {})
-  }));
+  // Type, pricing mode and monthly billing follow the category (see productTerms).
+  const updateDraft = (field, value) => setDraft((current) => {
+    const next = { ...current, [field]: value };
+    if (field === 'category' && value === 'SUBSCRIPTIONS' && current.category !== 'SUBSCRIPTIONS') next.allowMonthly = true;
+    if (field === 'category' && value === 'SERVICES' && current.category !== 'SERVICES') next.pricingMode = 'fixed';
+    const terms = normaliseProduct(next);
+    return { ...terms, ...(terms.pricingMode === 'subscription' ? {} : { hasAnnualDiscount: false }) };
+  });
   const updateVariant = (index, field, value) => setDraft((current) => ({ ...current,
     variants: (current.variants || []).map((variant, position) => position === index ? { ...variant, [field]: value } : variant)
   }));
@@ -95,7 +100,7 @@ export default function AdminPage({ products, onNavigate }) {
 
   const editProduct = (product) => {
     setSelectedProduct(product.id);
-    setDraft({ ...EMPTY_PRODUCT, ...product, eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
+    setDraft({ ...EMPTY_PRODUCT, ...normaliseProduct(product), eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
     setMessage('');
     resetImageInput();
   };
@@ -113,17 +118,14 @@ export default function AdminPage({ products, onNavigate }) {
     try {
       const product = {
         ...draft,
+        ...normaliseProduct(draft),
         basePrice: Number(draft.basePrice),
-        hasAnnualDiscount: Boolean(draft.hasAnnualDiscount)
+        hasAnnualDiscount: Boolean(draft.hasAnnualDiscount) && normaliseProduct(draft).pricingMode === 'subscription'
       };
       if (product.category === 'MERCHANDISE') {
-        product.type = 'merchandise';
-        product.hasAnnualDiscount = false;
         Object.assign(product, cleanStockFields(product));
       }
       if (product.category === 'EVENTS') {
-        product.type = 'event-ticket';
-        product.hasAnnualDiscount = false;
         product.eventSchedule = validateEventSchedule(product.eventSchedule);
         Object.assign(product, cleanEventDetails(product));
         Object.assign(product, cleanStockFields(product));
@@ -220,9 +222,9 @@ export default function AdminPage({ products, onNavigate }) {
           <form className="main_tile AdminEditor" onSubmit={handleSave}>
             <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && !isLockedProduct(selectedProduct) && <button type="button" className="CartRemoveButton" onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
             {selectedProduct && isLockedProduct(selectedProduct) && <p className="text_container text_container_note">This product cannot be removed: holding it gives £10 off single-day trips at checkout.</p>}
-            {EDITABLE_FIELDS.filter((field) => field !== 'type' || !['EVENTS', 'MERCHANDISE'].includes(draft.category)).map((field) => (
-              <label className="FormLabel" key={field}>{field === 'basePrice' ? 'Price' : field}
-                {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' || field === 'type' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{(field === 'category' ? CATEGORIES.filter((category) => category !== 'ALL') : ['external', 'voucher', 'annual-oneoff', 'yearly-service', 'subscription']).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required={field !== 'imageUrl'} />}
+            {EDITABLE_FIELDS.map((field) => (
+              <label className="FormLabel" key={field}>{field === 'basePrice' ? (draft.pricingMode === 'subscription' ? 'Monthly price' : 'Price') : field}
+                {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{CATEGORIES.filter((category) => category !== 'ALL').map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required={field !== 'imageUrl'} />}
               </label>
             ))}
             {draft.category === 'EVENTS' && <fieldset className="AdminEventSchedule">
@@ -259,7 +261,14 @@ export default function AdminPage({ products, onNavigate }) {
               <button type="button" className="EditorCommand" onClick={addVariant}>Add size</button>
               <p className="text_container text_container_note">Customers choose a size and quantity. A size that sells out is greyed out, and the item leaves the shop when every size is gone. Delete a refunded order in Reports to return its stock.</p>
             </fieldset>}
-            {draft.category !== 'EVENTS' && draft.category !== 'MERCHANDISE' && <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.hasAnnualDiscount} onChange={(event) => updateDraft('hasAnnualDiscount', event.target.checked)} /> Annual discount applies</label>}
+            {draft.category === 'SERVICES'
+              ? <label className="FormLabel">Pricing<select className="FormInput" value={draft.pricingMode} onChange={(event) => updateDraft('pricingMode', event.target.value)}>{Object.entries(PRICING_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              : <p className="text_container text_container_note">{{ MEMBERSHIP: draft.type === 'external' ? 'External link: bought through JustGo, not this shop.' : 'Membership is a fixed club-year price. It is never prorated or paid monthly.', SUBSCRIPTIONS: PRICING_LABELS.subscription, VOUCHERS: 'Voucher: a fixed price that issues a credit code.', EVENTS: 'Event ticket: a fixed price for the whole event or course.', MERCHANDISE: 'Merchandise: a fixed price per item.' }[draft.category]}</p>}
+            {draft.pricingMode === 'subscription' && <>
+              <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.allowMonthly === true} onChange={(event) => updateDraft('allowMonthly', event.target.checked)} /> Allow monthly payments</label>
+              <p className="text_container text_container_note">{draft.allowMonthly ? 'Customers can pay monthly by direct debit, or pay up front to 1 March.' : 'Customers pay up front for the months left until 1 March.'}</p>
+              <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.hasAnnualDiscount} onChange={(event) => updateDraft('hasAnnualDiscount', event.target.checked)} /> 20% off when paid up front</label>
+            </>}
             <label className="FormLabel">Product image<input key={fileInputKey} className="FormInput" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={(event) => { setImageFile(event.target.files?.[0] || null); setMessage(''); setError(''); }} /></label>
             <button type="button" className="EditorCommand" onClick={handleImageUpload} disabled={!imageFile || uploading}>
               {uploading ? <Loader2 className="IconMd animate-spin" /> : <Upload className="IconMd" />} {uploading ? `Uploading ${imageFile?.name || 'image'}…` : 'Upload image'}

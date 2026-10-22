@@ -13,7 +13,7 @@ export const PRODUCTS = [
     name: 'ANNUAL BOAT & KIT HIRE',
     category: 'SERVICES',
     basePrice: 85.00,
-    description: 'Unlimited kit hire for the club year. Pay upfront or spread the cost monthly.',
+    description: 'Unlimited kit hire for the club year.',
     type: 'yearly-service'
   },
   {

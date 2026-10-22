@@ -2,15 +2,7 @@
 
 ## Shop types and vouchers
 
-- Product Type follows Category and is not free choice:
-  - Vouchers: always a voucher.
-  - Events: always an event ticket.
-  - Subscriptions: always a subscription.
-  - Membership: fixed price only (never prorated, never monthly).
-  - Services: choose Fixed, Prorated or Subscription.
-  - Add a Prorated service price mode; keep Membership fixed and keep Membership and Vouchers excluded from monthly billing.
-  - Add an admin-controlled "Allow monthly payments" setting per eligible product.
-- Existing products are mapped to the new types automatically and keep their saved prices (`yearly-service` and friends).
+- Voucher credit eligibility:
   - Configure generated voucher credit eligibility by category or product; retain support for custom fixed discount codes.
 - Discount code list:
   - A voucher shop item appears once, under the shop item's name.

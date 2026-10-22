@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
+import { normaliseProduct, productTerms, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
 import { calculateCart } from './pricing.js';
 import { PRODUCTS } from '../constants/products.js';
 
 test('first saved product preserves starter catalogue; overrides and deletions stay explicit', () => {
   const defaults = [{ id: 'starter', name: 'Starter' }, { id: 'other' }];
   assert.equal(resolveCatalogue(defaults, [{ id: 'new' }]).length, 3);
-  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', name: 'Edited' }])[0], { id: 'starter', name: 'Edited' });
-  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', deleted: true }]), [{ id: 'other' }]);
+  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', name: 'Edited' }])[0], normaliseProduct({ id: 'starter', name: 'Edited' }));
+  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', deleted: true }]), [normaliseProduct({ id: 'other' })]);
   assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', deleted: true }, { id: 'other', deleted: true }]), []);
 });
 
@@ -55,4 +55,32 @@ test('course-place voucher purchase value can be applied as scoped credit to a c
   assert.equal(redemption.items[0].promoEligible, true);
   assert.equal(redemption.items[0].promoSaving, 60);
   assert.equal(redemption.total, 15);
+});
+test('product terms follow the category, and only services choose a pricing mode', () => {
+  assert.deepEqual(productTerms({ category: 'MEMBERSHIP', type: 'subscription', allowMonthly: true }), { type: 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false });
+  assert.equal(productTerms({ category: 'MEMBERSHIP', type: 'external' }).type, 'external');
+  assert.deepEqual(productTerms({ category: 'SERVICES', type: 'yearly-service' }), { type: 'yearly-service', pricingMode: 'fixed', allowMonthly: false });
+  assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'prorated', allowMonthly: true }), { type: 'yearly-service', pricingMode: 'prorated', allowMonthly: false });
+  assert.deepEqual(productTerms({ category: 'SERVICES', type: 'subscription' }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: false });
+  assert.equal(productTerms({ category: 'SERVICES', pricingMode: 'subscription', allowMonthly: true }).allowMonthly, true);
+  assert.deepEqual(productTerms({ category: 'SUBSCRIPTIONS' }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: true });
+  assert.equal(productTerms({ category: 'SUBSCRIPTIONS', allowMonthly: false }).allowMonthly, false);
+  for (const [category, type] of [['VOUCHERS', 'voucher'], ['EVENTS', 'event-ticket'], ['MERCHANDISE', 'merchandise']]) {
+    assert.deepEqual(productTerms({ category, type: 'subscription', pricingMode: 'prorated', allowMonthly: true }), { type, pricingMode: 'fixed', allowMonthly: false });
+  }
+  assert.ok(resolveCatalogue(PRODUCTS, []).every((product) => product.pricingMode));
+});
+
+test('a subscription that does not allow monthly payments is charged up front even in monthly mode', () => {
+  const now = new Date(2026, 9, 9);
+  const upfront = normaliseProduct({ id: 'up', category: 'SUBSCRIPTIONS', basePrice: 10, allowMonthly: false });
+  const monthly = normaliseProduct({ id: 'mo', category: 'SUBSCRIPTIONS', basePrice: 10 });
+  const fixed = normaliseProduct({ id: 'fx', category: 'SERVICES', type: 'yearly-service', basePrice: 85 });
+  const cart = calculateCart([upfront, monthly, fixed], false, null, now);
+  assert.deepEqual(cart.items.map((item) => item.monthlyBilling), [false, true, false]);
+  assert.equal(cart.items[0].displayPrice, 50);
+  assert.equal(cart.items[1].displayPrice, 10);
+  assert.equal(cart.items[2].displayPrice, 85);
+  assert.equal(calculateCart([fixed], true, null, new Date(2027, 0, 9)).total, 85);
+  assert.equal(calculateCart([{ ...fixed, pricingMode: 'prorated' }], true, null, new Date(2027, 0, 9)).total, 51);
 });

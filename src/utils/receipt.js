@@ -6,7 +6,7 @@ const money = (value) => `£${Number(value || 0).toFixed(2)}`;
 const receiptItems = (items, order) => items.map((item) => ({
   name: itemLabel(item) || 'Item',
   price: Number(item.price || 0),
-  billing: order.billingMode === 'monthly' && item.type === 'subscription' ? 'per month' : '',
+  billing: (typeof item.monthly === 'boolean' ? item.monthly : order.billingMode === 'monthly' && item.type === 'subscription') ? 'per month' : '',
   schedule: item.eventSchedule ? eventScheduleLabel(item.eventSchedule) : ''
 }));
 

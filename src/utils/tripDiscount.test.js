@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyTripDiscounts, currentPrivilegeIds, tripDiscountFor, isTripEvent, isLockedProduct } from './tripDiscount.js';
 import { calculateCart } from './pricing.js';
-import { resolveCatalogue } from './catalogue.js';
+import { normaliseProduct, resolveCatalogue } from './catalogue.js';
 
 const now = new Date('2026-10-10T12:00:00Z');
 const schedule = (mode) => ({ mode, startDate: '2026-11-01', startTime: '09:00', endTime: '16:00', ...(mode === 'single' ? { days: 1 } : { days: 3 }), timeZone: 'Europe/London' });
@@ -64,5 +64,5 @@ test('the trip discount products cannot be deleted from the shop', () => {
   assert.equal(isLockedProduct('keyhire'), false);
   const defaults = [{ id: 'boat-hire', name: 'Hire', basePrice: 85 }, { id: 'keyhire', name: 'Key', basePrice: 50 }];
   const catalogue = resolveCatalogue(defaults, [{ id: 'boat-hire', deleted: true, basePrice: 90 }, { id: 'keyhire', deleted: true }]);
-  assert.deepEqual(catalogue, [{ id: 'boat-hire', name: 'Hire', basePrice: 90 }]);
+  assert.deepEqual(catalogue, [normaliseProduct({ id: 'boat-hire', name: 'Hire', basePrice: 90 })]);
 });

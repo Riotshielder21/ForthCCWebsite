@@ -7,7 +7,7 @@ import { initializeAuth, validateDiscountCode } from './utils/firebase';
 import { calculateCart } from './utils/pricing';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft } from './utils/checkout';
 import CheckoutPage from './pages/CheckoutPage';
-import { eventScheduleLabel } from './utils/catalogue';
+import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
 import { itemLabel, productLimits } from './utils/inventory';
 import SiteNavigation from './components/SiteNavigation';
 import HomePage from './pages/HomePage';
@@ -48,10 +48,13 @@ export default function App() {
   const [availability, setAvailability] = useState({});
   const [pageContent, setPageContent] = useState({});
   const [cart, setCart] = useState(() => (initialDraft?.cart || [])
-    .map((line) => { const product = PRODUCTS.find((candidate) => candidate.id === line.id); return product ? { ...product, lineId: line.lineId } : null; })
+    .map((line) => { const product = PRODUCTS.find((candidate) => candidate.id === line.id); return product ? { ...normaliseProduct(product), lineId: line.lineId } : null; })
     .filter(Boolean));
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isAnnual, setIsAnnual] = useState(initialDraft?.isAnnual ?? true);
+  // Monthly billing is only offered when something in the basket allows it.
+  const monthlyAvailable = cart.some((item) => item.allowMonthly);
+  const annualBilling = isAnnual || !monthlyAvailable;
   const [activeCategory, setActiveCategory] = useState('ALL');
 
   const [promoInput, setPromoInput] = useState('');
@@ -190,7 +193,7 @@ export default function App() {
           items: cart.map(({ id, lineId }) => ({ id, lineId })),
           people,
           discountCode: activePromo?.code || '',
-          billingMode: isAnnual ? 'annual' : 'monthly'
+          billingMode: annualBilling ? 'annual' : 'monthly'
         })
       });
       const order = await response.json();
@@ -238,27 +241,7 @@ export default function App() {
     }
   };
 
-  const getClubYearContext = () => {
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
-    const clubYearStartYear = currentMonth >= 2 ? currentYear : currentYear - 1;
-    const clubYearStart = new Date(clubYearStartYear, 2, 1, 0, 0, 0, 0);
-    const nextClubYearStart = new Date(clubYearStartYear + 1, 2, 1, 0, 0, 0, 0);
-    const monthsRemaining = Math.max(
-      1,
-      (nextClubYearStart.getFullYear() - now.getFullYear()) * 12 + (nextClubYearStart.getMonth() - now.getMonth())
-    );
-
-    return {
-      now,
-      clubYearStart,
-      nextClubYearStart,
-      monthsRemaining
-    };
-  };
-
-  const calculations = useMemo(() => calculateCart(cart, isAnnual, activePromo), [cart, isAnnual, activePromo]);
+  const calculations = useMemo(() => calculateCart(cart, annualBilling, activePromo), [cart, annualBilling, activePromo]);
 
   const cartGroups = useMemo(() => {
     const groups = new Map();
@@ -276,7 +259,7 @@ export default function App() {
   };
 
   const getPricedItemDetails = (item) => calculations.items.find((pricedItem) => pricedItem.lineId === item.lineId)
-    || calculateCart([item], isAnnual).items[0];
+    || calculateCart([item], annualBilling).items[0];
 
   const getItemDisplayPrice = (item) => {
     return getPricedItemDetails(item).displayPrice.toFixed(2);
@@ -284,12 +267,6 @@ export default function App() {
 
   const getItemBillingLabel = (item) =>
     getPricedItemDetails(item).label;
-
-  const getKitHireMonthly = (item) => {
-    const clubYear = getClubYearContext();
-    const months = clubYear.monthsRemaining;
-    return (item.basePrice / months).toFixed(2);
-  };
 
   const renderPage = () => {
     if (currentPage === 'order-lookup') return <OrderLookupPage />;
@@ -330,7 +307,6 @@ export default function App() {
             addToCart={addToCart}
             removeOneFromCart={removeOneFromCart}
             getItemDisplayPrice={getItemDisplayPrice}
-            getKitHireMonthly={getKitHireMonthly}
             products={products}
             onNavigate={setCurrentPage}
           />
@@ -403,7 +379,7 @@ export default function App() {
             </div>
 
             <div className="CartBody">
-              <div className="BillingToggle">
+              {monthlyAvailable && <div className="BillingToggle">
                 <button
                   onClick={() => setIsAnnual(false)}
                   className={`BillingToggleButton ${!isAnnual ? 'BillingToggleButtonActive' : 'BillingToggleButtonIdle'}`}
@@ -416,7 +392,7 @@ export default function App() {
                 >
                   Club Year / Annual
                 </button>
-              </div>
+              </div>}
 
               <div className="CartItemList">
                 {cart.length > 0 && (
@@ -507,7 +483,7 @@ export default function App() {
                   </div>
                 </div>
                   {/* Cost Breakdown Section */}
-                  {isAnnual ? (
+                  {annualBilling ? (
                     // Annual mode: Only show Year 1 upfront cost
                     <div className="CartBreakdown">
                       <div className="CartBreakdownLabel">Your Cost</div>
@@ -530,7 +506,7 @@ export default function App() {
                     </div>
                   )}
                   
-                  {isAnnual && calculations.annualSaving > 0 && (
+                  {annualBilling && calculations.annualSaving > 0 && (
                     <div className="CartSummaryLine">
                       Annual Saving: -£{calculations.annualSaving.toFixed(2)}
                     </div>

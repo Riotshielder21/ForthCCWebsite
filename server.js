@@ -1476,7 +1476,8 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       reservedDocument = discountDocument.ref;
     }
     const items = pricing.items.map((item) => ({
-      id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, price: item.displayPrice,
+      id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, pricingMode: item.pricingMode, price: item.displayPrice,
+      monthly: Boolean(item.monthlyBilling),
       ...(item.tripSaving > 0 ? { tripDiscount: item.tripSaving, tripDiscountReasons: item.tripDiscountReasons } : {}),
       ...(item.size ? { size: item.size } : {}),
       ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),
@@ -1489,12 +1490,12 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const total = pricing.total;
     reservedStockIds = await reserveStock(orderRef, selected, catalog);
     const policyVersions = await currentCheckoutPolicies(adminDb, isLive());
-    const hasRecurringItem = billingMode === 'monthly' && items.some((item) => item.type === 'subscription');
+    const hasRecurringItem = items.some((item) => item.monthly);
     // Stripe will not take a £0 one-off payment, so fully discounted baskets are completed here instead.
     const free = !hasRecurringItem && Math.round(total * 100) === 0;
     const freeSessionId = free ? `cs_free_${crypto.randomBytes(16).toString('hex')}` : '';
     await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null, stripeSessionId: freeSessionId,
-      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions });
+      people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions });
     if (free) {
       const fields = await fulfilOrder({ orderRef, sessionId: freeSessionId, amountTotal: 0, stripeMode: '' });
       await updateFirestoreOrder(orderRef, { paymentMethod: 'free' });
@@ -1513,7 +1514,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       [`line_items[${index}][price_data][product_data][name]`, itemLabel(item)],
       [`line_items[${index}][price_data][unit_amount]`, String(Math.round((oneOffCredit ? pricing.items[index].subtotalPrice : Number(item.price)) * 100))],
       [`line_items[${index}][quantity]`, '1'],
-      ...(billingMode === 'monthly' && item.type === 'subscription'
+      ...(item.monthly
         ? [[`line_items[${index}][price_data][recurring][interval]`, 'month']]
         : [])
     ]);
@@ -1528,7 +1529,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       ['cancel_url', `${siteUrl}/membership`],
       ['metadata[order_ref]', orderRef],
       ['metadata[total]', String(total)],
-      ['metadata[billing_mode]', billingMode]
+      ['metadata[billing_mode]', hasRecurringItem ? 'monthly' : 'annual']
     ]);
     await updateFirestoreOrder(orderRef, { stripeSessionId: session.id, stripeSubscriptionId: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test' });
 

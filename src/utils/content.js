@@ -11,7 +11,7 @@ import { storage } from './firebase';
 import { PAGE_CONTENT } from '../constants/pageContent';
 import { apiUrl } from './api';
 import { isLockedProduct } from './tripDiscount';
-import { resolveCatalogue, validateEventSchedule } from './catalogue';
+import { normaliseProduct, resolveCatalogue, validateEventSchedule } from './catalogue';
 import { cleanStockFields } from './inventory';
 import { PRODUCTS } from '../constants/products';
 
@@ -62,16 +62,14 @@ export const savePageContent = async (pageId, content, idToken) => {
 export const saveProduct = async (product) => {
   if (!db) throw new Error('Content database is unavailable.');
 
-  const { id, ...productData } = product;
+  const { id, ...productData } = normaliseProduct(product);
+  if (productData.pricingMode !== 'subscription') productData.hasAnnualDiscount = false;
   if (product.category === 'EVENTS') {
-    productData.type = 'event-ticket';
-    productData.hasAnnualDiscount = false;
     productData.eventSchedule = validateEventSchedule(product.eventSchedule);
   }
   await setDoc(doc(db, 'products', id), {
     ...productData,
     ...cleanStockFields(product),
-    ...(product.category === 'MERCHANDISE' ? { type: 'merchandise', hasAnnualDiscount: false } : {}),
     deleted: false,
     updatedAt: serverTimestamp()
   }, { merge: true });
