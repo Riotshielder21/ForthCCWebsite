@@ -1443,12 +1443,18 @@ await test('a payer has one monthly subscription for everyone they pay for, and 
   assert.deepEqual((await call('GET', `/api/admin/subscriptions?orderRef=${laterRef}`, { headers: admin })).json.subscriptions.map((entry) => entry.id), [subscriptionId]);
 
   const cardPayer = email('new-card');
-  const firstCard = (await db.collection('orders').doc(await buy(cardPayer, lessonFor('Dan'), { billingMode: 'monthly' })).get()).data();
+  const firstCardRef = await buy(cardPayer, lessonFor('Dan'), { billingMode: 'monthly' });
+  const firstCard = (await db.collection('orders').doc(firstCardRef).get()).data();
   const secondCard = (await db.collection('orders').doc(await buy(cardPayer, lessonFor('Eve'), { billingMode: 'monthly' })).get()).data();
   assert.equal(secondCard.subscriptionPlan.kind, 'add');
-  assert.deepEqual(secondCard.stripeSubscriptionIds, firstCard.stripeSubscriptionIds, 'a different card or bank account still joins the one subscription');
-  assert.equal(secondCard.subscriptionPlan.paymentMethodSwitched, true, 'and the debit moves to the new details');
-  assert.equal((await db.collection('customers').doc(customerKey(cardPayer)).get()).data().subscriptionIds.length, 1);
+  assert.notEqual(secondCard.stripeSubscriptionIds[0], firstCard.stripeSubscriptionIds[0], 'different card or bank details, which may be someone else\'s, get a new subscription');
+  assert.equal(secondCard.subscriptionPlan.newPaymentDetails, true);
+  assert.equal(secondCard.subscriptionSetupNeedsStaff, false);
+  assert.deepEqual((await db.collection('customers').doc(customerKey(cardPayer)).get()).data().subscriptionIds.sort(),
+    [firstCard.stripeSubscriptionIds[0], secondCard.stripeSubscriptionIds[0]].sort());
+  const untouched = (await db.collection('subscriptions').doc(firstCard.stripeSubscriptionIds[0]).get()).data();
+  assert.deepEqual(untouched.orderRefs, [firstCardRef], 'the existing subscription stays as it was');
+  assert.deepEqual(untouched.items.map((item) => item.names), [['Dan Monthly']]);
 
   const soonPayer = email('renews-soon');
   const soonFirst = (await db.collection('orders').doc(await buy(soonPayer, lessonFor('Hal'), { billingMode: 'monthly' })).get()).data();

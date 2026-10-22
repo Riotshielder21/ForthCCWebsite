@@ -124,11 +124,11 @@ Events, services and subscriptions also have a **Membership** rule (`membershipR
 
 ## Monthly Subscriptions
 
-A payer has one Stripe subscription, so one monthly direct debit, for every monthly item they pay for, whoever it is for. Our records say which member receives each item, because Stripe only knows the payer.
+A payer has one Stripe subscription, so one monthly direct debit, for every monthly item they pay for with the same card or bank account, whoever it is for. Our records say which member receives each item, because Stripe only knows the payer.
 
 - **First monthly purchase:** Checkout starts the subscription with every monthly item as a recurring line.
 - **Later purchases by the same payer** (matched on email, against their active subscription in `subscriptions`): Checkout runs as a one-off payment that saves the card or bank account. Each monthly item is charged only up to the payer's next monthly payment date, as "(to <date>, then monthly with your other items)". After payment the webhook's `setUpSubscriptions` adds the items to the existing subscription without proration, so they are collected in the same debit from then on.
-- **Different card or bank account:** the items still join the one subscription, and the subscription's `default_payment_method` moves to the details just given, so the whole debit is taken from them (`subscriptionPlan.paymentMethodSwitched`).
+- **Different card or bank account** (compared by Stripe's payment-method fingerprint): the details may belong to someone else, so the items join whichever of the payer's subscriptions already uses those details, or otherwise get a new subscription on them, billing on the payer's usual date (`subscriptionPlan.newPaymentDetails`). Existing subscriptions and their payment details are never changed.
 - **First payment under Stripe's 30p minimum** (the payment date is only hours away): the part-month is not charged. The lines are left off the Stripe page; if nothing else is being bought, the order completes without Stripe and the items are added straight away.
 - **Renewal before the items are added** (for example a Bacs payment confirmed after the payment date): the items are added with `create_prorations`, so the rest of the new month is charged on the next debit (`subscriptionPlan.renewedBeforeAdding`).
 
@@ -149,7 +149,7 @@ In Reports, purchases and member records show **Monthly payments**: each subscri
 
 Removals take effect in Stripe straight away with no refund or proration, so the payer's debit drops from the next payment; removing the last active item cancels the subscription. Cancelled items keep their purchase history. Their privilege gets `endedAt` (so it no longer counts for trip discounts or the register's Includes column), the member's `subscriptionItems` entry becomes `cancelled`, and the order line gets `monthlyCancelledAt`. Each cancellation is written to `adminSubscriptionAudit`.
 
-The flow test's Stripe mock (`scripts/mock-stripe.mjs`) keeps subscriptions in memory. Payer emails starting `new-card.` use a different card at every checkout, `renews-soon.` subscriptions renew two minutes after they start, `renewed.` subscriptions renew while a later purchase is paid, and `sub-fail.` makes adding to a subscription fail.
+The flow test's Stripe mock (`scripts/mock-stripe.mjs`) keeps subscriptions in memory. Payer emails starting `new-card.` use a different card at every checkout, `renews-soon.` subscriptions renew two minutes after they start, `renewed.` subscriptions renew while a later purchase is paid, and `sub-fail.` makes adding to or creating a later subscription fail. The mock rejects any change to an existing subscription's payment details.
 
 ## Live Mode (`WEBSITE_ISLIVE`)
 

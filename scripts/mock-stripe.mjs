@@ -55,12 +55,37 @@ globalThis.fetch = async (url, options) => {
     if (!payment) return Response.json({ error: { message: 'No such payment intent.' } }, { status: 404 });
     return Response.json({ id: parsed.pathname.split('/').at(-1), customer: payment.customer, payment_method: payment.saved ? payment.paymentMethod : null });
   }
+  if (parsed.pathname.startsWith('/v1/payment_methods/')) {
+    const id = parsed.pathname.split('/').at(-1);
+    return Response.json({ id, type: 'card', card: { fingerprint: `fp_${id}` } });
+  }
   const key = options?.headers?.['Idempotency-Key'];
   if (key && replies.has(key)) return Response.json(replies.get(key));
   const remember = (body) => { if (key) replies.set(key, body); return Response.json(body); };
   if (parsed.pathname === '/v1/products' && method === 'POST') {
     counter += 1;
     return remember({ id: `prod_e2e_${counter}`, metadata: { line_id: new URLSearchParams(options.body).get('metadata[line_id]') } });
+  }
+  if (parsed.pathname === '/v1/subscriptions' && method === 'POST') {
+    counter += 1;
+    const params = new URLSearchParams(options.body);
+    if (emailOf(params.get('customer')).startsWith('sub-fail.')) return Response.json({ error: { message: 'Your card was declined.' } }, { status: 402 });
+    const others = [...subscriptions.values()].filter((owned) => owned.customer === params.get('customer'));
+    // A new subscription bills on the payer's usual date, and must not reuse the card already paying the others.
+    if (!params.get('default_payment_method')?.startsWith('pm_e2e') || others.some((owned) => owned.default_payment_method === params.get('default_payment_method'))
+      || params.get('proration_behavior') !== 'none' || !others.some((owned) => owned.current_period_end === Number(params.get('billing_cycle_anchor')))) {
+      return Response.json({ error: { message: 'A later subscription must use new payment details and the payer\'s billing date.' } }, { status: 400 });
+    }
+    const id = `sub_e2e_active_${counter}`;
+    const items = [...params.keys()].map((name) => /^items\[(\d+)\]\[price_data\]\[product\]$/.exec(name)?.[1]).filter(Boolean).map((index) => ({
+      id: `si_e2e_${counter}_${index}`, metadata: { line_id: params.get(`items[${index}][metadata][line_id]`) },
+      price: { product: params.get(`items[${index}][price_data][product]`), unit_amount: Number(params.get(`items[${index}][price_data][unit_amount]`)) }
+    }));
+    const end = Number(params.get('billing_cycle_anchor'));
+    const subscription = { id, status: 'active', customer: params.get('customer'), default_payment_method: params.get('default_payment_method'),
+      current_period_start: end - 30 * 24 * 60 * 60, current_period_end: end, latest_invoice: null, items: { data: items } };
+    subscriptions.set(id, subscription);
+    return remember(subscription);
   }
   if (parsed.pathname === '/v1/subscription_items' && method === 'POST') {
     counter += 1;
@@ -89,12 +114,7 @@ globalThis.fetch = async (url, options) => {
     const id = parsed.pathname.split('/').at(-1);
     const known = subscriptions.get(id);
     if (known && method === 'DELETE') known.status = 'canceled';
-    if (known && method === 'POST') {
-      const paymentMethod = new URLSearchParams(options.body).get('default_payment_method');
-      if (!paymentMethod?.startsWith('pm_e2e')) return Response.json({ error: { message: 'Unknown payment method.' } }, { status: 400 });
-      known.default_payment_method = paymentMethod;
-      return remember(known);
-    }
+    if (method === 'POST') return Response.json({ error: { message: 'The test never changes an existing subscription\'s payment details.' } }, { status: 400 });
     return Response.json(known || { id, status: id.includes('cancelled') ? 'canceled' : 'active', customer: 'cus_e2e', latest_invoice: null });
   }
   throw new Error('Unexpected Stripe request: ' + parsed.pathname);
