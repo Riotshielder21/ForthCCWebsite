@@ -528,8 +528,7 @@ const periodEnd = (subscription) => subscription.current_period_end || subscript
 const periodStart = (subscription) => subscription.current_period_start || subscription.items?.data?.[0]?.current_period_start || 0;
 const stripeId = (value) => value?.id || value || '';
 
-// The payer's active monthly subscription that new monthly items join. One renewing within two days is too close to
-// take a sensible first payment, so a new subscription is started instead.
+// The payer's active monthly subscription that new monthly items join, however close its next payment is.
 const payerSubscriptionForCheckout = async (email) => {
   const snapshot = await adminDb.collection('subscriptions').where('email', '==', email).where('status', '==', 'active').limit(10).get();
   const newestFirst = snapshot.docs.sort((a, b) => (b.data().createdAt?.toMillis?.() || 0) - (a.data().createdAt?.toMillis?.() || 0));
@@ -537,21 +536,12 @@ const payerSubscriptionForCheckout = async (email) => {
     try {
       const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
       if (subscription.status !== 'active') continue;
-      const end = periodEnd(subscription);
-      if (end * 1000 - Date.now() < 2 * 24 * 60 * 60 * 1000) continue;
-      return { id: document.id, start: periodStart(subscription), end };
+      return { id: document.id, start: periodStart(subscription), end: periodEnd(subscription) };
     } catch (error) {
       console.error(`Could not read subscription ${document.id}:`, error.message);
     }
   }
   return null;
-};
-
-// Card and bank-account fingerprints stay the same when the same details are entered again at a later checkout.
-const paymentFingerprint = async (id) => {
-  if (!id) return '';
-  const method = await stripeRequest(`payment_methods/${encodeURIComponent(id)}`, null, 'GET');
-  return method.card?.fingerprint || method.bacs_debit?.fingerprint || method.sepa_debit?.fingerprint || method.id;
 };
 
 const monthlyPriceParams = (prefix, item, product) => {
@@ -561,11 +551,11 @@ const monthlyPriceParams = (prefix, item, product) => {
 };
 
 /**
- * Records the monthly items on a paid order against the payer's subscription. A first purchase uses the subscription
- * Checkout started. Later purchases paid with the same card or bank account are added to the payer's existing
- * subscription, so they share its monthly direct debit; a different payment method gets its own subscription on the
- * same billing date. Each item records which members receive it. Safe to repeat: a recorded plan is skipped and
- * Stripe calls use idempotency keys. A change Stripe refuses is marked failed for staff rather than retried.
+ * Records the monthly items on a paid order against the payer's one subscription. A first purchase uses the
+ * subscription Checkout started; later purchases are added to it, so everything shares one monthly direct debit. If
+ * the payer used a different card or bank account, the subscription moves to it. Each item records which members
+ * receive it. Safe to repeat: a recorded plan is skipped and Stripe calls use idempotency keys. A change Stripe refuses
+ * is marked failed for staff rather than retried.
  */
 const setUpSubscriptions = async (orderRef) => {
   const orderReference = adminDb.collection('orders').doc(orderRef);
@@ -577,39 +567,39 @@ const setUpSubscriptions = async (orderRef) => {
   let next;
   try {
     let subscription;
-    let created = plan.kind === 'new';
+    let switchedPayment = false;
+    let renewedFirst = false;
+    const created = plan.kind === 'new';
     if (created) {
       if (!order.stripeSubscriptionId) throw new Error('Stripe did not start the subscription at checkout.');
       subscription = await stripeRequest(`subscriptions/${encodeURIComponent(order.stripeSubscriptionId)}`, null, 'GET');
     } else {
-      const intent = await stripeRequest(`payment_intents/${encodeURIComponent(order.stripePaymentIntentId || '')}`, null, 'GET');
-      const paymentMethod = stripeId(intent.payment_method);
-      if (!paymentMethod) throw new Error('Stripe did not save a payment method at checkout.');
       const target = await stripeRequest(`subscriptions/${encodeURIComponent(plan.targetSubscriptionId)}`, null, 'GET');
+      if (target.status !== 'active') throw new Error('The payer\'s monthly subscription is no longer active.');
+      // A first payment waived for being under Stripe's minimum skips Checkout, so there is no new payment method.
+      const intent = order.stripePaymentIntentId
+        ? await stripeRequest(`payment_intents/${encodeURIComponent(order.stripePaymentIntentId)}`, null, 'GET') : null;
+      const paymentMethod = stripeId(intent?.payment_method);
+      if (paymentMethod && paymentMethod !== stripeId(target.default_payment_method) && stripeId(intent.customer) === stripeId(target.customer)) {
+        // The whole debit moves to the card or bank account the payer has just given.
+        await stripeRequest(`subscriptions/${encodeURIComponent(target.id)}`, [['default_payment_method', paymentMethod]], 'POST',
+          { idempotencyKey: `${orderRef}-payment-method` });
+        switchedPayment = true;
+      }
+      // The first payment covered up to the payer's usual date. If the subscription renewed before the items were
+      // added, they missed that debit, so Stripe charges the rest of the new month on the next one.
+      renewedFirst = periodStart(target) >= (plan.firstPaymentUntil?.seconds || Infinity);
       const products = new Map();
       for (const lineId of plan.lineIds) {
         products.set(lineId, (await stripeRequest('products', [['name', itemLabel(lineById.get(lineId))], ['metadata[line_id]', lineId]], 'POST',
           { idempotencyKey: `${orderRef}-${lineId}-product` })).id);
       }
-      const samePayment = target.status === 'active'
-        && await paymentFingerprint(stripeId(target.default_payment_method)) === await paymentFingerprint(paymentMethod);
-      if (samePayment) {
-        for (const lineId of plan.lineIds) {
-          await stripeRequest('subscription_items', [['subscription', target.id], ['proration_behavior', 'none'],
-            ...monthlyPriceParams('', lineById.get(lineId), products.get(lineId)),
-            ['metadata[line_id]', lineId], ['metadata[order_ref]', orderRef]], 'POST', { idempotencyKey: `${orderRef}-${lineId}-item` });
-        }
-        subscription = await stripeRequest(`subscriptions/${encodeURIComponent(target.id)}`, null, 'GET');
-      } else {
-        // The first payment already covered up to the payer's usual date, so the new subscription bills from then.
-        const anchor = plan.firstPaymentUntil?.seconds || 0;
-        if (anchor * 1000 <= Date.now() + 60 * 1000) throw new Error('The usual monthly payment date passed before the payment completed.');
-        subscription = await stripeRequest('subscriptions', [['customer', stripeId(intent.customer) || stripeId(target.customer)], ['default_payment_method', paymentMethod],
-          ['billing_cycle_anchor', String(anchor)], ['proration_behavior', 'none'], ['metadata[order_ref]', orderRef],
-          ...plan.lineIds.flatMap((lineId, index) => [...monthlyPriceParams(`items[${index}]`, lineById.get(lineId), products.get(lineId)), [`items[${index}][metadata][line_id]`, lineId]])],
-        'POST', { idempotencyKey: `${orderRef}-subscription` });
-        created = true;
+      for (const lineId of plan.lineIds) {
+        await stripeRequest('subscription_items', [['subscription', target.id], ['proration_behavior', renewedFirst ? 'create_prorations' : 'none'],
+          ...monthlyPriceParams('', lineById.get(lineId), products.get(lineId)),
+          ['metadata[line_id]', lineId], ['metadata[order_ref]', orderRef]], 'POST', { idempotencyKey: `${orderRef}-${lineId}-item` });
       }
+      subscription = await stripeRequest(`subscriptions/${encodeURIComponent(target.id)}`, null, 'GET');
     }
     const itemIds = stripeItemLines(subscription, plan.lineIds);
     const items = plan.lineIds.map((lineId) => {
@@ -637,7 +627,8 @@ const setUpSubscriptions = async (orderRef) => {
         ...(holdsMembership && plan.kind === 'add' ? { stripeMembershipSubscriptionId: subscription.id, stripeMembershipMode: order.stripeMode || 'test' } : {}) }, { merge: true });
     }
     await batch.commit();
-    next = { ...plan, status: 'active', stripeSubscriptionId: subscription.id, stripeItemIds: Object.fromEntries(itemIds), recordedAt: now };
+    next = { ...plan, status: 'active', stripeSubscriptionId: subscription.id, stripeItemIds: Object.fromEntries(itemIds), recordedAt: now,
+      ...(switchedPayment ? { paymentMethodSwitched: true } : {}), ...(renewedFirst ? { renewedBeforeAdding: true } : {}) };
   } catch (error) {
     console.error(`Could not set up the monthly payments on ${orderRef}:`, error.message);
     next = { ...plan, status: 'failed', error: error.message.slice(0, 300), recordedAt: now };
@@ -1761,14 +1752,15 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const linePence = items.map((item, index) => Math.round((oneOffCredit ? pricing.items[index].subtotalPrice : Number(item.price)) * 100));
     // A payer who already pays monthly has new monthly items added to that subscription, so they share one direct
     // debit. Their first payment only runs to the payer's next monthly payment date.
-    let joining = hasRecurringItem ? await payerSubscriptionForCheckout(email) : null;
+    const joining = hasRecurringItem ? await payerSubscriptionForCheckout(email) : null;
     const share = joining ? remainingPeriodShare(joining.start, joining.end, Date.now() / 1000) : 1;
     const chargePence = items.map((item, index) => joining && item.monthly ? firstPaymentPence(linePence[index], share) : linePence[index]);
-    let checkoutTotal = (Math.round(total * 100) - linePence.reduce((sum, pence, index) => sum + pence - chargePence[index], 0)) / 100;
-    // Stripe's smallest card payment is 30p; below that the items start a subscription of their own instead.
+    const remainingTotal = () => (Math.round(total * 100) - linePence.reduce((sum, pence, index) => sum + pence - chargePence[index], 0)) / 100;
+    let checkoutTotal = remainingTotal();
+    // Stripe's smallest payment is 30p. Below that the few days to the usual payment date are not charged.
     if (joining && checkoutTotal < 0.3) {
-      joining = null;
-      checkoutTotal = total;
+      items.forEach((item, index) => { if (item.monthly) chargePence[index] = 0; });
+      checkoutTotal = remainingTotal();
     }
     const firstPaymentUntil = joining ? Timestamp.fromMillis(joining.end * 1000) : null;
     if (joining) items.forEach((item, index) => { if (item.monthly) Object.assign(item, { firstPayment: chargePence[index] / 100, firstPaymentUntil }); });
@@ -1776,7 +1768,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const subscriptionPlan = monthlyLineIds.length ? { kind: joining ? 'add' : 'new', lineIds: monthlyLineIds, status: joining ? 'pending' : 'checkout',
       ...(joining ? { targetSubscriptionId: joining.id, firstPaymentUntil } : {}) } : null;
     // Stripe will not take a £0 one-off payment, so fully discounted baskets are completed here instead.
-    const free = !hasRecurringItem && Math.round(total * 100) === 0;
+    const free = (!hasRecurringItem || Boolean(joining)) && Math.round(checkoutTotal * 100) === 0;
     const freeSessionId = free ? `cs_free_${crypto.randomBytes(16).toString('hex')}` : '';
     await createFirestoreOrder({ orderRef, email, items, total: checkoutTotal, status: 'pending', discountCodeId: discountDocument?.id || null, stripeSessionId: freeSessionId,
       people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions,
@@ -1786,6 +1778,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       await updateFirestoreOrder(orderRef, { paymentMethod: 'free' });
       try { if (fields) await deliverOrder(orderRef, fields); }
       catch (error) { console.error('Free order completed but the receipt email failed:', error.message); }
+      await setUpSubscriptions(orderRef);
       const params = new URLSearchParams({ session_id: freeSessionId, receipt_token: receiptViewToken });
       return res.json({ success: true, free: true, orderRef, sessionId: freeSessionId, checkoutUrl: `${siteUrl}/payment-success?${params}` });
     }
@@ -1795,11 +1788,13 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
     const untilLabel = joining ? firstPaymentUntil.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' }) : '';
     const recurringCheckout = hasRecurringItem && !joining;
-    const lineItems = items.flatMap((item, index) => [
+    // Monthly items whose first part-month was waived are not charged now, so they are left off the Stripe page.
+    const charged = items.map((item, index) => ({ item, pence: chargePence[index] })).filter(({ item, pence }) => !(joining && item.monthly && pence === 0));
+    const lineItems = charged.flatMap(({ item, pence }, index) => [
       [`line_items[${index}][price_data][currency]`, 'gbp'],
       [`line_items[${index}][price_data][product_data][name]`, joining && item.monthly ? `${itemLabel(item)} (to ${untilLabel}, then monthly with your other items)` : itemLabel(item)],
       [`line_items[${index}][price_data][product_data][metadata][line_id]`, item.lineId],
-      [`line_items[${index}][price_data][unit_amount]`, String(chargePence[index])],
+      [`line_items[${index}][price_data][unit_amount]`, String(pence)],
       [`line_items[${index}][quantity]`, '1'],
       ...(recurringCheckout && item.monthly ? [[`line_items[${index}][price_data][recurring][interval]`, 'month']] : [])
     ]);

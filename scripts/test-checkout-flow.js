@@ -1446,8 +1446,26 @@ await test('a payer has one monthly subscription for everyone they pay for, and 
   const firstCard = (await db.collection('orders').doc(await buy(cardPayer, lessonFor('Dan'), { billingMode: 'monthly' })).get()).data();
   const secondCard = (await db.collection('orders').doc(await buy(cardPayer, lessonFor('Eve'), { billingMode: 'monthly' })).get()).data();
   assert.equal(secondCard.subscriptionPlan.kind, 'add');
-  assert.notEqual(secondCard.stripeSubscriptionIds[0], firstCard.stripeSubscriptionIds[0], 'a different card or bank account gets its own subscription');
-  assert.equal((await db.collection('customers').doc(customerKey(cardPayer)).get()).data().subscriptionIds.length, 2);
+  assert.deepEqual(secondCard.stripeSubscriptionIds, firstCard.stripeSubscriptionIds, 'a different card or bank account still joins the one subscription');
+  assert.equal(secondCard.subscriptionPlan.paymentMethodSwitched, true, 'and the debit moves to the new details');
+  assert.equal((await db.collection('customers').doc(customerKey(cardPayer)).get()).data().subscriptionIds.length, 1);
+
+  const soonPayer = email('renews-soon');
+  const soonFirst = (await db.collection('orders').doc(await buy(soonPayer, lessonFor('Hal'), { billingMode: 'monthly' })).get()).data();
+  const soonCheckout = await checkout(soonPayer, lessonFor('Ida'), { billingMode: 'monthly' });
+  assert.equal(soonCheckout.status, 200, soonCheckout.text);
+  assert.equal(soonCheckout.json.free, true, 'a part-month under Stripe\'s 30p minimum is not charged');
+  const soonLater = (await db.collection('orders').doc(soonCheckout.json.orderRef).get()).data();
+  assert.equal(Number(soonLater.total), 0);
+  assert.equal(soonLater.items[0].firstPayment, 0);
+  assert.deepEqual(soonLater.stripeSubscriptionIds, soonFirst.stripeSubscriptionIds, 'a payment date two minutes away still joins the one subscription');
+
+  const renewedPayer = email('renewed');
+  const renewedFirst = (await db.collection('orders').doc(await buy(renewedPayer, lessonFor('Jo'), { billingMode: 'monthly' })).get()).data();
+  const renewedLater = (await db.collection('orders').doc(await buy(renewedPayer, lessonFor('Kit'), { billingMode: 'monthly' })).get()).data();
+  assert.deepEqual(renewedLater.stripeSubscriptionIds, renewedFirst.stripeSubscriptionIds);
+  assert.equal(renewedLater.subscriptionPlan.renewedBeforeAdding, true, 'items added after a renewal are charged pro rata on the next debit');
+  assert.equal(renewedLater.subscriptionSetupNeedsStaff, false);
 
   const failing = email('sub-fail');
   await buy(failing, lessonFor('Fay'), { billingMode: 'monthly' });
