@@ -32,6 +32,7 @@ import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './s
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
+import { registerBoathouseRoutes } from './src/server/boathouse.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -775,6 +776,7 @@ registerGdprRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, stripeRepo
 registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
 const { settleVolunteersFor } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
+registerBoathouseRoutes(app, { rateLimit, requireAdmin, db: () => adminDb });
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {

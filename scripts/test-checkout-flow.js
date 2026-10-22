@@ -1047,6 +1047,26 @@ await test('a non-member volunteer inducted first gets their code when a members
   assert.equal((await db.collection('testMail').where('signupId', '==', signupId).get()).size, 1);
 });
 
+await test('admins save the boathouse code privately; only a changed code bumps its version', async () => {
+  assert.equal((await call('GET', '/api/admin/boathouse-code')).status, 401);
+  assert.equal((await call('POST', '/api/admin/boathouse-code', { body: { code: '1111' } })).status, 401);
+  assert.equal((await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code: '' } })).status, 400);
+  const before = (await call('GET', '/api/admin/boathouse-code', { headers: admin })).json;
+  const code = `B${run}`.slice(0, 40);
+  const saved = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code, note: 'Side door padlock' } });
+  assert.equal(saved.status, 200, saved.text);
+  assert.equal(saved.json.changed, true);
+  assert.equal(saved.json.version, before.version + 1);
+  const loaded = (await call('GET', '/api/admin/boathouse-code', { headers: admin })).json;
+  assert.equal(loaded.code, code);
+  assert.equal(loaded.note, 'Side door padlock');
+  assert.equal(loaded.updatedBy, 'admin@forthcanoeclub.co.uk');
+  const noteOnly = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code, note: 'Main door' } });
+  assert.equal(noteOnly.json.changed, false);
+  assert.equal(noteOnly.json.version, saved.json.version);
+  assert.equal((await db.collection('settings').doc('boathouseCode').get()).data().note, 'Main door');
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));

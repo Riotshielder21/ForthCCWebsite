@@ -23,6 +23,7 @@
 - Early renewal opens two months before expiry (1 January). Payment is scheduled to start on 1 March.
 - Apply consistent club-year expiry to memberships, services and subscriptions using the product's fixed, proration or subscription pricing mode.
 - A monthly Stripe subscriber stays blocked while their Stripe subscription is active.
+- Adding a product without membership correctly flags it needs membership. BUT when adding it to the cart the error doesnt go away, and then if you remove the membership after adding it, the whole contact details you entered disapear.
 
 ## Email and receipts
 
@@ -62,7 +63,6 @@
 
 
 Feature WishList
-- Boathouse codes save in admin portal
 - Codes sent automatically if changed to active volunteers
 - Volunteers send codes when checked in
 - PVG and Safeguarding status on members (particularly volunteers) (expired, active, due to expire)
