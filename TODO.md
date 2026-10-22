@@ -9,28 +9,30 @@
 - Adding a product without membership correctly flags it needs membership. BUT when adding it to the cart the error doesnt go away, and then if you remove the membership after adding it, the whole contact details you entered disapear.
 - Pre-filled renewal cart: a renewal email to every member with expiring items, with a link carrying enough data to add all their items (membership and monthly items) to the cart. Sent to everyone on 1 February; before then it is optional (on request). Without it, the renewal cart is not pre-filled.
 
-## Payment schedule (agreed, not built)
+## Payment schedule (agreed in outline, not built)
 
-Everything monthly ends with the club year, and every direct debit is on the 1st of the month. This "joining-month charge" is separate from the shop's **Prorated 60%** pricing mode.
+Everything monthly ends with the club year, and every direct debit is on the 1st of the month. Items marked **Proposal** still need the club's confirmation. This "joining-month charge" is separate from the shop's **Prorated 60%** pricing mode.
 
 - **Bug to fix first:** Stripe subscriptions currently have no end date, so monthly debits would carry on after 1 March, and they are taken on the day of the first checkout rather than the 1st.
-- **Checkout** charges everything due now: annual and one-off items in full, plus a part-month for each monthly item: 1st–7th 100%, 8th–14th 80%, 15th–21st 60%, 22nd onwards 40% (never below 40%).
+- **Checkout** charges everything due now: annual and one-off items in full, plus a joining-month charge for each monthly item on the 20% / 40% / 60% / 80% scale.
+- **Proposal, scale:** the share of the month still to run, rounded up to the next 20%, using the real month length. For a 30-day month: 1st–6th 100% (a full month), 7th–12th 80%, 13th–18th 60%, 19th–24th 40%, 25th onwards 20%.
 - **"Pay up front" prices** use the same scale for the current month, then full months to 1 March.
 - **Subscriptions** are anchored to the 1st (`billing_cycle_anchor`, no proration), so the first direct debit is the next 1st. Items added later get their own joining-month charge and join the existing debit from the next 1st. This replaces the current "charge to the payer's usual date" logic and its 30p and renewal-race cases.
-- **Every subscription stops on 1 March** (`cancel_at`, set by the webhook just after Checkout because Checkout cannot set it). The last debit is 1 February; a failed February debit can be retried until the end of February, and nothing is taken from 1 March. Check against real Stripe that no 1 March invoice is created.
-- **No debit due before 1 March** (bought in February): no subscription is created; the joining-month charge is the only payment.
+- **Memberships and monthly items lapse on 1 March**, and no payment is taken in the last two weeks of February.
+- **Proposal, February cut-off:** the last debit is 1 February. Every subscription is set to stop at the start of 15 February (`cancel_at` with `proration_behavior=none`, set by the webhook just after Checkout because Checkout cannot set it). A failed 1 February debit can be retried only until then; any invoice still unpaid at the cut-off is voided and flagged for staff. Cover still runs to 1 March in our records. Check in Stripe test mode that cancellation stops retries and creates no credit or 1 March invoice.
+- **Proposal, buying in February:** 1st–14th, no subscription is created and the joining-month charge is the only payment. From 15 February nothing monthly is charged for the current year (offer next year's renewal instead).
 - **Different card or bank details** keep getting their own subscription (also on the 1st, also stopping 1 March).
 - Bacs needs a few working days for a new mandate, so someone joining at the end of a month may have their first debit a few days after the 1st.
 - No live subscriptions exist yet, so nothing needs migrating.
 
-## Renewals (agreed, not built)
+## Renewals (agreed in outline, not built)
 
 - Early renewal opens on 1 January (matches the access rule above). A membership bought from then covers the next club year, starting 1 March.
 - A renewal is a cart that includes a membership for someone who has an active subscription, or one due to stop on 1 March.
-- **While the old subscription is still active:** extend it by a year (move `cancel_at` to the next 1 March) and set its items to the monthly items in the renewal cart. Items not in the cart stop on 1 March. Debits carry on on the 1st with no gap.
-- **After it has stopped** (Stripe cannot restart a cancelled subscription): a new subscription through Checkout, asking for payment details again.
+- **While the old subscription is still active** (before the 15 February cut-off): extend it by a year (move `cancel_at` to the next year's cut-off) and set its items to the monthly items in the renewal cart. Items not in the cart stop on 1 March. Debits carry on on the 1st with no gap.
+- **After it has stopped** (from 15 February, or earlier if cancelled; Stripe cannot restart a cancelled subscription): a new subscription through Checkout, asking for payment details again.
 - Only what is in the renewal cart continues; the cart is not pre-filled (see the renewal email item above).
-- To decide when built: what a renewal bought in January charges at checkout (next year's annual items now, or on 1 March), and how the 1 January–1 March overlap shows on member records.
+- To decide: what a renewal bought in January charges at checkout (next year's annual items now, or on 1 March), and how the 1 January–1 March overlap shows on member records.
 
 ## Email and receipts
 
