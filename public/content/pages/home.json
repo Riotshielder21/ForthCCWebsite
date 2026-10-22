@@ -57,14 +57,12 @@
       "id": "welcome",
       "group": "intro",
       "type": "existing",
-      "appearance": "grey",
       "width": "standard"
     },
     {
       "id": "start",
       "group": "intro",
       "type": "existing",
-      "appearance": "grey",
       "width": "standard"
     },
     {
