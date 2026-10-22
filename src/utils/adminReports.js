@@ -33,7 +33,7 @@ export const subscriptionWarning = (fields) => Boolean(fields.stripeSubscription
 
 // `member` is the person's current membership record: existing members only confirm a few details at checkout,
 // so the rest (contact, emergency, medical) is read from their record.
-const personReport = (person, items, member = {}) => {
+export const personReport = (person, items, member = {}) => {
   const household = member.household || {};
   const junior = person.junior === true || Boolean(member.emergencyNote) || memberIsJunior(member);
   const guardian = person.guardian || {};

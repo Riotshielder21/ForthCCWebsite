@@ -16,6 +16,7 @@ import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTile
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart } from './src/utils/pricing.js';
 import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
+import { bookingsClosed } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
@@ -34,6 +35,7 @@ import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
+import { registerEventRosterRoutes } from './src/server/eventRosters.js';
 import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -217,7 +219,7 @@ const findMembership = async (person) => {
     .map((document) => [document.id, document.data()]));
   const asMatchRecord = (document) => {
     const data = document.data();
-    return { ...toMembershipRecord(document), email: data.email || householdById.get(data.householdId)?.email || '' };
+    return { ...toMembershipRecord(document), email: data.email || householdById.get(data.householdId)?.email || '', contactOnly: data.contactOnly === true };
   };
   const contactName = person.junior ? person.guardian.name : `${person.firstName} ${person.lastName}`;
   const matchingHouseholds = households.docs.filter((household) =>
@@ -243,7 +245,7 @@ const findMembership = async (person) => {
     conflict: result.conflict, reason: result.reason,
     contactHouseholdId: matchingHouseholds.length === 1 ? matchingHouseholds[0].id : '',
     existing: match ? { id: match.id, householdId: match.householdId,
-      active: stripeActive && activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil } : null
+      active: stripeActive && activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil, contactOnly: match.contactOnly } : null
   };
 };
 
@@ -279,13 +281,15 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
     const privileges = lines.filter((item) => !isMembership(item) && item.category !== 'EVENTS')
       .map((item) => ({ productId: item.id, name: item.name, type: item.type, orderRef, grantedAt: paidAt }));
     const historyEntry = { orderRef, paidAt, items: lines.map((item) => ({ id: item.id, name: item.name, price: item.price })) };
-    const { id, lineIds, membershipId, existingMember, householdId, ...details } = person;
+    const { id, lineIds, membershipId, existingMember, householdId, ownKitLineIds, ...details } = person;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
     membershipIds.push(membershipId);
     transaction.set(adminDb.collection('memberships').doc(membershipId), {
       ...(existingMember ? {} : {
         ...details, source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`)
       }),
+      // Non-members booking open events are kept as contact-only records until they buy a membership.
+      ...(membershipLine ? { contactOnly: FieldValue.delete() } : existingMember ? {} : { contactOnly: true }),
       schemaVersion: CURRENT_MEMBERSHIP_VERSION,
       ...(householdId ? { householdId } : {}),
       ...Object.fromEntries(HOUSEHOLD_MEMBER_FIELDS.map((key) => [key, FieldValue.delete()])),
@@ -679,7 +683,7 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
         members = new Map([...members].map(([id, member]) => [id, { ...member, household: households.get(member.householdId) || {} }]));
       }
     }
-    const records = documents.map((document) => (req.query.kind === 'members'
+    const records = documents.filter((document) => req.query.kind !== 'members' || document.data().contactOnly !== true).map((document) => (req.query.kind === 'members'
       ? membershipReport(document.id, document.data(), new Date(), households.get(document.data().householdId) || {})
       : orderReport(document.id, document.data(), members)));
     res.json({ records: eventReport ? records.filter((record) => record.items.some((item) => item.category === 'EVENTS'))
@@ -779,6 +783,8 @@ registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDire
 const { settleVolunteersFor, notifyBoathouseCode } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, onCodeChanged: notifyBoathouseCode });
+const { sendDueRosters } = registerEventRosterRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
+  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerMemberCheckRoutes(app, { rateLimit, requireAdmin, db: () => adminDb });
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
@@ -1345,6 +1351,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       try { validateEventSchedule(item.eventSchedule); }
       catch (error) { return res.status(400).json({ error: `Invalid event schedule for ${item.name}.` }); }
       if (item.type !== 'event-ticket') return res.status(400).json({ error: 'Event tickets must use one-off event pricing.' });
+      if (bookingsClosed(item)) return res.status(400).json({ error: `Bookings for ${item.name} have closed. Remove it from your basket.` });
     }
     if (!Array.isArray(req.body.people) || req.body.people.length > 20) {
       return res.status(400).json({ error: 'Add the details for each person in your basket.' });
@@ -1398,7 +1405,9 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       if (needsMembership.has(person.id) && !existing?.active) {
         return res.status(409).json({
           code: 'membership_required', personIds: [person.id],
-          error: existing?.awaitingRenewal
+          error: existing?.contactOnly
+            ? `${person.firstName} ${person.lastName} is on our contact list from an event booking but is not a club member, so these items need a membership. Add a membership to your basket.`
+            : existing?.awaitingRenewal
             ? `${person.firstName} ${person.lastName}'s JustGo renewal has not been confirmed for this club year, so add-ons cannot be bought yet. If you have renewed, it can take a day to appear; otherwise add a membership to your basket. Questions: secretary@forthcanoeclub.co.uk.`
             : `${person.firstName} ${person.lastName} needs a Forth Canoe Club membership before buying these items. Add a membership to your basket, or check the membership number or date of birth and email you entered. If you are already a member through JustGo your record can take a day to appear; contact secretary@forthcanoeclub.co.uk.`
         });
@@ -1457,7 +1466,10 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       ...(item.size ? { size: item.size } : {}),
       ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),
       ...(item.type === 'voucher' ? { voucherValue: item.basePrice } : {}),
-      ...(item.category === 'EVENTS' ? { eventSchedule: validateEventSchedule(item.eventSchedule) } : {})
+      ...(item.category === 'EVENTS' ? {
+        eventSchedule: validateEventSchedule(item.eventSchedule),
+        ...(storedPeople.some((person) => person.lineIds.includes(item.lineId) && person.ownKitLineIds.includes(item.lineId)) ? { ownKit: true } : {})
+      } : {})
     }));
     const total = pricing.total;
     reservedStockIds = await reserveStock(orderRef, selected, catalog);
@@ -1605,6 +1617,13 @@ if (adminDb && isLive()) {
   setInterval(recordPolicyVersions, 60 * 60 * 1000).unref();
 } else if (adminDb) {
   console.log('WEBSITE_ISLIVE is not true: consent and policy wording is not versioned and consent records show pre-live.');
+}
+
+if (adminDb) {
+  // Event leaders get their attendee list once bookings close.
+  const sendRosters = () => sendDueRosters().catch((error) => console.error('Event roster check failed:', error.message));
+  sendRosters();
+  setInterval(sendRosters, 60 * 60 * 1000).unref();
 }
 
 app.listen(PORT, process.env.HOST || '0.0.0.0', () => {

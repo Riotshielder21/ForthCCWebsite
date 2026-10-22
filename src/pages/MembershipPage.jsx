@@ -4,6 +4,7 @@ import { DISCOUNTS, CATEGORIES } from '../constants/products';
 import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { eventScheduleLabel } from '../utils/catalogue';
 import { isTripEvent } from '../utils/tripDiscount';
+import { bookingsClosed, formatDate } from '../utils/eventRoster';
 import { productLimits } from '../utils/inventory';
 
 export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, getKitHireMonthly, products, onNavigate }) {
@@ -146,6 +147,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
             const inStock = (size) => !remaining || (remaining[size] ?? 0) > 0;
             const size = merchandise ? (sizeChoice[product.id] && inStock(sizeChoice[product.id]) ? sizeChoice[product.id] : sizes.find(inStock) || sizes[0] || '') : '';
             const placesLeft = product.category === 'EVENTS' ? remaining?.all : null;
+            const closed = product.category === 'EVENTS' && bookingsClosed(product);
             return (
             <div key={product.id} className="shop_product_tile">
               {product.imageUrl && <img className="shop_product_image" src={product.imageUrl} alt="" />}
@@ -161,6 +163,9 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
               <p className="shop_product_description">{product.description}</p>
               {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
               {isTripEvent(product) && <p className="text_container text_container_note">£10 off with annual boat hire, and £10 off with a coaching subscription.</p>}
+              {product.category === 'EVENTS' && product.leaderName && <p className="text_container SpaceB4">Led by {product.leaderName}{product.leaderEmail && <> (<a className="ContentLink" href={`mailto:${product.leaderEmail}`}>{product.leaderEmail}</a>)</>}</p>}
+              {product.category === 'EVENTS' && product.membershipRequired === false && <p className="text_container text_container_note">Open to non-members.</p>}
+              {product.category === 'EVENTS' && product.closeDate && <p className="text_container SpaceB4">{closed ? 'Bookings have closed.' : `Book by ${formatDate(product.closeDate)}.`}</p>}
               {placesLeft > 0 && placesLeft <= 5 && <p className="text_container SpaceB4" role="status">Only {placesLeft} {placesLeft === 1 ? 'place' : 'places'} left</p>}
               {merchandise && sizes.length > 0 && (
                 <label className="FormLabel SpaceB4">Size
@@ -200,7 +205,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                   <a href={product.externalLink} target="_blank" rel="noreferrer" className="PrimaryActionButton">
                     {copy.externalAction} <ExternalLink className="IconSm" />
                   </a>
-                ) : purchaseControl(product, () => addToCart(product, size), size)}
+                ) : closed ? <span className="shop_product_meta">Bookings closed</span> : purchaseControl(product, () => addToCart(product, size), size)}
               </div>
             </div>
             );

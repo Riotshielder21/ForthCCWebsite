@@ -1221,6 +1221,72 @@ await test('single-day trips are £10 off with annual boat hire and £10 off wit
   assert.equal((await ticketLines(forged.json.orderRef))[0].price, 35, 'the browser cannot send its own discount');
 });
 
+await test('events open to non-members keep them as contacts, close on time and email the leader an attendee list', async () => {
+  const schedule = { mode: 'consecutive', startDate: '2027-06-05', startTime: '09:00', endTime: '16:00', days: 2, timeZone: 'Europe/London' };
+  const openId = `E2E-OPEN-${run}`;
+  const closedId = `E2E-CLOSED-${run}`;
+  const memberOnlyId = `E2E-MEMBERS-${run}`;
+  const leader = email('leader');
+  await db.collection('products').doc(openId).set({ name: 'E2E open day', category: 'EVENTS', type: 'event-ticket', basePrice: 20, eventSchedule: schedule,
+    membershipRequired: false, leaderName: 'Lee Leader', leaderEmail: leader, closeDate: '2027-06-01' });
+  await db.collection('products').doc(closedId).set({ name: 'E2E closed day', category: 'EVENTS', type: 'event-ticket', basePrice: 20, eventSchedule: schedule,
+    membershipRequired: false, closeDate: '2020-01-01', leaderEmail: leader });
+  await db.collection('products').doc(memberOnlyId).set({ name: 'E2E members day', category: 'EVENTS', type: 'event-ticket', basePrice: 20, eventSchedule: schedule });
+  const ticket = (id) => ({ id, lineId: `${id}-${makeId()}`, name: id, category: 'EVENTS', type: 'event-ticket', basePrice: 20 });
+  const visitor = email('openday');
+  const details = adultDetails({ firstName: 'Vic', lastName: 'Visitor', email: visitor, medical: 'Nut allergy' });
+  const basket = (id, over = {}) => {
+    const lines = [ticket(id)];
+    return { lines, people: assignLines([], lines, makeId).map((person) => ({ ...person, ...details, ...over(lines) })) };
+  };
+
+  const closed = await checkout(visitor, basket(closedId, () => ({})));
+  assert.equal(closed.status, 400);
+  assert.match(closed.json.error, /Bookings for E2E closed day have closed/);
+
+  const orderRef = await buy(visitor, basket(openId, (lines) => ({ ownKitLineIds: [lines[0].lineId] })));
+  const order = (await db.collection('orders').doc(orderRef).get()).data();
+  assert.equal(order.items[0].ownKit, true, 'the own-kit tick is kept on the ticket');
+  const contact = (await db.collection('memberships').doc(order.people[0].membershipId).get()).data();
+  assert.equal(contact.contactOnly, true);
+  assert.equal(contact.status, undefined, 'a non-member gets no membership status');
+  assert.equal(contact.ownKitLineIds, undefined);
+  let register = [];
+  for (let cursor = null, page = 0; page < 20; page += 1) {
+    const result = (await call('GET', `/api/admin/reports?kind=members${cursor ? `&cursor=${cursor}` : ''}`, { headers: admin })).json;
+    register = register.concat(result.records);
+    if (!(cursor = result.nextCursor)) break;
+  }
+  assert.ok(register.length > 0);
+  assert.ok(!register.some((record) => record.id === order.people[0].membershipId), 'contacts stay out of the member register');
+
+  const membersOnly = await checkout(visitor, basket(memberOnlyId, () => ({ returning: true, firstName: 'Vic', lastName: 'Visitor', dob: details.dob })));
+  assert.equal(membersOnly.status, 409);
+  assert.equal(membersOnly.json.code, 'membership_required');
+  assert.match(membersOnly.json.error, /on our contact list .* not a club member/);
+  const again = await buy(visitor, basket(openId, () => ({ returning: true, firstName: 'Vic', lastName: 'Visitor', dob: details.dob })));
+  assert.ok(again, 'a contact can book another open event with just their date of birth');
+
+  const path = `/api/admin/events/${openId}/roster`;
+  assert.equal((await call('GET', path, { headers: admin })).json.sentAt, 0);
+  assert.equal((await call('POST', path)).status, 401);
+  const sent = await call('POST', path, { headers: admin });
+  assert.equal(sent.status, 200, sent.text);
+  assert.deepEqual([sent.json.attendees, sent.json.sentTo], [2, leader]);
+  const mail = (await db.collection('testMail').where('productId', '==', openId).get()).docs.map((document) => document.data());
+  assert.equal(mail.length, 1);
+  assert.equal(mail[0].email, leader);
+  assert.match(mail[0].subject, /^Attendee list: E2E open day/);
+  assert.match(mail[0].body, /^Hello Lee Leader,/);
+  assert.match(mail[0].body, /Vic Visitor \(Adult, born .*\n {3}Phone: 07700 900111 .*\n {3}Emergency contact: Pat Friend, Friend, 07700 900222\n {3}Medical: Nut allergy/);
+  assert.match(mail[0].body, /Kit: Bringing own kit/);
+  assert.match(mail[0].body, /Kit: Needs boat hire \(not paid\)/);
+  assert.match(mail[0].body, /Membership: Not a member/);
+  const status = (await call('GET', path, { headers: admin })).json;
+  assert.deepEqual([status.sentTo, status.attendees, status.trigger], [leader, 2, 'admin']);
+  assert.equal((await call('POST', `/api/admin/events/${memberOnlyId}/roster`, { headers: admin })).status, 400, 'no leader email to send to');
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));

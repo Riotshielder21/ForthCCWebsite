@@ -7,9 +7,11 @@ import { usePageEditor } from '../utils/PageContentContext';
 import DiscountCodesPanel from '../components/DiscountCodesPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
+import EventRosterControl from '../components/EventRosterControl';
 import { apiUrl } from '../utils/api';
 import { validateEventSchedule, eventScheduleLabel } from '../utils/catalogue';
 import { cleanStockFields } from '../utils/inventory';
+import { cleanEventDetails } from '../utils/eventRoster';
 
 const EMPTY_PRODUCT = {
   id: '',
@@ -22,7 +24,8 @@ const EMPTY_PRODUCT = {
   imageUrl: '',
   capacity: '',
   variants: [{ size: '', stock: 0 }],
-  eventSchedule: { mode: 'single', startDate: '', startTime: '15:00', endTime: '17:00', days: 1, weeks: 1, timeZone: 'Europe/London' }
+  eventSchedule: { mode: 'single', startDate: '', startTime: '15:00', endTime: '17:00', days: 1, weeks: 1, timeZone: 'Europe/London' },
+  leaderName: '', leaderEmail: '', closeDate: '', membershipRequired: true
 };
 
 const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description', 'type', 'imageUrl'];
@@ -122,6 +125,7 @@ export default function AdminPage({ products, onNavigate }) {
         product.type = 'event-ticket';
         product.hasAnnualDiscount = false;
         product.eventSchedule = validateEventSchedule(product.eventSchedule);
+        Object.assign(product, cleanEventDetails(product));
         Object.assign(product, cleanStockFields(product));
       }
       await saveProduct(product);
@@ -232,6 +236,16 @@ export default function AdminPage({ products, onNavigate }) {
               <label className="FormLabel">Capacity (tickets available, blank for unlimited)<input className="FormInput" type="number" min="1" step="1" value={draft.capacity ?? ''} onChange={(event) => updateDraft('capacity', event.target.value)} /></label>
               <p className="text_container text_container_note">When every ticket is sold the event leaves the shop. Delete a refunded order in Reports to free its place.</p>
               <p className="text_container text_container_note">One ticket covers the whole event/course. Times are Europe/London.</p>
+              <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.membershipRequired !== false} onChange={(event) => updateDraft('membershipRequired', event.target.checked)} /> Attendees must be club members</label>
+              {draft.membershipRequired === false && <p className="text_container text_container_note">Non-members can book. They are kept as contacts, not members, and do not appear in the member register.</p>}
+            </fieldset>}
+            {draft.category === 'EVENTS' && <fieldset className="AdminEventSchedule">
+              <legend className="tile_heading_bold_1">Event leader</legend>
+              <label className="FormLabel">Leader name<input className="FormInput" maxLength={120} value={draft.leaderName || ''} onChange={(event) => updateDraft('leaderName', event.target.value)} /></label>
+              <label className="FormLabel">Leader email (shown in the shop)<input className="FormInput" type="email" maxLength={254} value={draft.leaderEmail || ''} onChange={(event) => updateDraft('leaderEmail', event.target.value)} /></label>
+              <label className="FormLabel">Bookings close (end of this day)<input className="FormInput" type="date" max={draft.eventSchedule.startDate || undefined} value={draft.closeDate || ''} onChange={(event) => updateDraft('closeDate', event.target.value)} /></label>
+              <p className="text_container text_container_note">When bookings close, the leader is emailed the attendee list once, with emergency contacts, medical details and who needs boat hire. Leave blank to keep bookings open.</p>
+              {selectedProduct && <EventRosterControl adminUser={adminUser} productId={selectedProduct} saved={Boolean(products.find((product) => product.id === selectedProduct)?.leaderEmail)} />}
             </fieldset>}
             {draft.category === 'MERCHANDISE' && <fieldset className="AdminEventSchedule">
               <legend className="tile_heading_bold_1">Sizes and stock</legend>

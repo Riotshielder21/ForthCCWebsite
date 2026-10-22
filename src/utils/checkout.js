@@ -110,6 +110,7 @@ export const sanitizePerson = (person) => ({
   address: text(person?.address, 300), postcode: text(person?.postcode, 12),
   affiliationNumber: text(person?.affiliationNumber, 40), swimming: text(person?.swimming, 20), medical: text(person?.medical, 1000),
   photoConsent: person?.photoConsent === true, disclaimerAccepted: person?.disclaimerAccepted === true,
+  ownKitLineIds: Array.isArray(person?.ownKitLineIds) ? person.ownKitLineIds.filter((id) => typeof id === 'string').map((id) => id.slice(0, 64)).slice(0, 20) : [],
   emergencyContact: { name: text(person?.emergencyContact?.name, 120), phone: text(person?.emergencyContact?.phone, 40), relationship: text(person?.emergencyContact?.relationship, 60) },
   guardian: { name: text(person?.guardian?.name, 120), phone: text(person?.guardian?.phone, 40), email: text(person?.guardian?.email, 254).toLowerCase(), relationship: text(person?.guardian?.relationship, 60), address: text(person?.guardian?.address, 300), postcode: text(person?.guardian?.postcode, 12) }
 });
@@ -209,10 +210,13 @@ export const validateCheckout = ({ lines, people, now = new Date() }) => {
   return errors;
 };
 
-// People buying non-membership items who have no membership line of their own.
+// Events need membership unless an admin unticks it; everything else that is not a membership does.
+export const requiresMembership = (line) => !isMembership(line) && !(line.category === 'EVENTS' && line.membershipRequired === false);
+
+// People buying items that need membership who have no membership line of their own.
 export const peopleNeedingMembership = (lines, people) => people.filter((person) => {
   const held = person.lineIds.map((id) => lines.find((line) => line.lineId === id)).filter(Boolean);
-  return held.some((line) => !isMembership(line)) && !held.some(isMembership);
+  return held.some(requiresMembership) && !held.some(isMembership);
 });
 
 export const normaliseName = (value) => String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();

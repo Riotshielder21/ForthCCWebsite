@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import {
   addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, personKind, familyRole, resolvedKind, FAMILY_ADULT_MAX,
-  displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT
+  displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT, requiresMembership
 } from '../utils/checkout';
 import { apiUrl } from '../utils/api';
 import { applyTripDiscounts, isTripEvent } from '../utils/tripDiscount';
@@ -11,6 +11,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, onBack, onReset, onPay, makeId }) {
   const addOnLines = lines.filter((line) => needsPerson(line) && !isMembership(line));
+  const openToNonMembers = addOnLines.some((line) => !requiresMembership(line));
   const [stepKey, setStepKey] = useState('email');
   const [errors, setErrors] = useState([]);
   const [emailKnown, setEmailKnown] = useState(false);
@@ -135,7 +136,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const tierName = (line) => ({ adult: 'Adult', junior: 'Junior', family: 'Family' })[line?.membershipTier] || 'Membership';
   const heading = !person ? '' : memberships.length
     ? `Membership ${membershipSteps.indexOf(person) + 1} of ${membershipSteps.length} (${tierName(memberships[0])})`
-    : 'Existing member';
+    : openToNonMembers && !held(person).some(requiresMembership) ? 'Attendee' : 'Existing member';
   const memberField = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.value }));
   const memberCheck = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.checked }));
   const shownErrors = [...errors, ...(serverErrors || []).filter((message) => !errors.includes(message))];
@@ -163,7 +164,9 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
           <div className="CheckoutDetails">
             <h2 className="page_heading_bold_1">{heading}</h2>
             {canRemove && <button type="button" className="PrimaryActionButtonCompact" onClick={() => removePerson(person)}>Cancel and remove this person</button>}
-            <p className="CartItemMeta">{memberships.length ? memberships.map(lineLabel).join(', ') : 'Existing member. Add-ons are chosen on a later step.'}</p>
+            <p className="CartItemMeta">{memberships.length ? memberships.map(lineLabel).join(', ') : heading === 'Attendee'
+              ? 'Club members can confirm with their date of birth. Not a member? Fill in your details below. Tickets are assigned on a later step.'
+              : 'Existing member. Add-ons are chosen on a later step.'}</p>
 
             {!person.returning && !person.firstName && emailKnown && (
               <div className="CheckoutSection">
@@ -295,16 +298,30 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
         {current === 'assign' && (
           <div className="CheckoutDetails">
             <h2 className="page_heading_bold_1">Who are the add-ons for?</h2>
-            <p className="text_container">Memberships are already assigned. Choose who each add-on is for.</p>
-            {addOnLines.map((line) => (
-              <label key={line.lineId} className="FormLabel">{lineLabel(line)}
-                <select className="FormInput" value={people.find((candidate) => candidate.lineIds.includes(line.lineId))?.id || ''} onChange={(event) => onPeopleChange(assignLine(people, line.lineId, event.target.value))}>
-                  <option value="">Choose…</option>
-                  {people.map((candidate) => <option key={candidate.id} value={candidate.id}>{personLabel(candidate)}</option>)}
-                </select>
-              </label>
-            ))}
-            <button type="button" className="PrimaryActionButtonCompact" onClick={() => addPerson()}>Add another person (existing member)</button>
+            <p className="text_container">Memberships are already assigned. Choose who each add-on is for.{addOnLines.some((line) => line.category === 'EVENTS') ? ' Without their own kit, event attendees need annual boat hire; the leader will be told who needs it.' : ''}</p>
+            {addOnLines.map((line) => {
+              const holder = people.find((candidate) => candidate.lineIds.includes(line.lineId));
+              const ownKit = Boolean(holder?.ownKitLineIds?.includes(line.lineId));
+              return (
+                <div key={line.lineId} className="CheckoutSection">
+                  <label className="FormLabel">{lineLabel(line)}
+                    <select className="FormInput" value={holder?.id || ''} onChange={(event) => onPeopleChange(assignLine(people, line.lineId, event.target.value))}>
+                      <option value="">Choose…</option>
+                      {people.map((candidate) => <option key={candidate.id} value={candidate.id}>{personLabel(candidate)}</option>)}
+                    </select>
+                  </label>
+                  {line.category === 'EVENTS' && (
+                    <label className="FormLabel AdminCheckbox">
+                      <input type="checkbox" disabled={!holder} checked={ownKit} onChange={(event) => update(holder.id, (candidate) => ({ ...candidate,
+                        ownKitLineIds: event.target.checked ? [...(candidate.ownKitLineIds || []), line.lineId] : (candidate.ownKitLineIds || []).filter((id) => id !== line.lineId) }))} />
+                      I have my own kit (boat, paddle and buoyancy aid) for this event
+                    </label>
+                  )}
+                  {line.leaderName && <p className="CartItemMeta">Led by {line.leaderName}{line.leaderEmail ? ` (${line.leaderEmail})` : ''}</p>}
+                </div>
+              );
+            })}
+            <button type="button" className="PrimaryActionButtonCompact" onClick={() => addPerson()}>{openToNonMembers ? 'Add another person' : 'Add another person (existing member)'}</button>
           </div>
         )}
 
