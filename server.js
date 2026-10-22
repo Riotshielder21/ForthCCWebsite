@@ -415,6 +415,101 @@ const recordPaymentFailureAttempt = async (intent) => {
   });
 };
 
+/**
+ * Marks a pending order paid and writes its membership records, vouchers and stock holds.
+ * Returns the order with its receipt access token, or null when it was already fulfilled.
+ */
+const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '', subscription = '', stripeMode = 'test' }) => {
+  const accessToken = createAccessToken();
+  const fields = await adminDb.runTransaction(async (transaction) => {
+    const orderDocument = adminDb.collection('orders').doc(orderRef);
+    const document = await transaction.get(orderDocument);
+    if (!document.exists) throw new Error('Order not found.');
+    const order = document.data();
+    if (order.stripeSessionId !== sessionId || Math.round(Number(order.total) * 100) !== amountTotal) {
+      throw new Error('Payment does not match the order.');
+    }
+    if (order.emailSent === true) return null;
+    if (order.emailSendingUntil?.toMillis() > Date.now()) throw new Error('Receipt delivery is already in progress.');
+    const stock = await readStock(transaction, order.stockProductIds || []);
+    const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
+    const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
+    const memberIds = [...new Set((order.people || []).map((person) => person.membershipId).filter(Boolean))];
+    const memberDocuments = memberIds.length
+      ? await transaction.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id)))
+      : [];
+    const memberHouseholds = new Map(memberDocuments.filter((member) => member.exists)
+      .map((member) => [member.id, member.data().householdId || '']));
+    const groups = new Map();
+    for (const person of order.people || []) {
+      const key = householdGroupKey(person);
+      const group = groups.get(key) || [];
+      group.push(person);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      const householdIds = [...new Set(group.map((person) => person.householdId || memberHouseholds.get(person.membershipId)).filter(Boolean))];
+      if (householdIds.length > 1) throw new Error('Checkout people reference different households.');
+      const householdId = householdIds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
+      group.forEach((person) => { person.householdId = householdId; });
+    }
+    const householdIds = [...new Set((order.people || []).map((person) => person.householdId).filter(Boolean))];
+    const householdDocuments = householdIds.length
+      ? await transaction.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id)))
+      : [];
+    const householdSnapshots = new Map(householdDocuments.map((household) => [household.id, household]));
+    if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
+    const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
+      code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
+      name: item.name,
+      value: item.voucherValue,
+      expiresAt: Timestamp.fromDate(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000))
+    }));
+    if (!order.vouchers) {
+      for (const voucher of vouchers) {
+        transaction.create(adminDb.collection('discountCodes').doc(voucher.code), {
+          code: voucher.code, label: voucher.name, discountType: 'credit', discountValue: voucher.value,
+          used: false, singleUse: true, excludedCategories: ['MEMBERSHIP'],
+          orderRef, email: order.email, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
+        });
+      }
+    }
+    if (discount?.singleUse) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
+    // Paid stock holds never lapse; rebuilt from the order in case the reservation was already cleared.
+    stock.forEach((snapshot) => transaction.set(snapshot.ref, {
+      holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
+    }));
+    const paidAt = order.paidAt || Timestamp.now();
+    if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt,
+      stripeSubscriptionId: subscription, stripeMode, householdSnapshots });
+    transaction.update(orderDocument, {
+      people: order.people || [],
+      status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
+      stripePaymentIntentId: paymentIntent, stripeSubscriptionId: subscription,
+      paidAt,
+      emailSendingUntil: Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000))
+    });
+    return { ...order, vouchers };
+  });
+  return fields && { ...fields, accessToken };
+};
+
+/** Lets newly-qualified volunteers know the boathouse code, then emails the receipt. */
+const deliverOrder = async (orderRef, fields) => {
+  // A volunteer who was inducted before joining gets their code once this purchase makes them a member.
+  try { await settleVolunteersFor([fields.email, ...(fields.people || []).map(contactEmail)].map(normalizeEmail)); }
+  catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
+  try {
+    const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken: fields.accessToken, items: fields.items, people: fields.people, total: fields.total,
+      vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode });
+    await updateFirestoreOrder(orderRef, { emailSent, emailSendingUntil: null, ...(emailSent ? { emailSentAt: Timestamp.now() } : {}) });
+    if (!emailSent) throw new Error('Receipt email is not configured.');
+  } catch (error) {
+    await updateFirestoreOrder(orderRef, { emailSendingUntil: null });
+    throw error;
+  }
+};
+
 app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const signature = req.headers['stripe-signature'];
@@ -445,90 +540,10 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
       if (!['paid', 'no_payment_required'].includes(session.payment_status)) return res.json({ received: true });
       const orderRef = session.metadata?.order_ref;
       if (!orderRef || !adminDb) return res.status(400).send('Order metadata is missing.');
-      const accessToken = createAccessToken();
-      const fields = await adminDb.runTransaction(async (transaction) => {
-        const orderDocument = adminDb.collection('orders').doc(orderRef);
-        const document = await transaction.get(orderDocument);
-        if (!document.exists) throw new Error('Order not found.');
-        const order = document.data();
-        if (order.stripeSessionId !== session.id || Math.round(Number(order.total) * 100) !== session.amount_total) {
-          throw new Error('Payment does not match the order.');
-        }
-        if (order.emailSent === true) return null;
-        if (order.emailSendingUntil?.toMillis() > Date.now()) throw new Error('Receipt delivery is already in progress.');
-        const stock = await readStock(transaction, order.stockProductIds || []);
-        const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
-        const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
-        const memberIds = [...new Set((order.people || []).map((person) => person.membershipId).filter(Boolean))];
-        const memberDocuments = memberIds.length
-          ? await transaction.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id)))
-          : [];
-        const memberHouseholds = new Map(memberDocuments.filter((member) => member.exists)
-          .map((member) => [member.id, member.data().householdId || '']));
-        const groups = new Map();
-        for (const person of order.people || []) {
-          const key = householdGroupKey(person);
-          const group = groups.get(key) || [];
-          group.push(person);
-          groups.set(key, group);
-        }
-        for (const group of groups.values()) {
-          const householdIds = [...new Set(group.map((person) => person.householdId || memberHouseholds.get(person.membershipId)).filter(Boolean))];
-          if (householdIds.length > 1) throw new Error('Checkout people reference different households.');
-          const householdId = householdIds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
-          group.forEach((person) => { person.householdId = householdId; });
-        }
-        const householdIds = [...new Set((order.people || []).map((person) => person.householdId).filter(Boolean))];
-        const householdDocuments = householdIds.length
-          ? await transaction.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id)))
-          : [];
-        const householdSnapshots = new Map(householdDocuments.map((household) => [household.id, household]));
-        if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
-        const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
-          code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
-          name: item.name,
-          value: item.voucherValue,
-          expiresAt: Timestamp.fromDate(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000))
-        }));
-        if (!order.vouchers) {
-          for (const voucher of vouchers) {
-            transaction.create(adminDb.collection('discountCodes').doc(voucher.code), {
-              code: voucher.code, label: voucher.name, discountType: 'credit', discountValue: voucher.value,
-              used: false, singleUse: true, excludedCategories: ['MEMBERSHIP'],
-              orderRef, email: order.email, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
-            });
-          }
-        }
-        if (discount?.singleUse) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
-        // Paid stock holds never lapse; rebuilt from the order in case the reservation was already cleared.
-        stock.forEach((snapshot) => transaction.set(snapshot.ref, {
-          holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
-        }));
-        const paidAt = order.paidAt || Timestamp.now();
-        if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt,
-          stripeSubscriptionId: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test', householdSnapshots });
-        transaction.update(orderDocument, {
-          people: order.people || [],
-          status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
-          stripePaymentIntentId: session.payment_intent || '', stripeSubscriptionId: session.subscription || '',
-          paidAt,
-          emailSendingUntil: Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000))
-        });
-        return { ...order, vouchers };
-      });
+      const fields = await fulfilOrder({ orderRef, sessionId: session.id, amountTotal: session.amount_total, paymentIntent: session.payment_intent || '',
+        subscription: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test' });
       if (!fields) return res.json({ received: true });
-      // A volunteer who was inducted before joining gets their code once this purchase makes them a member.
-      try { await settleVolunteersFor([fields.email, ...(fields.people || []).map(contactEmail)].map(normalizeEmail)); }
-      catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
-      try {
-        const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken, items: fields.items, people: fields.people, total: fields.total,
-          vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode });
-        await updateFirestoreOrder(orderRef, { emailSent, emailSendingUntil: null, ...(emailSent ? { emailSentAt: Timestamp.now() } : {}) });
-        if (!emailSent) throw new Error('Receipt email is not configured.');
-      } catch (error) {
-        await updateFirestoreOrder(orderRef, { emailSendingUntil: null });
-        throw error;
-      }
+      await deliverOrder(orderRef, fields);
     }
     res.json({ received: true });
   } catch (error) {
@@ -1474,9 +1489,20 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const total = pricing.total;
     reservedStockIds = await reserveStock(orderRef, selected, catalog);
     const policyVersions = await currentCheckoutPolicies(adminDb, isLive());
-    await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null,
-      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions });
     const hasRecurringItem = billingMode === 'monthly' && items.some((item) => item.type === 'subscription');
+    // Stripe will not take a £0 one-off payment, so fully discounted baskets are completed here instead.
+    const free = !hasRecurringItem && Math.round(total * 100) === 0;
+    const freeSessionId = free ? `cs_free_${crypto.randomBytes(16).toString('hex')}` : '';
+    await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null, stripeSessionId: freeSessionId,
+      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions });
+    if (free) {
+      const fields = await fulfilOrder({ orderRef, sessionId: freeSessionId, amountTotal: 0, stripeMode: '' });
+      await updateFirestoreOrder(orderRef, { paymentMethod: 'free' });
+      try { if (fields) await deliverOrder(orderRef, fields); }
+      catch (error) { console.error('Free order completed but the receipt email failed:', error.message); }
+      const params = new URLSearchParams({ session_id: freeSessionId, receipt_token: receiptViewToken });
+      return res.json({ success: true, free: true, orderRef, sessionId: freeSessionId, checkoutUrl: `${siteUrl}/payment-success?${params}` });
+    }
     const oneOffCredit = hasRecurringItem && promo?.discountType === 'credit';
     let coupon;
     if (oneOffCredit) {

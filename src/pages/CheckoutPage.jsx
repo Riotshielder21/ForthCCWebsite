@@ -338,7 +338,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
             {lines.filter((line) => !needsPerson(line)).map((line) => <p key={line.lineId} className="text_container">{line.name}</p>)}
             {lines.some(isTripEvent) && (
               <div className="CheckoutSection">
-                <p className="text_container">Single-day trips are £10 cheaper for each attendee with annual boat hire, and another £10 with a coaching subscription, bought this club year or in this basket. The discount is applied on the payment page.</p>
+                <p className="text_container">Single-day trips are £10 cheaper for each attendee with annual boat hire, and another £10 with a coaching subscription, bought this club year or in this basket. The discount is applied on the payment page; if it covers the whole order there is nothing to pay and your booking is confirmed straight away.</p>
                 {applyTripDiscounts(lines, people).filter((line) => line.tripDiscount).map((line) => (
                   <p key={line.lineId} className="CartItemMeta">{personLabel(people.find((candidate) => candidate.lineIds.includes(line.lineId)))}: £{line.tripDiscount} off {line.name} ({line.tripDiscountReasons.join(' and ')} in this basket)</p>
                 ))}

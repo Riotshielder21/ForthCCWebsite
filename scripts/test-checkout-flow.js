@@ -1219,6 +1219,24 @@ await test('single-day trips are £10 off with annual boat hire and £10 off wit
   const forged = await checkout(keyholder, forgedBasket, { items: forgedBasket.lines.map(({ id, lineId }) => ({ id, lineId, tripDiscount: 35, price: 0 })) });
   assert.equal(forged.status, 200, forged.text);
   assert.equal((await ticketLines(forged.json.orderRef))[0].price, 35, 'the browser cannot send its own discount');
+
+  const freeTripId = `E2E-FREE-TRIP-${run}`;
+  await db.collection('products').doc(freeTripId).set({ name: 'E2E free river trip', category: 'EVENTS', type: 'event-ticket', basePrice: 20, eventSchedule: single });
+  const freeLines = [{ ...event(freeTripId), basePrice: 20 }];
+  const started = await checkout(tripper, { lines: freeLines, people: assignLines([], freeLines, makeId).map((person) => ({ ...person, ...returning })) });
+  assert.equal(started.status, 200, started.text);
+  assert.equal(started.json.free, true, 'a trip discounted to £0 skips Stripe');
+  const successUrl = new URL(started.json.checkoutUrl);
+  assert.equal(successUrl.pathname, '/payment-success');
+  assert.match(started.json.sessionId, /^cs_free_[a-f0-9]{32}$/);
+  const freeOrder = (await db.collection('orders').doc(started.json.orderRef).get()).data();
+  assert.deepEqual([freeOrder.status, freeOrder.total, freeOrder.paymentMethod, freeOrder.items[0].price, freeOrder.items[0].tripDiscount], ['paid', '0', 'free', 0, 20]);
+  assert.equal((await call('GET', `/api/checkout-status?session_id=${started.json.sessionId}`)).json.status, 'paid');
+  const freeReceipt = await call('GET', `/api/checkout-receipt?session_id=${started.json.sessionId}&receipt_token=${successUrl.searchParams.get('receipt_token')}`);
+  assert.equal(freeReceipt.status, 200, freeReceipt.text);
+  assert.equal(freeReceipt.json.receipt.payerEmail, tripper);
+  const freeMail = await db.collection('testMail').where('orderRef', '==', started.json.orderRef).get();
+  assert.equal(freeMail.size, 1, 'the free booking is emailed a receipt');
 });
 
 await test('events open to non-members keep them as contacts, close on time and email the leader an attendee list', async () => {

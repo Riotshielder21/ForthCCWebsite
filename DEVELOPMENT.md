@@ -110,6 +110,8 @@ The API and Firebase Hosting send `nosniff`, `X-Frame-Options: DENY`, a referrer
 
 In the API terminal, set `STRIPE_SECRET_KEY` to a test key and `STRIPE_WEBHOOK_SECRET` to the CLI's signing secret, then restart the API. Use card `4242 4242 4242 4242`, a future expiry and any CVC. Failed attempts remain retryable; expired sessions retain their saved order contents, and the basket is cleared only after the webhook confirms payment. Cancel sandbox subscriptions after testing. Do not send secrets through chat or commit them.
 
+Stripe will not take a £0 one-off payment, so when trip discounts or a voucher bring a basket without a monthly subscription to £0, the API completes the order itself with no Stripe session. It is stored as paid with `paymentMethod: 'free'` and a `cs_free_…` reference, the receipt is emailed as usual, and the browser goes straight to the success page, which reads "Booking confirmed".
+
 ## Live Mode (`WEBSITE_ISLIVE`)
 
 `WEBSITE_ISLIVE` tells the API whether the site holds real customers' data. It defaults to false. Set it with the `WEBSITE_ISLIVE` GitHub secret (the deploy workflow passes it to Cloud Run) and locally in `.env`.
