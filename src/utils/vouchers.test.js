@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { summariseVoucherCodes, voucherRows } from './vouchers.js';
+import { scopeLabel, summariseVoucherCodes, voucherRows, voucherScope } from './vouchers.js';
 
 const now = 1_000_000;
 const code = (fields) => ({ orderRef: 'FCC-1', label: 'Gift voucher', discountValue: 60, used: false, expiresAt: now + 1, ...fields });
@@ -39,4 +39,12 @@ test('each voucher shop item gets one row; older codes join by name and unmatche
     { key: 'removed:Removed voucher', name: 'Removed voucher', issued: 1, active: 0, unspent: 0 }
   ]);
   assert.equal(rows[2].product, null);
+});
+
+test('a voucher scope keeps only known categories (never membership) and valid product ids', () => {
+  assert.deepEqual(voucherScope({}), { categories: [], productIds: [] });
+  assert.deepEqual(voucherScope({ voucherScope: { categories: ['EVENTS', 'MEMBERSHIP', 'EVENTS', 'NOPE'], productIds: ['boat-hire', '', 7, 'boat-hire'] } }),
+    { categories: ['EVENTS'], productIds: ['boat-hire'] });
+  assert.equal(scopeLabel({ categories: ['EVENTS'], productIds: ['boat-hire'] }, () => 'Kit hire'), 'all events, Kit hire');
+  assert.equal(scopeLabel({}), 'Everything except membership');
 });

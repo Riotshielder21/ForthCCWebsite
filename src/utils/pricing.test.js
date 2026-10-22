@@ -220,3 +220,13 @@ test('seasonal prorated service savings are calculated before voucher credit is 
   assert.equal(result.items[0].annualSaving, 34);
   assert.equal(result.promoDiscountValue, 20);
 });
+test('credit limited to categories or products only covers those items', () => {
+  const event = { id: 'trip', category: 'EVENTS', type: 'event-ticket', basePrice: 30 };
+  const hire = { id: 'boat-hire', category: 'SERVICES', type: 'yearly-service', pricingMode: 'fixed', basePrice: 85 };
+  const credit = (scope) => calculateCart([membership, hire, event], true, { discountType: 'credit', discountValue: 200, ...scope }, now);
+  assert.equal(credit({ categories: ['EVENTS'] }).total, 115);
+  assert.equal(credit({ productIds: ['boat-hire'] }).total, 60);
+  assert.equal(credit({ categories: ['EVENTS'], productIds: ['boat-hire'] }).total, 30);
+  assert.equal(credit({}).total, 30);
+  assert.equal(credit({ categories: ['MERCHANDISE'] }).promoDiscountValue, 0);
+});

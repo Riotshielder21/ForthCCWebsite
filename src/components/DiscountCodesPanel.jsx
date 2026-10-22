@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiUrl } from '../utils/api';
-import { voucherRows } from '../utils/vouchers';
+import { saveProduct } from '../utils/content';
+import { scopeLabel, VOUCHER_CATEGORIES, voucherRows, voucherScope } from '../utils/vouchers';
 
 const TYPES = [
   ['multiplier', 'Percentage off (%)'],
@@ -18,10 +19,12 @@ export default function DiscountCodesPanel({ adminUser, products }) {
   const [voucherSummaries, setVoucherSummaries] = useState([]);
   const [draft, setDraft] = useState(EMPTY);
   const [editing, setEditing] = useState(null);
+  const [scopeDraft, setScopeDraft] = useState(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const sellable = products.filter((product) => product.type !== 'external');
   const nameFor = (id) => products.find((product) => product.id === id)?.name || id;
+  const voucherSpendable = sellable.filter((product) => product.category !== 'MEMBERSHIP');
 
   const request = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
@@ -98,6 +101,24 @@ export default function DiscountCodesPanel({ adminUser, products }) {
     ? `${row.issued} issued: ${row.active} active${row.active ? ` (£${row.unspent.toFixed(2)} unspent)` : ''}, ${row.used} used, ${row.expired} expired`
     : 'None issued yet';
 
+  const toggleScope = (field, value) => setScopeDraft((current) => ({ ...current, [field]: current[field].includes(value)
+    ? current[field].filter((candidate) => candidate !== value)
+    : [...current[field], value] }));
+
+  const saveScope = async (event) => {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    try {
+      const product = products.find((candidate) => candidate.id === scopeDraft.productId);
+      await saveProduct({ ...product, voucherScope: voucherScope({ voucherScope: scopeDraft }) });
+      setMessage(`${product.name} vouchers updated. Codes bought from now on use the new rules.`);
+      setScopeDraft(null);
+    } catch (saveError) {
+      setError(saveError.message);
+    }
+  };
+
   const cancelEdit = () => { setEditing(null); setDraft(EMPTY); };
 
   const toggleActive = async (code) => {
@@ -141,6 +162,27 @@ export default function DiscountCodesPanel({ adminUser, products }) {
         {editing && <button type="button" className="PrimaryActionButtonCompact" onClick={cancelEdit}>Cancel editing</button>}
       </form>
 
+      {scopeDraft && (
+        <form className="CheckoutDetails SpaceT4" onSubmit={saveScope}>
+          <h4 className="CartItemTitle">What {nameFor(scopeDraft.productId)} codes can be spent on</h4>
+          <p className="text_container">Tick categories, products or both. With nothing ticked, the credit covers everything except membership. Changes apply to vouchers bought from now on; codes already issued keep their rules.</p>
+          <fieldset className="CheckoutFieldset">
+            <legend>Categories</legend>
+            {VOUCHER_CATEGORIES.map((category) => (
+              <label key={category} className="CheckoutCheck"><input type="checkbox" checked={scopeDraft.categories.includes(category)} onChange={() => toggleScope('categories', category)} /> All {category.toLowerCase()}</label>
+            ))}
+          </fieldset>
+          <fieldset className="CheckoutFieldset">
+            <legend>Products</legend>
+            {voucherSpendable.map((product) => (
+              <label key={product.id} className="CheckoutCheck"><input type="checkbox" checked={scopeDraft.productIds.includes(product.id)} onChange={() => toggleScope('productIds', product.id)} /> {product.name}</label>
+            ))}
+          </fieldset>
+          <button className="FormSubmitButton" type="submit">Save voucher rules</button>
+          <button type="button" className="PrimaryActionButtonCompact" onClick={() => setScopeDraft(null)}>Cancel</button>
+        </form>
+      )}
+
       {(codes.length > 0 || vouchers.length > 0) && (
         <div style={{ overflowX: 'auto' }}>
           <table className="text_container SpaceT4" style={{ width: '100%', textAlign: 'left' }}>
@@ -151,10 +193,10 @@ export default function DiscountCodesPanel({ adminUser, products }) {
                   <td>Shop voucher{row.product ? '' : ' (no longer in the shop)'}</td>
                   <td>{row.name}</td>
                   <td>{row.product ? `£${Number(row.product.basePrice).toFixed(2)} credit per code` : 'Credit'}</td>
-                  <td>Everything except membership</td>
+                  <td>{row.product ? scopeLabel(voucherScope(row.product), nameFor) : ''}</td>
                   <td>{voucherStatus(row)}</td>
                   <td>1 year after purchase</td>
-                  <td />
+                  <td>{row.product && <button type="button" className="PrimaryActionButtonCompact" onClick={() => setScopeDraft({ productId: row.product.id, ...voucherScope(row.product) })}>Edit</button>}</td>
                 </tr>
               ))}
               {codes.map((code) => (

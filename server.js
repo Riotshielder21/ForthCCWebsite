@@ -15,7 +15,7 @@ import { PAGE_CONTENT } from './src/constants/pageContent.js';
 import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart } from './src/utils/pricing.js';
-import { summariseVoucherCodes } from './src/utils/vouchers.js';
+import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
 import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
@@ -464,6 +464,7 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
       name: item.name,
       productId: item.id,
+      scope: voucherScope(item),
       value: item.voucherValue,
       expiresAt: Timestamp.fromDate(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000))
     }));
@@ -472,6 +473,7 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
         transaction.create(adminDb.collection('discountCodes').doc(voucher.code), {
           code: voucher.code, label: voucher.name, discountType: 'credit', discountValue: voucher.value,
           ...(voucher.productId ? { sourceProductId: voucher.productId } : {}),
+          productIds: voucher.scope.productIds, categories: voucher.scope.categories,
           used: false, singleUse: true, excludedCategories: ['MEMBERSHIP'],
           orderRef, email: order.email, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
         });
@@ -1074,7 +1076,8 @@ const discountFailure = (discount) => {
 const publicDiscount = (discount) => ({
   label: discount.label || 'Discount', discountType: discount.discountType || 'multiplier',
   discountValue: discount.discountValue ?? 0.25, allowsAnnualStacking: discount.allowsAnnualStacking === true,
-  productIds: Array.isArray(discount.productIds) ? discount.productIds : []
+  productIds: Array.isArray(discount.productIds) ? discount.productIds : [],
+  categories: Array.isArray(discount.categories) ? discount.categories : []
 });
 
 app.post('/api/discount-codes/validate', rateLimit(30, 60 * 1000), async (req, res) => {
@@ -1488,7 +1491,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       ...(item.tripSaving > 0 ? { tripDiscount: item.tripSaving, tripDiscountReasons: item.tripDiscountReasons } : {}),
       ...(item.size ? { size: item.size } : {}),
       ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),
-      ...(item.type === 'voucher' ? { voucherValue: item.basePrice } : {}),
+      ...(item.type === 'voucher' ? { voucherValue: item.basePrice, voucherScope: voucherScope(item) } : {}),
       ...(item.category === 'EVENTS' ? {
         eventSchedule: validateEventSchedule(item.eventSchedule),
         ...(storedPeople.some((person) => person.lineIds.includes(item.lineId) && person.ownKitLineIds.includes(item.lineId)) ? { ownKit: true } : {})

@@ -11,7 +11,10 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
     // Catalogue items carry pricingMode (see productTerms); anything without one is fixed unless it is a subscription.
     const pricingMode = item.pricingMode || (item.type === 'subscription' ? 'subscription' : 'fixed');
     const monthlyBilling = pricingMode === 'subscription' && !isAnnual && (item.allowMonthly ?? item.type === 'subscription');
-    const promoEligible = promo?.productIds?.length ? promo.productIds.includes(item.id) : item.category !== 'MEMBERSHIP';
+    // A code limited to products or categories covers just those; otherwise everything except membership.
+    const promoEligible = promo?.productIds?.length || promo?.categories?.length
+      ? Boolean(promo.productIds?.includes(item.id) || promo.categories?.includes(item.category))
+      : item.category !== 'MEMBERSHIP';
     const flat = promoEligible && promo?.discountType === 'flat' && pricingMode === 'subscription';
     const monthly = flat ? Math.max(0, item.basePrice - promo.discountValue) : item.basePrice;
     const annualRate = item.hasAnnualDiscount && (!flat || promo.allowsAnnualStacking) ? 1 - DISCOUNTS.ANNUAL : 1;

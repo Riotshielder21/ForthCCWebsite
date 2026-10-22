@@ -6,6 +6,7 @@ import { eventScheduleLabel } from '../utils/catalogue';
 import { isTripEvent } from '../utils/tripDiscount';
 import { bookingsClosed, formatDate } from '../utils/eventRoster';
 import { productLimits } from '../utils/inventory';
+import { scopeLabel, voucherScope } from '../utils/vouchers';
 
 export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, onNavigate }) {
   const copy = usePageContent('membership');
@@ -198,6 +199,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                             : copy.clubYearPriceLabel}
                       </div>
                       {product.pricingMode === 'subscription' && !product.allowMonthly && <div className="KitHireMonthlyLabel">Paid up front to 1 March</div>}
+                      {product.type === 'voucher' && <div className="KitHireMonthlyLabel">Spend on: {scopeLabel(voucherScope(product), (id) => products.find((candidate) => candidate.id === id)?.name || id).replace(/^Everything/, 'everything')}</div>}
                     </>
                   )}
                 </div>

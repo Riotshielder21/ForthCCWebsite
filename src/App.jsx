@@ -228,6 +228,7 @@ export default function App() {
           discountValue: validation.discountValue,
           allowsAnnualStacking: validation.allowsAnnualStacking === true,
           productIds: validation.productIds || [],
+          categories: validation.categories || [],
           code
         });
         setPromoError(null);

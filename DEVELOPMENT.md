@@ -118,6 +118,8 @@ A product's type and pricing follow its category (`productTerms` in `src/utils/c
 
 Generated voucher codes store the shop item they were bought from (`sourceProductId`). The admin discount code list shows one summary row per voucher shop item rather than every code; older codes without `sourceProductId` are grouped by the item name they were issued under. Individual codes are on the buyer's record in Reports.
 
+A voucher item's **Edit** button in that list sets what its credit can be spent on (`voucherScope` on the product: categories, products or both; membership is never allowed). With nothing ticked the credit covers everything except membership. Each order line copies the scope at checkout, and the generated code stores it as `categories`/`productIds`, so changes only affect vouchers bought afterwards. Custom discount codes are unchanged.
+
 ## Live Mode (`WEBSITE_ISLIVE`)
 
 `WEBSITE_ISLIVE` tells the API whether the site holds real customers' data. It defaults to false. Set it with the `WEBSITE_ISLIVE` GitHub secret (the deploy workflow passes it to Cloud Run) and locally in `.env`.

@@ -618,6 +618,22 @@ await test('discount codes: create, edit, scope, disable, apply', async () => {
   assert.equal((await call('POST', '/api/discount-codes/validate', { body: { code } })).json.valid, true);
 });
 
+await test('a voucher limited to events issues codes that only events can use', async () => {
+  const voucherId = `E2E-EVENT-VOUCHER-${run}`;
+  await db.collection('products').doc(voucherId).set({ name: 'Event voucher', category: 'VOUCHERS', type: 'voucher', basePrice: 20,
+    description: 'Test voucher', voucherScope: { categories: ['EVENTS', 'MEMBERSHIP'], productIds: [] } });
+  const buyer = email('eventvoucher');
+  const orderRef = await buy(buyer, { lines: [{ id: voucherId, lineId: `${voucherId}-line` }], people: [] });
+  const voucher = (await db.collection('orders').doc(orderRef).get()).data().vouchers[0];
+  const code = (await db.collection('discountCodes').doc(voucher.code).get()).data();
+  assert.deepEqual([code.categories, code.productIds, code.sourceProductId], [['EVENTS'], [], voucherId], 'membership is never allowed');
+  assert.deepEqual((await call('POST', '/api/discount-codes/validate', { body: { code: voucher.code } })).json.categories, ['EVENTS']);
+  const member = { returning: true, firstName: 'Alex', lastName: 'Adult', dob: yearsAgo(35), disclaimerAccepted: true };
+  const hire = await checkout(shared.alex, build(['boat-hire'], [member]), { discountCode: voucher.code });
+  assert.equal(hire.status, 400, 'boat hire is not an event');
+  await db.collection('products').doc(voucherId).delete();
+});
+
 await test('a voucher is accepted once, taken off the price, then shows as used', async () => {
   const member = { returning: true, firstName: 'Alex', lastName: 'Adult', dob: yearsAgo(35), disclaimerAccepted: true };
   const courseId = `E2E-VOUCHER-COURSE-${run}`;

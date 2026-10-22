@@ -50,3 +50,21 @@ export const voucherRows = (products, summaries) => {
   }
   return rows;
 };
+
+// Categories a voucher's credit can be limited to. Membership is never paid for with a voucher.
+export const VOUCHER_CATEGORIES = ['SERVICES', 'SUBSCRIPTIONS', 'EVENTS', 'MERCHANDISE', 'VOUCHERS'];
+
+/** What a voucher product's generated credit codes can be spent on; empty lists mean everything except membership. */
+export const voucherScope = (product) => {
+  const scope = product?.voucherScope || {};
+  const list = (values, keep) => [...new Set(Array.isArray(values) ? values.filter(keep) : [])].slice(0, 50);
+  return {
+    categories: list(scope.categories, (category) => VOUCHER_CATEGORIES.includes(category)),
+    productIds: list(scope.productIds, (id) => typeof id === 'string' && id.length > 0 && id.length <= 100)
+  };
+};
+
+export const scopeLabel = ({ categories = [], productIds = [] }, nameFor = (id) => id) => {
+  const parts = [...categories.map((category) => `all ${category.toLowerCase()}`), ...productIds.map(nameFor)];
+  return parts.length ? parts.join(', ') : 'Everything except membership';
+};
