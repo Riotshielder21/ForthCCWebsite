@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { validateListSubmission, sheetCell, matchesVolunteer, volunteerCodeDecision, boathouseCodeDecision, VOLUNTEER_LIST } from '../utils/lists.js';
 import { membershipActivity } from '../utils/membership.js';
+import { checkSummary } from '../utils/safeguarding.js';
 
 const VOLUNTEER_DISCOUNT = 0.25;
 const CODE_DAYS = 365;
@@ -188,7 +189,8 @@ export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, shee
       const codeVersion = (await boathouseCode()).version || 0;
       const memberIds = [...new Set(snapshot.docs.map((document) => document.data().memberId).filter(Boolean))];
       const members = memberIds.length
-        ? new Map((await db().getAll(...memberIds.map((id) => db().collection('memberships').doc(id)))).filter((document) => document.exists).map((document) => [document.id, toMembershipRecord(document)]))
+        ? new Map((await db().getAll(...memberIds.map((id) => db().collection('memberships').doc(id)))).filter((document) => document.exists)
+          .map((document) => [document.id, { ...toMembershipRecord(document), checks: checkSummary(document.data().checks) }]))
         : new Map();
       const volunteers = snapshot.docs.map((document) => {
         const data = document.data();
@@ -198,6 +200,7 @@ export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, shee
           memberId: member ? data.memberId : '', memberStatus: member ? membershipActivity(member) : 'not a member',
           inducted: data.inducted === true, codeIssued: Boolean(data.discountCode), codeEmailed: data.codeEmailed === true,
           active: data.active === true, boathouseCodeCurrent: Boolean(codeVersion) && data.boathouseCodeVersion === codeVersion,
+          checks: member?.checks || null,
           createdAt: data.createdAt?.toMillis() || 0
         };
       }).sort((a, b) => b.createdAt - a.createdAt);

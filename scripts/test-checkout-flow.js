@@ -1147,6 +1147,40 @@ await test('an active volunteer gets the boathouse code when checked in, or when
   assert.match((await db.collection('lists').doc(joinerSignup).get()).data().discountCode || '', /^VOL-/);
 });
 
+await test('admins record PVG and safeguarding expiry dates on a volunteer member and see their status', async () => {
+  const memberId = (await db.collection('lists').doc(shared.volunteerSignup).get()).data().memberId;
+  assert.ok(memberId);
+  const path = `/api/admin/memberships/${memberId}/checks`;
+  const day = (offset) => new Date(Date.now() + offset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  assert.equal((await call('PATCH', path, { body: { pvg: day(400) } })).status, 401);
+  assert.equal((await call('PATCH', path, { headers: admin, body: { pvg: '31/12/2030' } })).status, 400);
+  assert.equal((await call('PATCH', path, { headers: admin, body: { dbs: day(400) } })).status, 400);
+  assert.equal((await call('PATCH', '/api/admin/memberships/no-such-member/checks', { headers: admin, body: { pvg: day(400) } })).status, 404);
+
+  const saved = await call('PATCH', path, { headers: admin, body: { pvg: day(400), safeguarding: day(30) } });
+  assert.equal(saved.status, 200, saved.text);
+  assert.deepEqual(saved.json.checks, { pvg: { expiresOn: day(400), status: 'active' }, safeguarding: { expiresOn: day(30), status: 'due' } });
+  const stored = (await db.collection('memberships').doc(memberId).get()).data().checks;
+  assert.equal(stored.pvg.updatedBy, 'admin@forthcanoeclub.co.uk');
+  const row = (await call('GET', '/api/admin/volunteers', { headers: admin })).json.volunteers.find((volunteer) => volunteer.id === shared.volunteerSignup);
+  assert.equal(row.checks.safeguarding.status, 'due');
+
+  const expired = await call('PATCH', path, { headers: admin, body: { pvg: day(-1) } });
+  assert.equal(expired.json.checks.pvg.status, 'expired');
+  assert.equal(expired.json.checks.safeguarding.status, 'due', 'an update to one check leaves the other alone');
+  let register = [];
+  for (let cursor = null, page = 0; page < 20; page += 1) {
+    const result = (await call('GET', `/api/admin/reports?kind=members${cursor ? `&cursor=${cursor}` : ''}`, { headers: admin })).json;
+    register = register.concat(result.records);
+    if (register.some((record) => record.id === memberId) || !(cursor = result.nextCursor)) break;
+  }
+  assert.match(register.find((record) => record.id === memberId)?.pvg || '', /^Expired \(/);
+
+  const cleared = await call('PATCH', path, { headers: admin, body: { pvg: '', safeguarding: '' } });
+  assert.deepEqual(cleared.json.checks.pvg, { expiresOn: '', status: 'none' });
+  assert.equal((await db.collection('memberships').doc(memberId).get()).data().checks.pvg, undefined);
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));

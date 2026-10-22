@@ -150,14 +150,14 @@ export default function AdminReportsPage({ onNavigate }) {
     const headers = purchaseReport
       ? ['Order ID', 'Email', 'Status', 'Created', 'Paid', kind === 'events' ? 'Event tickets total GBP' : 'Total GBP', 'Items and schedules', 'Stripe subscription ID', 'Stripe check required']
       : kind === 'subscribers' ? ['Subscription ID', 'Customer ID', 'Club customer ID', 'Club subscription ID', 'Name', 'Email', 'Eligibility', 'Stripe status', 'Reason', 'Plans', 'Period end', 'Cancellation date', 'Payment reversed', 'Refund check available', 'Checked at', 'Stripe mode']
-      : ['Membership ID', 'Name', 'Date of birth', 'Email', 'Phone', 'Address', 'Affiliation number', 'Tier', 'Status', 'Valid until', 'Includes', 'Emergency contact', 'Parent or guardian', 'Medical', 'Swimming', 'Photo consent', 'JustGo', 'Renews via', 'Last updated'];
+      : ['Membership ID', 'Name', 'Date of birth', 'Email', 'Phone', 'Address', 'Affiliation number', 'Tier', 'Status', 'Valid until', 'Includes', 'Emergency contact', 'Parent or guardian', 'Medical', 'Swimming', 'Photo consent', 'PVG', 'Safeguarding', 'JustGo', 'Renews via', 'Last updated'];
     const rows = filtered.map((record) => purchaseReport
       ? [record.id, record.email, record.status, record.createdAt, record.paidAt, record.total,
         record.items.map((item) => `${item.name}${item.price === null ? '' : ` (${money(item.price)})`}${item.eventSchedule ? ` — ${eventScheduleLabel(item.eventSchedule)}` : ''}`).join('; '), record.stripeSubscriptionId, record.subscriptionWarning ? 'Yes' : 'No']
       : kind === 'subscribers' ? [record.id, record.stripeCustomerId, record.clubCustomerId, record.clubSubscriptionId, record.name, record.email, record.status, record.stripeStatus, record.reason,
         record.items.map((item) => `${item.name}: ${item.amount ?? 'variable'} ${item.currency.toUpperCase()}/${item.interval}`).join('; '),
         record.currentPeriodEnd, record.cancelAt, record.paymentReversed ? 'Yes' : 'No', record.refundCheckAvailable ? 'Yes' : 'No', checkedAt, stripeMode]
-      : [record.id, record.name, record.dob, record.email, record.phone, record.address, record.affiliationNumber, record.tier, record.status, record.expiry, record.privileges.join('; '), record.emergencyContact, record.parent, record.medical, record.swimming, record.photoConsent ? 'Yes' : 'No', record.justgo, record.renewalMethod, record.lastUpdated]);
+      : [record.id, record.name, record.dob, record.email, record.phone, record.address, record.affiliationNumber, record.tier, record.status, record.expiry, record.privileges.join('; '), record.emergencyContact, record.parent, record.medical, record.swimming, record.photoConsent ? 'Yes' : 'No', record.pvg, record.safeguarding, record.justgo, record.renewalMethod, record.lastUpdated]);
     download(`fcc-${kind}-${new Date().toISOString().slice(0, 10)}.csv`, reportCsv(headers, rows));
   };
   const beginDelete = (record) => {

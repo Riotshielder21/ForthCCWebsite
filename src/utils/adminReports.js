@@ -1,6 +1,7 @@
 import { membershipActivity } from './membership.js';
 import { itemLabel } from './inventory.js';
 import { memberIsJunior } from './households.js';
+import { checkLabel } from './safeguarding.js';
 
 export const reportDate = (value) => {
   if (!value) return null;
@@ -119,6 +120,7 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     householdId: fields.householdId || '',
     medical: fields.medical || '', swimming: fields.swimming || '',
     photoConsent: fields.consents?.photoVideo?.accepted === true || fields.photoConsent === true,
+    pvg: checkLabel(fields.checks?.pvg?.expiresOn, now), safeguarding: checkLabel(fields.checks?.safeguarding?.expiresOn, now),
     familyGroup: fields.familyGroup || '', privileges: [...new Set((fields.privileges || []).map((privilege) => String(privilege.name || privilege.productId || '')))],
     history: (fields.history || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
   };

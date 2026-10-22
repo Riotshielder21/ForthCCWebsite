@@ -33,6 +33,7 @@ import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
+import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -777,6 +778,7 @@ registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDire
 const { settleVolunteersFor, notifyBoathouseCode } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, onCodeChanged: notifyBoathouseCode });
+registerMemberCheckRoutes(app, { rateLimit, requireAdmin, db: () => adminDb });
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {

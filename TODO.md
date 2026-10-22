@@ -63,6 +63,5 @@
 
 
 Feature WishList
-- PVG and Safeguarding status on members (particularly volunteers) (expired, active, due to expire)
 - Trip single day events should get discounts automatically applied at checkout if someone has annual boathire, and / or subscription. Need to delete lock them as it breaks the feature but a subscriber gets 10 off, a equipment hire gets 10 off. either need to delete lock them or make a feature that allows a configurable subscription or service item that does this. (eg, keyhire doesnt apply discount)
 - Events should have a leader field and email, the email is public but importantly the event should have a close date and a it will automatically email a list of atendees to the lead. with well formatted emergency contacts, and medical details. It should also attach info on if a person needs boathire, or has already paid. If a person needs boathire it will just point out this info. this can be obtained from their membership record or not. (usually because an event will or will not require membership (tickbox for admin)) its a lookup of kithire situ. events can have a checkbox for the participant at the add-on section saying, i have my own kit.
