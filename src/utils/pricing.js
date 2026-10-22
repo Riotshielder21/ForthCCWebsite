@@ -34,13 +34,16 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
     } else if (item.type === 'annual-oneoff') {
       label = 'Club Year';
     }
+    // Automatic trip discounts (see tripDiscount.js) come off before any promo code.
+    const tripSaving = money(Math.min(Math.max(0, Number(item.tripDiscount) || 0), displayPrice));
+    displayPrice = money(displayPrice - tripSaving);
     if (promoEligible && promo?.discountType === 'multiplier') {
       const saving = money(displayPrice * promo.discountValue);
       displayPrice = money(displayPrice - saving);
       promoSaving += saving;
       recurringMonthlyCost = money(recurringMonthlyCost * (1 - promo.discountValue));
     }
-    return { ...item, label, subtotalPrice, displayPrice, annualSaving, promoSaving, promoEligible, recurringMonthlyCost, clubYear };
+    return { ...item, label, subtotalPrice, displayPrice, annualSaving, promoSaving, tripSaving, promoEligible, recurringMonthlyCost, clubYear };
   });
   let credit = promo?.discountType === 'credit' ? promo.discountValue : 0;
   for (const item of items) {
@@ -52,5 +55,5 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
   }
   const sum = (field) => money(items.reduce((total, item) => total + item[field], 0));
   const total = sum('displayPrice');
-  return { items, subtotal: sum('subtotalPrice'), annualSaving: sum('annualSaving'), promoDiscountValue: sum('promoSaving'), total, year1Total: total, recurringMonthlyTotal: sum('recurringMonthlyCost') };
+  return { items, subtotal: sum('subtotalPrice'), annualSaving: sum('annualSaving'), promoDiscountValue: sum('promoSaving'), tripDiscountValue: sum('tripSaving'), total, year1Total: total, recurringMonthlyTotal: sum('recurringMonthlyCost') };
 };

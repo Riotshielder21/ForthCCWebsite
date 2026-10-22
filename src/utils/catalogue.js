@@ -1,7 +1,13 @@
+import { isLockedProduct } from './tripDiscount.js';
+
+// Locked products (the trip discount depends on them) stay in the shop even if a deletion was saved.
 export const resolveCatalogue = (defaults, saved) => {
   const products = new Map(defaults.map((product) => [product.id, product]));
   for (const product of saved) {
-    if (product.deleted === true) products.delete(product.id);
+    if (product.deleted === true && isLockedProduct(product.id)) {
+      const { deleted: _deleted, ...kept } = product;
+      products.set(product.id, { ...products.get(product.id), ...kept });
+    } else if (product.deleted === true) products.delete(product.id);
     else products.set(product.id, product);
   }
   return [...products.values()];

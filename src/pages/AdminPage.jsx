@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
 import { removeProduct, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
+import { isLockedProduct } from '../utils/tripDiscount';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
 import DiscountCodesPanel from '../components/DiscountCodesPanel';
@@ -213,7 +214,8 @@ export default function AdminPage({ products, onNavigate }) {
             {!products.length && <p className="text_container">No products. Add a new item or restore the starter catalogue.</p>}
           </aside>
           <form className="main_tile AdminEditor" onSubmit={handleSave}>
-            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && <button type="button" className="CartRemoveButton" onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
+            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && !isLockedProduct(selectedProduct) && <button type="button" className="CartRemoveButton" onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
+            {selectedProduct && isLockedProduct(selectedProduct) && <p className="text_container text_container_note">This product cannot be removed: holding it gives £10 off single-day trips at checkout.</p>}
             {EDITABLE_FIELDS.filter((field) => field !== 'type' || !['EVENTS', 'MERCHANDISE'].includes(draft.category)).map((field) => (
               <label className="FormLabel" key={field}>{field === 'basePrice' ? 'Price' : field}
                 {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' || field === 'type' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{(field === 'category' ? CATEGORIES.filter((category) => category !== 'ALL') : ['external', 'voucher', 'annual-oneoff', 'yearly-service', 'subscription']).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required={field !== 'imageUrl'} />}

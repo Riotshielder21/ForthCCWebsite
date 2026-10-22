@@ -3,6 +3,7 @@ import { ShoppingCart, Plus, Minus, ExternalLink, ChevronDown, Pencil } from 'lu
 import { DISCOUNTS, CATEGORIES } from '../constants/products';
 import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { eventScheduleLabel } from '../utils/catalogue';
+import { isTripEvent } from '../utils/tripDiscount';
 import { productLimits } from '../utils/inventory';
 
 export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, getKitHireMonthly, products, onNavigate }) {
@@ -159,6 +160,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
               </div>
               <p className="shop_product_description">{product.description}</p>
               {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
+              {isTripEvent(product) && <p className="text_container text_container_note">£10 off with annual boat hire, and £10 off with a coaching subscription.</p>}
               {placesLeft > 0 && placesLeft <= 5 && <p className="text_container SpaceB4" role="status">Only {placesLeft} {placesLeft === 1 ? 'place' : 'places'} left</p>}
               {merchandise && sizes.length > 0 && (
                 <label className="FormLabel SpaceB4">Size

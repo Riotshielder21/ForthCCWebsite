@@ -10,6 +10,7 @@ import { db } from './firebase';
 import { storage } from './firebase';
 import { PAGE_CONTENT } from '../constants/pageContent';
 import { apiUrl } from './api';
+import { isLockedProduct } from './tripDiscount';
 import { resolveCatalogue, validateEventSchedule } from './catalogue';
 import { cleanStockFields } from './inventory';
 import { PRODUCTS } from '../constants/products';
@@ -78,6 +79,7 @@ export const saveProduct = async (product) => {
 
 export const removeProduct = async (id) => {
   if (!db) throw new Error('Content database is unavailable.');
+  if (isLockedProduct(id)) throw new Error('This product gives the automatic trip discount, so it cannot be removed.');
   await setDoc(doc(db, 'products', id), { deleted: true, updatedAt: serverTimestamp() }, { merge: true });
 };
 

@@ -15,6 +15,7 @@ import { PAGE_CONTENT } from './src/constants/pageContent.js';
 import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart } from './src/utils/pricing.js';
+import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
 import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
@@ -1429,7 +1430,15 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       if (message) return res.status(400).json({ error: message });
       promo = publicDiscount(discountDocument.data());
     }
-    const pricing = calculateCart(selected, billingMode === 'annual', promo);
+    // Single-day trips are discounted for attendees holding boat hire or a subscription this club year, or buying one now.
+    const tripPrivileges = new Map();
+    const memberIds = selected.some(isTripEvent) ? [...new Set(storedPeople.filter((person) => person.existingMember).map((person) => person.membershipId))] : [];
+    if (memberIds.length) {
+      const members = new Map((await adminDb.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id))))
+        .filter((document) => document.exists).map((document) => [document.id, document.data().privileges || []]));
+      for (const person of storedPeople) if (members.has(person.membershipId)) tripPrivileges.set(person.id, members.get(person.membershipId));
+    }
+    const pricing = calculateCart(applyTripDiscounts(selected, storedPeople, tripPrivileges), billingMode === 'annual', promo);
     if (promo && pricing.promoDiscountValue <= 0) return res.status(400).json({ error: 'This code does not apply to the items in your basket.' });
     const siteUrl = checkoutSiteOrigin(req);
     const receiptViewToken = createAccessToken();
@@ -1444,6 +1453,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
     const items = pricing.items.map((item) => ({
       id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, price: item.displayPrice,
+      ...(item.tripSaving > 0 ? { tripDiscount: item.tripSaving, tripDiscountReasons: item.tripDiscountReasons } : {}),
       ...(item.size ? { size: item.size } : {}),
       ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),
       ...(item.type === 'voucher' ? { voucherValue: item.basePrice } : {}),

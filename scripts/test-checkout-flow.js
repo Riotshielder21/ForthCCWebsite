@@ -1181,6 +1181,46 @@ await test('admins record PVG and safeguarding expiry dates on a volunteer membe
   assert.equal((await db.collection('memberships').doc(memberId).get()).data().checks.pvg, undefined);
 });
 
+await test('single-day trips are £10 off with annual boat hire and £10 off with a subscription, held or in the basket', async () => {
+  const single = { mode: 'single', startDate: '2027-05-01', startTime: '09:00', endTime: '17:00', days: 1, timeZone: 'Europe/London' };
+  const tripId = `E2E-TRIP-${run}`;
+  const courseId = `E2E-TRIP-COURSE-${run}`;
+  await db.collection('products').doc(tripId).set({ name: 'E2E river trip', category: 'EVENTS', type: 'event-ticket', basePrice: 35, eventSchedule: single });
+  await db.collection('products').doc(courseId).set({ name: 'E2E two-day course', category: 'EVENTS', type: 'event-ticket', basePrice: 35,
+    eventSchedule: { ...single, mode: 'consecutive', days: 2 } });
+  let ticket = 0;
+  const event = (id) => ({ id, lineId: `${id}-${++ticket}`, name: id, category: 'EVENTS', type: 'event-ticket', basePrice: 35 });
+  const basket = (productIds, events, details) => {
+    const lines = [...productIds.map(lineFor), ...events.map(event)];
+    return { lines, people: assignLines([], lines, makeId).map((person) => ({ ...person, ...details })) };
+  };
+  const ticketLines = async (orderRef) => (await db.collection('orders').doc(orderRef).get()).data().items.filter((item) => item.category === 'EVENTS');
+
+  const tripper = email('tripper');
+  const details = adultDetails({ firstName: 'Tia', lastName: 'Tripper', email: tripper });
+  const returning = { returning: true, firstName: 'Tia', lastName: 'Tripper', dob: details.dob, disclaimerAccepted: true };
+  const first = await ticketLines(await buy(tripper, basket(['membership-adult', 'boat-hire'], [tripId, courseId], details)));
+  assert.deepEqual(first.map((item) => [item.id, item.price, item.tripDiscount]), [[tripId, 25, 10], [courseId, 35, undefined]],
+    'boat hire in the same basket discounts the single-day trip only');
+  assert.deepEqual(first[0].tripDiscountReasons, ['annual boat hire']);
+
+  const held = await ticketLines(await buy(tripper, basket([], [tripId], returning)));
+  assert.equal(held[0].price, 25, 'boat hire bought earlier this club year still counts');
+  await buy(tripper, basket(['blue-sub'], [], returning));
+  const both = await ticketLines(await buy(tripper, basket([], [tripId], returning)));
+  assert.equal(both[0].price, 15);
+  assert.equal(both[0].tripDiscount, 20);
+
+  const keyholder = email('keyholder');
+  const keyOnly = await ticketLines(await buy(keyholder, basket(['membership-adult', 'keyhire'], [tripId], adultDetails({ firstName: 'Kay', lastName: 'Holder', email: keyholder }))));
+  assert.equal(keyOnly[0].price, 35, 'key hire gives no trip discount');
+
+  const forgedBasket = basket([], [tripId], { returning: true, firstName: 'Kay', lastName: 'Holder', dob: details.dob, disclaimerAccepted: true });
+  const forged = await checkout(keyholder, forgedBasket, { items: forgedBasket.lines.map(({ id, lineId }) => ({ id, lineId, tripDiscount: 35, price: 0 })) });
+  assert.equal(forged.status, 200, forged.text);
+  assert.equal((await ticketLines(forged.json.orderRef))[0].price, 35, 'the browser cannot send its own discount');
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));
