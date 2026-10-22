@@ -1372,7 +1372,7 @@ await test('a membership-included product makes each buyer a member, by age, unt
   assert.equal((await db.collection('memberships').doc(tasterOrder.people[0].membershipId).get()).data().contactOnly, true, 'open services keep non-members as contacts');
 });
 
-await test('each person gets their own monthly subscription, and staff can cancel single items', async () => {
+await test('each monthly item is its own Stripe subscription, so cancelling one leaves the others paying', async () => {
   const lessonId = `E2E-LESSONS-${run}`;
   await db.collection('products').doc(lessonId).set({ name: 'E2E lesson block', category: 'SERVICES', pricingMode: 'subscription', allowMonthly: true, basePrice: 20, membershipRule: 'none' });
   const basketFor = (payer) => {
@@ -1389,8 +1389,9 @@ await test('each person gets their own monthly subscription, and staff can cance
   assert.ok(basket.people[0].lineIds.includes(basket.lines[4].lineId), 'the lesson block belongs to the first person');
   const orderRef = await buy(payer, basket, { billingMode: 'monthly' });
   const order = (await db.collection('orders').doc(orderRef).get()).data();
-  assert.equal(order.subscriptionGroups.length, 2);
-  assert.equal(order.stripeSubscriptionIds.length, 2, 'two people, two Stripe subscriptions');
+  assert.equal(order.subscriptionGroups.length, 3);
+  assert.equal(order.stripeSubscriptionIds.length, 3, 'three monthly items, three Stripe subscriptions (separate direct debits)');
+  assert.equal(new Set(order.items.filter((item) => item.monthly).map((item) => item.stripeSubscriptionId)).size, 3);
   assert.equal(order.subscriptionSetupNeedsStaff, false);
   assert.ok(order.items.filter((item) => item.monthly).every((item) => item.stripeSubscriptionId && item.stripeSubscriptionItemId), 'every monthly line knows its Stripe item');
   const customer = (await db.collection('customers').doc(createHash('sha256').update(payer).digest('hex')).get()).data();
@@ -1398,29 +1399,29 @@ await test('each person gets their own monthly subscription, and staff can cance
 
   const listed = await call('GET', `/api/admin/subscriptions?orderRef=${orderRef}`, { headers: admin });
   assert.equal(listed.status, 200, listed.text);
-  const mona = listed.json.subscriptions.find((entry) => entry.names.includes('Mona Monthly'));
+  assert.ok(listed.json.subscriptions.every((entry) => entry.items.length === 1), 'one item per subscription');
+  const monaSubs = listed.json.subscriptions.filter((entry) => entry.names.includes('Mona Monthly'));
+  const lessonSub = monaSubs.find((entry) => entry.items[0].productId === lessonId);
+  const monaGold = monaSubs.find((entry) => entry.items[0].productId === 'gold-sub');
   const ben = listed.json.subscriptions.find((entry) => entry.names.includes('Ben Monthly'));
-  assert.deepEqual(mona.items.map((item) => item.productId).sort(), [lessonId, 'gold-sub'].sort());
+  assert.ok(lessonSub && monaGold && lessonSub.id !== monaGold.id, 'Mona has separate lesson and gold subscriptions');
   assert.deepEqual(ben.items.map((item) => item.monthlyAmount), [30]);
-  const memberList = await call('GET', `/api/admin/subscriptions?membershipId=${ben.membershipIds[0]}`, { headers: admin });
-  assert.deepEqual(memberList.json.subscriptions.map((entry) => entry.id), [ben.id]);
+  const memberList = await call('GET', `/api/admin/subscriptions?membershipId=${lessonSub.membershipIds[0]}`, { headers: admin });
+  assert.deepEqual(memberList.json.subscriptions.map((entry) => entry.id).sort(), [lessonSub.id, monaGold.id].sort(), 'a member lists each of their subscriptions');
 
-  assert.equal((await call('POST', `/api/admin/subscriptions/${mona.id}/cancel`)).status, 401, 'cancelling needs an admin');
-  const lesson = mona.items.find((item) => item.productId === lessonId);
-  const cancelledItem = await call('POST', `/api/admin/subscriptions/${mona.id}/items/${lesson.lineId}/cancel`, { headers: admin });
-  assert.equal(cancelledItem.status, 200, cancelledItem.text);
-  assert.equal(cancelledItem.json.cancelledWholeSubscription, false);
-  assert.equal(cancelledItem.json.subscription.status, 'active', 'the gold subscription keeps being paid');
-  assert.deepEqual(cancelledItem.json.subscription.items.map((item) => item.status).sort(), ['active', 'cancelled']);
-  const monaMember = (await db.collection('memberships').doc(mona.membershipIds[0]).get()).data();
+  assert.equal((await call('POST', `/api/admin/subscriptions/${lessonSub.id}/cancel`)).status, 401, 'cancelling needs an admin');
+  const lesson = lessonSub.items[0];
+  const cancelled = await call('POST', `/api/admin/subscriptions/${lessonSub.id}/cancel`, { headers: admin });
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal(cancelled.json.cancelledWholeSubscription, true);
+  assert.equal(cancelled.json.subscription.status, 'cancelled', 'the lesson direct debit stops');
+  const stillPaying = (await call('GET', `/api/admin/subscriptions?membershipId=${lessonSub.membershipIds[0]}`, { headers: admin })).json.subscriptions;
+  assert.equal(stillPaying.find((entry) => entry.id === monaGold.id).status, 'active', 'the gold subscription keeps being paid');
+  const monaMember = (await db.collection('memberships').doc(lessonSub.membershipIds[0]).get()).data();
   assert.ok(monaMember.privileges.find((privilege) => privilege.productId === lessonId).endedAt, 'the lesson entitlement ends');
   assert.ok(!monaMember.privileges.find((privilege) => privilege.productId === 'gold-sub').endedAt);
-  assert.equal((await call('POST', `/api/admin/subscriptions/${mona.id}/items/${lesson.lineId}/cancel`, { headers: admin })).status, 409);
-
-  const benLast = await call('POST', `/api/admin/subscriptions/${ben.id}/items/${ben.items[0].lineId}/cancel`, { headers: admin });
-  assert.equal(benLast.status, 200, benLast.text);
-  assert.equal(benLast.json.cancelledWholeSubscription, true, 'cancelling the last item cancels the subscription');
-  assert.equal(benLast.json.subscription.status, 'cancelled');
+  assert.deepEqual([...monaMember.subscriptionIds].sort(), [lessonSub.id, monaGold.id].sort());
+  assert.equal((await call('POST', `/api/admin/subscriptions/${lessonSub.id}/cancel`, { headers: admin })).status, 409);
   const afterOrder = (await db.collection('orders').doc(orderRef).get()).data();
   assert.ok(afterOrder.items.find((item) => item.lineId === lesson.lineId).monthlyCancelledAt);
 
@@ -1428,15 +1429,16 @@ await test('each person gets their own monthly subscription, and staff can cance
   assert.equal(replay.status, 200);
   const replayed = (await db.collection('orders').doc(orderRef).get()).data();
   assert.deepEqual(replayed.stripeSubscriptionIds, order.stripeSubscriptionIds, 'a replayed webhook creates no new subscriptions');
-  assert.equal((await db.collection('subscriptions').doc(mona.id).get()).data().items.find((item) => item.lineId === lesson.lineId).status, 'cancelled', 'and does not undo cancellations');
+  assert.equal((await db.collection('subscriptions').doc(lessonSub.id).get()).data().status, 'cancelled', 'and does not undo cancellations');
 
   const failing = email('sub-fail');
   const failedRef = await buy(failing, basketFor(failing), { billingMode: 'monthly' });
   const failedOrder = (await db.collection('orders').doc(failedRef).get()).data();
   assert.equal(failedOrder.subscriptionSetupNeedsStaff, true, 'a refused extra subscription is flagged for staff');
   const failedList = await call('GET', `/api/admin/subscriptions?orderRef=${failedRef}`, { headers: admin });
-  assert.equal(failedList.json.subscriptions.length, 1);
-  assert.deepEqual(failedList.json.failed.map((group) => [group.names, group.error]), [[['Ben Monthly'], 'Your card was declined.']]);
+  assert.equal(failedList.json.subscriptions.length, 1, 'only the Checkout subscription exists');
+  assert.equal(failedList.json.failed.length, 2);
+  assert.ok(failedList.json.failed.every((group) => group.itemNames.length === 1 && group.error === 'Your card was declined.'), 'staff see which item failed');
   await db.collection('products').doc(lessonId).delete();
 });
 

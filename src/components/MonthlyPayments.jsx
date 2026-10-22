@@ -5,7 +5,7 @@ import { monthlyTotal } from '../utils/subscriptions';
 const date = (iso) => iso ? new Date(iso).toLocaleDateString('en-GB') : '';
 const money = (value) => `£${Number(value || 0).toFixed(2)}`;
 
-// Each person (or family) pays monthly items on their own Stripe subscription; staff can stop single items or all of them.
+// Each monthly item is its own Stripe subscription (a separate direct debit), so staff cancel them one at a time.
 export default function MonthlyPayments({ adminUser, query }) {
   const [state, setState] = useState({ loading: true, subscriptions: [], failed: [], error: '' });
   const [busy, setBusy] = useState('');
@@ -30,18 +30,13 @@ export default function MonthlyPayments({ adminUser, query }) {
   }, [request, query]);
 
   const cancel = async () => {
-    const { subscription, item } = confirming;
-    setBusy(`${subscription.id}:${item?.lineId || ''}`);
+    const { subscription } = confirming;
+    setBusy(subscription.id);
     setMessage('');
     try {
-      const path = item
-        ? `/api/admin/subscriptions/${encodeURIComponent(subscription.id)}/items/${encodeURIComponent(item.lineId)}/cancel`
-        : `/api/admin/subscriptions/${encodeURIComponent(subscription.id)}/cancel`;
-      const result = await request(path, 'POST');
+      const result = await request(`/api/admin/subscriptions/${encodeURIComponent(subscription.id)}/cancel`, 'POST');
       setState((current) => ({ ...current, subscriptions: current.subscriptions.map((entry) => entry.id === result.subscription.id ? result.subscription : entry) }));
-      setMessage(result.cancelledWholeSubscription
-        ? `Subscription ${subscription.id} cancelled in Stripe. No further monthly payments will be taken.`
-        : `${item.name} removed from subscription ${subscription.id}. The other items carry on at the lower monthly amount.`);
+      setMessage(`Subscription ${subscription.id} cancelled in Stripe. No further payments will be taken for it; other monthly payments carry on.`);
       setConfirming(null);
     } catch (error) {
       setMessage('');
@@ -60,34 +55,31 @@ export default function MonthlyPayments({ adminUser, query }) {
       {message && <p className="StatusText" role="status">{message}</p>}
       {state.failed.map((group) => (
         <p key={group.key} className="StatusTextError" role="alert">
-          No monthly subscription could be set up for {group.names.join(', ') || 'one person'}: {group.error} Their first month was paid at checkout; arrange the following payments with them.
+          No monthly subscription could be set up for {(group.itemNames || []).join(', ') || 'an item'}{group.names.length ? ` (${group.names.join(', ')})` : ''}: {group.error} The first month was paid at checkout; arrange the following payments with them.
         </p>
       ))}
-      {state.subscriptions.map((subscription) => (
-        <div key={subscription.id} className="SpaceT4">
-          <p><strong>{subscription.names.join(', ') || subscription.email}</strong> — <code>{subscription.id}</code> — {subscription.status === 'active' ? `${money(monthlyTotal(subscription))} a month` : `cancelled ${date(subscription.cancelledAt)}`} (order {subscription.orderRef})</p>
-          <table className="ReportsTable">
-            <thead><tr><th scope="col">Item</th><th scope="col">Monthly</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
-            <tbody>
-              {subscription.items.map((item) => (
-                <tr key={item.lineId}>
-                  <td>{item.name}</td>
-                  <td>{money(item.monthlyAmount)}</td>
-                  <td>{item.status === 'active' ? 'Active' : `Cancelled ${date(item.cancelledAt)}`}</td>
-                  <td>{item.status === 'active' && <button className="EditorCommand" type="button" disabled={Boolean(busy)} onClick={() => setConfirming({ subscription, item })}>Cancel item</button>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {subscription.status === 'active' && <button className="EditorCommand SpaceT4" type="button" disabled={Boolean(busy)} onClick={() => setConfirming({ subscription })}>Cancel subscription</button>}
-        </div>
-      ))}
+      {state.subscriptions.length > 0 && (
+        <table className="ReportsTable">
+          <thead><tr><th scope="col">Person</th><th scope="col">Item</th><th scope="col">Stripe subscription</th><th scope="col">Order</th><th scope="col">Monthly</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+          <tbody>
+            {state.subscriptions.map((subscription) => (
+              <tr key={subscription.id}>
+                <td>{subscription.names.join(', ') || subscription.email}</td>
+                <td>{subscription.items.map((item) => item.name).join(', ')}</td>
+                <td><code>{subscription.id}</code></td>
+                <td>{subscription.orderRef}</td>
+                <td>{money(subscription.status === 'active' ? monthlyTotal(subscription) : subscription.items.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0))}</td>
+                <td>{subscription.status === 'active' ? 'Active' : `Cancelled ${date(subscription.cancelledAt)}`}</td>
+                <td>{subscription.status === 'active' && <button className="EditorCommand" type="button" disabled={Boolean(busy)} onClick={() => setConfirming({ subscription })}>Cancel</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       {confirming && (
         <div className="ReportsRowActions SpaceT4" role="group" aria-label="Confirm cancellation">
           <p className="ReportNotice">
-            {confirming.item
-              ? `Stop charging ${money(confirming.item.monthlyAmount)} a month for ${confirming.item.name}? This takes effect in Stripe now, with no refund for the current month.`
-              : `Cancel every monthly payment on ${confirming.subscription.id}? This takes effect in Stripe now, with no refund for the current month.`}
+            {`Stop the ${money(monthlyTotal(confirming.subscription))} monthly direct debit for ${confirming.subscription.items.map((item) => item.name).join(', ')} (${confirming.subscription.id})? This cancels it in Stripe now, with no refund for the current month. Other monthly payments carry on.`}
           </p>
           <button className="EditorCommand" type="button" disabled={Boolean(busy)} onClick={cancel}>{busy ? 'Cancelling…' : 'Confirm cancellation'}</button>
           <button className="EditorCommand" type="button" disabled={Boolean(busy)} onClick={() => setConfirming(null)}>Keep paying</button>

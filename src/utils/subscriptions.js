@@ -1,26 +1,18 @@
 /**
- * Monthly items become Stripe subscriptions: one per person, except people on the same family membership, who share
- * one. Stripe Checkout can only start one subscription, so the first group is created there and the others are created
- * straight after payment on the same saved payment method (their first month is charged in the checkout payment).
+ * Every monthly item becomes its own Stripe subscription, so Stripe collects each as a separate direct debit and each
+ * can be cancelled without touching the others. Stripe Checkout can only start one subscription, so the first item's is
+ * created there and the others straight after payment on the same saved payment method (their first month is charged
+ * in the checkout payment).
  */
-export const subscriptionGroupKey = (person) => person.subscriptionGroup || `person:${person.membershipId || person.id}`;
-
-export const subscriptionGroups = (items, people) => {
-  const groups = new Map();
-  for (const item of items.filter((entry) => entry.monthly)) {
-    const holders = people.filter((person) => (person.lineIds || []).includes(item.lineId));
-    const key = holders.length ? subscriptionGroupKey(holders[0]) : 'order';
-    const group = groups.get(key) || { key, membershipIds: [], names: [], lineIds: [] };
-    for (const person of holders) {
-      if (group.membershipIds.includes(person.membershipId)) continue;
-      group.membershipIds.push(person.membershipId);
-      group.names.push(`${person.firstName || ''} ${person.lastName || ''}`.trim());
-    }
-    group.lineIds.push(item.lineId);
-    groups.set(key, group);
-  }
-  return [...groups.values()].map((group, index) => ({ ...group, primary: index === 0, status: index === 0 ? 'checkout' : 'pending' }));
-};
+export const subscriptionGroups = (items, people) => items.filter((entry) => entry.monthly).map((item, index) => {
+  const holders = people.filter((person) => (person.lineIds || []).includes(item.lineId));
+  return {
+    key: `line:${item.lineId}`, lineIds: [item.lineId],
+    membershipIds: [...new Set(holders.map((person) => person.membershipId))],
+    names: [...new Set(holders.map((person) => `${person.firstName || ''} ${person.lastName || ''}`.trim()))],
+    primary: index === 0, status: index === 0 ? 'checkout' : 'pending'
+  };
+});
 
 // Stripe subscription items carry our order line id, either on the item or (for Checkout-created items) on its product.
 export const stripeItemLines = (subscription, lineIds) => {

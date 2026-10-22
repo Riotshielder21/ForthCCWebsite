@@ -288,7 +288,7 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
       .map((item) => ({ productId: item.id, name: item.name, type: item.type, orderRef, grantedAt: paidAt, ...(item.lineId ? { lineId: item.lineId } : {}) }));
     const historyEntry = { orderRef, paidAt, items: lines.map((item) => ({ id: item.id, name: item.name, price: item.price })) };
     const { id, lineIds, membershipId, existingMember, householdId, ownKitLineIds, grantMembership: _grant, subscriptionGroup: _group, ...details } = person;
-    // Only the subscription started by Checkout exists yet; other people's are linked once they are created after payment.
+    // Only the subscription started by Checkout exists yet; the others are linked once they are created after payment.
     const membershipGroup = membershipLine && (order.subscriptionGroups || []).find((group) => group.lineIds.includes(membershipLine.lineId));
     const membershipSubscription = membershipGroup && !membershipGroup.primary ? '' : stripeSubscriptionId;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
@@ -528,9 +528,9 @@ const deliverOrder = async (orderRef, fields) => {
 const periodEnd = (subscription) => subscription.current_period_end || subscription.items?.data?.[0]?.current_period_end || 0;
 
 /**
- * Gives every person (or family) on a paid order their own monthly subscription. Checkout started the first one; the
- * rest are created here on the same saved payment method, billing from the first one's next payment date because
- * their first month was part of the checkout payment. Safe to repeat: finished groups are skipped and Stripe calls
+ * Gives every monthly item on a paid order its own Stripe subscription (a separate direct debit). Checkout started the
+ * first one; the rest are created here on the same saved payment method, billing from the first one's next payment date
+ * because their first month was part of the checkout payment. Safe to repeat: finished groups are skipped and Stripe calls
  * use idempotency keys. A group Stripe refuses is marked failed for staff rather than retried.
  */
 const setUpSubscriptions = async (orderRef) => {
@@ -820,7 +820,8 @@ app.get('/api/admin/subscriptions', rateLimit(60, 60 * 1000), async (req, res) =
     const snapshot = await query.limit(50).get();
     const order = text('orderRef') ? (await adminDb.collection('orders').doc(text('orderRef')).get()).data() : null;
     res.json({ subscriptions: snapshot.docs.map(subscriptionView),
-      failed: (order?.subscriptionGroups || []).filter((group) => group.status === 'failed').map(({ key, names, lineIds, error }) => ({ key, names, lineIds, error })) });
+      failed: (order?.subscriptionGroups || []).filter((group) => group.status === 'failed').map(({ key, names, lineIds, error }) => ({ key, names, lineIds, error,
+        itemNames: lineIds.map((lineId) => order.items.find((item) => item.lineId === lineId)?.name).filter(Boolean) })) });
   } catch (error) {
     console.error('Subscription lookup failed:', error.message);
     res.status(500).json({ error: 'Could not load the monthly payments.' });
@@ -1629,9 +1630,6 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
         existingMember: Boolean(existing),
         // A membership-included item makes the person a member unless they already are one.
         ...(getsMembership.has(person.id) && !existing?.active ? { grantMembership: true } : {}),
-        // People on one family membership share a monthly subscription; everyone else gets their own.
-        ...(person.familyGroup ? { subscriptionGroup: `family:${person.familyGroup}` }
-          : existing?.family && existing.active ? { subscriptionGroup: `family:${existing.householdId}` } : {}),
         ...((existing?.householdId || contactHouseholdId)
           ? { householdId: existing?.householdId || contactHouseholdId } : {}) });
     }

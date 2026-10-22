@@ -4,27 +4,15 @@ import { subscriptionGroups, stripeItemLines, activeSubscriptionItems, monthlyTo
 
 const person = (membershipId, lineIds, extra = {}) => ({ id: membershipId, membershipId, firstName: membershipId, lastName: 'Test', lineIds, ...extra });
 
-test('each person gets their own subscription for their monthly items', () => {
+test('every monthly item gets its own subscription, even for the same person', () => {
   const items = [{ lineId: 'a1', monthly: true }, { lineId: 'a2', monthly: true }, { lineId: 'b1', monthly: true }, { lineId: 'shirt', monthly: false }];
   const groups = subscriptionGroups(items, [person('A', ['a1', 'a2', 'shirt']), person('B', ['b1'])]);
-  assert.deepEqual(groups.map(({ key, lineIds, primary, status }) => ({ key, lineIds, primary, status })), [
-    { key: 'person:A', lineIds: ['a1', 'a2'], primary: true, status: 'checkout' },
-    { key: 'person:B', lineIds: ['b1'], primary: false, status: 'pending' }
+  assert.deepEqual(groups.map(({ key, lineIds, membershipIds, primary, status }) => ({ key, lineIds, membershipIds, primary, status })), [
+    { key: 'line:a1', lineIds: ['a1'], membershipIds: ['A'], primary: true, status: 'checkout' },
+    { key: 'line:a2', lineIds: ['a2'], membershipIds: ['A'], primary: false, status: 'pending' },
+    { key: 'line:b1', lineIds: ['b1'], membershipIds: ['B'], primary: false, status: 'pending' }
   ]);
-  assert.deepEqual(groups[1].names, ['B Test']);
-});
-
-test('people on one family membership share a subscription', () => {
-  const items = [{ lineId: 'family', monthly: true }, { lineId: 'kid-sub', monthly: true }, { lineId: 'friend', monthly: true }];
-  const groups = subscriptionGroups(items, [
-    person('P', ['family'], { subscriptionGroup: 'family:family' }),
-    person('K', ['family', 'kid-sub'], { subscriptionGroup: 'family:family' }),
-    person('F', ['friend'])
-  ]);
-  assert.equal(groups.length, 2);
-  assert.deepEqual(groups[0].lineIds, ['family', 'kid-sub']);
-  assert.deepEqual(groups[0].membershipIds, ['P', 'K']);
-  assert.equal(groups[1].key, 'person:F');
+  assert.deepEqual(groups[2].names, ['B Test']);
 });
 
 test('annual-only baskets have no subscriptions', () => {
