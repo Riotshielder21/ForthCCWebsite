@@ -67,7 +67,9 @@ export const orderReport = (id, fields, members = new Map()) => ({
   total: Number.isFinite(Number(fields.total)) ? Number(fields.total) : 0,
   createdAt: reportDate(fields.createdAt),
   paidAt: reportDate(fields.paidAt),
-  stripeSubscriptionId: fields.stripeSubscriptionId || '',
+  // Orders for several people hold one Stripe subscription per person (or family).
+  stripeSubscriptionId: [...new Set([fields.stripeSubscriptionId, ...(Array.isArray(fields.stripeSubscriptionIds) ? fields.stripeSubscriptionIds : [])].filter(Boolean))].join(', '),
+  ...(fields.subscriptionSetupNeedsStaff === true ? { monthlyPaymentSetupFailed: true } : {}),
   stripePaymentIntentId: fields.stripePaymentIntentId || '',
   subscriptionWarning: subscriptionWarning(fields),
   items: (Array.isArray(fields.items) ? fields.items : []).map((item) => ({
@@ -122,7 +124,7 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     medical: fields.medical || '', swimming: fields.swimming || '',
     photoConsent: fields.consents?.photoVideo?.accepted === true || fields.photoConsent === true,
     pvg: checkLabel(fields.checks?.pvg?.expiresOn, now), safeguarding: checkLabel(fields.checks?.safeguarding?.expiresOn, now),
-    familyGroup: fields.familyGroup || '', privileges: [...new Set((fields.privileges || []).map((privilege) => String(privilege.name || privilege.productId || '')))],
+    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set((fields.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => String(privilege.name || privilege.productId || '')))],
     history: (fields.history || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
   };
 };

@@ -22,11 +22,11 @@ const toDate = (value) => {
   return Number.isFinite(date.getTime()) ? date : null;
 };
 
-/** Product ids from a membership's privileges that were granted in the current club year. */
+/** Product ids from a membership's privileges that were granted in the current club year and not since cancelled. */
 export const currentPrivilegeIds = (privileges = [], now = new Date()) => {
   const start = clubYearStart(now);
   return (Array.isArray(privileges) ? privileges : [])
-    .filter((privilege) => (toDate(privilege?.grantedAt) || 0) >= start)
+    .filter((privilege) => (toDate(privilege?.grantedAt) || 0) >= start && !(privilege?.endedAt && toDate(privilege.endedAt) <= now))
     .map((privilege) => privilege.productId)
     .filter(Boolean);
 };
