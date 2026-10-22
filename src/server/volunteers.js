@@ -10,7 +10,8 @@ const CODE_DAYS = 365;
  * Public list submissions and the volunteer reward. A sign-up is only linked to a membership when the name and a contact
  * email both match; nothing is revealed to the submitter. An admin ticks "inducted", and the code is emailed once the
  * volunteer is both inducted and an active member (re-checked after every paid order for that email). Volunteers an admin
- * also ticks "Active" are emailed the boathouse code, and again whenever it changes.
+ * also ticks "Active" are emailed the boathouse code once they are checked in (inducted) as active members, and again
+ * whenever it changes.
  */
 export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail }) => {
   const lists = () => db().collection('lists');
@@ -226,21 +227,25 @@ export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, shee
       }
       if (!inducted && document.data().discountCode) return res.status(409).json({ error: 'A code has already been issued to this volunteer.' });
       await reference.update({ inducted, inductedBy: inducted ? admin.uid : null, inductedAt: inducted ? Timestamp.now() : null });
-      res.json({ success: true, outcome: await settleVolunteer(reference) });
+      const outcome = await settleVolunteer(reference);
+      // Checking a volunteer in also gives an active volunteer the boathouse code.
+      res.json({ success: true, outcome, boathouseCode: inducted ? await settleBoathouseCode(reference) : 'not-active' });
     } catch (error) {
       console.error('Could not update volunteer:', error.message);
       res.status(500).json({ error: 'Could not update the volunteer.' });
     }
   });
 
-  /** Called after a paid order with the payer's and each person's contact email: inducted volunteers who have just become members get their code. */
+  /** Called after a paid order with the payer's and each person's contact email: inducted volunteers who have just become members get their codes. */
   const settleVolunteersFor = async (emails) => {
     if (!db()) return;
     for (const email of [...new Set(emails.filter(Boolean))].slice(0, 20)) {
       const snapshot = await lists().where('email', '==', email).limit(20).get();
       for (const document of snapshot.docs) {
         const data = document.data();
-        if (data.listType === VOLUNTEER_LIST && data.inducted === true && !data.discountCode) await settleVolunteer(document.ref);
+        if (data.listType !== VOLUNTEER_LIST || data.inducted !== true) continue;
+        if (!data.discountCode) await settleVolunteer(document.ref);
+        if (data.active === true) await settleBoathouseCode(document.ref);
       }
     }
   };

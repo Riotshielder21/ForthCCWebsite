@@ -55,7 +55,7 @@ export default function VolunteersPanel({ adminUser }) {
       const result = await request(`/api/admin/volunteers/${encodeURIComponent(volunteer.id)}`, { method: 'PATCH', body: JSON.stringify(change) });
       setMessage(`${volunteer.name}: ${'active' in change
         ? (change.active ? BOATHOUSE_OUTCOMES[result.boathouseCode] || 'Saved.' : 'No longer an active volunteer.')
-        : OUTCOMES[result.outcome] || 'Saved.'}`);
+        : `${OUTCOMES[result.outcome] || 'Saved.'}${result.boathouseCode === 'sent' ? ' Boathouse code emailed.' : ''}`}`);
       await load();
     } catch (saveError) {
       setError(saveError.message);

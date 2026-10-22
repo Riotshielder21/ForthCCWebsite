@@ -1115,6 +1115,38 @@ await test('active volunteers who are inducted members get the boathouse code on
   assert.equal((await codeMail(shared.volunteerSignup)).length, 2, 'inactive volunteers are not emailed new codes');
 });
 
+await test('an active volunteer gets the boathouse code when checked in, or when they join after induction', async () => {
+  const codeMail = async (signupId) => (await db.collection('testMail').where('signupId', '==', signupId).get()).docs
+    .map((document) => document.data()).filter((mail) => mail.kind === 'boathouse-code');
+  const signUp = async (name, address) => {
+    await call('POST', '/api/lists', { body: { name, email: address, category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
+    return (await db.collection('lists').where('email', '==', address).get()).docs[0].id;
+  };
+  const patch = async (signupId, body) => (await call('PATCH', `/api/admin/volunteers/${signupId}`, { headers: admin, body })).json;
+
+  const memberEmail = email('boathouse-member');
+  await buy(memberEmail, build(['membership-adult'], [adultDetails({ firstName: 'Bea', lastName: 'Boathouse', email: memberEmail })]));
+  const memberSignup = await signUp('Bea Boathouse', memberEmail);
+  assert.equal((await patch(memberSignup, { active: true })).boathouseCode, 'not-active', 'not checked in yet');
+  assert.equal((await codeMail(memberSignup)).length, 0);
+  const checkedIn = await patch(memberSignup, { inducted: true });
+  assert.equal(checkedIn.outcome, 'issued');
+  assert.equal(checkedIn.boathouseCode, 'sent');
+  assert.equal((await codeMail(memberSignup)).length, 1);
+  assert.equal((await patch(memberSignup, { inducted: true })).boathouseCode, 'up-to-date', 'checking in again sends nothing new');
+  assert.equal((await codeMail(memberSignup)).length, 1);
+
+  const joinerEmail = email('boathouse-joiner');
+  const joinerSignup = await signUp('Jo Joiner', joinerEmail);
+  await patch(joinerSignup, { active: true });
+  const awaiting = await patch(joinerSignup, { inducted: true });
+  assert.equal(awaiting.outcome, 'awaiting-membership');
+  assert.equal(awaiting.boathouseCode, 'not-active');
+  await buy(joinerEmail, build(['membership-adult'], [adultDetails({ firstName: 'Jo', lastName: 'Joiner', email: joinerEmail })]));
+  assert.equal((await codeMail(joinerSignup)).length, 1, 'joining sends the boathouse code to a checked-in active volunteer');
+  assert.match((await db.collection('lists').doc(joinerSignup).get()).data().discountCode || '', /^VOL-/);
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));
