@@ -11,20 +11,21 @@
 
 ## Payment schedule (agreed in outline, not built)
 
-Everything monthly ends with the club year, and every direct debit is on the 1st of the month. Items marked **Proposal** still need the club's confirmation. This "joining-month charge" is separate from the shop's **Prorated 60%** pricing mode.
+Everything monthly ends with the club year, and every direct debit is on the 1st of the month. This "joining-month charge" is separate from the shop's **Prorated 60%** pricing mode.
 
 - **Bug to fix first:** Stripe subscriptions currently have no end date, so monthly debits would carry on after 1 March, and they are taken on the day of the first checkout rather than the 1st.
 - **Checkout** charges everything due now: annual and one-off items in full, plus a joining-month charge for each monthly item on the 20% / 40% / 60% / 80% scale.
-- **Proposal, scale:** the share of the month still to run, rounded up to the next 20%, using the real month length. For a 30-day month: 1st–6th 100% (a full month), 7th–12th 80%, 13th–18th 60%, 19th–24th 40%, 25th onwards 20%.
+- **Scale (agreed):** the share of the month still to run, rounded up to the next 20%, using the real month length. For a 30-day month: 1st–6th 100% (a full month), 7th–12th 80%, 13th–18th 60%, 19th–24th 40%, 25th onwards 20%.
 - **"Pay up front" prices** use the same scale for the current month, then full months to 1 March.
 - **Subscriptions** are anchored to the 1st (`billing_cycle_anchor`, no proration), so the first direct debit is the next 1st. Items added later get their own joining-month charge and join the existing debit from the next 1st. This replaces the current "charge to the payer's usual date" logic and its 30p and renewal-race cases.
 - **Memberships and monthly items lapse on 1 March**, and no payment is taken in the last two weeks of February.
-- **Proposal, February cut-off:** the last debit is 1 February. Every subscription is set to stop at the start of 15 February (`cancel_at` with `proration_behavior=none`, set by the webhook just after Checkout because Checkout cannot set it). A failed 1 February debit can be retried only until then; any invoice still unpaid at the cut-off is voided and flagged for staff. Cover still runs to 1 March in our records. Check in Stripe test mode that cancellation stops retries and creates no credit or 1 March invoice.
-- **Buying in February (agreed):** checkout asks, for each membership and monthly item, whether it is for **this club year**, **next club year** or **both**.
-  - **This year** (1st–14th only): no subscription; the joining-month charge is the only payment.
+- **February cut-off (agreed):** the last debit is 1 February. Every subscription is set to stop at the start of 15 February (`cancel_at` with `proration_behavior=none`, set by the webhook just after Checkout because Checkout cannot set it). A failed 1 February debit can be retried only until then; any invoice still unpaid at the cut-off is voided and flagged for staff. Cover still runs to 1 March in our records. Check in Stripe test mode that cancellation stops retries and creates no credit or 1 March invoice.
+- **Buying from 1 January (agreed):** checkout asks, for each membership and monthly item, whether it is for **this club year**, **next club year** or **both**.
+  - **This year, monthly items:** in January, a subscription as usual (last debit 1 February). In February (1st–14th only), no subscription; the joining-month charge is the only payment.
+  - **This year, membership:** full price. From 8 February checkout recommends **next year** instead; an insurance rule covers the gap until 1 March.
   - **Next year:** next year's membership and up-front items are charged at checkout; monthly items get a subscription scheduled to start on 1 March, with its first debit on 1 March.
   - **Both:** this year's charge as above, plus next year's as above, in one checkout.
-  - From 15 February nothing monthly is sold for this year; only **next year** is offered for monthly items.
+  - From 15 February neither monthly items nor membership are sold for this year; only **next year** is offered.
   - Stripe check: Checkout can delay a subscription's first debit (`subscription_data[trial_end]`) only if it is at least 2 days away, so purchases on 27–28 February (29th in a leap year) need the subscription created by the webhook from the saved payment details instead.
 - **Different card or bank details** keep getting their own subscription (also on the 1st, with the same February cut-off).
 - Bacs needs a few working days for a new mandate, so someone joining at the end of a month may have their first debit a few days after the 1st.
@@ -32,7 +33,7 @@ Everything monthly ends with the club year, and every direct debit is on the 1st
 
 ## Renewals (agreed in outline, not built)
 
-- Early renewal opens on 1 January (matches the access rule above). A membership bought from then covers the next club year, starting 1 March.
+- Early renewal opens on 1 January (matches the access rule above). From then, checkout asks whether a membership is for this club year, next club year or both (see **Buying from 1 January** above).
 - A renewal is a cart that includes a membership for someone who has an active subscription, or one due to stop on 1 March.
 - **While the old subscription is still active** (before the 15 February cut-off): extend it by a year (move `cancel_at` to the next year's cut-off) and set its items to the monthly items in the renewal cart. Items not in the cart stop on 1 March. Debits carry on on the 1st with no gap.
 - **After it has stopped** (from 15 February, or earlier if cancelled; Stripe cannot restart a cancelled subscription): a new subscription through Checkout, asking for payment details again.
