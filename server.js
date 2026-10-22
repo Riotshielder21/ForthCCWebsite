@@ -774,9 +774,9 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
 
 registerGdprRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
 registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
-const { settleVolunteersFor } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
+const { settleVolunteersFor, notifyBoathouseCode } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
-registerBoathouseRoutes(app, { rateLimit, requireAdmin, db: () => adminDb });
+registerBoathouseRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, onCodeChanged: notifyBoathouseCode });
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {

@@ -5,7 +5,7 @@ import { validateBoathouseCode } from '../utils/boathouse.js';
  * The boathouse access code is kept in a private settings document (the Firestore rules deny browsers) and is only
  * read and changed through these admin routes. `version` goes up whenever the code itself changes.
  */
-export const registerBoathouseRoutes = (app, { rateLimit, requireAdmin, db }) => {
+export const registerBoathouseRoutes = (app, { rateLimit, requireAdmin, db, onCodeChanged = async () => ({ sent: 0, failed: 0 }) }) => {
   const reference = () => db().collection('settings').doc('boathouseCode');
   const publicView = (data = {}) => ({
     code: data.code || '', note: data.note || '', version: data.version || 0,
@@ -39,7 +39,13 @@ export const registerBoathouseRoutes = (app, { rateLimit, requireAdmin, db }) =>
         transaction.set(reference(), next);
         return { ...next, changed };
       });
-      res.json({ success: true, changed: saved.changed, ...publicView(saved) });
+      // A changed code goes straight to every active volunteer; a failed email is retried on the next save or "Active" tick.
+      let notified = { sent: 0, failed: 0 };
+      if (saved.changed) {
+        try { notified = await onCodeChanged(); }
+        catch (notifyError) { console.error('Boathouse code saved but volunteers not notified:', notifyError.message); notified = { sent: 0, failed: 0, error: true }; }
+      }
+      res.json({ success: true, changed: saved.changed, notified, ...publicView(saved) });
     } catch (error) {
       console.error('Could not save the boathouse code:', error.message);
       res.status(500).json({ error: 'Could not save the boathouse code.' });

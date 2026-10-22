@@ -1067,6 +1067,54 @@ await test('admins save the boathouse code privately; only a changed code bumps 
   assert.equal((await db.collection('settings').doc('boathouseCode').get()).data().note, 'Main door');
 });
 
+await test('active volunteers who are inducted members get the boathouse code once, and again when it changes', async () => {
+  const codeMail = async (signupId) => (await db.collection('testMail').where('signupId', '==', signupId).get()).docs
+    .map((document) => document.data()).filter((mail) => mail.kind === 'boathouse-code');
+  assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { body: { active: true } })).status, 401);
+  assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: 'yes' } })).status, 400);
+  assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: true, inducted: true } })).status, 400);
+
+  const ticked = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: true } });
+  assert.equal(ticked.status, 200, ticked.text);
+  assert.equal(ticked.json.boathouseCode, 'sent');
+  const current = (await db.collection('settings').doc('boathouseCode').get()).data();
+  const [first] = await codeMail(shared.volunteerSignup);
+  assert.match(first.body, new RegExp(current.code));
+  assert.equal(first.version, current.version);
+  const again = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: true } });
+  assert.equal(again.json.boathouseCode, 'up-to-date');
+  assert.equal((await codeMail(shared.volunteerSignup)).length, 1, 'no repeat email');
+  const listed = (await call('GET', '/api/admin/volunteers', { headers: admin })).json;
+  assert.equal(listed.boathouseCodeSet, true);
+  const row = listed.volunteers.find((volunteer) => volunteer.id === shared.volunteerSignup);
+  assert.equal(row.active, true);
+  assert.equal(row.boathouseCodeCurrent, true);
+
+  // Active but not inducted: nothing is sent.
+  const newcomerEmail = email('volunteer-not-inducted');
+  await call('POST', '/api/lists', { body: { name: 'Otto Outsider', email: newcomerEmail, category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
+  const newcomerId = (await db.collection('lists').where('email', '==', newcomerEmail).get()).docs[0].id;
+  assert.equal((await call('PATCH', `/api/admin/volunteers/${newcomerId}`, { headers: admin, body: { active: true } })).json.boathouseCode, 'not-active');
+  assert.equal((await codeMail(newcomerId)).length, 0);
+
+  const noteOnly = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code: current.code, note: 'Back door' } });
+  assert.equal(noteOnly.json.changed, false);
+  assert.equal((await codeMail(shared.volunteerSignup)).length, 1, 'a note-only save emails nobody');
+
+  const changed = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code: `C${run}`.slice(0, 40), note: 'Back door' } });
+  assert.equal(changed.json.changed, true);
+  assert.ok(changed.json.notified.sent >= 1, changed.text);
+  const mails = await codeMail(shared.volunteerSignup);
+  assert.equal(mails.length, 2);
+  assert.ok(mails.some((mail) => mail.version === changed.json.version && /has changed/.test(mail.body)));
+  assert.equal((await codeMail(newcomerId)).length, 0, 'still nothing for a volunteer who is not inducted');
+
+  const untick = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: false } });
+  assert.equal(untick.json.boathouseCode, 'not-active');
+  await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code: `D${run}`.slice(0, 40) } });
+  assert.equal((await codeMail(shared.volunteerSignup)).length, 2, 'inactive volunteers are not emailed new codes');
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));

@@ -42,3 +42,13 @@ export const volunteerCodeDecision = ({ inducted, codeIssued, memberActive }) =>
   if (!memberActive) return 'awaiting-membership';
   return 'issue';
 };
+
+/**
+ * Active volunteers (inducted, an active member, and ticked "Active" by an admin) are emailed each boathouse code once:
+ * `sentVersion` is the code version they last received.
+ */
+export const boathouseCodeDecision = ({ inducted, active, memberActive, codeVersion, sentVersion }) => {
+  if (!codeVersion) return 'no-code';
+  if (!inducted || !active || !memberActive) return 'not-active';
+  return sentVersion === codeVersion ? 'up-to-date' : 'send';
+};

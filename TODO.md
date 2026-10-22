@@ -63,7 +63,6 @@
 
 
 Feature WishList
-- Codes sent automatically if changed to active volunteers
 - Volunteers send codes when checked in
 - PVG and Safeguarding status on members (particularly volunteers) (expired, active, due to expire)
 - Trip single day events should get discounts automatically applied at checkout if someone has annual boathire, and / or subscription. Need to delete lock them as it breaks the feature but a subscriber gets 10 off, a equipment hire gets 10 off. either need to delete lock them or make a feature that allows a configurable subscription or service item that does this. (eg, keyhire doesnt apply discount)

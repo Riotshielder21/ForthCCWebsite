@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Timestamp } from 'firebase-admin/firestore';
-import { validateListSubmission, sheetCell, matchesVolunteer, volunteerCodeDecision, VOLUNTEER_LIST } from '../utils/lists.js';
+import { validateListSubmission, sheetCell, matchesVolunteer, volunteerCodeDecision, boathouseCodeDecision, VOLUNTEER_LIST } from '../utils/lists.js';
 import { membershipActivity } from '../utils/membership.js';
 
 const VOLUNTEER_DISCOUNT = 0.25;
@@ -9,7 +9,8 @@ const CODE_DAYS = 365;
 /**
  * Public list submissions and the volunteer reward. A sign-up is only linked to a membership when the name and a contact
  * email both match; nothing is revealed to the submitter. An admin ticks "inducted", and the code is emailed once the
- * volunteer is both inducted and an active member (re-checked after every paid order for that email).
+ * volunteer is both inducted and an active member (re-checked after every paid order for that email). Volunteers an admin
+ * also ticks "Active" are emailed the boathouse code, and again whenever it changes.
  */
 export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail }) => {
   const lists = () => db().collection('lists');
@@ -58,19 +59,65 @@ export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, shee
     }
   };
 
+  /** The sign-up's membership, linking one by name and contact email if it was not known yet. */
+  const linkVolunteerMember = async (signupReference, signup) => {
+    const memberDocument = signup.memberId ? await db().collection('memberships').doc(signup.memberId).get() : null;
+    if (memberDocument?.exists) return memberDocument;
+    const found = await findVolunteerMember(signup);
+    if (found) await signupReference.update({ memberId: found.id });
+    return found;
+  };
+
+  const boathouseCode = async () => (await db().collection('settings').doc('boathouseCode').get()).data() || {};
+
+  /** Emails the current boathouse code to an active volunteer who has not had this version yet. */
+  const settleBoathouseCode = async (signupReference, current = null) => {
+    const signup = (await signupReference.get()).data();
+    if (!signup || signup.listType !== VOLUNTEER_LIST) return 'not-volunteer';
+    const code = current || await boathouseCode();
+    const ready = { inducted: signup.inducted === true, active: signup.active === true, codeVersion: code.version || 0, sentVersion: signup.boathouseCodeVersion || 0 };
+    // Membership is checked last because it can call Stripe.
+    const withoutMembership = boathouseCodeDecision({ ...ready, memberActive: true });
+    if (withoutMembership !== 'send') return withoutMembership;
+    const memberActive = await memberIsActive(await linkVolunteerMember(signupReference, signup));
+    const decision = boathouseCodeDecision({ ...ready, memberActive });
+    if (decision !== 'send') return decision;
+    try {
+      const emailSent = await sendEmail({
+        to: signup.email, subject: 'Forth Canoe Club boathouse code',
+        body: [`Hi ${signup.name},`, '',
+          ready.sentVersion ? 'The boathouse code has changed. As an active volunteer, here is the new code:' : 'As an active volunteer, here is the current boathouse code:', '',
+          code.code, ...(code.note ? ['', code.note] : []), '',
+          'Please keep it to yourself and do not write it down where others can see it.', '',
+          'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n'),
+        record: { kind: 'boathouse-code', signupId: signupReference.id, version: code.version }
+      });
+      if (!emailSent) return 'not-sent';
+      await signupReference.update({ boathouseCodeVersion: code.version, boathouseCodeSentAt: Timestamp.now() });
+      return 'sent';
+    } catch (error) {
+      console.error('Boathouse code not emailed to a volunteer:', error.message);
+      return 'not-sent';
+    }
+  };
+
+  /** After the code changes: every active volunteer who has not had this version is emailed it. */
+  const notifyBoathouseCode = async () => {
+    if (!db()) return { sent: 0, failed: 0 };
+    const code = await boathouseCode();
+    const snapshot = await lists().where('listType', '==', VOLUNTEER_LIST).where('active', '==', true).limit(500).get();
+    const outcomes = [];
+    for (const document of snapshot.docs) outcomes.push(await settleBoathouseCode(document.ref, code));
+    return { sent: outcomes.filter((outcome) => outcome === 'sent').length, failed: outcomes.filter((outcome) => outcome === 'not-sent').length };
+  };
+
   /** Links the sign-up to a membership if one now exists, and issues the code once everything is in place. */
   const settleVolunteer = async (signupReference) => {
     const adminDb = db();
     let signup = (await signupReference.get()).data();
     if (!signup || signup.listType !== VOLUNTEER_LIST) return 'not-volunteer';
-    let memberDocument = signup.memberId ? await adminDb.collection('memberships').doc(signup.memberId).get() : null;
-    if (!memberDocument?.exists) {
-      memberDocument = await findVolunteerMember(signup);
-      if (memberDocument) {
-        await signupReference.update({ memberId: memberDocument.id });
-        signup = { ...signup, memberId: memberDocument.id };
-      }
-    }
+    const memberDocument = await linkVolunteerMember(signupReference, signup);
+    if (memberDocument) signup = { ...signup, memberId: memberDocument.id };
     if (memberDocument?.exists) {
       await memberDocument.ref.set({ volunteer: { signupId: signupReference.id, inducted: signup.inducted === true } }, { merge: true });
     }
@@ -108,7 +155,7 @@ export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, shee
       const member = volunteer ? await findVolunteerMember(value) : null;
       const reference = await lists().add({
         ...value, status: 'pending', createdAt: Timestamp.now(),
-        ...(volunteer ? { memberId: member?.id || null, inducted: false, discountCode: null } : {})
+        ...(volunteer ? { memberId: member?.id || null, inducted: false, active: false, discountCode: null } : {})
       });
       if (member) await member.ref.set({ volunteer: { signupId: reference.id, inducted: false } }, { merge: true });
 
@@ -137,6 +184,7 @@ export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, shee
       if (!db()) return res.status(503).json({ error: 'Volunteer storage is not configured.' });
       res.set('Cache-Control', 'no-store');
       const snapshot = await lists().where('listType', '==', VOLUNTEER_LIST).limit(500).get();
+      const codeVersion = (await boathouseCode()).version || 0;
       const memberIds = [...new Set(snapshot.docs.map((document) => document.data().memberId).filter(Boolean))];
       const members = memberIds.length
         ? new Map((await db().getAll(...memberIds.map((id) => db().collection('memberships').doc(id)))).filter((document) => document.exists).map((document) => [document.id, toMembershipRecord(document)]))
@@ -148,10 +196,11 @@ export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, shee
           id: document.id, name: data.name, email: data.email, items: data.items || [], notes: data.notes || '',
           memberId: member ? data.memberId : '', memberStatus: member ? membershipActivity(member) : 'not a member',
           inducted: data.inducted === true, codeIssued: Boolean(data.discountCode), codeEmailed: data.codeEmailed === true,
+          active: data.active === true, boathouseCodeCurrent: Boolean(codeVersion) && data.boathouseCodeVersion === codeVersion,
           createdAt: data.createdAt?.toMillis() || 0
         };
       }).sort((a, b) => b.createdAt - a.createdAt);
-      res.json({ volunteers });
+      res.json({ volunteers, boathouseCodeSet: Boolean(codeVersion) });
     } catch (error) {
       console.error('Could not list volunteers:', error.message);
       res.status(500).json({ error: 'Could not load volunteers.' });
@@ -163,12 +212,20 @@ export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, shee
       const admin = await requireAdmin(req, res);
       if (!admin) return;
       if (!db()) return res.status(503).json({ error: 'Volunteer storage is not configured.' });
-      if (typeof req.body.inducted !== 'boolean' || !/^[A-Za-z0-9_-]{1,128}$/.test(req.params.id)) return res.status(400).json({ error: 'Choose whether the volunteer is inducted.' });
+      const { inducted, active } = req.body;
+      const changes = Object.keys(req.body);
+      if (changes.length !== 1 || !(typeof inducted === 'boolean' || typeof active === 'boolean') || !/^[A-Za-z0-9_-]{1,128}$/.test(req.params.id)) {
+        return res.status(400).json({ error: 'Choose whether the volunteer is inducted or active.' });
+      }
       const reference = lists().doc(req.params.id);
       const document = await reference.get();
       if (!document.exists || document.data().listType !== VOLUNTEER_LIST) return res.status(404).json({ error: 'Volunteer not found.' });
-      if (!req.body.inducted && document.data().discountCode) return res.status(409).json({ error: 'A code has already been issued to this volunteer.' });
-      await reference.update({ inducted: req.body.inducted, inductedBy: req.body.inducted ? admin.uid : null, inductedAt: req.body.inducted ? Timestamp.now() : null });
+      if (typeof active === 'boolean') {
+        await reference.update({ active, activeChangedBy: admin.uid, activeChangedAt: Timestamp.now() });
+        return res.json({ success: true, boathouseCode: active ? await settleBoathouseCode(reference) : 'not-active' });
+      }
+      if (!inducted && document.data().discountCode) return res.status(409).json({ error: 'A code has already been issued to this volunteer.' });
+      await reference.update({ inducted, inductedBy: inducted ? admin.uid : null, inductedAt: inducted ? Timestamp.now() : null });
       res.json({ success: true, outcome: await settleVolunteer(reference) });
     } catch (error) {
       console.error('Could not update volunteer:', error.message);
@@ -188,5 +245,5 @@ export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, shee
     }
   };
 
-  return { settleVolunteersFor };
+  return { settleVolunteersFor, notifyBoathouseCode };
 };
