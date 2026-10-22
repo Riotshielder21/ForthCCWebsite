@@ -3,13 +3,13 @@
 ## Club-year access and renewal
 
 - A held service or subscription blocks buying it again while active.
-- Early renewal opens two months before expiry (1 January). Payment is scheduled to start on 1 March.
+- Early renewal opens two months before expiry (1 January). Next year's membership and up-front items are charged at checkout; next year's monthly items are first debited on 1 March (see **Payment schedule** below).
 - Apply consistent club-year expiry to memberships, services and subscriptions using the product's fixed, proration or subscription pricing mode.
 - A monthly Stripe subscriber stays blocked while their Stripe subscription is active.
 - Adding a product without membership correctly flags it needs membership. BUT when adding it to the cart the error doesnt go away, and then if you remove the membership after adding it, the whole contact details you entered disapear.
 - Pre-filled renewal cart: a renewal email to every member with expiring items, with a link carrying enough data to add all their items (membership and monthly items) to the cart. Sent to everyone on 1 February; before then it is optional (on request). Without it, the renewal cart is not pre-filled.
 
-## Payment schedule (agreed in outline, not built)
+## Payment schedule (agreed, not built)
 
 Everything monthly ends with the club year, and every direct debit is on the 1st of the month. This "joining-month charge" is separate from the shop's **Prorated 60%** pricing mode.
 
@@ -22,16 +22,17 @@ Everything monthly ends with the club year, and every direct debit is on the 1st
 - **February cut-off (agreed):** the last debit is 1 February. Every subscription is set to stop at the start of 15 February (`cancel_at` with `proration_behavior=none`, set by the webhook just after Checkout because Checkout cannot set it). A failed 1 February debit can be retried only until then; any invoice still unpaid at the cut-off is voided and flagged for staff. Cover still runs to 1 March in our records. Check in Stripe test mode that cancellation stops retries and creates no credit or 1 March invoice.
 - **Buying from 1 January (agreed):** checkout asks, for each membership and monthly item, whether it is for **this club year**, **next club year** or **both**.
   - **This year, monthly items:** in January, a subscription as usual (last debit 1 February). In February (1st–14th only), no subscription; the joining-month charge is the only payment.
-  - **This year, membership:** full price. From 8 February checkout recommends **next year** instead; an insurance rule covers the gap until 1 March.
+  - **This year, membership:** full price, sold until 7 February (the end of February's first week). From 8 February a membership is for **next year** only: checkout does not offer this year or both. The club's insurance rule covers the gap until 1 March.
+  - To confirm when built: from 8 February, does a next-year membership in the basket satisfy the membership requirement for this year's monthly items (bought until 14 February)?
   - **Next year:** next year's membership and up-front items are charged at checkout; monthly items get a subscription scheduled to start on 1 March, with its first debit on 1 March.
   - **Both:** this year's charge as above, plus next year's as above, in one checkout.
-  - From 15 February neither monthly items nor membership are sold for this year; only **next year** is offered.
+  - From 15 February nothing is sold for this year (monthly items stop then; this year's membership already stopped on 8 February); only **next year** is offered.
   - Stripe check: Checkout can delay a subscription's first debit (`subscription_data[trial_end]`) only if it is at least 2 days away, so purchases on 27–28 February (29th in a leap year) need the subscription created by the webhook from the saved payment details instead.
 - **Different card or bank details** keep getting their own subscription (also on the 1st, with the same February cut-off).
 - Bacs needs a few working days for a new mandate, so someone joining at the end of a month may have their first debit a few days after the 1st.
 - No live subscriptions exist yet, so nothing needs migrating.
 
-## Renewals (agreed in outline, not built)
+## Renewals (agreed, not built)
 
 - Early renewal opens on 1 January (matches the access rule above). From then, checkout asks whether a membership is for this club year, next club year or both (see **Buying from 1 January** above).
 - A renewal is a cart that includes a membership for someone who has an active subscription, or one due to stop on 1 March.
