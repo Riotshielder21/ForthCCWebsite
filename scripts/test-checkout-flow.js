@@ -1325,6 +1325,51 @@ await test('events open to non-members keep them as contacts, close on time and 
   assert.equal((await call('POST', `/api/admin/events/${memberOnlyId}/roster`, { headers: admin })).status, 400, 'no leader email to send to');
 });
 
+await test('a membership-included product makes each buyer a member, by age, until 1 March', async () => {
+  const schedule = { mode: 'weekly', startDate: '2027-05-01', startTime: '10:00', endTime: '12:00', weeks: 6, timeZone: 'Europe/London' };
+  const courseId = `E2E-INCLUDED-${run}`;
+  const tasterId = `E2E-TASTER-${run}`;
+  await db.collection('products').doc(courseId).set({ name: 'E2E beginner course', category: 'EVENTS', type: 'event-ticket', basePrice: 90, eventSchedule: schedule, membershipRule: 'included' });
+  await db.collection('products').doc(tasterId).set({ name: 'E2E taster service', category: 'SERVICES', type: 'yearly-service', pricingMode: 'fixed', basePrice: 5, membershipRule: 'none' });
+  const line = (id, category) => ({ id, lineId: `${id}-${makeId()}`, name: id, category });
+  const basket = (id, category, details) => {
+    const lines = [line(id, category)];
+    return { lines, people: assignLines([], lines, makeId).map((person) => ({ ...person, ...details })) };
+  };
+  const adultEmail = email('included-adult');
+  const adult = adultDetails({ firstName: 'Ida', lastName: 'Included', email: adultEmail });
+  const orderRef = await buy(adultEmail, basket(courseId, 'EVENTS', adult));
+  const order = (await db.collection('orders').doc(orderRef).get()).data();
+  assert.equal(order.items[0].membershipRule, 'included');
+  assert.equal(order.people[0].grantMembership, true);
+  const member = (await db.collection('memberships').doc(order.people[0].membershipId).get()).data();
+  assert.equal(member.status, 'active');
+  assert.equal(member.membershipTier, 'adult');
+  assert.equal(member.contactOnly, undefined);
+  assert.equal(member.grantMembership, undefined, 'the checkout flag is not copied onto the member');
+  assert.equal(member.validUntil.toDate().getUTCMonth(), 2, 'membership runs to 1 March');
+  assert.equal(member.justgoUpload.status, 'queued');
+  assert.deepEqual(member.membershipIncludedWith, { productId: courseId, name: 'E2E beginner course', orderRef });
+
+  const juniorEmail = email('included-junior');
+  const junior = juniorDetails({ junior: true, firstName: 'Ivy', lastName: 'Included', guardian: { ...juniorDetails().guardian, email: juniorEmail } });
+  const juniorOrder = (await db.collection('orders').doc(await buy(juniorEmail, basket(courseId, 'EVENTS', junior))).get()).data();
+  assert.equal((await db.collection('memberships').doc(juniorOrder.people[0].membershipId).get()).data().membershipTier, 'junior');
+
+  const returning = { returning: true, firstName: 'Ida', lastName: 'Included', dob: adult.dob, disclaimerAccepted: true };
+  const hire = await checkout(adultEmail, basket('boat-hire', 'SERVICES', returning));
+  assert.equal(hire.status, 200, `the new member can buy members-only items: ${hire.text}`);
+  const repeatRef = await buy(adultEmail, basket(courseId, 'EVENTS', returning));
+  const repeat = (await db.collection('orders').doc(repeatRef).get()).data();
+  assert.equal(repeat.people[0].grantMembership, undefined, 'an active member keeps their existing membership');
+  assert.equal((await db.collection('memberships').doc(repeat.people[0].membershipId).get()).data().membershipIncludedWith.orderRef, orderRef);
+
+  const visitor = email('taster');
+  const tasterOrder = (await db.collection('orders').doc(await buy(visitor, basket(tasterId, 'SERVICES', adultDetails({ firstName: 'Tess', lastName: 'Taster', email: visitor })))).get()).data();
+  assert.equal(tasterOrder.items[0].membershipRule, 'none');
+  assert.equal((await db.collection('memberships').doc(tasterOrder.people[0].membershipId).get()).data().contactOnly, true, 'open services keep non-members as contacts');
+});
+
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');
   const created = orders.filter((document) => document.data().stripeSessionId?.startsWith('cs_e2e_') && document.data().email.endsWith(`.${run}@example.test`));

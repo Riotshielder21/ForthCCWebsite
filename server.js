@@ -18,7 +18,7 @@ import { calculateCart } from './src/utils/pricing.js';
 import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
 import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
-import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
+import { sanitizePerson, validateCheckout, peopleNeedingMembership, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
 import { buildRawEmail } from './src/utils/mail.js';
@@ -278,11 +278,13 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
   for (const person of order.people || []) {
     const lines = person.lineIds.map((id) => order.items.find((item) => item.lineId === id)).filter(Boolean);
     const membershipLine = lines.find(isMembership);
+    const includedLine = !membershipLine && person.grantMembership ? lines.find(grantsMembership) : null;
+    const grantedTier = person.junior ? 'junior' : 'adult';
     // Event tickets stay in the purchase history; privileges are ongoing entitlements.
     const privileges = lines.filter((item) => !isMembership(item) && item.category !== 'EVENTS')
       .map((item) => ({ productId: item.id, name: item.name, type: item.type, orderRef, grantedAt: paidAt }));
     const historyEntry = { orderRef, paidAt, items: lines.map((item) => ({ id: item.id, name: item.name, price: item.price })) };
-    const { id, lineIds, membershipId, existingMember, householdId, ownKitLineIds, ...details } = person;
+    const { id, lineIds, membershipId, existingMember, householdId, ownKitLineIds, grantMembership: _grant, ...details } = person;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
     membershipIds.push(membershipId);
     transaction.set(adminDb.collection('memberships').doc(membershipId), {
@@ -290,7 +292,7 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
         ...details, source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`)
       }),
       // Non-members booking open events are kept as contact-only records until they buy a membership.
-      ...(membershipLine ? { contactOnly: FieldValue.delete() } : existingMember ? {} : { contactOnly: true }),
+      ...(membershipLine || includedLine ? { contactOnly: FieldValue.delete() } : existingMember ? {} : { contactOnly: true }),
       schemaVersion: CURRENT_MEMBERSHIP_VERSION,
       ...(householdId ? { householdId } : {}),
       ...Object.fromEntries(HOUSEHOLD_MEMBER_FIELDS.map((key) => [key, FieldValue.delete()])),
@@ -299,13 +301,14 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
         disclaimer: { ...order.policyVersions?.disclaimer, acceptedAt: paidAt, by: person.junior ? 'guardian' : 'self' },
         ...(existingMember ? {} : { photoVideo: { ...order.policyVersions?.photoVideo, accepted: person.photoConsent === true, recordedAt: paidAt, by: person.junior ? 'guardian' : 'self' } })
       },
-      ...(membershipLine ? { status: 'active', validUntil, membershipTier: membershipLine.membershipTier || '', justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.affiliationNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
+      ...(membershipLine || includedLine ? { status: 'active', validUntil, membershipTier: membershipLine ? membershipLine.membershipTier || '' : grantedTier, justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.affiliationNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
       ...(stripeSubscriptionId && membershipLine?.type === 'subscription'
         ? { stripeMembershipSubscriptionId: stripeSubscriptionId, stripeMembershipMode: stripeMode }
         : {}),
       ...(membershipLine && (!stripeSubscriptionId || membershipLine.type !== 'subscription')
         ? { stripeMembershipSubscriptionId: '', stripeMembershipMode: '' }
         : {}),
+      ...(includedLine ? { stripeMembershipSubscriptionId: '', stripeMembershipMode: '', membershipIncludedWith: { productId: includedLine.id, name: includedLine.name, orderRef } } : {}),
       ...(privileges.length ? { privileges: FieldValue.arrayUnion(...privileges) } : {}),
       history: FieldValue.arrayUnion(historyEntry),
       updatedAt: paidAt
@@ -1390,6 +1393,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const detailErrors = validateCheckout({ lines: selected, people });
     if (detailErrors.length) return res.status(400).json({ error: detailErrors[0], details: detailErrors });
     const needsMembership = new Set(peopleNeedingMembership(selected, people).map((person) => person.id));
+    const getsMembership = new Set(peopleGrantedMembership(selected, people).map((person) => person.id));
     const storedPeople = [];
     for (const person of withFamilyContacts(people, selected)) {
       const { existing, conflict, reason, validationError, contactHouseholdId } = await findMembership(person);
@@ -1412,7 +1416,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       }
       const buysMembership = person.lineIds.some((id) => isMembership(selected.find((line) => line.lineId === id)));
       // From 1 March every JustGo member is inactive until the nightly sync confirms their direct-debit renewal.
-      if (existing?.awaitingRenewal && renewalConfirmationOpen() && (buysMembership || needsMembership.has(person.id))) {
+      if (existing?.awaitingRenewal && renewalConfirmationOpen() && (buysMembership || needsMembership.has(person.id) || getsMembership.has(person.id))) {
         return res.status(409).json({
           code: 'renewal_unconfirmed', personIds: [person.id],
           error: `${person.firstName} ${person.lastName}'s membership renews through JustGo direct debit and is still being confirmed for the new club year. This usually completes within a day, so please try again then or contact secretary@forthcanoeclub.co.uk. There is no need to buy a membership here.`
@@ -1438,7 +1442,10 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
         });
       }
       storedPeople.push({ ...person, membershipId: existing?.id || `MEM-${crypto.randomUUID().toUpperCase()}`,
-        existingMember: Boolean(existing), ...((existing?.householdId || contactHouseholdId)
+        existingMember: Boolean(existing),
+        // A membership-included item makes the person a member unless they already are one.
+        ...(getsMembership.has(person.id) && !existing?.active ? { grantMembership: true } : {}),
+        ...((existing?.householdId || contactHouseholdId)
           ? { householdId: existing?.householdId || contactHouseholdId } : {}) });
     }
     const householdGroups = new Map();
@@ -1488,6 +1495,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const items = pricing.items.map((item) => ({
       id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, pricingMode: item.pricingMode, price: item.displayPrice,
       monthly: Boolean(item.monthlyBilling),
+      ...(lineMembershipRule(item) && item.category !== 'MERCHANDISE' && item.category !== 'VOUCHERS' ? { membershipRule: lineMembershipRule(item) } : {}),
       ...(item.tripSaving > 0 ? { tripDiscount: item.tripSaving, tripDiscountReasons: item.tripDiscountReasons } : {}),
       ...(item.size ? { size: item.size } : {}),
       ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),

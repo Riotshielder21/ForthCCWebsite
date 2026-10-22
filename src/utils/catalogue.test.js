@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseProduct, productTerms, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
+import { normaliseProduct, productTerms, productMembershipRule, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
 import { calculateCart } from './pricing.js';
 import { PRODUCTS } from '../constants/products.js';
 
@@ -83,4 +83,18 @@ test('a subscription that does not allow monthly payments is charged up front ev
   assert.equal(cart.items[2].displayPrice, 85);
   assert.equal(calculateCart([fixed], true, null, new Date(2027, 0, 9)).total, 85);
   assert.equal(calculateCart([{ ...fixed, pricingMode: 'prorated' }], true, null, new Date(2027, 0, 9)).total, 51);
+});
+
+test('the membership rule applies to events, services and subscriptions, mapping the old event flag', () => {
+  assert.equal(productMembershipRule({ category: 'EVENTS' }), 'required');
+  assert.equal(productMembershipRule({ category: 'EVENTS', membershipRequired: false }), 'none');
+  assert.equal(productMembershipRule({ category: 'SERVICES', membershipRule: 'included' }), 'included');
+  assert.equal(productMembershipRule({ category: 'SUBSCRIPTIONS', membershipRule: 'bogus' }), 'required');
+  assert.equal(productMembershipRule({ category: 'MERCHANDISE', membershipRule: 'included' }), null);
+  const open = normaliseProduct({ id: 'e', category: 'EVENTS', membershipRule: 'none' });
+  assert.equal(open.membershipRequired, false);
+  const included = normaliseProduct({ id: 'e', category: 'EVENTS', membershipRequired: false, membershipRule: 'included' });
+  assert.deepEqual([included.membershipRule, included.membershipRequired], ['included', true]);
+  const merch = normaliseProduct({ id: 'm', category: 'MERCHANDISE', membershipRule: 'included', membershipRequired: true });
+  assert.equal('membershipRule' in merch || 'membershipRequired' in merch, false);
 });

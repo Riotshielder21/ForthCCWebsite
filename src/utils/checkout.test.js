@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem, displayName
+  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, peopleGrantedMembership, requiresMembership, grantsMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem, displayName
 } from './checkout.js';
 
 const now = new Date(2026, 9, 11);
@@ -75,6 +75,29 @@ test('people with only non-membership items need an existing membership', () => 
   assert.equal(peopleNeedingMembership(lines, people).length, 0);
   const hireOnly = assignLines([], [hire], makeId);
   assert.equal(peopleNeedingMembership([hire], hireOnly).length, 1);
+});
+
+test('the membership rule decides who needs, or is given, a membership', () => {
+  const course = { id: 'course', lineId: 'c1', name: 'Course', category: 'EVENTS', membershipRule: 'included' };
+  const open = { id: 'open', lineId: 'o1', name: 'Open day', category: 'EVENTS', membershipRule: 'none' };
+  const coaching = { id: 'coach', lineId: 's1', name: 'Coaching', category: 'SUBSCRIPTIONS', membershipRule: 'required' };
+  assert.equal(requiresMembership(coaching), true);
+  assert.equal(requiresMembership(open), false);
+  assert.equal(requiresMembership(course), false);
+  assert.equal(grantsMembership(course), true);
+  assert.equal(grantsMembership(junior(1)), false);
+  // Older lines without a rule: services need membership, events opt out with membershipRequired.
+  assert.equal(requiresMembership(hire), true);
+  assert.equal(requiresMembership({ category: 'EVENTS', membershipRequired: false }), false);
+  const lines = [course, open, coaching, junior(2)];
+  const people = [
+    { ...blankPerson('course-and-coaching'), lineIds: ['c1', 's1'] },
+    { ...blankPerson('open-only'), lineIds: ['o1'] },
+    { ...blankPerson('coaching-only'), lineIds: ['s1'] },
+    { ...blankPerson('member-and-course'), lineIds: ['j2', 'c1'] }
+  ];
+  assert.deepEqual(peopleNeedingMembership(lines, people).map((person) => person.id), ['coaching-only']);
+  assert.deepEqual(peopleGrantedMembership(lines, people).map((person) => person.id), ['course-and-coaching']);
 });
 
 test('draft storage round-trips and ignores corrupt data', () => {

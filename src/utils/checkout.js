@@ -1,3 +1,4 @@
+import { productMembershipRule } from './catalogue.js';
 // Placeholder wording: replace with the club's approved disclaimer; the new wording is recorded as the next policy version after release.
 export const DISCLAIMER_TEXT = 'I confirm the details given are correct and I accept the Forth Canoe Club participation and safety disclaimer. For under-18s, the parent/guardian accepts on their behalf.';
 export const PHOTO_CONSENT_TEXT = 'Photo and video consent';
@@ -210,13 +211,21 @@ export const validateCheckout = ({ lines, people, now = new Date() }) => {
   return errors;
 };
 
-// Events need membership unless an admin unticks it; everything else that is not a membership does.
-export const requiresMembership = (line) => !isMembership(line) && !(line.category === 'EVENTS' && line.membershipRequired === false);
+// Membership lines never need one. Events, services and subscriptions follow their membership rule; anything else does.
+export const lineMembershipRule = (line) => isMembership(line) ? null : productMembershipRule(line) || 'required';
+export const requiresMembership = (line) => !isMembership(line) && lineMembershipRule(line) === 'required';
+export const grantsMembership = (line) => !isMembership(line) && lineMembershipRule(line) === 'included';
 
-// People buying items that need membership who have no membership line of their own.
+// People buying items that need membership who have no membership line (or membership-included item) of their own.
 export const peopleNeedingMembership = (lines, people) => people.filter((person) => {
   const held = person.lineIds.map((id) => lines.find((line) => line.lineId === id)).filter(Boolean);
-  return held.some(requiresMembership) && !held.some(isMembership);
+  return held.some(requiresMembership) && !held.some((line) => isMembership(line) || grantsMembership(line));
+});
+
+// People who become members through a membership-included item rather than a membership line.
+export const peopleGrantedMembership = (lines, people) => people.filter((person) => {
+  const held = person.lineIds.map((id) => lines.find((line) => line.lineId === id)).filter(Boolean);
+  return held.some(grantsMembership) && !held.some(isMembership);
 });
 
 export const normaliseName = (value) => String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();

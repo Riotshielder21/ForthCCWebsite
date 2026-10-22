@@ -1,9 +1,5 @@
 # TODO
 
-## Shop types and vouchers
-
-- Course and shop products need an admin-controlled membership rule: no membership required, membership required, or membership included. Checkout and reports must enforce and show the selected rule.
-
 ## Club-year access and renewal
 
 - A held service or subscription blocks buying it again while active.

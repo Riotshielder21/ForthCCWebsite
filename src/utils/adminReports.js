@@ -101,6 +101,7 @@ export const membershipReport = (id, fields, now = new Date(), household = field
   return {
     id, name: `${fields.firstName || ''} ${fields.lastName || ''}`.trim() || fields.name || '', email: household.email || fields.email || '',
     affiliationNumber: fields.affiliationNumber || '', tier: fields.membershipTier || '',
+    includedWith: fields.membershipIncludedWith?.name || '',
     status: membershipActivity({ status: fields.status, validUntil: expiry, renewalMethod: fields.renewalMethod, justgoSyncStatus: fields.justgoSyncStatus, lastJustgoSync: reportDate(fields.lastJustgoSync) }, now) === 'awaiting-renewal'
       ? 'Awaiting renewal'
       : memberState({ status: fields.status, expiry: fields.validUntil || fields.expiry }, now),

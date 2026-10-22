@@ -21,7 +21,24 @@ export const productTerms = (product) => {
   return { type: CATEGORY_TYPES[product.category] || 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false };
 };
 
-export const normaliseProduct = (product) => ({ ...product, ...productTerms(product) });
+/**
+ * Who can buy an event, service or subscription: 'required' needs a club membership, 'none' is open to non-members
+ * (kept as contacts), and 'included' makes each person a member for the club year. Older products only had
+ * `membershipRequired`, which events could turn off.
+ */
+export const MEMBERSHIP_RULES = ['required', 'none', 'included'];
+const MEMBERSHIP_RULE_CATEGORIES = ['EVENTS', 'SERVICES', 'SUBSCRIPTIONS'];
+export const productMembershipRule = (product) => {
+  if (!MEMBERSHIP_RULE_CATEGORIES.includes(product.category)) return null;
+  if (MEMBERSHIP_RULES.includes(product.membershipRule)) return product.membershipRule;
+  return product.category === 'EVENTS' && product.membershipRequired === false ? 'none' : 'required';
+};
+
+export const normaliseProduct = (product) => {
+  const rule = productMembershipRule(product);
+  const { membershipRule: _rule, membershipRequired: _required, ...rest } = product;
+  return { ...rest, ...productTerms(product), ...(rule ? { membershipRule: rule, membershipRequired: rule !== 'none' } : {}) };
+};
 
 // Locked products (the trip discount depends on them) stay in the shop even if a deletion was saved.
 export const resolveCatalogue = (defaults, saved) => {

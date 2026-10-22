@@ -120,6 +120,8 @@ Generated voucher codes store the shop item they were bought from (`sourceProduc
 
 A voucher item's **Edit** button in that list sets what its credit can be spent on (`voucherScope` on the product: categories, products or both; membership is never allowed). With nothing ticked the credit covers everything except membership. Each order line copies the scope at checkout, and the generated code stores it as `categories`/`productIds`, so changes only affect vouchers bought afterwards. Custom discount codes are unchanged.
 
+Events, services and subscriptions also have a **Membership** rule (`membershipRule`, see `productMembershipRule` in `src/utils/catalogue.js`): *Club members only* (`required`, the default), *Open to non-members* (`none`; buyers who are not members are kept as contact-only records outside the member register) or *Club membership included* (`included`). An included product makes each person who is not already an active member an adult or junior member (by age) until 1 March: the order person carries `grantMembership`, and payment writes the same active membership, tier and queued JustGo upload as buying a membership, plus `membershipIncludedWith` (shown in the member register as "Included with …"). Active members pay the same price and keep their membership. Older events saved with `membershipRequired: false` read as `none`; `membershipRequired` is still written for compatibility. Order lines record the rule.
+
 ## Live Mode (`WEBSITE_ISLIVE`)
 
 `WEBSITE_ISLIVE` tells the API whether the site holds real customers' data. It defaults to false. Set it with the `WEBSITE_ISLIVE` GitHub secret (the deploy workflow passes it to Cloud Run) and locally in `.env`.

@@ -27,7 +27,14 @@ const EMPTY_PRODUCT = {
   capacity: '',
   variants: [{ size: '', stock: 0 }],
   eventSchedule: { mode: 'single', startDate: '', startTime: '15:00', endTime: '17:00', days: 1, weeks: 1, timeZone: 'Europe/London' },
-  leaderName: '', leaderEmail: '', closeDate: '', membershipRequired: true
+  leaderName: '', leaderEmail: '', closeDate: '', membershipRule: 'required'
+};
+
+const MEMBERSHIP_RULE_LABELS = { required: 'Club members only', none: 'Open to non-members', included: 'Club membership included' };
+const MEMBERSHIP_RULE_NOTES = {
+  required: 'Buyers must already be members, or add a membership to their basket.',
+  none: 'Non-members can buy. They are kept as contacts, not members, and do not appear in the member register.',
+  included: 'Each person becomes an adult or junior club member (by age) until 1 March. Existing members pay the same price.'
 };
 
 const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description', 'imageUrl'];
@@ -238,8 +245,6 @@ export default function AdminPage({ products, onNavigate }) {
               <label className="FormLabel">Capacity (tickets available, blank for unlimited)<input className="FormInput" type="number" min="1" step="1" value={draft.capacity ?? ''} onChange={(event) => updateDraft('capacity', event.target.value)} /></label>
               <p className="text_container text_container_note">When every ticket is sold the event leaves the shop. Delete a refunded order in Reports to free its place.</p>
               <p className="text_container text_container_note">One ticket covers the whole event/course. Times are Europe/London.</p>
-              <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.membershipRequired !== false} onChange={(event) => updateDraft('membershipRequired', event.target.checked)} /> Attendees must be club members</label>
-              {draft.membershipRequired === false && <p className="text_container text_container_note">Non-members can book. They are kept as contacts, not members, and do not appear in the member register.</p>}
             </fieldset>}
             {draft.category === 'EVENTS' && <fieldset className="AdminEventSchedule">
               <legend className="tile_heading_bold_1">Event leader</legend>
@@ -268,6 +273,10 @@ export default function AdminPage({ products, onNavigate }) {
               <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.allowMonthly === true} onChange={(event) => updateDraft('allowMonthly', event.target.checked)} /> Allow monthly payments</label>
               <p className="text_container text_container_note">{draft.allowMonthly ? 'Customers can pay monthly by direct debit, or pay up front to 1 March.' : 'Customers pay up front for the months left until 1 March.'}</p>
               <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.hasAnnualDiscount} onChange={(event) => updateDraft('hasAnnualDiscount', event.target.checked)} /> 20% off when paid up front</label>
+            </>}
+            {draft.membershipRule && <>
+              <label className="FormLabel">Membership<select className="FormInput" value={draft.membershipRule} onChange={(event) => updateDraft('membershipRule', event.target.value)}>{Object.entries(MEMBERSHIP_RULE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <p className="text_container text_container_note">{MEMBERSHIP_RULE_NOTES[draft.membershipRule]}</p>
             </>}
             <label className="FormLabel">Product image<input key={fileInputKey} className="FormInput" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={(event) => { setImageFile(event.target.files?.[0] || null); setMessage(''); setError(''); }} /></label>
             <button type="button" className="EditorCommand" onClick={handleImageUpload} disabled={!imageFile || uploading}>

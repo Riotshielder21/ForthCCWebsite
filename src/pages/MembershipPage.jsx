@@ -165,7 +165,8 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
               {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
               {isTripEvent(product) && <p className="text_container text_container_note">£10 off with annual boat hire, and £10 off with a coaching subscription.</p>}
               {product.category === 'EVENTS' && product.leaderName && <p className="text_container SpaceB4">Led by {product.leaderName}{product.leaderEmail && <> (<a className="ContentLink" href={`mailto:${product.leaderEmail}`}>{product.leaderEmail}</a>)</>}</p>}
-              {product.category === 'EVENTS' && product.membershipRequired === false && <p className="text_container text_container_note">Open to non-members.</p>}
+              {product.membershipRule === 'none' && <p className="text_container text_container_note">Open to non-members.</p>}
+              {product.membershipRule === 'included' && <p className="text_container text_container_note">Club membership included until 1 March.</p>}
               {product.category === 'EVENTS' && product.closeDate && <p className="text_container SpaceB4">{closed ? 'Bookings have closed.' : `Book by ${formatDate(product.closeDate)}.`}</p>}
               {placesLeft > 0 && placesLeft <= 5 && <p className="text_container SpaceB4" role="status">Only {placesLeft} {placesLeft === 1 ? 'place' : 'places'} left</p>}
               {merchandise && sizes.length > 0 && (

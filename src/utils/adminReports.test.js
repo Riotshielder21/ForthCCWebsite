@@ -72,6 +72,9 @@ test('one membership report covers JustGo and website records', () => {
   assert.equal(normalized.email, 'pat@example.com');
   assert.equal(normalized.parent, 'Pat Web, Parent, 7');
   assert.equal(normalized.address, '2 Road, EH2');
+  const included = membershipReport('MEM-3', { firstName: 'Cal', lastName: 'Course', membershipTier: 'adult', status: 'active', validUntil: '2099-03-01',
+    membershipIncludedWith: { productId: 'course', name: 'Beginner course', orderRef: 'FCC-1' } });
+  assert.deepEqual([included.tier, included.includedWith], ['adult', 'Beginner course']);
 });
 
 test('event attendee exports use the linked household as the canonical source of contact details', () => {
