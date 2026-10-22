@@ -1,21 +1,24 @@
 import { isLockedProduct } from './tripDiscount.js';
 
 /**
- * How a product is charged. Fixed is the full price whenever bought; prorated is the full price, or 60% when four or fewer
- * months of the club year remain; subscription is a monthly price charged up to the next 1 March.
+ * How a product is charged. Fixed is the full price whenever bought; prorated is the full price, or 60% from 1 October;
+ * subscription ("prorated monthly" for services) is a monthly price for each month left until the next 1 March.
  */
 export const PRICING_MODES = ['fixed', 'prorated', 'subscription'];
+const LEGACY_FIXED_SERVICES = ['keyhire'];
 const CATEGORY_TYPES = { VOUCHERS: 'voucher', EVENTS: 'event-ticket', SUBSCRIPTIONS: 'subscription', MERCHANDISE: 'merchandise' };
 
 /**
- * The type follows the category; only services choose a pricing mode. Older saved products are mapped here, so a
- * `yearly-service` becomes a fixed service and keeps its price. Only subscription pricing can be paid monthly.
+ * The type follows the category; only services choose a pricing mode. Older saved products are mapped here: a
+ * `yearly-service` was always prorated, so it stays prorated, except key hire, which is a fixed price. Only subscription
+ * pricing can be paid monthly, and it allows monthly payments unless an admin turns them off.
  */
 export const productTerms = (product) => {
   if (product.category === 'MEMBERSHIP') return { type: product.type === 'external' ? 'external' : 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false };
   if (product.category === 'SERVICES') {
-    const pricingMode = PRICING_MODES.includes(product.pricingMode) ? product.pricingMode : product.type === 'subscription' ? 'subscription' : 'fixed';
-    return { type: pricingMode === 'subscription' ? 'subscription' : 'yearly-service', pricingMode, allowMonthly: pricingMode === 'subscription' && product.allowMonthly === true };
+    const legacy = product.type === 'subscription' ? 'subscription' : product.type === 'yearly-service' && !LEGACY_FIXED_SERVICES.includes(product.id) ? 'prorated' : 'fixed';
+    const pricingMode = PRICING_MODES.includes(product.pricingMode) ? product.pricingMode : legacy;
+    return { type: pricingMode === 'subscription' ? 'subscription' : 'yearly-service', pricingMode, allowMonthly: pricingMode === 'subscription' && product.allowMonthly !== false };
   }
   if (product.category === 'SUBSCRIPTIONS') return { type: 'subscription', pricingMode: 'subscription', allowMonthly: product.allowMonthly !== false };
   return { type: CATEGORY_TYPES[product.category] || 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false };

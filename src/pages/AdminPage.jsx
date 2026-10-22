@@ -38,7 +38,7 @@ const MEMBERSHIP_RULE_NOTES = {
 };
 
 const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description', 'imageUrl'];
-const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorated: 60% when 4 or fewer months of the club year remain', subscription: 'Subscription: monthly price, charged to 1 March' };
+const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorated 60%: full price, then 60% from 1 October', subscription: 'Prorated monthly: monthly price for each month left to 1 March' };
 
 export default function AdminPage({ products, onNavigate }) {
   const editor = usePageEditor();
@@ -57,6 +57,7 @@ export default function AdminPage({ products, onNavigate }) {
     const next = { ...current, [field]: value };
     if (field === 'category' && value === 'SUBSCRIPTIONS' && current.category !== 'SUBSCRIPTIONS') next.allowMonthly = true;
     if (field === 'category' && value === 'SERVICES' && current.category !== 'SERVICES') next.pricingMode = 'fixed';
+    if (field === 'pricingMode' && value === 'subscription' && current.pricingMode !== 'subscription') next.allowMonthly = true;
     const terms = normaliseProduct(next);
     return { ...terms, ...(terms.pricingMode === 'subscription' ? {} : { hasAnnualDiscount: false }) };
   });
@@ -268,7 +269,7 @@ export default function AdminPage({ products, onNavigate }) {
             </fieldset>}
             {draft.category === 'SERVICES'
               ? <label className="FormLabel">Pricing<select className="FormInput" value={draft.pricingMode} onChange={(event) => updateDraft('pricingMode', event.target.value)}>{Object.entries(PRICING_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              : <p className="text_container text_container_note">{{ MEMBERSHIP: draft.type === 'external' ? 'External link: bought through JustGo, not this shop.' : 'Membership is a fixed club-year price. It is never prorated or paid monthly.', SUBSCRIPTIONS: PRICING_LABELS.subscription, VOUCHERS: 'Voucher: a fixed price that issues a credit code.', EVENTS: 'Event ticket: a fixed price for the whole event or course.', MERCHANDISE: 'Merchandise: a fixed price per item.' }[draft.category]}</p>}
+              : <p className="text_container text_container_note">{{ MEMBERSHIP: draft.type === 'external' ? 'External link: bought through JustGo, not this shop.' : 'Membership is a fixed club-year price. It is never prorated or paid monthly.', SUBSCRIPTIONS: 'Subscription: monthly price for each month left to 1 March.', VOUCHERS: 'Voucher: a fixed price that issues a credit code.', EVENTS: 'Event ticket: a fixed price for the whole event or course.', MERCHANDISE: 'Merchandise: a fixed price per item.' }[draft.category]}</p>}
             {draft.pricingMode === 'subscription' && <>
               <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.allowMonthly === true} onChange={(event) => updateDraft('allowMonthly', event.target.checked)} /> Allow monthly payments</label>
               <p className="text_container text_container_note">{draft.allowMonthly ? 'Customers can pay monthly by direct debit, or pay up front to 1 March.' : 'Customers pay up front for the months left until 1 March.'}</p>

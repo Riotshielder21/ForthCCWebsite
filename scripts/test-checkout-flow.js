@@ -393,7 +393,7 @@ await test('multiple copies of shop services can be bought by different members 
   );
   const now = new Date();
   const monthsRemaining = Math.max(1, (now.getMonth() >= 2 ? 1 : 0) * 12 + 2 - now.getMonth());
-  const boatPrice = monthsRemaining <= 4 ? 51 : 85;
+  const boatPrice = monthsRemaining <= 5 ? 51 : 85;
   const goldPrice = Math.round(30 * monthsRemaining * 0.8 * 100) / 100;
   assert.equal(Number(order.total), 60 + boatPrice * 2 + 100 + goldPrice, 'each member and product line is priced, including the annual gold subscription');
   assert.equal(Number(order.total), order.items.reduce((total, item) => total + Number(item.price), 0));
@@ -606,12 +606,14 @@ await test('discount codes: create, edit, scope, disable, apply', async () => {
   const member = { returning: true, firstName: 'Alex', lastName: 'Adult', dob: yearsAgo(35), disclaimerAccepted: true };
   const scoped = await checkout(shared.alex, build(['boat-hire'], [member]), { discountCode: code });
   assert.equal(scoped.status, 200);
-  assert.equal(Number((await db.collection('orders').doc(scoped.json.orderRef).get()).data().total), 68);
+  // Boat hire is prorated: 60% from 1 October to the end of February.
+  const boatPrice = [9, 10, 11, 0, 1].includes(new Date().getMonth()) ? 51 : 85;
+  assert.equal(Number((await db.collection('orders').doc(scoped.json.orderRef).get()).data().total), Math.round(boatPrice * 0.8 * 100) / 100);
   const notApplicable = await checkout(email('newjoiner'), build(['membership-adult'], [adultDetails({ email: email('newjoiner') })]), { discountCode: code });
   assert.equal(notApplicable.status, 400);
   assert.equal((await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { label: 'Boat 50', discountType: 'multiplier', discountValue: 0.5, productIds: ['boat-hire'] } })).status, 200);
   const edited = await checkout(shared.alex, build(['boat-hire'], [member]), { discountCode: code });
-  assert.equal(Number((await db.collection('orders').doc(edited.json.orderRef).get()).data().total), 42.5);
+  assert.equal(Number((await db.collection('orders').doc(edited.json.orderRef).get()).data().total), boatPrice * 0.5);
   await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { active: false } });
   assert.equal((await call('POST', '/api/discount-codes/validate', { body: { code } })).json.valid, false);
   await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { active: true } });

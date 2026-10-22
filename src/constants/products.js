@@ -14,7 +14,8 @@ export const PRODUCTS = [
     category: 'SERVICES',
     basePrice: 85.00,
     description: 'Unlimited kit hire for the club year.',
-    type: 'yearly-service'
+    type: 'yearly-service',
+    pricingMode: 'prorated'
   },
   {
     id: 'club-membership',
@@ -89,6 +90,7 @@ export const PRODUCTS = [
     description: 'Get access to the boathouse and facilities with our key hire. Pay annually only.',
     hasAnnualDiscount: false,
     allowsAnnualStacking: false,
-    type: 'yearly-service'
+    type: 'yearly-service',
+    pricingMode: 'fixed'
   }
 ];

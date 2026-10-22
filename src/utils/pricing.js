@@ -1,5 +1,8 @@
 import { DISCOUNTS } from '../constants/products.js';
 
+// Prorated items drop to 60% from 1 October, when five months of the club year (Oct–Feb) remain.
+export const PRORATED_MONTHS = 5;
+
 const money = (value) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) => {
@@ -33,7 +36,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
       recurringMonthlyCost = monthlyBilling ? monthly : 0;
       label = monthlyBilling ? 'Monthly' : `Until ${nextClubYearStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
     } else if (pricingMode === 'prorated') {
-      displayPrice = money(item.basePrice * (monthsRemaining <= 4 ? 0.6 : 1));
+      displayPrice = money(item.basePrice * (monthsRemaining <= PRORATED_MONTHS ? 0.6 : 1));
       subtotalPrice = displayPrice;
       annualSaving = money(item.basePrice - displayPrice);
       label = 'Club Year';

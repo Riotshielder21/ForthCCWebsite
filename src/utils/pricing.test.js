@@ -9,7 +9,8 @@ const service = { id: 'service', category: 'SERVICES', type: 'annual-oneoff', ba
 const subscription = { id: 'sub', category: 'SUBSCRIPTIONS', type: 'subscription', basePrice: 25, hasAnnualDiscount: true };
 
 test('each purchasable starter product can be priced as a one-item cart', () => {
-  const now = new Date(2026, 9, 9);
+  // September: before prorated items drop to 60%.
+  const now = new Date(2026, 8, 9);
   const products = PRODUCTS.filter((product) => product.type !== 'external');
   assert.ok(products.length > 0);
 
@@ -173,12 +174,16 @@ test('annual subscription totals and savings use the remaining club-year months'
   assert.equal(march.recurringMonthlyTotal, 0);
 });
 
-test('prorated service pricing changes at the four-month club-year boundary', () => {
+test('prorated service pricing drops to 60% on 1 October', () => {
   const yearlyService = { id: 'annual-service', category: 'SERVICES', type: 'yearly-service', pricingMode: 'prorated', basePrice: 85 };
-  const october = calculateCart([yearlyService], false, null, new Date(2026, 9, 31));
-  const november = calculateCart([yearlyService], false, null, new Date(2026, 10, 1));
-  assert.deepEqual([october.items[0].clubYear.monthsRemaining, october.subtotal, october.annualSaving], [5, 85, 0]);
-  assert.deepEqual([november.items[0].clubYear.monthsRemaining, november.subtotal, november.annualSaving], [4, 51, 34]);
+  const september = calculateCart([yearlyService], false, null, new Date(2026, 8, 30));
+  const october = calculateCart([yearlyService], false, null, new Date(2026, 9, 1));
+  const february = calculateCart([yearlyService], false, null, new Date(2027, 1, 28));
+  const march = calculateCart([yearlyService], false, null, new Date(2027, 2, 1));
+  assert.deepEqual([september.items[0].clubYear.monthsRemaining, september.subtotal, september.annualSaving], [6, 85, 0]);
+  assert.deepEqual([october.items[0].clubYear.monthsRemaining, october.subtotal, october.annualSaving], [5, 51, 34]);
+  assert.equal(february.subtotal, 51);
+  assert.equal(march.subtotal, 85);
 });
 
 test('percentage savings round to pennies before subtracting from the line price', () => {
