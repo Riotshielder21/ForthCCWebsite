@@ -1,22 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { subscriptionGroups, stripeItemLines, activeSubscriptionItems, monthlyTotal } from './subscriptions.js';
+import { lineHolders, remainingPeriodShare, firstPaymentPence, stripeItemLines, activeSubscriptionItems, monthlyTotal } from './subscriptions.js';
 
 const person = (membershipId, lineIds, extra = {}) => ({ id: membershipId, membershipId, firstName: membershipId, lastName: 'Test', lineIds, ...extra });
 
-test('every monthly item gets its own subscription, even for the same person', () => {
-  const items = [{ lineId: 'a1', monthly: true }, { lineId: 'a2', monthly: true }, { lineId: 'b1', monthly: true }, { lineId: 'shirt', monthly: false }];
-  const groups = subscriptionGroups(items, [person('A', ['a1', 'a2', 'shirt']), person('B', ['b1'])]);
-  assert.deepEqual(groups.map(({ key, lineIds, membershipIds, primary, status }) => ({ key, lineIds, membershipIds, primary, status })), [
-    { key: 'line:a1', lineIds: ['a1'], membershipIds: ['A'], primary: true, status: 'checkout' },
-    { key: 'line:a2', lineIds: ['a2'], membershipIds: ['A'], primary: false, status: 'pending' },
-    { key: 'line:b1', lineIds: ['b1'], membershipIds: ['B'], primary: false, status: 'pending' }
-  ]);
-  assert.deepEqual(groups[2].names, ['B Test']);
+test('each line records which members receive it', () => {
+  const people = [person('A', ['a1', 'shared']), person('B', ['b1', 'shared']), person('', ['x'])];
+  assert.deepEqual(lineHolders('a1', people), { membershipIds: ['A'], names: ['A Test'] });
+  assert.deepEqual(lineHolders('shared', people), { membershipIds: ['A', 'B'], names: ['A Test', 'B Test'] });
+  assert.deepEqual(lineHolders('none', people), { membershipIds: [], names: [] });
 });
 
-test('annual-only baskets have no subscriptions', () => {
-  assert.deepEqual(subscriptionGroups([{ lineId: 'x', monthly: false }], [person('A', ['x'])]), []);
+test('a new item is charged only up to the payer\'s next monthly payment', () => {
+  assert.equal(remainingPeriodShare(0, 100, 25), 0.75);
+  assert.equal(remainingPeriodShare(0, 100, 150), 0);
+  assert.equal(remainingPeriodShare(0, 100, -10), 1);
+  assert.equal(remainingPeriodShare(0, 0, 0), 1);
+  assert.equal(firstPaymentPence(2000, 0.75), 1500);
+  assert.equal(firstPaymentPence(999, 1 / 3), 333);
 });
 
 test('Stripe items are matched to order lines by metadata', () => {

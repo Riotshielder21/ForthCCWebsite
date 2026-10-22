@@ -124,11 +124,31 @@ Events, services and subscriptions also have a **Membership** rule (`membershipR
 
 ## Monthly Subscriptions
 
-Every monthly item is billed on its own Stripe subscription, even when one person has several (`subscriptionGroups` in `src/utils/subscriptions.js`). All subscriptions sit under the payer's Stripe customer, so Stripe shows each item as a separate direct debit that can be cancelled without touching the others. Stripe Checkout can only start one subscription, so the first monthly item is a recurring Checkout line and every other monthly item's first month is charged in the same payment as a one-off "(first month)" line. After payment the webhook runs `setUpSubscriptions` in `server.js`, which creates the other subscriptions on the saved payment method, billing from the first subscription's next payment date (`billing_cycle_anchor`, no proration), with idempotency keys so a replayed webhook creates nothing twice. If Stripe refuses one, its group is marked `failed` with the error and the order gets `subscriptionSetupNeedsStaff`; staff see which item failed on the order.
+A payer has one Stripe subscription, so one monthly direct debit, for every monthly item they pay for, whoever it is for. Our records say which member receives each item, because Stripe only knows the payer.
 
-Records: the order keeps `subscriptionGroups` (the line and person for each, the Stripe subscription and item ids) and `stripeSubscriptionIds`, and each monthly order line gets `stripeSubscriptionId`/`stripeSubscriptionItemId`. Each Stripe subscription has a `subscriptions/{id}` document (payer email, order, people, items with their monthly amount and status), and its id is added to `subscriptionIds` on the customer and each person's membership. Membership privileges record their order `lineId`.
+- **First monthly purchase:** Checkout starts the subscription with every monthly item as a recurring line.
+- **Later purchases by the same payer** (matched on email, against their active subscription in `subscriptions`): Checkout runs as a one-off payment that saves the card or bank account. Each monthly item is charged only up to the payer's next monthly payment date, as "(to <date>, then monthly with your other items)". After payment the webhook's `setUpSubscriptions` adds the items to the existing subscription without proration, so they are collected in the same debit from then on.
+- **Different card or bank account** (compared by Stripe's payment-method fingerprint): the items get a new subscription on that payment method, billing on the payer's usual date.
+- **Renewal within two days, or a first payment under 30p:** the items start their own subscription through Checkout instead of joining.
 
-In Reports, purchases and member records show **Monthly payments**: one row per subscription with the person, item, Stripe subscription id, order and monthly amount. **Cancel** cancels that Stripe subscription straight away with no refund or proration; the person's other monthly items carry on. Cancelled items keep their purchase history, but their privilege gets `endedAt` (so it no longer counts for trip discounts or the register's Includes column), and the order line gets `monthlyCancelledAt`. Each cancellation is written to `adminSubscriptionAudit`. The flow test's Stripe mock (`scripts/mock-stripe.mjs`) keeps these subscriptions in memory; a payer email starting `sub-fail.` makes the extra subscriptions fail.
+Stripe calls use idempotency keys, so a replayed webhook changes nothing. If Stripe refuses a change, the order's `subscriptionPlan` is marked `failed` with the error and the order gets `subscriptionSetupNeedsStaff`; staff see which item and member it was on the order.
+
+Records:
+
+- **Order:** `subscriptionPlan` (`new` or `add`, the monthly lines, the target subscription and the first-payment end date) and `stripeSubscriptionIds`. Each monthly line gets `stripeSubscriptionId`/`stripeSubscriptionItemId`, and lines that joined an existing subscription record `firstPayment`/`firstPaymentUntil`. The order `total` is what was charged at checkout.
+- **`subscriptions/{id}`:** the payer email, every `orderRefs` that added to it, and its items, each with its order, monthly amount, Stripe item id, status and the `membershipIds`/`names` of who receives it.
+- **Customer:** the payer's `subscriptionIds`.
+- **Each member who receives an item:** `subscriptionIds` and `subscriptionItems` (subscription, item, monthly amount, `payerEmail` and status), so their record shows what they get and who pays, even when someone else pays. Membership privileges record their order `lineId`.
+
+In Reports, purchases and member records show **Monthly payments**: each subscription with its payer and monthly total, and one row per item with the member, order, amount and status. Staff can:
+
+- **Cancel item:** removes one item.
+- **Cancel this member's items** (on a member record): removes everything that member receives.
+- **Cancel whole subscription.**
+
+Removals take effect in Stripe straight away with no refund or proration, so the payer's debit drops from the next payment; removing the last active item cancels the subscription. Cancelled items keep their purchase history. Their privilege gets `endedAt` (so it no longer counts for trip discounts or the register's Includes column), the member's `subscriptionItems` entry becomes `cancelled`, and the order line gets `monthlyCancelledAt`. Each cancellation is written to `adminSubscriptionAudit`.
+
+The flow test's Stripe mock (`scripts/mock-stripe.mjs`) keeps subscriptions in memory. Payer emails starting `new-card.` use a different card at every checkout, and `sub-fail.` makes adding to or creating a later subscription fail.
 
 ## Live Mode (`WEBSITE_ISLIVE`)
 

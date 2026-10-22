@@ -3,7 +3,12 @@ let counter = 0;
 const customers = new Set();
 const subscriptions = new Map();
 const replies = new Map();
+const checkoutPayments = new Map();
 const periodEnd = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+const periodStart = periodEnd - 30 * 24 * 60 * 60;
+const emailOf = (customer) => Buffer.from(String(customer).slice('cus_e2e_'.length), 'base64url').toString();
+// Payers whose email starts `new-card.` use a different card at every checkout.
+const paymentMethodFor = (email) => email.startsWith('new-card.') ? `pm_e2e_${counter}` : 'pm_e2e';
 globalThis.fetch = async (url, options) => {
   if (!String(url).startsWith('https://api.stripe.com/')) return originalFetch(url, options);
   const parsed = new URL(url);
@@ -17,7 +22,10 @@ globalThis.fetch = async (url, options) => {
     counter += 1;
     const params = new URLSearchParams(options.body);
     if (params.has('customer_email') || !params.get('customer')?.startsWith('cus_e2e_')) throw new Error('Checkout must use the Stripe customer created for the checkout email.');
-    const email = Buffer.from(params.get('customer').slice('cus_e2e_'.length), 'base64url').toString();
+    const email = emailOf(params.get('customer'));
+    const paymentMethod = paymentMethodFor(email);
+    checkoutPayments.set(params.get('metadata[order_ref]'), { customer: params.get('customer'), paymentMethod,
+      saved: params.get('payment_intent_data[setup_future_usage]') === 'off_session' });
     const recurring = params.get('mode') === 'subscription';
     const cancelled = email.startsWith('coaching-cancelled.');
     const returnUrl = encodeURIComponent(params.get('success_url') || '');
@@ -29,12 +37,21 @@ globalThis.fetch = async (url, options) => {
         price: { product: { metadata: { line_id: params.get(`line_items[${index}][price_data][product_data][metadata][line_id]`) } },
           unit_amount: Number(params.get(`line_items[${index}][price_data][unit_amount]`)) }
       }));
-      if (!cancelled) subscriptions.set(subscription, { id: subscription, status: 'active', customer: params.get('customer'), default_payment_method: 'pm_e2e', current_period_end: periodEnd, latest_invoice: null, items: { data: items } });
+      if (!cancelled) subscriptions.set(subscription, { id: subscription, status: 'active', customer: params.get('customer'), default_payment_method: paymentMethod, current_period_start: periodStart, current_period_end: periodEnd, latest_invoice: null, items: { data: items } });
     }
     return Response.json({ id: `cs_e2e_${Date.now()}_${counter}`, url: `https://checkout.stripe.com/e2e?return_url=${returnUrl}`, ...(subscription ? { subscription } : {}) });
   }
   if (parsed.pathname === '/v1/coupons') return Response.json({ id: `coupon_${counter}` });
   const method = options?.method || 'GET';
+  if (parsed.pathname.startsWith('/v1/payment_intents/')) {
+    const payment = checkoutPayments.get(parsed.pathname.split('/').at(-1).replace(/^pi_/, ''));
+    if (!payment) return Response.json({ error: { message: 'No such payment intent.' } }, { status: 404 });
+    return Response.json({ id: parsed.pathname.split('/').at(-1), customer: payment.customer, payment_method: payment.saved ? payment.paymentMethod : null });
+  }
+  if (parsed.pathname.startsWith('/v1/payment_methods/')) {
+    const id = parsed.pathname.split('/').at(-1);
+    return Response.json({ id, type: 'card', card: { fingerprint: `fp_${id}` } });
+  }
   const key = options?.headers?.['Idempotency-Key'];
   if (key && replies.has(key)) return Response.json(replies.get(key));
   const remember = (body) => { if (key) replies.set(key, body); return Response.json(body); };
@@ -45,19 +62,32 @@ globalThis.fetch = async (url, options) => {
   if (parsed.pathname === '/v1/subscriptions' && method === 'POST') {
     counter += 1;
     const params = new URLSearchParams(options.body);
-    const email = Buffer.from(params.get('customer').slice('cus_e2e_'.length), 'base64url').toString();
-    if (email.startsWith('sub-fail.')) return Response.json({ error: { message: 'Your card was declined.' } }, { status: 402 });
-    if (params.get('default_payment_method') !== 'pm_e2e' || params.get('proration_behavior') !== 'none' || Number(params.get('billing_cycle_anchor')) !== periodEnd) {
-      return Response.json({ error: { message: 'Extra subscriptions must reuse the checkout payment method and billing date.' } }, { status: 400 });
+    if (emailOf(params.get('customer')).startsWith('sub-fail.')) return Response.json({ error: { message: 'Your card was declined.' } }, { status: 402 });
+    if (!params.get('default_payment_method')?.startsWith('pm_e2e') || params.get('proration_behavior') !== 'none' || Number(params.get('billing_cycle_anchor')) !== periodEnd) {
+      return Response.json({ error: { message: 'A later subscription must use the saved payment method and the payer\'s billing date.' } }, { status: 400 });
     }
     const id = `sub_e2e_active_${counter}`;
     const items = [...params.keys()].map((name) => /^items\[(\d+)\]\[price_data\]\[product\]$/.exec(name)?.[1]).filter(Boolean).map((index) => ({
       id: `si_e2e_${counter}_${index}`, metadata: { line_id: params.get(`items[${index}][metadata][line_id]`) },
       price: { product: params.get(`items[${index}][price_data][product]`), unit_amount: Number(params.get(`items[${index}][price_data][unit_amount]`)) }
     }));
-    const subscription = { id, status: 'active', customer: params.get('customer'), default_payment_method: 'pm_e2e', current_period_end: periodEnd, latest_invoice: null, items: { data: items } };
+    const subscription = { id, status: 'active', customer: params.get('customer'), default_payment_method: params.get('default_payment_method'), current_period_start: periodStart, current_period_end: periodEnd, latest_invoice: null, items: { data: items } };
     subscriptions.set(id, subscription);
     return remember(subscription);
+  }
+  if (parsed.pathname === '/v1/subscription_items' && method === 'POST') {
+    counter += 1;
+    const params = new URLSearchParams(options.body);
+    const owner = subscriptions.get(params.get('subscription'));
+    if (!owner || owner.status !== 'active') return Response.json({ error: { message: 'No such active subscription.' } }, { status: 404 });
+    if (emailOf(owner.customer).startsWith('sub-fail.')) return Response.json({ error: { message: 'Your card was declined.' } }, { status: 402 });
+    if (params.get('proration_behavior') !== 'none' || params.get('price_data[recurring][interval]') !== 'month') {
+      return Response.json({ error: { message: 'Added items must be monthly and not prorated; the first payment was taken at checkout.' } }, { status: 400 });
+    }
+    const item = { id: `si_e2e_${counter}`, metadata: { line_id: params.get('metadata[line_id]') },
+      price: { product: params.get('price_data[product]'), unit_amount: Number(params.get('price_data[unit_amount]')) } };
+    owner.items.data.push(item);
+    return remember(item);
   }
   if (parsed.pathname.startsWith('/v1/subscription_items/') && method === 'DELETE') {
     const id = parsed.pathname.split('/').at(-1);

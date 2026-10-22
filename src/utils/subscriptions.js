@@ -1,18 +1,23 @@
 /**
- * Every monthly item becomes its own Stripe subscription, so Stripe collects each as a separate direct debit and each
- * can be cancelled without touching the others. Stripe Checkout can only start one subscription, so the first item's is
- * created there and the others straight after payment on the same saved payment method (their first month is charged
- * in the checkout payment).
+ * A payer has one Stripe subscription (one monthly direct debit) for every monthly item they pay for, whoever the item
+ * is for. Our records say which member gets each item, so staff can stop one member's items and the payer's debit
+ * simply drops by that amount.
  */
-export const subscriptionGroups = (items, people) => items.filter((entry) => entry.monthly).map((item, index) => {
-  const holders = people.filter((person) => (person.lineIds || []).includes(item.lineId));
+export const lineHolders = (lineId, people) => {
+  const holders = (people || []).filter((person) => (person.lineIds || []).includes(lineId));
   return {
-    key: `line:${item.lineId}`, lineIds: [item.lineId],
-    membershipIds: [...new Set(holders.map((person) => person.membershipId))],
-    names: [...new Set(holders.map((person) => `${person.firstName || ''} ${person.lastName || ''}`.trim()))],
-    primary: index === 0, status: index === 0 ? 'checkout' : 'pending'
+    membershipIds: [...new Set(holders.map((person) => person.membershipId).filter(Boolean))],
+    names: [...new Set(holders.map((person) => `${person.firstName || ''} ${person.lastName || ''}`.trim()).filter(Boolean))]
   };
-});
+};
+
+// Share of the current billing period left, used to charge a new item only up to the payer's next monthly payment.
+export const remainingPeriodShare = (periodStart, periodEnd, now) => {
+  if (!(periodEnd > periodStart)) return 1;
+  return Math.min(1, Math.max(0, (periodEnd - now) / (periodEnd - periodStart)));
+};
+
+export const firstPaymentPence = (monthlyPence, share) => Math.round(monthlyPence * share);
 
 // Stripe subscription items carry our order line id, either on the item or (for Checkout-created items) on its product.
 export const stripeItemLines = (subscription, lineIds) => {
