@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { ImagePlus, LogOut, Save, Trash2, FileText } from 'lucide-react';
+import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
 import { removeProduct, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
 import DiscountCodesPanel from '../components/DiscountCodesPanel';
+import VolunteersPanel from '../components/VolunteersPanel';
 import { apiUrl } from '../utils/api';
 import { validateEventSchedule, eventScheduleLabel } from '../utils/catalogue';
+import { cleanStockFields } from '../utils/inventory';
 
 const EMPTY_PRODUCT = {
   id: '',
@@ -16,6 +18,8 @@ const EMPTY_PRODUCT = {
   type: 'annual-oneoff',
   hasAnnualDiscount: false,
   imageUrl: '',
+  capacity: '',
+  variants: [{ size: '', stock: 0 }],
   eventSchedule: { mode: 'single', startDate: '', startTime: '15:00', endTime: '17:00', days: 1, weeks: 1, timeZone: 'Europe/London' }
 };
 
@@ -28,12 +32,22 @@ export default function AdminPage({ products, onNavigate }) {
   const [draft, setDraft] = useState(EMPTY_PRODUCT);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [formDraft, setFormDraft] = useState({ name: '', description: '', fields: 'Name\nEmail\nResponse' });
 
   const updateDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value,
     ...(field === 'category' && value === 'EVENTS' ? { type: 'event-ticket', hasAnnualDiscount: false } : {}),
-    ...(field === 'category' && value !== 'EVENTS' && current.type === 'event-ticket' ? { type: 'annual-oneoff' } : {})
+    ...(field === 'category' && value === 'MERCHANDISE' ? { type: 'merchandise', hasAnnualDiscount: false } : {}),
+    ...(field === 'category' && value !== 'EVENTS' && current.type === 'event-ticket' ? { type: 'annual-oneoff' } : {}),
+    ...(field === 'category' && value !== 'MERCHANDISE' && current.type === 'merchandise' ? { type: 'annual-oneoff' } : {})
   }));
+  const updateVariant = (index, field, value) => setDraft((current) => ({ ...current,
+    variants: (current.variants || []).map((variant, position) => position === index ? { ...variant, [field]: value } : variant)
+  }));
+  const addVariant = () => setDraft((current) => ({ ...current, variants: [...(current.variants || []), { size: '', stock: 0 }] }));
+  const removeVariant = (index) => setDraft((current) => ({ ...current, variants: (current.variants || []).filter((_, position) => position !== index) }));
   const updateEventSchedule = (field, value) => setDraft((current) => ({ ...current,
     eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...current.eventSchedule, [field]: value }
   }));
@@ -72,16 +86,20 @@ export default function AdminPage({ products, onNavigate }) {
   };
 
 
+  const resetImageInput = () => { setImageFile(null); setFileInputKey((key) => key + 1); };
+
   const editProduct = (product) => {
     setSelectedProduct(product.id);
     setDraft({ ...EMPTY_PRODUCT, ...product, eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
     setMessage('');
+    resetImageInput();
   };
 
   const startNewProduct = () => {
     setSelectedProduct(null);
     setDraft({ ...EMPTY_PRODUCT, id: `product-${Date.now()}` });
     setMessage('');
+    resetImageInput();
   };
 
   const handleSave = async (event) => {
@@ -93,10 +111,16 @@ export default function AdminPage({ products, onNavigate }) {
         basePrice: Number(draft.basePrice),
         hasAnnualDiscount: Boolean(draft.hasAnnualDiscount)
       };
+      if (product.category === 'MERCHANDISE') {
+        product.type = 'merchandise';
+        product.hasAnnualDiscount = false;
+        Object.assign(product, cleanStockFields(product));
+      }
       if (product.category === 'EVENTS') {
         product.type = 'event-ticket';
         product.hasAnnualDiscount = false;
         product.eventSchedule = validateEventSchedule(product.eventSchedule);
+        Object.assign(product, cleanStockFields(product));
       }
       await saveProduct(product);
       setSelectedProduct(product.id);
@@ -119,16 +143,20 @@ export default function AdminPage({ products, onNavigate }) {
     }
   };
 
-  const handleImageChange = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file || !draft.id) return;
+  const handleImageUpload = async () => {
+    if (!imageFile || !draft.id || uploading) return;
     setError('');
+    setMessage('');
+    setUploading(true);
     try {
-      const imageUrl = await uploadProductImage(draft.id, file);
+      const imageUrl = await uploadProductImage(draft.id, imageFile);
       updateDraft('imageUrl', imageUrl);
+      resetImageInput();
       setMessage('Image uploaded. Save the product to publish it.');
     } catch (uploadError) {
       setError(uploadError.message);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -185,7 +213,7 @@ export default function AdminPage({ products, onNavigate }) {
           </aside>
           <form className="main_tile AdminEditor" onSubmit={handleSave}>
             <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && <button type="button" className="CartRemoveButton" onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
-            {EDITABLE_FIELDS.filter((field) => field !== 'type' || draft.category !== 'EVENTS').map((field) => (
+            {EDITABLE_FIELDS.filter((field) => field !== 'type' || !['EVENTS', 'MERCHANDISE'].includes(draft.category)).map((field) => (
               <label className="FormLabel" key={field}>{field === 'basePrice' ? 'Price' : field}
                 {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' || field === 'type' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{(field === 'category' ? CATEGORIES.filter((category) => category !== 'ALL') : ['external', 'voucher', 'annual-oneoff', 'yearly-service', 'subscription']).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required={field !== 'imageUrl'} />}
               </label>
@@ -198,17 +226,36 @@ export default function AdminPage({ products, onNavigate }) {
               {draft.eventSchedule.mode === 'weekly' && <label className="FormLabel">Number of consecutive weeks<input className="FormInput" type="number" min="1" max="60" step="1" required value={draft.eventSchedule.weeks ?? 1} onChange={(event) => updateEventSchedule('weeks', Number(event.target.value))} /></label>}
               <div className="AdminEventTimes"><label className="FormLabel">Start time<input className="FormInput" type="time" required value={draft.eventSchedule.startTime} onChange={(event) => updateEventSchedule('startTime', event.target.value)} /></label><label className="FormLabel">End time<input className="FormInput" type="time" required value={draft.eventSchedule.endTime} onChange={(event) => updateEventSchedule('endTime', event.target.value)} /></label></div>
               <p className="text_container">{eventScheduleLabel(draft.eventSchedule)}</p>
+              <label className="FormLabel">Capacity (tickets available, blank for unlimited)<input className="FormInput" type="number" min="1" step="1" value={draft.capacity ?? ''} onChange={(event) => updateDraft('capacity', event.target.value)} /></label>
+              <p className="text_container text_container_note">When every ticket is sold the event leaves the shop. Delete a refunded order in Reports to free its place.</p>
               <p className="text_container text_container_note">One ticket covers the whole event/course. Times are Europe/London.</p>
             </fieldset>}
-            {draft.category !== 'EVENTS' && <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.hasAnnualDiscount} onChange={(event) => updateDraft('hasAnnualDiscount', event.target.checked)} /> Annual discount applies</label>}
-            <label className="FormLabel">Product image<input className="FormInput" type="file" accept="image/png,image/jpeg,image/webp" onChange={handleImageChange} /></label>
+            {draft.category === 'MERCHANDISE' && <fieldset className="AdminEventSchedule">
+              <legend className="tile_heading_bold_1">Sizes and stock</legend>
+              {(draft.variants || []).map((variant, index) => (
+                <div className="AdminEventTimes" key={index}>
+                  <label className="FormLabel">Size<input className="FormInput" maxLength={40} placeholder="e.g. M or One size" value={variant.size} onChange={(event) => updateVariant(index, 'size', event.target.value)} /></label>
+                  <label className="FormLabel">In stock<input className="FormInput" type="number" min="0" step="1" value={variant.stock} onChange={(event) => updateVariant(index, 'stock', event.target.value)} /></label>
+                  <button type="button" className="CartRemoveButton" onClick={() => removeVariant(index)} aria-label={`Remove size ${variant.size || index + 1}`}><Trash2 className="IconMd" /></button>
+                </div>
+              ))}
+              <button type="button" className="EditorCommand" onClick={addVariant}>Add size</button>
+              <p className="text_container text_container_note">Customers choose a size and quantity. A size that sells out is greyed out, and the item leaves the shop when every size is gone. Delete a refunded order in Reports to return its stock.</p>
+            </fieldset>}
+            {draft.category !== 'EVENTS' && draft.category !== 'MERCHANDISE' && <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.hasAnnualDiscount} onChange={(event) => updateDraft('hasAnnualDiscount', event.target.checked)} /> Annual discount applies</label>}
+            <label className="FormLabel">Product image<input key={fileInputKey} className="FormInput" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={(event) => { setImageFile(event.target.files?.[0] || null); setMessage(''); setError(''); }} /></label>
+            <button type="button" className="EditorCommand" onClick={handleImageUpload} disabled={!imageFile || uploading}>
+              {uploading ? <Loader2 className="IconMd animate-spin" /> : <Upload className="IconMd" />} {uploading ? `Uploading ${imageFile?.name || 'image'}…` : 'Upload image'}
+            </button>
+            {imageFile && !uploading && <p className="StatusText" role="status">Not uploaded yet: {imageFile.name}</p>}
             {draft.imageUrl && <img className="AdminImagePreview" src={draft.imageUrl} alt="Product preview" />}
             {message && <p className="StatusText StatusTextSuccess">{message}</p>}{error && <p className="StatusText StatusTextError">{error}</p>}
-            <button className="FormSubmitButton" type="submit"><Save className="IconMd" /> Save product</button>
+            <button className="FormSubmitButton" type="submit" disabled={uploading}><Save className="IconMd" /> Save product</button>
             <p className="text_container text_container_note"><ImagePlus className="IconSm" /> PNG, JPG, or WebP up to 5 MB.</p>
           </form>
         </div>
         <DiscountCodesPanel adminUser={adminUser} products={products} />
+        <VolunteersPanel adminUser={adminUser} />
         <form className="main_tile AdminFormBuilder SpaceT6" onSubmit={handleCreateForm}>
           <div className="AdminListHeader"><div><span className="tile_eyebrow">Google Workspace</span><h3 className="tile_heading_bold_2">Create a form</h3></div></div>
           <p className="text_container SpaceB4">Creates one response spreadsheet in the current club-year folder on the Shared Drive.</p>

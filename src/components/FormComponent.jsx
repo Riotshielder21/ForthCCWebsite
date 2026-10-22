@@ -59,12 +59,7 @@ export default function FormComponent({
           message = onSuccess(result, formData) || message;
         }
 
-        setSubmitStatus({
-          type: 'success',
-          message,
-          discountCode: result.discountCode,
-          verified: result.verification?.verified
-        });
+        setSubmitStatus({ type: 'success', message });
 
         setFormData(EMPTY);
         setAnswers({});
@@ -176,19 +171,6 @@ export default function FormComponent({
               )}
               <div className="FormAlertBody">
                 <p className="FormAlertMessage">{submitStatus.message}</p>
-                {submitStatus.discountCode && (
-                  <div className="DiscountCodeBox">
-                    <p className="DiscountCodeTitle">
-                      Your Discount Code
-                    </p>
-                    <p className="DiscountCodeValue">
-                      {submitStatus.discountCode}
-                    </p>
-                    <p className="DiscountCodeHint">
-                      Use this code at checkout for 25% off your next purchase
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           </div>

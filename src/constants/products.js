@@ -4,7 +4,7 @@ export const DISCOUNTS = {
 };
 
 // Product categories
-export const CATEGORIES = ['ALL', 'MEMBERSHIP', 'SERVICES', 'SUBSCRIPTIONS', 'VOUCHERS', 'EVENTS'];
+export const CATEGORIES = ['ALL', 'MEMBERSHIP', 'SERVICES', 'SUBSCRIPTIONS', 'VOUCHERS', 'EVENTS', 'MERCHANDISE'];
 
 // All available products
 export const PRODUCTS = [

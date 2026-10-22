@@ -9,7 +9,7 @@
     },
     "invite": {
       "url": "REPLACE with JustGo's invite-existing-member page",
-      "fields": { "scaNumber": "REPLACE", "email": "REPLACE" },
+      "fields": { "affiliationNumber": "REPLACE", "email": "REPLACE" },
       "submit": "REPLACE", "success": "REPLACE"
     }
   }

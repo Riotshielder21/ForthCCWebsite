@@ -140,6 +140,11 @@
     text-underline-offset: 2px;
   }
 
+  .text_container .PrimaryActionButtonCompact, .text_container .PrimaryActionButton {
+    color: #fff;
+    text-decoration: none;
+  }
+
   .text_container ul {
     @apply space-y-2 mt-3;
   }
@@ -1083,23 +1088,6 @@
     @apply font-medium mb-2;
   }
 
-  .DiscountCodeTitle {
-    @apply text-sm font-bold uppercase mb-1;
-    letter-spacing: 0.18em;
-    color: #065f46;
-  }
-
-  .DiscountCodeValue {
-    @apply text-2xl font-black;
-    letter-spacing: 0.08em;
-    color: var(--fcc-color-ink);
-  }
-
-  .DiscountCodeHint {
-    @apply text-xs mt-1;
-    color: #059669;
-  }
-
   .FormSpinner {
     @apply w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin;
   }
@@ -1110,10 +1098,6 @@
 
   .AlertError {
     @apply bg-red-50 text-red-700 border border-red-200;
-  }
-
-  .DiscountCodeBox {
-    @apply bg-white p-3 rounded-lg border-2 border-dashed border-emerald-300;
   }
 
   /* ─── Mobile Navigation ─────────────────────────── */
@@ -1310,8 +1294,6 @@
   .ReceiptWrapper { @apply max-w-2xl mx-auto; }
   .ReceiptHeader { @apply text-center mb-12; }
   .ReceiptCheckIcon { @apply w-16 h-16 mx-auto mb-4 text-emerald-500; }
-  .ReceiptEmailCopy { @apply mt-8 p-5 sm:p-8 text-left; color: var(--fcc-color-ink); }
-  .ReceiptEmailCopy pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 14px; line-height: 1.65; }
   .PageIntroCentered { @apply max-w-lg font-medium mx-auto; color: var(--fcc-color-copy); }
   .ReceiptActions { @apply mt-8 flex flex-col sm:flex-row gap-4; }
   .ReceiptItemList { @apply space-y-4 mb-8; }
@@ -1373,10 +1355,10 @@
 .CheckoutNames { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 
 /* One pill: + on top, count, - below. */
-.QuantityControl { display: flex; flex-direction: column; align-items: center; border-radius: 1rem; background: #e0f2fe; color: #0284c7; overflow: hidden; }
-.QuantityControl button { display: flex; align-items: center; justify-content: center; width: 3.5rem; height: 2.75rem; color: inherit; transition: background 0.15s; }
+.QuantityControl { display: flex; flex-direction: row; align-items: center; border-radius: 1rem; background: #e0f2fe; color: #0284c7; overflow: hidden; }
+.QuantityControl button { display: flex; align-items: center; justify-content: center; width: 2.75rem; height: 3.5rem; color: inherit; transition: background 0.15s; }
 .QuantityControl button:hover { background: rgba(2, 132, 199, 0.15); }
-.QuantityControl span { font-size: 0.8rem; font-weight: 800; line-height: 1; padding: 0.1rem 0; }
+.QuantityControl span { min-width: 1.25rem; text-align: center; font-size: 0.9rem; font-weight: 800; line-height: 1; }
 
 .CheckoutCheck:has(input:disabled) { opacity: 0.45; cursor: not-allowed; }
 
@@ -1405,3 +1387,7 @@
 /* Error messages are sentences, so they read in normal case rather than spaced capitals. */
 .CheckoutErrors, .CheckoutErrors li, .FormLabel .StatusText { text-transform: none; letter-spacing: normal; font-size: 0.85rem; font-weight: 600; line-height: 1.4; }
 .FormLabel .StatusText { display: block; margin-top: 0.35rem; }
+
+.CartItemQuantity { min-width: 1.5rem; text-align: center; font-weight: 800; font-size: 0.9rem; color: var(--fcc-color-ink); }
+.CartClearButton { display: block; margin-left: auto; padding: 0.25rem 0.5rem; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: #475569; }
+.CartClearButton:hover { color: #dc2626; }

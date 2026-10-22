@@ -1,4 +1,5 @@
 ﻿import express from 'express';
+import { rateLimit as expressRateLimit, ipKeyGenerator } from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { domainToASCII } from 'url';
@@ -14,29 +15,38 @@ import { PAGE_CONTENT } from './src/constants/pageContent.js';
 import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart } from './src/utils/pricing.js';
-import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership, DISCLAIMER_VERSION } from './src/utils/checkout.js';
+import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
+import { buildRawEmail } from './src/utils/mail.js';
 import { buildReceiptSummary, receiptEmailCopy } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation, stripeSubscriberReport } from './src/utils/stripeReports.js';
 import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
+import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProblem, withHold, itemLabel, isMerchandise } from './src/utils/inventory.js';
+import { deletionAuditEntry } from './src/utils/privacy.js';
+import { CURRENT_MEMBERSHIP_VERSION } from './src/utils/schema.js';
+import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from './src/utils/households.js';
+import { registerGdprRoutes } from './src/server/gdpr.js';
+import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
+import { isLive, liveReadinessProblems } from './src/utils/live.js';
+import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
+import { registerVolunteerRoutes } from './src/server/volunteers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const requestWindows = new Map();
-const rateLimit = (limit, windowMs) => (req, res, next) => {
-  const key = `${req.ip}:${req.path}`;
-  const now = Date.now();
-  const recent = (requestWindows.get(key) || []).filter((time) => now - time < windowMs);
-  if (recent.length >= limit) return res.status(429).json({ error: 'Too many requests. Try again shortly.' });
-  recent.push(now);
-  requestWindows.set(key, recent);
-  next();
-};
+const rateLimit = (limit, windowMs) => expressRateLimit({
+  windowMs,
+  limit,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => `${ipKeyGenerator(req.ip || '')}:${req.path}`,
+  validate: { xForwardedForHeader: false },
+  message: { error: 'Too many requests. Try again shortly.' }
+});
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isValidEmail = (value) => {
@@ -53,27 +63,72 @@ const isValidEmail = (value) => {
   return labels.length > 1 && labels.every((label) => label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
 };
 
-// Middleware
+// Cloud Run sits behind one Google front end; trusting that hop gives each visitor their own rate-limit bucket.
+app.set('trust proxy', process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : (process.env.K_SERVICE ? 1 : false));
+app.disable('x-powered-by');
+
+const corsOrigins = allowedOrigins(process.env);
+const allowLocalhostOrigins = !isLive() || process.env.LOCAL_FIREBASE_EMULATORS === 'true';
+// Pages are framed by nobody; the full script/connect policy is report-only until it has been checked in browsers.
+const PAGE_CSP_REPORT_ONLY = [
+  "default-src 'self'", "script-src 'self' https://www.googletagmanager.com https://apis.google.com",
+  "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:",
+  "connect-src 'self' https://*.googleapis.com https://*.google-analytics.com https://*.analytics.google.com https://*.run.app",
+  "frame-src https://*.firebaseapp.com https://*.web.app", "form-action 'self' https://checkout.stripe.com"
+].join('; ');
+
 app.use(compression());
-app.use(cors());
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()'
+  });
+  if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  if (req.path.startsWith('/api/')) {
+    res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  } else {
+    res.set('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
+    res.set('Content-Security-Policy-Report-Only', PAGE_CSP_REPORT_ONLY);
+  }
+  // Receipt links carry their access token in the URL: never cache them or leak them in a Referer header.
+  if (/^\/(order\/|payment-success|api\/orders\/|api\/checkout-receipt)/.test(req.path)) {
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+  }
+  next();
+});
+app.use(cors({
+  origin: (origin, callback) => callback(null, isAllowedOrigin(origin, corsOrigins, { allowLocalhost: allowLocalhostOrigins })),
+  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 600
+}));
 app.use(express.static('dist'));
 
-const stripeRequest = async (path, params) => {
+const stripeRequest = async (path, params, method = 'POST') => {
   const secretKey = process.env.STRIPE_SECRET_KEY || '';
   if (!secretKey.startsWith('sk_test_')) {
     throw new Error('Stripe checkout requires a test-mode secret key. Live payments are disabled.');
   }
   const response = await fetch(`https://api.stripe.com/v1/${path}`, {
-    method: 'POST',
+    method,
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded'
     },
-    body: new URLSearchParams(params)
+    ...(method === 'GET' ? {} : { body: new URLSearchParams(params) })
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || 'Stripe request failed.');
   return data;
+};
+
+// Checkout is tied to a Stripe customer holding the email given at the start, so Stripe shows it read-only
+// and subscriptions cannot end up under a different address from the order.
+const stripeCustomerFor = async (email) => {
+  const existing = await stripeRequest(`customers?${new URLSearchParams({ email, limit: '1' })}`, null, 'GET');
+  return existing.data?.[0]?.id || (await stripeRequest('customers', [['email', email]])).id;
 };
 
 const customerId = (email) => crypto.createHash('sha256').update(normalizeEmail(email)).digest('hex');
@@ -83,11 +138,11 @@ const checkoutSiteOrigin = (req) => {
   const configuredSite = process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
   let defaultOrigin = 'http://localhost:3000';
   try { defaultOrigin = new URL(configuredSite).origin; } catch { /* use the local default */ }
-  const allowedOrigins = [configuredSite, ...(process.env.PUBLIC_SITE_URLS || '').split(',')]
+  const siteOrigins = [configuredSite, ...(process.env.PUBLIC_SITE_URLS || '').split(',')]
     .map((url) => { try { return new URL(url.trim()).origin; } catch { return ''; } })
     .filter(Boolean);
   const requestedOrigin = req.get('origin');
-  return allowedOrigins.includes(requestedOrigin) ? requestedOrigin : defaultOrigin;
+  return siteOrigins.includes(requestedOrigin) ? requestedOrigin : defaultOrigin;
 };
 
 const clubYearEnd = () => {
@@ -99,7 +154,7 @@ const clubYearEnd = () => {
 const toMembershipRecord = (document) => {
   const data = document.data();
   return {
-    id: document.id, scaNumber: data.scaNumber || '', email: data.email || '', dob: data.dob || '',
+    id: document.id, affiliationNumber: data.affiliationNumber || '', email: data.email || '', householdId: data.householdId || '', dob: data.dob || '',
     firstName: data.firstName || '', lastName: data.lastName || '', status: data.status, validUntil: data.validUntil?.toMillis() || 0,
     justgo: data.justgoSyncStatus === 'synced' || data.renewalMethod === 'justgo',
     renewalMethod: data.renewalMethod || '', justgoSyncStatus: data.justgoSyncStatus || '', lastJustgoSync: data.lastJustgoSync?.toMillis() || 0,
@@ -140,11 +195,38 @@ const stripeSubscriptionIsActive = async (member) => {
 
 const findMembership = async (person) => {
   const memberships = adminDb.collection('memberships');
-  const [byNumber, byEmail] = await Promise.all([
-    person.scaNumber ? memberships.where('scaNumber', '==', person.scaNumber).limit(5).get() : null,
-    memberships.where('email', '==', contactEmail(person)).limit(50).get()
+  const [byNumber, byEmail, households] = await Promise.all([
+    person.affiliationNumber ? memberships.where('affiliationNumber', '==', person.affiliationNumber).limit(5).get() : null,
+    memberships.where('email', '==', contactEmail(person)).limit(50).get(),
+    adminDb.collection('households').where('email', '==', contactEmail(person)).limit(50).get()
   ]);
-  const result = matchMembership(person, { byNumber: byNumber?.docs.map(toMembershipRecord) || [], byEmail: byEmail.docs.map(toMembershipRecord) });
+  const householdMembers = (await Promise.all(households.docs.map((household) =>
+    memberships.where('householdId', '==', household.id).limit(50).get()
+  ))).flatMap((snapshot) => snapshot.docs);
+  const candidateDocuments = [...new Map([...byEmail.docs, ...(byNumber?.docs || []), ...householdMembers]
+    .map((document) => [document.id, document])).values()];
+  const otherHouseholdIds = [...new Set(candidateDocuments.map((document) => document.data().householdId)
+    .filter((id) => id && !households.docs.some((household) => household.id === id)))];
+  const otherHouseholds = otherHouseholdIds.length
+    ? await adminDb.getAll(...otherHouseholdIds.map((id) => adminDb.collection('households').doc(id)))
+    : [];
+  const householdById = new Map([...households.docs, ...otherHouseholds].filter((document) => document.exists)
+    .map((document) => [document.id, document.data()]));
+  const asMatchRecord = (document) => {
+    const data = document.data();
+    return { ...toMembershipRecord(document), email: data.email || householdById.get(data.householdId)?.email || '' };
+  };
+  const contactName = person.junior ? person.guardian.name : `${person.firstName} ${person.lastName}`;
+  const matchingHouseholds = households.docs.filter((household) =>
+    normaliseName(household.data().contactName) === normaliseName(contactName));
+  const recordsById = new Map(candidateDocuments.map((document) => {
+    const record = asMatchRecord(document);
+    return [record.id, record];
+  }));
+  const result = matchMembership(person, {
+    byNumber: (byNumber?.docs || []).map(asMatchRecord),
+    byEmail: [...recordsById.values()]
+  });
   const match = result.match;
   let stripeActive = true;
   try {
@@ -156,28 +238,37 @@ const findMembership = async (person) => {
   const activity = match ? membershipActivity(match) : 'inactive';
   return {
     conflict: result.conflict, reason: result.reason,
-    existing: match ? { id: match.id, active: stripeActive && activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil } : null
+    contactHouseholdId: matchingHouseholds.length === 1 ? matchingHouseholds[0].id : '',
+    existing: match ? { id: match.id, householdId: match.householdId,
+      active: stripeActive && activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil } : null
   };
 };
 
-const verifyMemberByName = async (name) => {
-  if (!adminDb) return { verified: false };
-  const snapshot = await adminDb.collection('memberships').where('searchName', '==', normaliseName(name)).limit(5).get();
-  for (const member of snapshot.docs.map(toMembershipRecord)) {
-    if (membershipActivity(member) !== 'active') continue;
-    try {
-      if (await stripeSubscriptionIsActive(member)) return { verified: true };
-    } catch (error) {
-      console.error('Stripe volunteer membership validation failed:', error.message);
-      return { verified: false };
-    }
-  }
-  return { verified: false };
-};
-
-const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripeSubscriptionId = '', stripeMode = 'test' }) => {
+const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripeSubscriptionId = '', stripeMode = 'test', householdSnapshots = new Map() }) => {
   const validUntil = Timestamp.fromDate(clubYearEnd());
   const membershipIds = [];
+  const households = new Map();
+  for (const person of order.people || []) {
+    if (!person.householdId) continue;
+    const group = households.get(person.householdId) || [];
+    group.push(person);
+    households.set(person.householdId, group);
+  }
+  for (const [householdId, people] of households) {
+    const reference = adminDb.collection('households').doc(householdId);
+    const existing = householdSnapshots.get(householdId)?.data();
+    if (existing) {
+      const junior = people.find((person) => person.junior);
+      const update = { updatedAt: paidAt };
+      if (junior && normaliseName(existing.contactName) === normaliseName(junior.guardian?.name) && junior.guardian?.relationship) {
+        update.contactRelationship = junior.guardian.relationship;
+      }
+      transaction.set(reference, update, { merge: true });
+    } else {
+      const { id: _id, ...fields } = householdForPerson(people[0], householdId, paidAt);
+      transaction.set(reference, fields);
+    }
+  }
   for (const person of order.people || []) {
     const lines = person.lineIds.map((id) => order.items.find((item) => item.lineId === id)).filter(Boolean);
     const membershipLine = lines.find(isMembership);
@@ -185,15 +276,22 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
     const privileges = lines.filter((item) => !isMembership(item) && item.category !== 'EVENTS')
       .map((item) => ({ productId: item.id, name: item.name, type: item.type, orderRef, grantedAt: paidAt }));
     const historyEntry = { orderRef, paidAt, items: lines.map((item) => ({ id: item.id, name: item.name, price: item.price })) };
-    const { id, lineIds, membershipId, existingMember, ...details } = person;
+    const { id, lineIds, membershipId, existingMember, householdId, ...details } = person;
+    for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
     membershipIds.push(membershipId);
     transaction.set(adminDb.collection('memberships').doc(membershipId), {
       ...(existingMember ? {} : {
-        ...details, email: contactEmail(person), source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`),
-        ...(person.junior ? { phone: person.guardian.phone, address: person.guardian.address, postcode: person.guardian.postcode } : {}),
-        disclaimerVersion: order.disclaimerVersion, disclaimerAcceptedAt: paidAt
+        ...details, source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`)
       }),
-      ...(membershipLine ? { status: 'active', validUntil, membershipTier: membershipLine.membershipTier || '', justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.scaNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
+      schemaVersion: CURRENT_MEMBERSHIP_VERSION,
+      ...(householdId ? { householdId } : {}),
+      ...Object.fromEntries(HOUSEHOLD_MEMBER_FIELDS.map((key) => [key, FieldValue.delete()])),
+      // Consent is recorded against the wording version shown at checkout; the disclaimer is re-accepted on every purchase.
+      consents: {
+        disclaimer: { ...order.policyVersions?.disclaimer, acceptedAt: paidAt, by: person.junior ? 'guardian' : 'self' },
+        ...(existingMember ? {} : { photoVideo: { ...order.policyVersions?.photoVideo, accepted: person.photoConsent === true, recordedAt: paidAt, by: person.junior ? 'guardian' : 'self' } })
+      },
+      ...(membershipLine ? { status: 'active', validUntil, membershipTier: membershipLine.membershipTier || '', justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.affiliationNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
       ...(stripeSubscriptionId && membershipLine?.type === 'subscription'
         ? { stripeMembershipSubscriptionId: stripeSubscriptionId, stripeMembershipMode: stripeMode }
         : {}),
@@ -214,13 +312,14 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
   }, { merge: true });
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [], siteUrl = '', billingMode = 'annual', receiptViewTokenHash = '' }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [], siteUrl = '', billingMode = 'annual', receiptViewTokenHash = '', stockProductIds = [], policyVersions = null }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     email: email.toLowerCase(),
     items,
     people,
-    disclaimerVersion: DISCLAIMER_VERSION,
+    stockProductIds,
+    policyVersions,
     total: String(total),
     status,
     stripeSessionId,
@@ -237,6 +336,39 @@ const updateFirestoreOrder = async (orderRef, fields) => {
   await adminDb.collection('orders').doc(orderRef).update(fields);
 };
 
+const stockReference = (productId) => adminDb.collection('stock').doc(productId);
+const limitedProductIds = (items) => [...new Set(items.filter((item) => item.category === 'EVENTS' || isMerchandise(item)).map((item) => item.id))];
+const readStock = (transaction, productIds) => productIds.length
+  ? transaction.getAll(...productIds.map(stockReference))
+  : Promise.resolve([]);
+const dropHold = (transaction, snapshot, orderRef) => {
+  if (snapshot.data()?.holds?.[orderRef]) transaction.update(snapshot.ref, new FieldPath('holds', orderRef), FieldValue.delete());
+};
+
+/** Takes stock for every limited line in one transaction; throws a `soldOut` error when any line cannot be supplied. */
+const reserveStock = async (orderRef, selected, catalog) => {
+  const productIds = limitedProductIds(selected).filter((id) => productLimits(catalog.find((product) => product.id === id)));
+  if (!productIds.length) return [];
+  await adminDb.runTransaction(async (transaction) => {
+    const snapshots = await readStock(transaction, productIds);
+    const now = Date.now();
+    snapshots.forEach((snapshot, index) => {
+      const product = catalog.find((candidate) => candidate.id === productIds[index]);
+      const holds = snapshot.data()?.holds || {};
+      const wanted = wantedQuantities(selected.filter((line) => line.id === product.id));
+      const problem = stockProblem(product, holds, wanted, now);
+      if (problem) throw Object.assign(new Error(problem), { soldOut: true, productId: product.id });
+      transaction.set(snapshot.ref, { holds: withHold(holds, orderRef, wanted, now) });
+    });
+  });
+  return productIds;
+};
+
+const releaseStock = (orderRef, productIds) => productIds.length ? adminDb.runTransaction(async (transaction) => {
+  const snapshots = await readStock(transaction, productIds);
+  snapshots.forEach((snapshot) => dropHold(transaction, snapshot, orderRef));
+}) : Promise.resolve();
+
 /** Terminal checkout failures update status but keep the saved order for support and retries. */
 const recordUnsuccessfulCheckout = async (session, status) => {
   const orderRef = session.metadata?.order_ref;
@@ -250,6 +382,8 @@ const recordUnsuccessfulCheckout = async (session, status) => {
     if (order.status !== 'pending') return;
     const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
     const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
+    const stock = await readStock(transaction, order.stockProductIds || []);
+    stock.forEach((snapshot) => dropHold(transaction, snapshot, orderRef));
     const timestamp = Timestamp.now();
     transaction.update(orderDocument, { status, ...(status === 'expired' ? { expiredAt: timestamp } : { paymentFailedAt: timestamp }) });
     if (discountDocument && discount?.reservedByOrder === orderRef && !discount.used) {
@@ -315,8 +449,33 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
         }
         if (order.emailSent === true) return null;
         if (order.emailSendingUntil?.toMillis() > Date.now()) throw new Error('Receipt delivery is already in progress.');
+        const stock = await readStock(transaction, order.stockProductIds || []);
         const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
         const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
+        const memberIds = [...new Set((order.people || []).map((person) => person.membershipId).filter(Boolean))];
+        const memberDocuments = memberIds.length
+          ? await transaction.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id)))
+          : [];
+        const memberHouseholds = new Map(memberDocuments.filter((member) => member.exists)
+          .map((member) => [member.id, member.data().householdId || '']));
+        const groups = new Map();
+        for (const person of order.people || []) {
+          const key = householdGroupKey(person);
+          const group = groups.get(key) || [];
+          group.push(person);
+          groups.set(key, group);
+        }
+        for (const group of groups.values()) {
+          const householdIds = [...new Set(group.map((person) => person.householdId || memberHouseholds.get(person.membershipId)).filter(Boolean))];
+          if (householdIds.length > 1) throw new Error('Checkout people reference different households.');
+          const householdId = householdIds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
+          group.forEach((person) => { person.householdId = householdId; });
+        }
+        const householdIds = [...new Set((order.people || []).map((person) => person.householdId).filter(Boolean))];
+        const householdDocuments = householdIds.length
+          ? await transaction.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id)))
+          : [];
+        const householdSnapshots = new Map(householdDocuments.map((household) => [household.id, household]));
         if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
         const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
           code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
@@ -334,10 +493,15 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
           }
         }
         if (discount?.singleUse) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
+        // Paid stock holds never lapse; rebuilt from the order in case the reservation was already cleared.
+        stock.forEach((snapshot) => transaction.set(snapshot.ref, {
+          holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
+        }));
         const paidAt = order.paidAt || Timestamp.now();
         if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt,
-          stripeSubscriptionId: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test' });
+          stripeSubscriptionId: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test', householdSnapshots });
         transaction.update(orderDocument, {
+          people: order.people || [],
           status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
           stripePaymentIntentId: session.payment_intent || '', stripeSubscriptionId: session.subscription || '',
           paidAt,
@@ -346,6 +510,9 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
         return { ...order, vouchers };
       });
       if (!fields) return res.json({ received: true });
+      // A volunteer who was inducted before joining gets their code once this purchase makes them a member.
+      try { await settleVolunteersFor([fields.email, ...(fields.people || []).map(contactEmail)].map(normalizeEmail)); }
+      catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
       try {
         const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken, items: fields.items, people: fields.people, total: fields.total,
           vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode });
@@ -363,8 +530,7 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
   }
 });
 
-app.use(express.json());
-app.use(express.static('dist'));
+app.use(express.json({ limit: '100kb' }));
 
 // Google Sheets API Setup
 let sheets;
@@ -392,7 +558,8 @@ try {
     adminAuth = getAdminAuth(adminApp);
     const workspaceAuth = new google.auth.GoogleAuth({
       credentials,
-      subject: process.env.GOOGLE_WORKSPACE_DELEGATED_USER || undefined,
+      // Domain-wide delegation only works when the impersonated user is passed as a client option.
+      clientOptions: { subject: process.env.GOOGLE_WORKSPACE_DELEGATED_USER || undefined },
       scopes: [
         'https://www.googleapis.com/auth/gmail.send',
         'https://www.googleapis.com/auth/drive',
@@ -494,11 +661,24 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
     const snapshot = await query.get();
     const documents = snapshot.docs.slice(0, 100);
     let members = new Map();
+    let households = new Map();
     if (req.query.kind !== 'members') {
       const ids = [...new Set(documents.flatMap((document) => (document.data().people || []).map((person) => person.membershipId)).filter(Boolean))];
       if (ids.length) members = new Map((await adminDb.getAll(...ids.map((id) => adminDb.collection('memberships').doc(id)))).filter((document) => document.exists).map((document) => [document.id, document.data()]));
     }
-    const records = documents.map((document) => (req.query.kind === 'members' ? membershipReport(document.id, document.data()) : orderReport(document.id, document.data(), members)));
+    const householdIds = [...new Set((req.query.kind === 'members'
+      ? documents.map((document) => document.data().householdId)
+      : [...members.values()].map((member) => member.householdId)).filter(Boolean))];
+    if (householdIds.length) {
+      households = new Map((await adminDb.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id))))
+        .filter((document) => document.exists).map((document) => [document.id, document.data()]));
+      if (req.query.kind !== 'members') {
+        members = new Map([...members].map(([id, member]) => [id, { ...member, household: households.get(member.householdId) || {} }]));
+      }
+    }
+    const records = documents.map((document) => (req.query.kind === 'members'
+      ? membershipReport(document.id, document.data(), new Date(), households.get(document.data().householdId) || {})
+      : orderReport(document.id, document.data(), members)));
     res.json({ records: eventReport ? records.filter((record) => record.items.some((item) => item.category === 'EVENTS'))
       .map((record) => ({ ...record, orderTotal: record.total, items: record.items.filter((item) => item.category === 'EVENTS'),
         total: record.items.filter((item) => item.category === 'EVENTS').reduce((sum, item) => sum + (item.price || 0), 0) })) : records,
@@ -559,6 +739,8 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       return res.status(400).json({ error: 'Invalid report record.' });
     }
     if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Type the exact record ID to confirm deletion.' });
+    const auditSecret = process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
+    if (!auditSecret) return res.status(503).json({ error: 'Deletion audit is not configured. Set AUDIT_LOOKUP_SECRET.' });
     const reference = collection.doc(req.params.id);
     const result = await adminDb.runTransaction(async (transaction) => {
       const document = await transaction.get(reference);
@@ -572,11 +754,13 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       if (warning && req.body.acknowledgeStripe !== true) return { status: 409,
         error: 'Check and cancel any active Stripe subscription before deleting this record. Deleting website data does not stop payments.',
         requiresStripeAcknowledgement: true, stripeSubscriptionId: fields.stripeSubscriptionId || '' };
+      // Removing a refunded order returns its tickets and stock to the shop.
+      const stock = req.params.kind === 'orders' ? await readStock(transaction, limitedProductIds(fields.items || [])) : [];
+      stock.forEach((snapshot) => dropHold(transaction, snapshot, req.params.id));
       transaction.delete(reference);
       transaction.create(adminDb.collection('adminDeletionAudit').doc(), {
-        adminUid: admin.uid, kind: req.params.kind,
-        recordIdHash: crypto.createHash('sha256').update(req.params.id).digest('hex'),
-        stripeAcknowledged: req.body.acknowledgeStripe === true, createdAt: Timestamp.now()
+        ...deletionAuditEntry({ kind: req.params.kind, id: req.params.id, fields, secret: auditSecret, adminUid: admin.uid, stripeAcknowledged: req.body.acknowledgeStripe === true }),
+        createdAt: Timestamp.now()
       });
       return { status: 200, success: true };
     });
@@ -586,6 +770,11 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
     res.status(500).json({ error: 'Could not delete record.' });
   }
 });
+
+registerGdprRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
+registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
+const { settleVolunteersFor } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
+  toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
@@ -731,19 +920,12 @@ const sendContentPrNotification = async (pullRequest, requestedBy) => {
   const recipient = process.env.GITHUB_PR_NOTIFICATION_EMAIL || 'Riotshielder21@gmail.com';
   const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
   if (!gmailApi || !sender || !recipient) return false;
-  const raw = [
-    `From: Forth Canoe Club Website <${sender}>`,
-    `To: ${recipient}`,
-    `Subject: Website changes need your review: PR #${pullRequest.number}`,
-    'Content-Type: text/plain; charset=utf-8',
-    '',
-    `An administrator (${requestedBy}) submitted website content for review.`,
-    '',
-    `Review and merge the pull request to publish the changes: ${pullRequest.html_url}`,
-    '',
-    'The approved main-branch workflow deploys the website to Firebase.'
-  ].join('\r\n');
   try {
+    const raw = buildRawEmail({ fromName: 'Forth Canoe Club Website', from: sender, to: recipient,
+      subject: `Website changes need your review: PR #${pullRequest.number}`,
+      body: [`An administrator (${requestedBy}) submitted website content for review.`, '',
+        `Review and merge the pull request to publish the changes: ${pullRequest.html_url}`, '',
+        'The approved main-branch workflow deploys the website to Firebase.'].join('\n') });
     await gmailApi.users.messages.send({
       userId: 'me',
       requestBody: { raw: Buffer.from(raw).toString('base64url') }
@@ -916,17 +1098,22 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
     }
     if (!email) return res.status(404).json({ error: 'No customer found.' });
 
-    const [byEmail, orderSnapshot, memberSnapshot] = await Promise.all([
+    const [byEmail, orderSnapshot, memberSnapshot, householdSnapshot] = await Promise.all([
       adminDb.collection('discountCodes').where('email', '==', email).get(),
       adminDb.collection('orders').where('email', '==', email).limit(50).get(),
-      adminDb.collection('memberships').where('email', '==', email).limit(20).get()
+      adminDb.collection('memberships').where('email', '==', email).limit(20).get(),
+      adminDb.collection('households').where('email', '==', email).limit(50).get()
     ]);
+    const householdMembers = (await Promise.all(householdSnapshot.docs.map((household) =>
+      adminDb.collection('memberships').where('householdId', '==', household.id).limit(50).get()
+    ))).flatMap((snapshot) => snapshot.docs);
+    const allMembers = [...new Map([...memberSnapshot.docs, ...householdMembers].map((document) => [document.id, document])).values()];
     // Older vouchers have no email of their own, so they are found through the customer's orders.
     const known = new Set(byEmail.docs.map((document) => document.id));
     const olderCodes = orderSnapshot.docs.flatMap((order) => (order.data().vouchers || []).map((voucher) => voucher.code)).filter((code) => !known.has(code));
     const voucherDocs = [...byEmail.docs.filter((document) => document.data().orderRef)];
     if (olderCodes.length) voucherDocs.push(...(await adminDb.getAll(...olderCodes.map((code) => adminDb.collection('discountCodes').doc(code)))).filter((document) => document.exists));
-    if (!voucherDocs.length && !orderSnapshot.size && !memberSnapshot.size) return res.status(404).json({ error: 'No customer found.' });
+    if (!voucherDocs.length && !orderSnapshot.size && !allMembers.length) return res.status(404).json({ error: 'No customer found.' });
     const now = Date.now();
     res.json({
       email,
@@ -938,12 +1125,12 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
           createdAt: data.createdAt?.toMillis() || 0, expiresAt: data.expiresAt?.toMillis() || 0, usedAt: data.usedAt?.toMillis() || 0
         };
       }).sort((a, b) => b.createdAt - a.createdAt),
-      memberships: memberSnapshot.docs.map((document) => {
+      memberships: allMembers.map((document) => {
         const data = document.data();
         return {
           id: document.id, name: `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.name || 'Unnamed',
           membershipTier: data.membershipTier || '', status: data.status === 'active' && data.validUntil?.toMillis() <= now ? 'expired' : data.status || 'unknown',
-          validUntil: data.validUntil?.toMillis() || 0, scaNumber: data.scaNumber || '',
+          validUntil: data.validUntil?.toMillis() || 0, affiliationNumber: data.affiliationNumber || '',
           privileges: (data.privileges || []).map((privilege) => privilege.name)
         };
       }),
@@ -1036,20 +1223,50 @@ app.post('/api/admin/discount-codes', rateLimit(20, 60 * 1000), async (req, res)
   }
 });
 
-// Names only, so a returning member can pick themselves; the date of birth is still verified at payment.
-app.post('/api/membership-names', rateLimit(5, 60 * 1000), async (req, res) => {
+// Says whether a membership exists for an email; names are only returned for a matching date of birth.
+app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
-    if (!adminDb || !isValidEmail(email)) return res.json({ names: [] });
-    const snapshot = await adminDb.collection('memberships').where('email', '==', email).limit(10).get();
+    const dob = typeof req.body.dob === 'string' ? req.body.dob.trim() : '';
+    if (!adminDb || !isValidEmail(email)) return res.json({ exists: false, names: [] });
+    const [legacy, households] = await Promise.all([
+      adminDb.collection('memberships').where('email', '==', email).limit(10).get(),
+      adminDb.collection('households').where('email', '==', email).limit(50).get()
+    ]);
+    const householdMembers = (await Promise.all(households.docs.map((household) =>
+      adminDb.collection('memberships').where('householdId', '==', household.id).limit(50).get()
+    ))).flatMap((snapshot) => snapshot.docs.map((document) => document.data()));
+    const records = [...new Map([...legacy.docs.map((document) => document.data()), ...householdMembers]
+      .filter(({ firstName, lastName }) => firstName && lastName)
+      .map((record) => [`${record.firstName} ${record.lastName}|${record.dob || ''}`, record])).values()];
     const names = new Map();
-    for (const document of snapshot.docs) {
-      const { firstName, lastName } = document.data();
-      if (firstName && lastName) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+      for (const { firstName, lastName, dob: held } of records) if (held === dob) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName });
     }
-    res.json({ names: [...names.values()] });
+    res.json({ exists: records.length > 0, names: [...names.values()] });
   } catch (error) {
-    res.json({ names: [] });
+    console.error('Membership email lookup failed:', error.message);
+    res.status(503).json({ error: 'Membership lookup is unavailable.' });
+  }
+});
+
+/** Remaining stock for limited products, so the shop can hide anything sold out. */
+app.get('/api/availability', rateLimit(60, 60 * 1000), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!adminDb) return res.json({ availability: {} });
+  try {
+    const [productSnapshot, stockSnapshot] = await Promise.all([adminDb.collection('products').get(), adminDb.collection('stock').get()]);
+    const catalog = resolveCatalogue(PRODUCTS, productSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
+    const holdsById = new Map(stockSnapshot.docs.map((document) => [document.id, document.data().holds || {}]));
+    const availability = {};
+    for (const product of catalog) {
+      const remaining = remainingStock(product, holdsById.get(product.id));
+      if (remaining) availability[product.id] = { remaining, soldOut: isSoldOut(remaining) };
+    }
+    res.json({ availability });
+  } catch (error) {
+    console.error('Could not load availability:', error.message);
+    res.status(503).json({ error: 'Availability is unavailable.' });
   }
 });
 
@@ -1096,6 +1313,7 @@ app.get('/api/checkout-receipt', rateLimit(20, 60 * 1000), async (req, res) => {
 
 app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => {
   let reservedDocument;
+  let reservedStockIds = [];
   const orderRef = `FCC-${crypto.randomUUID().toUpperCase()}`;
   try {
     const email = normalizeEmail(req.body.email);
@@ -1114,7 +1332,10 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     if (catalogItems.some((item) => !item || item.type === 'external' || !Number.isFinite(item.basePrice) || item.basePrice < 0) || lineIds.some((id) => !id) || new Set(lineIds).size !== lineIds.length) {
       return res.status(400).json({ error: 'Your basket contains an unavailable item. Please refresh the shop.' });
     }
-    const selected = catalogItems.map((item, index) => ({ ...item, lineId: lineIds[index] }));
+    const selected = catalogItems.map((item, index) => ({ ...item, lineId: lineIds[index],
+      ...(isMerchandise(item) ? { size: typeof requestedItems[index]?.size === 'string' ? requestedItems[index].size.trim().slice(0, 40) : '' } : {}) }));
+    const unsized = selected.find((item) => isMerchandise(item) && !Object.hasOwn(productLimits(item) || {}, item.size));
+    if (unsized) return res.status(400).json({ error: `Choose an available size for ${unsized.name}.` });
     for (const item of selected.filter((product) => product.category === 'EVENTS')) {
       try { validateEventSchedule(item.eventSchedule); }
       catch (error) { return res.status(400).json({ error: `Invalid event schedule for ${item.name}.` }); }
@@ -1134,7 +1355,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const needsMembership = new Set(peopleNeedingMembership(selected, people).map((person) => person.id));
     const storedPeople = [];
     for (const person of withFamilyContacts(people, selected)) {
-      const { existing, conflict, reason, validationError } = await findMembership(person);
+      const { existing, conflict, reason, validationError, contactHouseholdId } = await findMembership(person);
       if (validationError) {
         return res.status(503).json({ error: 'We could not confirm your Stripe direct-debit subscription. Your basket is unchanged; please try again shortly.' });
       }
@@ -1177,7 +1398,24 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
             : `${person.firstName} ${person.lastName} needs a Forth Canoe Club membership before buying these items. Add a membership to your basket, or check the membership number or date of birth and email you entered. If you are already a member through JustGo your record can take a day to appear; contact secretary@forthcanoeclub.co.uk.`
         });
       }
-      storedPeople.push({ ...person, membershipId: existing?.id || `MEM-${crypto.randomUUID().toUpperCase()}`, existingMember: Boolean(existing) });
+      storedPeople.push({ ...person, membershipId: existing?.id || `MEM-${crypto.randomUUID().toUpperCase()}`,
+        existingMember: Boolean(existing), ...((existing?.householdId || contactHouseholdId)
+          ? { householdId: existing?.householdId || contactHouseholdId } : {}) });
+    }
+    const householdGroups = new Map();
+    for (const person of storedPeople) {
+      const key = householdGroupKey(person);
+      const group = householdGroups.get(key) || [];
+      group.push(person);
+      householdGroups.set(key, group);
+    }
+    for (const group of householdGroups.values()) {
+      const existingHouseholds = [...new Set(group.map((person) => person.householdId).filter(Boolean))];
+      if (existingHouseholds.length > 1) {
+        return res.status(409).json({ error: 'The family members are linked to different households. Contact the club before continuing.' });
+      }
+      const householdId = existingHouseholds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
+      group.forEach((person) => { person.householdId = householdId; });
     }
     let promo = null;
     const code = typeof req.body.discountCode === 'string' ? req.body.discountCode.trim().toUpperCase() : '';
@@ -1202,13 +1440,16 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
     const items = pricing.items.map((item) => ({
       id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, price: item.displayPrice,
+      ...(item.size ? { size: item.size } : {}),
       ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),
       ...(item.type === 'voucher' ? { voucherValue: item.basePrice } : {}),
       ...(item.category === 'EVENTS' ? { eventSchedule: validateEventSchedule(item.eventSchedule) } : {})
     }));
     const total = pricing.total;
+    reservedStockIds = await reserveStock(orderRef, selected, catalog);
+    const policyVersions = await currentCheckoutPolicies(adminDb, isLive());
     await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null,
-      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken) });
+      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions });
     const hasRecurringItem = billingMode === 'monthly' && items.some((item) => item.type === 'subscription');
     const oneOffCredit = hasRecurringItem && promo?.discountType === 'credit';
     let coupon;
@@ -1217,7 +1458,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
     const lineItems = items.flatMap((item, index) => [
       [`line_items[${index}][price_data][currency]`, 'gbp'],
-      [`line_items[${index}][price_data][product_data][name]`, item.name],
+      [`line_items[${index}][price_data][product_data][name]`, itemLabel(item)],
       [`line_items[${index}][price_data][unit_amount]`, String(Math.round((oneOffCredit ? pricing.items[index].subtotalPrice : Number(item.price)) * 100))],
       [`line_items[${index}][quantity]`, '1'],
       ...(billingMode === 'monthly' && item.type === 'subscription'
@@ -1229,7 +1470,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       ...(coupon ? [['discounts[0][coupon]', coupon.id]] : []),
       ['expires_at', String(Math.floor(Date.now() / 1000) + 3600)],
       ['mode', hasRecurringItem ? 'subscription' : 'payment'],
-      ['customer_email', email],
+      ['customer', await stripeCustomerFor(email)],
       ...(!hasRecurringItem ? [['payment_intent_data[metadata][order_ref]', orderRef]] : []),
       ['success_url', `${siteUrl}/payment-success?session_id={CHECKOUT_SESSION_ID}&receipt_token=${receiptViewToken}`],
       ['cancel_url', `${siteUrl}/membership`],
@@ -1254,9 +1495,28 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       }
     }
     console.error('Error creating Stripe Checkout session:', error.message);
+    try { await releaseStock(orderRef, reservedStockIds); }
+    catch (releaseError) { console.error('Could not release stock hold:', releaseError.message); }
+    if (error.soldOut) return res.status(409).json({ code: 'sold_out', productId: error.productId, error: error.message });
     res.status(500).json({ error: 'Could not start secure checkout.' });
   }
 });
+
+/** Sends a plain-text email through Workspace; the emulator stack writes it to `testMail` instead. */
+const sendEmail = async ({ to, subject, body, record = {} }) => {
+  if (localFirebase) {
+    await adminDb.collection('testMail').add({ email: to, subject, body, ...record, createdAt: Timestamp.now() });
+    return true;
+  }
+  const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
+  if (!gmailApi || !sender) {
+    console.error('Email not sent: set GOOGLE_WORKSPACE_DELEGATED_USER (and a service account with domain-wide delegation).');
+    return false;
+  }
+  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body });
+  await gmailApi.users.messages.send({ userId: 'me', requestBody: { raw } });
+  return true;
+};
 
 const sendOrderEmail = async ({ email, orderRef, accessToken, items, people = [], total, vouchers = [], siteUrl = '', billingMode = 'annual' }) => {
   const orderSiteUrl = siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
@@ -1264,66 +1524,9 @@ const sendOrderEmail = async ({ email, orderRef, accessToken, items, people = []
   const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${accessToken}`;
   const body = [receiptEmailCopy(receipt), '', `Retrieve your receipt and subscription information: ${retrievalUrl}`, '',
     'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n');
-  if (localFirebase) {
-    await adminDb.collection('testMail').add({ email, orderRef, items, people, total, receipt, body, retrievalUrl, vouchers, createdAt: Timestamp.now() });
-    return true;
-  }
-  const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
-  if (!gmailApi || !sender) return false;
-
-  const raw = [
-    `From: Forth Canoe Club <${sender}>`,
-    `To: ${email}`,
-    'Subject: Your Forth Canoe Club purchase',
-    'Content-Type: text/plain; charset=utf-8',
-    '',
-    body
-  ].join('\r\n');
-
-  await gmailApi.users.messages.send({
-    userId: 'me',
-    requestBody: { raw: Buffer.from(raw).toString('base64url') }
-  });
-  return true;
+  return sendEmail({ to: email, subject: 'Your Forth Canoe Club purchase', body,
+    record: { orderRef, items, people, total, receipt, retrievalUrl, vouchers } });
 };
-
-app.post('/api/orders', rateLimit(10, 60 * 1000), async (req, res) => {
-  try {
-    const { email, items, total, receipt } = req.body;
-    if (!isValidEmail(email) || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'Enter a valid email address and include at least one item.' });
-    }
-    if (!adminDb) {
-      return res.status(503).json({ error: 'Order storage is not configured.' });
-    }
-
-    const orderRef = generateOrderRef();
-    const accessToken = createAccessToken();
-    await adminDb.collection('orders').doc(orderRef).create({
-      email: normalizeEmail(email),
-      accessTokenHash: hashAccessToken(accessToken),
-      receipt: receipt || {},
-      items,
-      total: String(total),
-      status: 'paid',
-      emailSent: false,
-      createdAt: Timestamp.now(),
-      expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
-    });
-
-    let emailSent = false;
-    try {
-      emailSent = await sendOrderEmail({ email, orderRef, accessToken, items, total });
-    } catch (emailError) {
-      console.error('Order stored but email could not be sent:', emailError.message);
-    }
-
-    res.json({ success: true, orderRef, accessToken, emailSent });
-  } catch (error) {
-    console.error('Error creating order:', error);
-    res.status(500).json({ error: 'Could not save order.' });
-  }
-});
 
 app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => {
   try {
@@ -1353,78 +1556,6 @@ app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => 
   }
 });
 
-// API Routes
-app.post('/api/lists', async (req, res) => {
-  try {
-    const { name, email, listType, items, notes } = req.body;
-
-    // Validate required fields
-    if (!name || !email || !listType || !items || !Array.isArray(items)) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    // Store in Firebase (optional backup)
-    const { db, addDoc, collection, serverTimestamp, generateDiscountCode, saveDiscountCode } = await import('./src/utils/firebase.js');
-    await addDoc(collection(db, 'lists'), {
-      name,
-      email,
-      listType,
-      items,
-      notes: notes || '',
-      timestamp: serverTimestamp(),
-      status: 'pending'
-    });
-
-    // Handle volunteer verification and discount code generation
-    let verificationResult = { verified: false };
-    let discountCode = null;
-
-    if (listType === 'Volunteer Sign-ups') {
-      verificationResult = await verifyMemberByName(name);
-      if (verificationResult.verified) {
-        discountCode = generateDiscountCode();
-        await saveDiscountCode(name, email, discountCode);
-      }
-    }
-
-    // Add to Google Sheets if available
-    if (sheets) {
-      const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-      if (spreadsheetId) {
-        const values = [
-          [
-            new Date().toISOString(),
-            name,
-            email,
-            listType,
-            items.join('; '),
-            notes || '',
-            verificationResult.verified ? 'VERIFIED' : 'UNVERIFIED',
-            discountCode || ''
-          ]
-        ];
-
-        await sheets.spreadsheets.values.append({
-          spreadsheetId,
-          range: 'Lists!A:H',
-          valueInputOption: 'RAW',
-          resource: { values }
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      message: 'List submitted successfully',
-      verification: verificationResult,
-      discountCode: discountCode
-    });
-  } catch (error) {
-    console.error('Error submitting list:', error);
-    res.status(500).json({ error: 'Failed to submit list' });
-  }
-});
-
 // Health check endpoint (for monitoring)
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -1444,6 +1575,24 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
+// Records changed consent and policy wording after each release once the site is live; repeated hourly in case the website deployed after this instance started.
+const recordPolicyVersions = async () => {
+  try {
+    const recorded = await syncPolicies(adminDb, { distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL });
+    if (recorded.length) console.log('Recorded policy versions:', recorded.map(({ key, version }) => `${key}@${version}`).join(', '));
+    const currentVersions = Object.fromEntries((await adminDb.collection('policies').get()).docs.map((document) => [document.id, document.data().currentVersion || 0]));
+    liveReadinessProblems({ currentVersions }).forEach((problem) => console.warn(`Not ready for live: ${problem}`));
+  } catch (error) {
+    console.error('Policy sync failed:', error.message);
+  }
+};
+if (adminDb && isLive()) {
+  recordPolicyVersions();
+  setInterval(recordPolicyVersions, 60 * 60 * 1000).unref();
+} else if (adminDb) {
+  console.log('WEBSITE_ISLIVE is not true: consent and policy wording is not versioned and consent records show pre-live.');
+}
+
 app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   console.log(`ðŸŽ¯ FCC Website running at http://127.0.0.1:${PORT}`);
   console.log(`ðŸ“ Serving from: ${__dirname}/dist`);

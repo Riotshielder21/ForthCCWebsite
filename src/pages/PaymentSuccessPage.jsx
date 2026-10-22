@@ -2,10 +2,23 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { apiUrl } from '../utils/api';
 
-export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBasket }) {
+const RECEIPT_KEY = 'fcc-payment-receipt';
+
+// The receipt token is moved out of the address bar (history, bookmarks, screenshots) into this tab's storage.
+const takeReceiptParams = () => {
   const query = new URLSearchParams(window.location.search);
-  const sessionId = query.get('session_id');
-  const receiptToken = query.get('receipt_token');
+  let stored = {};
+  try { stored = JSON.parse(window.sessionStorage.getItem(RECEIPT_KEY) || '{}'); } catch { /* ignore */ }
+  const params = { sessionId: query.get('session_id') || stored.sessionId || '', receiptToken: query.get('receipt_token') || stored.receiptToken || '' };
+  if (query.has('receipt_token') || query.has('session_id')) {
+    try { window.sessionStorage.setItem(RECEIPT_KEY, JSON.stringify(params)); } catch { /* storage may be disabled */ }
+    window.history.replaceState(window.history.state, '', window.location.pathname);
+  }
+  return params;
+};
+
+export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBasket }) {
+  const [{ sessionId, receiptToken }] = useState(takeReceiptParams);
   const [status, setStatus] = useState('checking');
   const [receipt, setReceipt] = useState(null);
   const [receiptUnavailable, setReceiptUnavailable] = useState(false);

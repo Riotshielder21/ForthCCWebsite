@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import {
   addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, personKind, familyRole, resolvedKind, FAMILY_ADULT_MAX,
-  normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT
+  displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT
 } from '../utils/checkout';
 import { apiUrl } from '../utils/api';
 
@@ -12,7 +12,10 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const addOnLines = lines.filter((line) => needsPerson(line) && !isMembership(line));
   const [stepKey, setStepKey] = useState('email');
   const [errors, setErrors] = useState([]);
-  const [names, setNames] = useState([]);
+  const [emailKnown, setEmailKnown] = useState(false);
+  // Per person: the date of birth typed to unlock matching names, and what the lookup found.
+  const [dobChecks, setDobChecks] = useState({});
+  const receiptEmailCopied = useRef(false);
 
   // Family members are filled in on their family membership's page, so they get no step of their own.
   const stepPeople = useMemo(() => people.filter((candidate) => familyRole(candidate, people, lines) !== 'member'), [people, lines]);
@@ -30,7 +33,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   }, [focusPersonId, serverErrors]);
   useEffect(() => { window.scrollTo({ top: 0 }); }, [current]);
 
-  const personLabel = (candidate) => [candidate.firstName, candidate.lastName].filter(Boolean).join(' ') || `Person ${people.indexOf(candidate) + 1}`;
+  const personLabel = (candidate) => displayName(candidate) || `Person ${people.indexOf(candidate) + 1}`;
   const held = (candidate) => candidate.lineIds.map((id) => lines.find((line) => line.lineId === id)).filter(Boolean);
   const lineLabel = (line) => {
     const same = lines.filter((candidate) => candidate.id === line.id);
@@ -41,14 +44,33 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const nested = (group, key) => (event) => update(person.id, (candidate) => ({ ...candidate, [group]: { ...candidate[group], [key]: event.target.value } }));
   const check = (key) => (event) => update(person.id, (candidate) => ({ ...candidate, [key]: event.target.checked }));
 
-  const fetchNames = async () => {
+  const lookupMembers = async (dob = '') => {
     try {
-      const response = await fetch(apiUrl('/api/membership-names'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim() }) });
+      const response = await fetch(apiUrl('/api/membership-names'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim(), ...(dob ? { dob } : {}) }) });
       const result = await response.json();
-      setNames(Array.isArray(result.names) ? result.names : []);
+      return { exists: result.exists === true, names: Array.isArray(result.names) ? result.names : [] };
     } catch {
-      setNames([]);
+      return { exists: false, names: [] };
     }
+  };
+
+  const checkDob = async (personId) => {
+    const dob = dobChecks[personId]?.dob;
+    if (!dob) return;
+    setDobChecks((current) => ({ ...current, [personId]: { ...current[personId], busy: true } }));
+    const { names } = await lookupMembers(dob);
+    setDobChecks((current) => ({ ...current, [personId]: { dob, names, checked: true } }));
+  };
+
+  // The receipt email is offered once as the first person's membership email; after that it is their own field.
+  const copyReceiptEmail = () => {
+    const first = stepPeople[0];
+    if (!first || first.returning || receiptEmailCopied.current) return;
+    receiptEmailCopied.current = true;
+    const receipt = email.trim();
+    update(first.id, (candidate) => resolvedKind(candidate, people, lines) === 'junior'
+      ? (candidate.guardian.email ? candidate : { ...candidate, guardian: { ...candidate.guardian, email: receipt } })
+      : (candidate.email ? candidate : { ...candidate, email: receipt }));
   };
 
   const go = async (direction) => {
@@ -56,7 +78,11 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
       let problems = [];
       if (current === 'email') {
         if (!EMAIL.test(email.trim())) problems = ['Enter a valid email address to receive your receipt.'];
-        else if (people.length) await fetchNames();
+        else if (people.length) {
+          setDobChecks({});
+          setEmailKnown((await lookupMembers()).exists);
+          copyReceiptEmail();
+        }
       } else if (person) {
         problems = [
           ...personDetailErrors(person, personLabel(person), lines, new Date(), role),
@@ -97,7 +123,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const canRemove = person && !held(person).some(isMembership) && (!person.lineIds.length || people.length > 1);
   const removeMember = (id) => onPeopleChange(people.filter((candidate) => candidate.id !== id));
   const taken = new Set(people.filter((candidate) => candidate.returning && candidate.id !== person?.id).map((candidate) => normaliseName(`${candidate.firstName} ${candidate.lastName}`)));
-  const choices = names.filter((name) => !taken.has(normaliseName(`${name.firstName} ${name.lastName}`)));
+  const dobCheck = (person && dobChecks[person.id]) || {};
+  const choices = (dobCheck.names || []).filter((name) => !taken.has(normaliseName(`${name.firstName} ${name.lastName}`)));
   const role = person ? familyRole(person, people, lines) : null;
   const minor = person ? resolvedKind(person, people, lines) === 'junior' : false;
   const fixedTier = person ? role === 'primary' || held(person).some((line) => ['junior', 'adult'].includes(line.membershipTier)) : true;
@@ -123,9 +150,9 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
       <div className="main_tile">
         {current === 'email' && (
           <div className="CheckoutDetails">
-            <h2 className="page_heading_bold_1">Your contact email</h2>
-            <p className="text_container">Your receipt and any voucher codes are sent here. If you already have a membership under this email, you can pick your name on the next page instead of typing everything again.</p>
-            <label className="FormLabel">Email
+            <h2 className="page_heading_bold_1">Your receipt email</h2>
+            <p className="text_container">We send your receipt and any voucher codes here. This is only the receipt address, so it can be different from the email on your membership. You will be asked for the membership email next.</p>
+            <label className="FormLabel">Receipt email
               <input className="FormInput" type="email" required maxLength={254} autoComplete="email" value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder="you@example.com" />
             </label>
           </div>
@@ -137,29 +164,37 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
             {canRemove && <button type="button" className="PrimaryActionButtonCompact" onClick={() => removePerson(person)}>Cancel and remove this person</button>}
             <p className="CartItemMeta">{memberships.length ? memberships.map(lineLabel).join(', ') : 'Existing member. Add-ons are chosen on a later step.'}</p>
 
-            {!person.returning && !person.firstName && choices.length > 0 && (
+            {!person.returning && !person.firstName && emailKnown && (
               <div className="CheckoutSection">
-                <h4 className="CartItemTitle">Already a member? Choose your name</h4>
-                <div className="CheckoutNames">
-                  {choices.map((name) => (
-                    <button key={`${name.firstName} ${name.lastName}`} type="button" className="PrimaryActionButtonCompact"
-                      onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName }))}>
-                      {name.firstName} {name.lastName}
-                    </button>
-                  ))}
-                </div>
+                <h4 className="CartItemTitle">We already hold a membership under this email</h4>
+                <p className="text_container">If that is you, enter your date of birth and we will show your name so you do not have to type everything again. This may not be you, for example someone else could share this email. If so, just fill in the form below as a new entry.</p>
+                <label className="FormLabel">Date of birth
+                  <input className="FormInput" type="date" value={dobCheck.dob || ''} onChange={(event) => setDobChecks((current) => ({ ...current, [person.id]: { dob: event.target.value, names: [], checked: false } }))} />
+                </label>
+                <button type="button" className="PrimaryActionButtonCompact" disabled={!dobCheck.dob || dobCheck.busy} onClick={() => checkDob(person.id)}>{dobCheck.busy ? 'Checking…' : 'Check'}</button>
+                {dobCheck.checked && choices.length > 0 && (
+                  <div className="CheckoutNames">
+                    {choices.map((name) => (
+                      <button key={`${name.firstName} ${name.lastName}`} type="button" className="PrimaryActionButtonCompact"
+                        onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob, verifiedDob: dobCheck.dob }))}>
+                        {name.firstName} {name.lastName}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {dobCheck.checked && !choices.length && <p className="CartItemMeta" role="status">No membership matches that date of birth. Carry on with the form below.</p>}
                 <p className="CartItemMeta">Someone new? Just fill in the form below.</p>
               </div>
             )}
 
             {person.returning ? (
               <>
-                <p className="text_container"><strong>{person.firstName} {person.lastName}</strong></p>
+                <p className="text_container"><strong>{displayName(person)}</strong></p>
                 <label className="FormLabel">Confirm date of birth
                   <input className="FormInput" type="date" required value={person.dob} onChange={field('dob')} />
                 </label>
                 <p className="CartItemMeta">We match this with your membership record. We never show other details.</p>
-                <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: false, firstName: '', lastName: '', dob: '' }))}>This is not me / enter full details</button>
+                <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: false, firstName: '', lastName: '', dob: '', verifiedDob: '' }))}>This is not me / enter full details</button>
               </>
             ) : (
               <>
@@ -176,10 +211,10 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                   <label className="FormLabel">Last name<input className="FormInput" required maxLength={80} autoComplete="off" value={person.lastName} onChange={field('lastName')} /></label>
                   <label className="FormLabel">Date of birth<input className="FormInput" type="date" required aria-label="Date of birth" aria-invalid={Boolean(ageProblem(person, lines, role))} value={person.dob} onChange={field('dob')} />{ageProblem(person, lines, role) && <span className="StatusText StatusTextError">{ageProblem(person, lines, role)}</span>}</label>
                   {role !== 'member' && !minor && <label className="FormLabel">Phone<input className="FormInput" type="tel" required maxLength={40} value={person.phone} onChange={field('phone')} /></label>}
-                  {role !== 'member' && !minor && <label className="FormLabel">Email<input className="FormInput" type="email" required maxLength={254} value={person.email} onChange={field('email')} /></label>}
+                  {role !== 'member' && !minor && <label className="FormLabel">Membership email<input className="FormInput" type="email" required maxLength={254} value={person.email} onChange={field('email')} /></label>}
                   {role !== 'member' && !minor && <label className="FormLabel">Address<input className="FormInput" required maxLength={300} value={person.address} onChange={field('address')} /></label>}
                   {role !== 'member' && !minor && <label className="FormLabel">Postcode<input className="FormInput" required maxLength={12} value={person.postcode} onChange={field('postcode')} /></label>}
-                  {!role && <label className="FormLabel">Paddle Scotland / JustGo membership number (if you have one)<input className="FormInput" maxLength={40} value={person.scaNumber} onChange={field('scaNumber')} /></label>}
+                  {!role && <label className="FormLabel">Paddle Scotland / JustGo membership number (if you have one)<input className="FormInput" maxLength={40} value={person.affiliationNumber} onChange={field('affiliationNumber')} /></label>}
                   <label className="FormLabel">Swimming ability
                     <select className="FormInput" required value={person.swimming} onChange={field('swimming')}>
                       <option value="">Choose</option>
@@ -195,9 +230,9 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     <legend>Parent / guardian (contact details and emergency contact)</legend>
                     <div className="CheckoutGrid">
                       <label className="FormLabel">Name<input className="FormInput" required maxLength={120} value={person.guardian.name} onChange={nested('guardian', 'name')} /></label>
-                      <label className="FormLabel">Relationship<input className="FormInput" maxLength={60} value={person.guardian.relationship} onChange={nested('guardian', 'relationship')} /></label>
+                      <label className="FormLabel">Relationship<input className="FormInput" required maxLength={60} value={person.guardian.relationship} onChange={nested('guardian', 'relationship')} /></label>
                       <label className="FormLabel">Phone<input className="FormInput" type="tel" required maxLength={40} value={person.guardian.phone} onChange={nested('guardian', 'phone')} /></label>
-                      <label className="FormLabel">Email<input className="FormInput" type="email" required maxLength={254} value={person.guardian.email} onChange={nested('guardian', 'email')} /></label>
+                      <label className="FormLabel">Membership email<input className="FormInput" type="email" required maxLength={254} value={person.guardian.email} onChange={nested('guardian', 'email')} /></label>
                       <label className="FormLabel">Address<input className="FormInput" required maxLength={300} value={person.guardian.address} onChange={nested('guardian', 'address')} /></label>
                       <label className="FormLabel">Postcode<input className="FormInput" required maxLength={12} value={person.guardian.postcode} onChange={nested('guardian', 'postcode')} /></label>
                     </div>
@@ -207,12 +242,12 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     <legend>{role === 'primary' ? 'Family emergency contact' : 'Emergency contact'}</legend>
                     <div className="CheckoutGrid">
                       <label className="FormLabel">Name<input className="FormInput" required maxLength={120} value={person.emergencyContact.name} onChange={nested('emergencyContact', 'name')} /></label>
-                      <label className="FormLabel">Relationship<input className="FormInput" maxLength={60} value={person.emergencyContact.relationship} onChange={nested('emergencyContact', 'relationship')} /></label>
+                      <label className="FormLabel">Relationship<input className="FormInput" required maxLength={60} value={person.emergencyContact.relationship} onChange={nested('emergencyContact', 'relationship')} /></label>
                       <label className="FormLabel">Phone<input className="FormInput" type="tel" required maxLength={40} value={person.emergencyContact.phone} onChange={nested('emergencyContact', 'phone')} /></label>
                     </div>
                   </fieldset>
                 )}
-                <label className="CheckoutCheck"><input type="checkbox" checked={person.photoConsent} onChange={check('photoConsent')} /> Photo and video consent</label>
+                <label className="CheckoutCheck"><input type="checkbox" checked={person.photoConsent} onChange={check('photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
               </>
             )}
             <label className="CheckoutCheck"><input type="checkbox" checked={person.disclaimerAccepted} onChange={check('disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
@@ -243,7 +278,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     </div>
                     <label className="FormLabel">Medical conditions or notes<textarea className="FormInput" rows="2" maxLength={1000} value={member.medical} onChange={memberField(member.id, 'medical')} /></label>
                     <p className="CartItemMeta">{member.junior ? 'Parents are their emergency contact.' : 'Shares the family contact details and family emergency contact.'}</p>
-                    <label className="CheckoutCheck"><input type="checkbox" checked={member.photoConsent} onChange={memberCheck(member.id, 'photoConsent')} /> Photo and video consent</label>
+                    <label className="CheckoutCheck"><input type="checkbox" checked={member.photoConsent} onChange={memberCheck(member.id, 'photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
                     <label className="CheckoutCheck"><input type="checkbox" checked={member.disclaimerAccepted} onChange={memberCheck(member.id, 'disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
                   </section>
                 ))}

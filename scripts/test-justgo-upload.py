@@ -35,19 +35,25 @@ class FakeUploader:
         self.failing, self.calls = failing, []
 
     async def upload(self, member):
-        self.calls.append((member["id"], member["justgoUpload"]["attempts"]))
+        self.calls.append((member["id"], member["justgoUpload"]["attempts"], member.get("email", ""), member.get("contactName", "")))
         if member["id"] in self.failing:
             raise upload.UploadError("JustGo said no")
         return {}
 
 
-def member(key, state):
+def member(key, state, household_id=""):
     reference = db.collection("memberships").document(f"UP-{key}-{run}")
-    reference.set({"firstName": key, "lastName": "Test", "email": f"{key}.{run}@example.test", "justgoSyncStatus": "pending", "justgoUpload": state})
+    reference.set({"firstName": key, "lastName": "Test", "email": f"{key}.{run}@example.test", "justgoSyncStatus": "pending", "justgoUpload": state,
+                   **({"householdId": household_id} if household_id else {})})
     return reference
 
 
-queued = member("queued", {"status": "queued", "attempts": 0, "failures": 0, "mode": "new"})
+household_id = f"HH-UP-{run}"
+db.collection("households").document(household_id).set({
+    "contactName": "Parent Contact", "contactRelationship": "Parent", "email": f"parent.{run}@example.test",
+    "phone": "0777", "address": "1 Road", "postcode": "EH1"
+})
+queued = member("queued", {"status": "queued", "attempts": 0, "failures": 0, "mode": "new"}, household_id)
 failing = member("failing", {"status": "queued", "attempts": 0, "failures": 0, "mode": "invite"})
 expired = member("expired", {"status": "invited", "attempts": 1, "failures": 0, "mode": "new", "inviteExpiresAt": T0 - days(1)})
 waiting = member("waiting", {"status": "invited", "attempts": 1, "failures": 0, "mode": "new", "inviteExpiresAt": T0 + days(3)})
@@ -64,6 +70,7 @@ summary = asyncio.run(upload.process_queue(db, uploader, T0))
 assert summary["invited"] == 2 and summary["failed"] == 1, summary
 assert state(queued)["status"] == "invited" and state(queued)["inviteExpiresAt"] == T0 + days(upload.INVITE_DAYS), "invite expiry recorded"
 assert state(queued)["attempts"] == 1
+assert (f"UP-queued-{run}", 1, f"parent.{run}@example.test", "Parent Contact") in uploader.calls, "JustGo upload reads contact details from the household"
 f1 = state(failing)
 assert (f1["status"], f1["failures"], f1["attempts"], f1["needsStaff"]) == ("failed", 1, 1, False), f1
 assert f1["lastError"] == "JustGo said no" and f1["nextAttemptAt"] == T0 + hours(1), "first retry after an hour"
@@ -91,4 +98,5 @@ assert state(queued)["status"] == "invited" and state(queued)["failures"] == 1 a
 
 for reference in (queued, failing, expired, waiting, manual, spent):
     reference.delete()
+db.collection("households").document(household_id).delete()
 print("JustGo upload checks passed: invitations, expiry resends, backoff, staff flag, failure counts, manual skip, attempt limit.")

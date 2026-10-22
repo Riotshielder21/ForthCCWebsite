@@ -1,9 +1,10 @@
 import { eventScheduleLabel } from './catalogue.js';
+import { itemLabel } from './inventory.js';
 
 const money = (value) => `£${Number(value || 0).toFixed(2)}`;
 
 const receiptItems = (items, order) => items.map((item) => ({
-  name: String(item.name || item.id || 'Item'),
+  name: itemLabel(item) || 'Item',
   price: Number(item.price || 0),
   billing: order.billingMode === 'monthly' && item.type === 'subscription' ? 'per month' : '',
   schedule: item.eventSchedule ? eventScheduleLabel(item.eventSchedule) : ''

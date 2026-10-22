@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem
+  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem, displayName
 } from './checkout.js';
 
 const now = new Date(2026, 9, 11);
@@ -86,8 +86,8 @@ test('draft storage round-trips and ignores corrupt data', () => {
   assert.equal(loadDraft(storage), null);
 });
 
-const rec = (over) => ({ id: 'r1', email: 'p@example.com', dob: '2012-03-04', firstName: 'Sam', lastName: 'Lee', scaNumber: '', status: 'active', validUntil: 0, ...over });
-const who = (over) => ({ firstName: 'Sam', lastName: 'Lee', dob: '2012-03-04', scaNumber: '', ...over });
+const rec = (over) => ({ id: 'r1', email: 'p@example.com', dob: '2012-03-04', firstName: 'Sam', lastName: 'Lee', affiliationNumber: '', status: 'active', validUntil: 0, ...over });
+const who = (over) => ({ firstName: 'Sam', lastName: 'Lee', dob: '2012-03-04', affiliationNumber: '', ...over });
 
 test('siblings sharing a guardian email are separate people', () => {
   const result = matchMembership(who({ firstName: 'Alex', dob: '2014-06-01' }), { byEmail: [rec({})] });
@@ -112,13 +112,13 @@ test('email, date of birth and name together match an existing record', () => {
 });
 
 test('membership number is primary but must agree with the date of birth', () => {
-  const byNumber = [rec({ id: 'j1', scaNumber: '123', email: '' })];
-  assert.equal(matchMembership(who({ scaNumber: '123', firstName: 'Samuel' }), { byNumber }).match.id, 'j1');
-  assert.equal(matchMembership(who({ scaNumber: '123', dob: '2000-01-01' }), { byNumber }).reason, 'number');
+  const byNumber = [rec({ id: 'j1', affiliationNumber: '123', email: '' })];
+  assert.equal(matchMembership(who({ affiliationNumber: '123', firstName: 'Samuel' }), { byNumber }).match.id, 'j1');
+  assert.equal(matchMembership(who({ affiliationNumber: '123', dob: '2000-01-01' }), { byNumber }).reason, 'number');
 });
 
 test('an unknown membership number falls back to the email check', () => {
-  assert.equal(matchMembership(who({ scaNumber: '999' }), { byNumber: [], byEmail: [rec({})] }).match.id, 'r1');
+  assert.equal(matchMembership(who({ affiliationNumber: '999' }), { byNumber: [], byEmail: [rec({})] }).match.id, 'r1');
 });
 
 test('an active record is preferred over an expired one', () => {
@@ -255,4 +255,188 @@ test('age problems are reported as soon as a date of birth fits the membership b
   const kid = { ...assignLines([], [junior(1)], makeId)[0], dob: '1990-01-01' };
   assert.match(ageProblem(kid, [junior(1)], null, now), /ages 8-17/);
   assert.equal(ageProblem({ ...kid, dob: '' }, [junior(1)], null, now), '');
+});
+
+const adult = (n) => ({ id: 'membership-adult', lineId: `a${n}`, name: 'ADULT', category: 'MEMBERSHIP', type: 'annual-oneoff', membershipTier: 'adult' });
+
+test('membership assignment keeps each membership holder distinct and places add-ons consistently', () => {
+  const cases = [
+    { lines: [junior(1), adult(1)], expectedMemberships: [['j1'], ['a1']] },
+    { lines: [adult(1), junior(1), hire], expectedMemberships: [['a1', 'h1'], ['j1']] },
+    { lines: [junior(1), hire, junior(2)], expectedMemberships: [['j1', 'h1'], ['j2']] }
+  ];
+
+  for (const { lines, expectedMemberships } of cases) {
+    const people = assignLines([], lines, makeId);
+    assert.deepEqual(people.map((person) => person.lineIds), expectedMemberships);
+    assert.equal(new Set(people.flatMap((person) => person.lineIds)).size, lines.length);
+  }
+});
+
+test('membership requirement applies only to people with non-membership items and no membership of their own', () => {
+  const lines = [junior(1), adult(1), hire, { ...hire, lineId: 'h2', id: 'other-hire' }];
+  const people = assignLines([], lines, makeId);
+  const member = people.find((person) => person.lineIds.includes('j1'));
+  const adultMember = people.find((person) => person.lineIds.includes('a1'));
+  const hireOnly = { ...blankPerson('hire-only'), lineIds: ['h1', 'h2'] };
+  const membershipOnly = { ...blankPerson('member-only'), lineIds: ['j1'] };
+
+  assert.deepEqual(peopleNeedingMembership(lines, people), []);
+  assert.deepEqual(peopleNeedingMembership(lines, [member, adultMember, hireOnly, membershipOnly]).map((person) => person.id), ['hire-only']);
+
+  const familyPeopleWithHire = assignLines([], [family, hire], makeId);
+  assert.equal(peopleNeedingMembership([family, hire], familyPeopleWithHire).length, 0);
+});
+
+test('guardian fields are all required for junior members, including relationship', () => {
+  const line = junior(1);
+  const [person] = assignLines([], [line], makeId);
+  const valid = complete(person, {
+    dob: '2015-01-01',
+    guardian: { name: 'Parent', phone: '3', email: 'parent@example.com', relationship: 'Parent', address: '2 St', postcode: 'EH2' }
+  });
+  const cases = [
+    ['name', ''],
+    ['relationship', ''],
+    ['phone', ''],
+    ['email', 'not-an-email'],
+    ['address', ''],
+    ['postcode', '']
+  ];
+
+  for (const [field, value] of cases) {
+    const invalid = { ...valid, guardian: { ...valid.guardian, [field]: value } };
+    assert.match(validateCheckout({ lines: [line], people: [invalid], now }).join(' '), /parent\/guardian name, relationship, phone, email, address and postcode are required/, field);
+  }
+});
+
+test('adult contact and emergency-contact fields are required, including relationship', () => {
+  const line = adult(1);
+  const [person] = assignLines([], [line], makeId);
+  const valid = complete(person);
+  const cases = [
+    { change: { phone: '' }, message: /phone number is required/ },
+    { change: { address: '' }, message: /address and postcode are required/ },
+    { change: { postcode: '' }, message: /address and postcode are required/ },
+    { change: { email: 'invalid' }, message: /a valid email is required/ },
+    { change: { emergencyContact: { ...valid.emergencyContact, name: '' } }, message: /emergency contact name, relationship and phone are required/ },
+    { change: { emergencyContact: { ...valid.emergencyContact, relationship: '' } }, message: /emergency contact name, relationship and phone are required/ },
+    { change: { emergencyContact: { ...valid.emergencyContact, phone: '' } }, message: /emergency contact name, relationship and phone are required/ }
+  ];
+
+  for (const { change, message } of cases) {
+    assert.match(validateCheckout({ lines: [line], people: [{ ...valid, ...change }], now }).join(' '), message);
+  }
+});
+
+test('family contacts are consistent across mixed adults and juniors without changing member details', () => {
+  const lines = [family];
+  const people = familyPeople([
+    { name: 'Second adult', dob: '1985-01-01', junior: false },
+    { name: 'Child', dob: '2015-01-01', junior: true }
+  ]);
+  const resolved = withFamilyContacts(people, lines);
+  const primary = resolved[0];
+  const shared = {
+    phone: primary.phone,
+    email: primary.email,
+    address: primary.address,
+    postcode: primary.postcode,
+    emergencyContact: primary.emergencyContact,
+    familyGroup: 'f1'
+  };
+
+  assert.equal(resolved.length, 3);
+  for (const member of resolved.slice(1)) {
+    for (const [field, value] of Object.entries(shared)) assert.deepEqual(member[field], value);
+    assert.equal(member.guardian.name, 'A B');
+    assert.equal(member.guardian.relationship, 'Parent');
+    assert.equal(member.guardian.email, primary.email);
+    assert.equal(member.guardian.address, primary.address);
+  }
+  assert.equal(resolved[1].emergencyNote, undefined);
+  assert.equal(resolved[2].emergencyNote, 'Parents are the emergency contact');
+  assert.equal(primary.familyGroup, 'f1');
+});
+
+test('existing membership lookup distinguishes matches, conflicts, and unrelated shared-email records', () => {
+  const cases = [
+    { label: 'normalized same-name and date match', person: who({ firstName: ' sam ' }), records: [rec({})], expectedId: 'r1' },
+    { label: 'same name with a different date is a conflict', person: who({ dob: '2012-04-03' }), records: [rec({})], expectedReason: 'dob' },
+    { label: 'another family member on the shared email is not a match', person: who({ firstName: 'Alex', dob: '2014-06-01' }), records: [rec({})] },
+    { label: 'different name and date are not a conflict', person: who({ firstName: 'Alex', dob: '2014-06-01' }), records: [rec({ firstName: 'Taylor', dob: '2014-06-01' })] }
+  ];
+
+  for (const { label, person, records, expectedId, expectedReason } of cases) {
+    const result = matchMembership(person, { byEmail: records });
+    assert.equal(result.match?.id ?? null, expectedId ?? null, label);
+    assert.equal(result.reason, expectedReason, label);
+    if (!expectedReason) assert.equal(result.conflict, null, label);
+  }
+});
+
+test('membership-number verification uses a junior guardian email and an adult member email', () => {
+  const cases = [
+    {
+      person: { ...who({ affiliationNumber: '123' }), junior: true, email: 'child@example.com', guardian: { email: 'parent@example.com' } },
+      record: rec({ affiliationNumber: '123', email: 'parent@example.com' }),
+      expectedId: 'r1'
+    },
+    {
+      person: { ...who({ affiliationNumber: '123' }), junior: false, email: 'adult@example.com', guardian: { email: 'parent@example.com' } },
+      record: rec({ affiliationNumber: '123', email: 'adult@example.com' }),
+      expectedId: 'r1'
+    },
+    {
+      person: { ...who({ affiliationNumber: '123' }), junior: true, email: 'child@example.com', guardian: { email: 'other@example.com' } },
+      record: rec({ affiliationNumber: '123', email: 'parent@example.com' }),
+      expectedReason: 'number'
+    }
+  ];
+
+  for (const { person, record, expectedId, expectedReason } of cases) {
+    const result = matchMembership(person, { byNumber: [record] });
+    assert.equal(result.match?.id ?? null, expectedId ?? null);
+    assert.equal(result.reason, expectedReason);
+  }
+});
+
+test('invalid and boundary dates produce the current age-validation results', () => {
+  const cases = [
+    { dob: '', expectedAge: null, expectedProblem: '' },
+    { dob: 'not-a-date', expectedAge: null, expectedProblem: '' },
+    { dob: '2010-02-31', expectedAge: null, expectedProblem: '' },
+    { dob: '2027-01-01', expectedAge: null, expectedProblem: '' },
+    { dob: '2018-10-11', expectedAge: 8, expectedProblem: '' },
+    { dob: '2008-10-11', expectedAge: 18, expectedProblem: 'Junior membership is for ages 8-17.' },
+    { dob: '2008-10-12', expectedAge: 17, expectedProblem: '' }
+  ];
+  const line = junior(1);
+  const [person] = assignLines([], [line], makeId);
+
+  for (const { dob, expectedAge, expectedProblem } of cases) {
+    assert.equal(ageOn(dob, now), expectedAge, dob || '(empty date)');
+    assert.equal(ageProblem({ ...person, dob }, [line], null, now), expectedProblem, dob || '(empty date)');
+  }
+});
+
+test('checkout rejects duplicate people, missing items, and duplicate membership holders', () => {
+  const line = junior(1);
+  const person = complete({ ...blankPerson('same'), lineIds: ['j1'] }, { dob: '2015-01-01' });
+  const duplicate = { ...person, lineIds: ['j1'] };
+  const duplicateIdErrors = validateCheckout({ lines: [line], people: [person, duplicate], now }).join(' ');
+  assert.match(duplicateIdErrors, /invalid entry/);
+  assert.match(duplicateIdErrors, /assign to exactly one person/);
+
+  const noItems = complete({ ...blankPerson('empty'), lineIds: [] });
+  assert.match(validateCheckout({ lines: [line], people: [noItems], now }).join(' '), /has no items/);
+});
+
+test('a returning member name stays masked until the unlocking date of birth is entered', () => {
+  const picked = { returning: true, firstName: 'Jane', lastName: 'Smith', dob: '1990-02-03', verifiedDob: '1990-02-03' };
+  assert.equal(displayName(picked), 'Jane Smith');
+  assert.equal(displayName({ ...picked, dob: '' }), 'J*** S***');
+  assert.equal(displayName({ ...picked, dob: '1990-02-04' }), 'J*** S***');
+  assert.equal(displayName({ ...picked, verifiedDob: undefined }), 'J*** S***');
+  assert.equal(displayName({ returning: false, firstName: 'New', lastName: 'Person', dob: '' }), 'New Person');
 });

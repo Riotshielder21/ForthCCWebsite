@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock } from 'lucide-react';
+import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, ShieldX } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl } from '../utils/api';
 import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows } from '../utils/adminReports';
 import { eventScheduleLabel } from '../utils/catalogue';
 import CustomerVouchers from '../components/CustomerVouchers';
+import GdprErasurePanel from '../components/GdprErasurePanel';
 
 const detailValue = (value) => {
   if (value === true) return 'Yes';
@@ -47,6 +48,7 @@ export default function AdminReportsPage({ onNavigate }) {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [tierFilter, setTierFilter] = useState('all');
   const [selected, setSelected] = useState(null);
+  const [erasure, setErasure] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [confirmation, setConfirmation] = useState('');
   const [stripeRequired, setStripeRequired] = useState(false);
@@ -117,7 +119,7 @@ export default function AdminReportsPage({ onNavigate }) {
   }, [selected?.id]);
 
   const filtered = records.filter((record) => {
-    const haystack = `${record.id} ${record.clubCustomerId || ''} ${record.clubSubscriptionId || ''} ${record.email || ''} ${record.name || ''} ${record.scaId || ''} ${record.phone || ''} ${record.address || ''} ${record.emergencyContact || ''} ${record.parent || ''} ${record.tier || ''} ${(record.privileges || []).join(' ')} ${(record.items || []).map((item) => item.name).join(' ')}`.toLowerCase();
+    const haystack = `${record.id} ${record.clubCustomerId || ''} ${record.clubSubscriptionId || ''} ${record.email || ''} ${record.name || ''} ${record.affiliationNumber || ''} ${record.phone || ''} ${record.address || ''} ${record.emergencyContact || ''} ${record.parent || ''} ${record.tier || ''} ${(record.privileges || []).join(' ')} ${(record.items || []).map((item) => item.name).join(' ')}`.toLowerCase();
     return haystack.includes(search.toLowerCase()) && (status === 'all' || record.status === status)
       && (kind !== 'members' || ((sourceFilter === 'all' || record.justgo === sourceFilter) && (tierFilter === 'all' || record.tier === tierFilter)))
       && (kind !== 'orders' || purchaseType === 'all'
@@ -148,14 +150,14 @@ export default function AdminReportsPage({ onNavigate }) {
     const headers = purchaseReport
       ? ['Order ID', 'Email', 'Status', 'Created', 'Paid', kind === 'events' ? 'Event tickets total GBP' : 'Total GBP', 'Items and schedules', 'Stripe subscription ID', 'Stripe check required']
       : kind === 'subscribers' ? ['Subscription ID', 'Customer ID', 'Club customer ID', 'Club subscription ID', 'Name', 'Email', 'Eligibility', 'Stripe status', 'Reason', 'Plans', 'Period end', 'Cancellation date', 'Payment reversed', 'Refund check available', 'Checked at', 'Stripe mode']
-      : ['Membership ID', 'Name', 'Date of birth', 'Email', 'Phone', 'Address', 'JustGo ID', 'Tier', 'Status', 'Valid until', 'Includes', 'Emergency contact', 'Parent or guardian', 'Medical', 'Swimming', 'Photo consent', 'JustGo', 'Renews via', 'Last updated'];
+      : ['Membership ID', 'Name', 'Date of birth', 'Email', 'Phone', 'Address', 'Affiliation number', 'Tier', 'Status', 'Valid until', 'Includes', 'Emergency contact', 'Parent or guardian', 'Medical', 'Swimming', 'Photo consent', 'JustGo', 'Renews via', 'Last updated'];
     const rows = filtered.map((record) => purchaseReport
       ? [record.id, record.email, record.status, record.createdAt, record.paidAt, record.total,
         record.items.map((item) => `${item.name}${item.price === null ? '' : ` (${money(item.price)})`}${item.eventSchedule ? ` — ${eventScheduleLabel(item.eventSchedule)}` : ''}`).join('; '), record.stripeSubscriptionId, record.subscriptionWarning ? 'Yes' : 'No']
       : kind === 'subscribers' ? [record.id, record.stripeCustomerId, record.clubCustomerId, record.clubSubscriptionId, record.name, record.email, record.status, record.stripeStatus, record.reason,
         record.items.map((item) => `${item.name}: ${item.amount ?? 'variable'} ${item.currency.toUpperCase()}/${item.interval}`).join('; '),
         record.currentPeriodEnd, record.cancelAt, record.paymentReversed ? 'Yes' : 'No', record.refundCheckAvailable ? 'Yes' : 'No', checkedAt, stripeMode]
-      : [record.id, record.name, record.dob, record.email, record.phone, record.address, record.scaId, record.tier, record.status, record.expiry, record.privileges.join('; '), record.emergencyContact, record.parent, record.medical, record.swimming, record.photoConsent ? 'Yes' : 'No', record.justgo, record.renewalMethod, record.lastUpdated]);
+      : [record.id, record.name, record.dob, record.email, record.phone, record.address, record.affiliationNumber, record.tier, record.status, record.expiry, record.privileges.join('; '), record.emergencyContact, record.parent, record.medical, record.swimming, record.photoConsent ? 'Yes' : 'No', record.justgo, record.renewalMethod, record.lastUpdated]);
     download(`fcc-${kind}-${new Date().toISOString().slice(0, 10)}.csv`, reportCsv(headers, rows));
   };
   const beginDelete = (record) => {
@@ -236,6 +238,7 @@ export default function AdminReportsPage({ onNavigate }) {
     </div>
     <div className="ReportsExports"><span>{filtered.length} matching records</span>
       <button className="EditorCommand" disabled={!filtered.length || loading} onClick={exportRecords}><Download size={18} /> Download report CSV</button>
+      {kind === 'members' && <button className="EditorCommand" onClick={() => setErasure({ lookup: true })}><ShieldX size={18} /> GDPR erasure lookup</button>}
       {kind === 'members' && <button className="EditorCommand" disabled={!justgoUploadRows(filtered).length || loading} onClick={() => download(`fcc-justgo-staff-upload-${new Date().toISOString().slice(0, 10)}.csv`, reportCsv(justgoUploadHeaders, justgoUploadRows(filtered)))}><Download size={18} /> Staff upload list ({justgoUploadRows(filtered).length})</button>}
       <button className="EditorCommand" disabled={!emails.length || loading} onClick={() => download(`fcc-${kind}-emails.csv`, reportCsv(['Email'], emails.map((email) => [email])))}><Mail size={18} /> Export emails ({emails.length})</button>
     </div>
@@ -247,7 +250,7 @@ export default function AdminReportsPage({ onNavigate }) {
     {error && !deleting && <p className="StatusTextError" role="alert">{error}</p>}
     {message && <p role="status">{message}</p>}
     <div className="ReportsTableWrap"><table className="ReportsTable"><thead><tr>
-      {(kind === 'subscribers' ? ['Customer', 'Email', 'Subscription', 'Status', 'Plans', 'Period end', ''] : purchaseReport ? ['Order', 'Customer email', kind === 'events' ? 'Event / course schedule' : 'Purchased', 'Status', kind === 'events' ? 'Tickets total' : 'Total', 'Created', ''] : ['Member', 'Email', 'JustGo ID', 'Tier', 'Status', 'Valid until', 'Includes', 'JustGo', '']).map((label, index) => <th key={index} scope="col">{label || 'Actions'}</th>)}
+      {(kind === 'subscribers' ? ['Customer', 'Email', 'Subscription', 'Status', 'Plans', 'Period end', ''] : purchaseReport ? ['Order', 'Customer email', kind === 'events' ? 'Event / course schedule' : 'Purchased', 'Status', kind === 'events' ? 'Tickets total' : 'Total', 'Created', ''] : ['Member', 'Email', 'Affiliation number', 'Tier', 'Status', 'Valid until', 'Includes', 'JustGo', '']).map((label, index) => <th key={index} scope="col">{label || 'Actions'}</th>)}
     </tr></thead><tbody>
       {filtered.map((record) => <tr key={record.id}>{purchaseReport ? <>
         <td><button className="ContentLink" onClick={() => setSelected(record)}>{record.id}</button></td><td>{record.email || 'Not recorded'}</td>
@@ -259,7 +262,7 @@ export default function AdminReportsPage({ onNavigate }) {
         <td>{record.status}<div>{record.stripeStatus}</div>{record.reason && <span className="ReportWarning">{record.reason}</span>}{!record.refundCheckAvailable && <div className="ReportWarning">Refund check unavailable</div>}</td>
         <td>{record.items.map((item, index) => <div key={index}>{item.name}<br />{item.amount ?? 'Variable'} {item.currency.toUpperCase()} / {item.interval} {item.quantity > 1 ? `× ${item.quantity}` : ''}</div>)}</td>
         <td>{dateLabel(record.currentPeriodEnd)}{(record.cancelAt || record.cancelAtPeriodEnd) && <div>Ends: {dateLabel(record.cancelAt || record.currentPeriodEnd)}</div>}</td>
-      </> : <><td><button className="ContentLink" onClick={() => setSelected(record)}>{record.name || record.id}</button></td><td>{record.email || 'Not recorded'}</td><td>{record.scaId || 'None'}</td><td>{record.tier || 'Not set'}</td><td>{record.status}</td><td>{dateLabel(record.expiry)}</td><td>{record.privileges.join(', ') || 'Membership only'}</td><td>{record.justgo}{record.renewalMethod === 'justgo' ? ' (renews via JustGo)' : ''}</td></>}
+      </> : <><td><button className="ContentLink" onClick={() => setSelected(record)}>{record.name || record.id}</button></td><td>{record.email || 'Not recorded'}</td><td>{record.affiliationNumber || 'None'}</td><td>{record.tier || 'Not set'}</td><td>{record.status}</td><td>{dateLabel(record.expiry)}</td><td>{record.privileges.join(', ') || 'Membership only'}</td><td>{record.justgo}{record.renewalMethod === 'justgo' ? ' (renews via JustGo)' : ''}</td></>}
         <td><div className="ReportsRowActions"><button className="EditorIconButton" title="Record details" aria-label={`Details for ${record.id}`} onClick={() => setSelected(record)}><FileText size={16} /></button>{kind === 'subscribers' && record.status === 'Active' && record.clubCustomerId && <button className="EditorIconButton" title="Schedule club-year cancellation" aria-label={`Schedule club-year end for ${record.id}`} onClick={() => { setSelected(record); setError(''); }}><CalendarClock size={16} /></button>}{!['subscribers', 'events'].includes(kind) && <button className="EditorIconButton TileRemove" title="Delete record" aria-label={`Delete ${record.id}`} onClick={() => beginDelete(record)}><Trash2 size={16} /></button>}</div></td>
       </tr>)}
       {!filtered.length && <tr><td colSpan="7">{loading ? 'Loading records…' : 'No matching records.'}</td></tr>}
@@ -286,6 +289,7 @@ export default function AdminReportsPage({ onNavigate }) {
           {error && <p className="StatusTextError" role="alert">{error}</p>}
           <button className="EditorCommand" type="submit" disabled={scheduleBusy || scheduleConfirmation !== selected.id || !scheduleAcknowledged}><CalendarClock size={18} /> {scheduleBusy ? 'Confirming with Stripe…' : 'Schedule club-year end'}</button>
         </form>}
+        {kind === 'members' && <button className="EditorCommand TileRemove" onClick={() => { setErasure({ membershipId: selected.id, name: selected.name }); setSelected(null); }}><ShieldX size={18} /> GDPR erasure</button>}
         {!['subscribers', 'events'].includes(kind) && <button className="EditorCommand TileRemove" onClick={() => beginDelete(selected)}><Trash2 size={18} /> Delete this record</button>}</>}
       {deleting && <form onSubmit={(event) => { event.preventDefault(); deleteRecord(); }}>
         <p className="ReportNotice">Permanently deletes this {kind === 'orders' ? 'order' : 'member-register'} record only. Other customer records, Firebase login accounts, vouchers, Google Sheets, emails, and Stripe subscriptions remain unchanged. This is not complete customer erasure. Check retention requirements first.</p>
@@ -295,5 +299,6 @@ export default function AdminReportsPage({ onNavigate }) {
         <button className="EditorCommand TileRemove" type="submit" disabled={deleteBusy || confirmation !== deleting.id || (stripeRequired && !stripeAcknowledged)}><Trash2 size={18} /> {deleteBusy ? 'Deleting…' : 'Permanently delete record'}</button>
       </form>}
     </section></div>}
+    {erasure && <GdprErasurePanel adminUser={adminUser} start={erasure} onClose={() => setErasure(null)} onErased={() => load()} />}
   </div>;
 }
