@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiUrl } from '../utils/api';
+import { voucherRows } from '../utils/vouchers';
 
 const TYPES = [
   ['multiplier', 'Percentage off (%)'],
@@ -14,6 +15,7 @@ const describe = (code) => code.discountType === 'multiplier'
 
 export default function DiscountCodesPanel({ adminUser, products }) {
   const [codes, setCodes] = useState([]);
+  const [voucherSummaries, setVoucherSummaries] = useState([]);
   const [draft, setDraft] = useState(EMPTY);
   const [editing, setEditing] = useState(null);
   const [message, setMessage] = useState('');
@@ -35,7 +37,9 @@ export default function DiscountCodesPanel({ adminUser, products }) {
 
   const load = useCallback(async () => {
     try {
-      setCodes((await request('/api/admin/discount-codes')).codes);
+      const result = await request('/api/admin/discount-codes');
+      setCodes(result.codes);
+      setVoucherSummaries(result.vouchers || []);
     } catch (loadError) {
       setError(loadError.message);
     }
@@ -89,6 +93,11 @@ export default function DiscountCodesPanel({ adminUser, products }) {
     });
   };
 
+  const vouchers = voucherRows(products, voucherSummaries);
+  const voucherStatus = (row) => row.issued
+    ? `${row.issued} issued: ${row.active} active${row.active ? ` (£${row.unspent.toFixed(2)} unspent)` : ''}, ${row.used} used, ${row.expired} expired`
+    : 'None issued yet';
+
   const cancelEdit = () => { setEditing(null); setDraft(EMPTY); };
 
   const toggleActive = async (code) => {
@@ -104,7 +113,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
   return (
     <section className="main_tile SpaceT6">
       <div className="AdminListHeader"><div><span className="tile_eyebrow">Shop</span><h3 className="tile_heading_bold_2">Discount codes</h3></div></div>
-      <p className="text_container SpaceB4">Choose products to limit a code to them. With none selected a code covers everything except membership.</p>
+      <p className="text_container SpaceB4">Choose products to limit a code to them. With none selected a code covers everything except membership. Each voucher shop item is listed once below; Individual voucher codes are shown on the buyer's record in Reports.</p>
       <form className="CheckoutDetails" onSubmit={handleSave}>
         <div className="CheckoutGrid">
           <label className="FormLabel">Code<input className="FormInput" required disabled={Boolean(editing)} pattern="[A-Za-z0-9-]{3,64}" maxLength={64} value={draft.code} onChange={(event) => update('code', event.target.value.toUpperCase())} /></label>
@@ -132,14 +141,26 @@ export default function DiscountCodesPanel({ adminUser, products }) {
         {editing && <button type="button" className="PrimaryActionButtonCompact" onClick={cancelEdit}>Cancel editing</button>}
       </form>
 
-      {codes.length > 0 && (
+      {(codes.length > 0 || vouchers.length > 0) && (
         <div style={{ overflowX: 'auto' }}>
           <table className="text_container SpaceT4" style={{ width: '100%', textAlign: 'left' }}>
-            <thead><tr><th>Code</th><th>Discount</th><th>Applies to</th><th>Status</th><th>Expires</th><th /></tr></thead>
+            <thead><tr><th>Code</th><th>Description</th><th>Discount</th><th>Applies to</th><th>Status</th><th>Expires</th><th /></tr></thead>
             <tbody>
+              {vouchers.map((row) => (
+                <tr key={`voucher-${row.key}`}>
+                  <td>Shop voucher{row.product ? '' : ' (no longer in the shop)'}</td>
+                  <td>{row.name}</td>
+                  <td>{row.product ? `£${Number(row.product.basePrice).toFixed(2)} credit per code` : 'Credit'}</td>
+                  <td>Everything except membership</td>
+                  <td>{voucherStatus(row)}</td>
+                  <td>1 year after purchase</td>
+                  <td />
+                </tr>
+              ))}
               {codes.map((code) => (
                 <tr key={code.code}>
-                  <td><code>{code.code}</code><br />{code.label}</td>
+                  <td><code>{code.code}</code></td>
+                  <td>{code.label}</td>
                   <td>{describe(code)}</td>
                   <td>{code.productIds.length ? code.productIds.map(nameFor).join(', ') : 'Everything except membership'}</td>
                   <td>{code.used ? 'used' : code.expired ? 'expired' : code.active ? 'active' : 'disabled'}{code.singleUse ? ' (single use)' : ''}</td>

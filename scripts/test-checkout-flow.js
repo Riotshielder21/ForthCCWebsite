@@ -160,6 +160,10 @@ await test('voucher-only purchase needs no membership and creates a voucher on t
   assert.equal(voucher.value, 60);
   shared.voucherCode = voucher.code;
   shared.gifter = buyer;
+  assert.equal((await db.collection('discountCodes').doc(voucher.code).get()).data().sourceProductId, 'vouchers');
+  const listing = (await call('GET', '/api/admin/discount-codes', { headers: admin })).json;
+  assert.ok(!listing.codes.some((entry) => entry.code === voucher.code), 'bought vouchers are not listed one by one');
+  assert.ok(listing.vouchers.find((group) => group.productId === 'vouchers').active >= 1, 'bought vouchers are totalled under their shop item');
   const byCode = await call('GET', `/api/admin/customer?q=${voucher.code}`, { headers: admin });
   assert.equal(byCode.json.email, buyer);
   const mail = await db.collection('testMail').where('orderRef', '==', shared.voucherOrder).get();

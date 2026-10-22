@@ -116,6 +116,8 @@ Stripe will not take a £0 one-off payment, so when trip discounts or a voucher 
 
 A product's type and pricing follow its category (`productTerms` in `src/utils/catalogue.js`). Saved products are normalised whenever the catalogue is read, so older product documents need no migration. Membership, vouchers, event tickets and merchandise are always fixed-price, one-off purchases. Services choose **Fixed** (full price all year), **Prorated** (60% when four or fewer months of the club year remain) or **Subscription**. Older `yearly-service` products are read as Fixed. Subscription prices are monthly. If **Allow monthly payments** is ticked (the default for the Subscriptions category; off for services), the customer can pay monthly through a Stripe subscription; otherwise they pay up front for the months left until 1 March. The basket shows the monthly/annual toggle only when an item in it allows monthly payments, and each saved order line records `monthly`.
 
+Generated voucher codes store the shop item they were bought from (`sourceProductId`). The admin discount code list shows one summary row per voucher shop item rather than every code; older codes without `sourceProductId` are grouped by the item name they were issued under. Individual codes are on the buyer's record in Reports.
+
 ## Live Mode (`WEBSITE_ISLIVE`)
 
 `WEBSITE_ISLIVE` tells the API whether the site holds real customers' data. It defaults to false. Set it with the `WEBSITE_ISLIVE` GitHub secret (the deploy workflow passes it to Cloud Run) and locally in `.env`.

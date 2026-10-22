@@ -4,9 +4,6 @@
 
 - Voucher credit eligibility:
   - Configure generated voucher credit eligibility by category or product; retain support for custom fixed discount codes.
-- Discount code list:
-  - A voucher shop item appears once, under the shop item's name.
-  - Code and description get separate columns instead of being stacked.
 - Course and shop products need an admin-controlled membership rule: no membership required, membership required, or membership included. Checkout and reports must enforce and show the selected rule.
 
 ## Club-year access and renewal

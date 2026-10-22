@@ -15,6 +15,7 @@ import { PAGE_CONTENT } from './src/constants/pageContent.js';
 import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart } from './src/utils/pricing.js';
+import { summariseVoucherCodes } from './src/utils/vouchers.js';
 import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
@@ -462,6 +463,7 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
     const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
       code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
       name: item.name,
+      productId: item.id,
       value: item.voucherValue,
       expiresAt: Timestamp.fromDate(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000))
     }));
@@ -469,6 +471,7 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       for (const voucher of vouchers) {
         transaction.create(adminDb.collection('discountCodes').doc(voucher.code), {
           code: voucher.code, label: voucher.name, discountType: 'credit', discountValue: voucher.value,
+          ...(voucher.productId ? { sourceProductId: voucher.productId } : {}),
           used: false, singleUse: true, excludedCategories: ['MEMBERSHIP'],
           orderRef, email: order.email, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
         });
@@ -1177,13 +1180,17 @@ app.get('/api/admin/discount-codes', rateLimit(30, 60 * 1000), async (req, res) 
     if (!adminDb) return res.status(503).json({ error: 'Discount storage is not configured.' });
     const snapshot = await adminDb.collection('discountCodes').get();
     const now = Date.now();
+    const vouchers = summariseVoucherCodes(snapshot.docs.map((document) => document.data()).map((data) => ({
+      orderRef: data.orderRef, sourceProductId: data.sourceProductId, label: data.label, discountValue: data.discountValue,
+      used: data.used === true, expiresAt: data.expiresAt?.toMillis() || 0
+    })), now);
     const codes = snapshot.docs.map((document) => document.data()).filter((data) => !data.orderRef).map((data) => ({
       code: data.code, label: data.label || '', discountType: data.discountType || 'multiplier',
       discountValue: data.discountValue ?? 0.25, productIds: Array.isArray(data.productIds) ? data.productIds : [],
       singleUse: data.singleUse === true, used: data.used === true, active: data.active !== false,
       expired: data.expiresAt?.toMillis() <= now, expiresAt: data.expiresAt?.toMillis() || 0, createdAt: data.createdAt?.toMillis() || 0
     })).sort((a, b) => b.createdAt - a.createdAt).slice(0, 500);
-    res.json({ codes });
+    res.json({ codes, vouchers });
   } catch (error) {
     console.error('Could not list discount codes:', error.message);
     res.status(500).json({ error: 'Could not load discount codes.' });
