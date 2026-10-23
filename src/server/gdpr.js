@@ -3,6 +3,7 @@ import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { identityEmails, matchesIdentity, redactOrder, sharedDetailsErrors, sharedDetailsUpdate } from '../utils/erasure.js';
 import { lookupKey, maskEmail, maskMembershipNumber, maskName, personLookupKeys } from '../utils/privacy.js';
 import { memberIsJunior } from '../utils/households.js';
+import { rateLimit } from './rateLimit.js';
 
 const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 const subjectFor = (record) => ({ email: identityEmails(record, record.household)[0] || '', firstName: record.firstName || '', lastName: record.lastName || '', dob: record.dob || '', affiliationNumber: record.affiliationNumber || '' });
@@ -19,7 +20,7 @@ const leftHouseholdIds = (records, targets) => {
  * GDPR erasure. Starts from the member register, follows the person into every other collection, keeps orders for the
  * accounts with identifying details removed, and leaves only a masked audit entry.
  */
-export const registerGdprRoutes = (app, { rateLimit, requireAdmin, db, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail }) => {
+export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail }) => {
   const auditSecret = () => process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
 
   /** Everything an erasure for this request would touch. `scope` is 'person' or 'family'. */

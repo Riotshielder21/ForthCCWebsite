@@ -3,6 +3,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { validateListSubmission, sheetCell, matchesVolunteer, volunteerCodeDecision, boathouseCodeDecision, VOLUNTEER_LIST } from '../utils/lists.js';
 import { membershipActivity } from '../utils/membership.js';
 import { checkSummary } from '../utils/safeguarding.js';
+import { rateLimit } from './rateLimit.js';
 
 const VOLUNTEER_DISCOUNT = 0.25;
 const CODE_DAYS = 365;
@@ -14,7 +15,7 @@ const CODE_DAYS = 365;
  * also ticks "Active" are emailed the boathouse code once they are checked in (inducted) as active members, and again
  * whenever it changes.
  */
-export const registerVolunteerRoutes = (app, { rateLimit, requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail }) => {
+export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail }) => {
   const lists = () => db().collection('lists');
 
   const findVolunteerMember = async ({ name, email }) => {

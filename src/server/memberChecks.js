@@ -1,8 +1,9 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { validateCheckUpdate, checkSummary } from '../utils/safeguarding.js';
+import { rateLimit } from './rateLimit.js';
 
 /** Admins record when a member's PVG and safeguarding training expire; the status is worked out from the date when read. */
-export const registerMemberCheckRoutes = (app, { rateLimit, requireAdmin, db }) => {
+export const registerMemberCheckRoutes = (app, { requireAdmin, db }) => {
   app.patch('/api/admin/memberships/:id/checks', rateLimit(30, 60 * 1000), async (req, res) => {
     try {
       const admin = await requireAdmin(req, res);

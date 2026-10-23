@@ -1,11 +1,12 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { buildRoster, rosterEmail, rosterDue } from '../utils/eventRoster.js';
+import { rateLimit } from './rateLimit.js';
 
 /**
  * Emails each event leader the attendee list once bookings close (checked hourly), and lets an admin send it at any time.
  * Sends are recorded in the private `eventRosters` collection, keyed by product id, so the automatic send happens once.
  */
-export const registerEventRosterRoutes = (app, { rateLimit, requireAdmin, db, sendEmail, loadCatalogue }) => {
+export const registerEventRosterRoutes = (app, { requireAdmin, db, sendEmail, loadCatalogue }) => {
   const rosters = () => db().collection('eventRosters');
 
   const loadMembers = async (orders) => {
@@ -57,8 +58,9 @@ export const registerEventRosterRoutes = (app, { rateLimit, requireAdmin, db, se
   };
 
   const productId = (req) => (typeof req.params.id === 'string' && /^[\w-]{1,100}$/.test(req.params.id) ? req.params.id : '');
+  const adminRosterStatusRateLimit = rateLimit(60, 60 * 1000);
 
-  app.get('/api/admin/events/:id/roster', rateLimit(60, 60 * 1000), async (req, res) => {
+  app.get('/api/admin/events/:id/roster', adminRosterStatusRateLimit, async (req, res) => {
     try {
       if (!await requireAdmin(req, res)) return;
       if (!db()) return res.status(503).json({ error: 'Event storage is not configured.' });

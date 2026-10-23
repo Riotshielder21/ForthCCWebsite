@@ -1,18 +1,21 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { validateBoathouseCode } from '../utils/boathouse.js';
+import { rateLimit } from './rateLimit.js';
 
 /**
  * The boathouse access code is kept in a private settings document (the Firestore rules deny browsers) and is only
  * read and changed through these admin routes. `version` goes up whenever the code itself changes.
  */
-export const registerBoathouseRoutes = (app, { rateLimit, requireAdmin, db, onCodeChanged = async () => ({ sent: 0, failed: 0 }) }) => {
+export const registerBoathouseRoutes = (app, { requireAdmin, db, onCodeChanged = async () => ({ sent: 0, failed: 0 }) }) => {
   const reference = () => db().collection('settings').doc('boathouseCode');
   const publicView = (data = {}) => ({
     code: data.code || '', note: data.note || '', version: data.version || 0,
     updatedAt: data.updatedAt?.toMillis() || 0, updatedBy: data.updatedBy || ''
   });
+  const boathouseCodeReadLimiter = rateLimit(30, 60 * 1000);
+  const boathouseCodeWriteLimiter = rateLimit(10, 60 * 1000);
 
-  app.get('/api/admin/boathouse-code', rateLimit(30, 60 * 1000), async (req, res) => {
+  app.get('/api/admin/boathouse-code', boathouseCodeReadLimiter, async (req, res) => {
     try {
       if (!await requireAdmin(req, res)) return;
       if (!db()) return res.status(503).json({ error: 'Boathouse code storage is not configured.' });
@@ -24,7 +27,7 @@ export const registerBoathouseRoutes = (app, { rateLimit, requireAdmin, db, onCo
     }
   });
 
-  app.post('/api/admin/boathouse-code', rateLimit(10, 60 * 1000), async (req, res) => {
+  app.post('/api/admin/boathouse-code', boathouseCodeWriteLimiter, async (req, res) => {
     try {
       const admin = await requireAdmin(req, res);
       if (!admin) return;

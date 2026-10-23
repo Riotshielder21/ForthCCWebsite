@@ -1,11 +1,12 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { normalizeReceiptPersonFields } from '../utils/receipt.js';
+import { rateLimit } from './rateLimit.js';
 
 /**
  * Which submitted person details confirmation emails include. Kept in a private settings document (the Firestore
  * rules deny browsers) and changed only by admins; the default is none.
  */
-export const registerReceiptEmailRoutes = (app, { rateLimit, requireAdmin, db }) => {
+export const registerReceiptEmailRoutes = (app, { requireAdmin, db }) => {
   const reference = () => db().collection('settings').doc('receiptEmail');
   const publicView = (data = {}) => ({
     personFields: normalizeReceiptPersonFields(data.personFields),

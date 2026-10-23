@@ -1,5 +1,4 @@
 ﻿import express from 'express';
-import { rateLimit as expressRateLimit, ipKeyGenerator } from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { domainToASCII } from 'url';
@@ -43,21 +42,13 @@ import { registerEventRosterRoutes } from './src/server/eventRosters.js';
 import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
 import { registerReceiptEmailRoutes } from './src/server/receiptEmail.js';
 import { registerRenewalRoutes } from './src/server/renewals.js';
+import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const rateLimit = (limit, windowMs) => expressRateLimit({
-  windowMs,
-  limit,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  keyGenerator: (req) => `${ipKeyGenerator(req.ip || '')}:${req.path}`,
-  validate: { xForwardedForHeader: false },
-  message: { error: 'Too many requests. Try again shortly.' }
-});
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isValidEmail = (value) => {
@@ -116,6 +107,8 @@ app.use(cors({
   maxAge: 600
 }));
 app.use(express.static('dist'));
+// Everything after static files (API and the SPA fallback) shares one per-visitor ceiling; routes add tighter limits.
+app.use(baselineRateLimit);
 
 const stripeRequest = async (path, params, method = 'POST', { idempotencyKey } = {}) => {
   const secretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -688,7 +681,7 @@ const setUpSubscriptions = async (orderRef) => {
       stripeItemIds: Object.fromEntries(results.flatMap(({ group, subscription }) => [...stripeItemLines(subscription, group.lineIds)])),
       ...(groups.some((group) => group.newPaymentDetails) ? { newPaymentDetails: true } : {}) };
   } catch (error) {
-    console.error(`Could not set up the monthly payments on ${orderRef}:`, error.message);
+    console.error('Could not set up the monthly payments on %s: %s', orderRef, error.message);
     next = { ...plan, status: 'failed', error: error.message.slice(0, 300), recordedAt: now,
       ...(results.length ? { partialSubscriptionIds: results.map(({ subscription }) => subscription.id) } : {}) };
   }
@@ -1140,17 +1133,17 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
   }
 });
 
-registerGdprRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
-registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
-const { settleVolunteersFor, notifyBoathouseCode } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
+registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
+registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
+const { settleVolunteersFor, notifyBoathouseCode } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
-registerBoathouseRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, onCodeChanged: notifyBoathouseCode });
-registerAdminAccessRoutes(app, { rateLimit, requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });
-const { sendDueRosters } = registerEventRosterRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
+registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyBoathouseCode });
+registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });
+const { sendDueRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
-registerMemberCheckRoutes(app, { rateLimit, requireAdmin, db: () => adminDb });
-const { loadReceiptPersonFields } = registerReceiptEmailRoutes(app, { rateLimit, requireAdmin, db: () => adminDb });
-registerRenewalRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
+registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
+const { loadReceiptPersonFields } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
+registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
 

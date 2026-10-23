@@ -3,6 +3,7 @@ import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { clubYearDates } from '../utils/clubYear.js';
 import { ageOn } from '../utils/checkout.js';
 import { needsRenewal, renewalBasket, renewalChoice, renewalEmail, renewalRound, renewalWindow } from '../utils/renewals.js';
+import { rateLimit } from './rateLimit.js';
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 const normaliseEmail = (value) => String(value || '').trim().toLowerCase();
@@ -16,7 +17,7 @@ const DAY = 24 * 60 * 60 * 1000;
  */
 const SENT = 'renewalInviteSentFor';
 const REMINDED = 'renewalReminderSentFor';
-export const registerRenewalRoutes = (app, { rateLimit, requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow }) => {
+export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow }) => {
   const memberships = () => db().collection('memberships');
 
   /** Members needing renewal grouped by contact email; `onlyUnsent` leaves out anyone whose `field` already has this year. */
@@ -97,7 +98,9 @@ export const registerRenewalRoutes = (app, { rateLimit, requireAdmin, db, loadCa
     return { emails, members, failures };
   };
 
-  app.get('/api/admin/renewals', rateLimit(30, 60 * 1000), async (req, res) => {
+  const adminRenewalsLimiter = rateLimit(30, 60 * 1000);
+  const adminRenewalsSendLimiter = rateLimit(5, 60 * 1000);
+  app.get('/api/admin/renewals', adminRenewalsLimiter, async (req, res) => {
     try {
       if (!await requireAdmin(req, res)) return;
       const now = requestNow(req);
@@ -114,7 +117,7 @@ export const registerRenewalRoutes = (app, { rateLimit, requireAdmin, db, loadCa
   });
 
   /** Sends to everyone not yet emailed, or with `membershipId` (re)sends the email for that member's contact address. */
-  app.post('/api/admin/renewals/send', rateLimit(5, 60 * 1000), async (req, res) => {
+  app.post('/api/admin/renewals/send', adminRenewalsSendLimiter, async (req, res) => {
     try {
       if (!await requireAdmin(req, res)) return;
       const now = requestNow(req);

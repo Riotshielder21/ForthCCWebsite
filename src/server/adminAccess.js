@@ -1,8 +1,9 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { validateAdminChange, adminCandidateProblem, isClubEmail } from '../utils/adminAccess.js';
+import { rateLimit } from './rateLimit.js';
 
 /** Lets existing admins approve or remove other admins by setting the Firebase `admin` custom claim. */
-export const registerAdminAccessRoutes = (app, { rateLimit, requireAdmin, auth, db, localFirebase = false }) => {
+export const registerAdminAccessRoutes = (app, { requireAdmin, auth, db, localFirebase = false }) => {
   const summary = (user) => ({
     uid: user.uid, email: user.email || '', name: user.displayName || '',
     lastSignIn: user.metadata?.lastSignInTime ? Date.parse(user.metadata.lastSignInTime) : 0

@@ -54,7 +54,7 @@ test('HTML escapes all customer, catalogue and voucher text and attribute values
     vouchers: [{ name: unsafe, code: unsafe, value: 10 }]
   });
   const html = receiptEmailHtml(summary, 'https://example.test/order/ref?x="&y=1');
-  assert.doesNotMatch(html, /<script>| onerror="/);
+  assert.doesNotMatch(html, /<script\b| onerror="/i);
   assert.match(html, /&lt;script&gt;alert\(&quot;x&quot;\)&lt;\/script&gt; &amp; &#39;/);
   assert.match(html, /href="https:\/\/example.test\/order\/ref\?x=&quot;&amp;y=1"/);
 });
