@@ -1,14 +1,11 @@
 # TODO
 
-## Club years, monthly payments and renewals (built; check before live)
-
-Built as agreed: club-year choice (this/next/both from 1 January), one subscription per payer per club year per payment method on the 1st with the 15 February cut-off, joining-month charges, setup-mode Checkout when nothing is due now, next-year membership covering this year from 8 February, and renewal emails with a prefilled-basket link (see `DEVELOPMENT.md`: **Club Years**, **Monthly Subscriptions**, **Renewal Emails**). Still to do:
+## Club years, monthly payments and renewals
 
 - **Stripe test mode:** check that a subscription cancelled at the cut-off stops retries and creates no credit or 1 March invoice; that a backdated subscription (delayed Bacs payment) charges the missed month once; and how Bacs mandate delays affect a first debit on the 1st. Turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st).
 - **Webhook:** add `customer.subscription.deleted` to the Dashboard webhook endpoints (test and live).
 - **Renewal job deployment:** create a `renewal-job-token` secret, pass it to Cloud Run as `RENEWAL_JOB_TOKEN` in `.github/workflows/firebase-hosting.yml`, and install `config/fcc-renewals.{service,timer}` on the server with `RENEWAL_JOB_TOKEN` and `RENEWAL_JOB_URL` in its `.env`. Until then staff can send renewal emails from the admin page.
 - **Renewal email wording:** the email uses template text for now; agree the final wording with the club (`renewalEmail` in `src/utils/renewals.js`).
-- Members who hold only next year show as active in reports and the register (as agreed: admins rely on the active status), even before 1 March.
 - GDPR erasure cancels the person's subscriptions but does not blank the payer email and names on `subscriptions/{id}` records.
 
 ## Email and receipts
