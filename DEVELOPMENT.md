@@ -81,6 +81,8 @@ npx --yes firebase-tools@14.22.0 emulators:exec --only auth,firestore,storage --
 
 The smoke test mocks Stripe; it does not contact Stripe or production Firebase.
 
+To check the FCC-domain admin restriction without seeding data, run `node scripts/test-admin-domain.js` with the local emulator environment loaded. It checks approval, API access, Firestore product writes and both Storage upload paths, including non-club accounts carrying an admin claim. The synthetic users and test data are removed afterwards.
+
 ## Checkout Flow Test
 
 With the emulators running and `.env.emulator` loaded, seed them, start the API with Stripe mocked, then run the flow test from another terminal. It places orders through the API, confirms payment with a signed webhook, and checks memberships, households, customers, vouchers, discount codes, receipts and admin reports. The voucher scenario purchases a course-place voucher and redeems it against a five-day course before checking that it cannot be reused.
@@ -212,7 +214,7 @@ Before switching to live:
 - Orders fail: start the API and Firestore, not only Vite. Check `curl --fail http://localhost:3002/health`.
 - Payment stays pending: check Stripe CLI delivery and the API signing secret. Stripe and Firebase emulators are separate services.
 - API returns HTML: check `VITE_API_BASE_URL` and restart Vite.
-- Admin denied: reseed the local admin, then sign out/in. Real accounts need the Firebase `admin: true` claim: the person signs in once at `/admin` with their club Google account, then an existing admin approves them under **Website admins** (or a developer runs `node scripts/grant-admin.js name@forthcanoeclub.co.uk`). Changes are logged in `adminAccessAudit`; removed admins are signed out.
+- Admin denied: reseed the local admin, then sign out/in. Real accounts need the Firebase `admin: true` claim and an address on the exact `forthcanoeclub.co.uk` domain: the person signs in once at `/admin` with their verified club Google account, then an existing admin approves them under **Website admins** (or a developer runs `node scripts/grant-admin.js name@forthcanoeclub.co.uk`). The API, editor and Firebase write rules also enforce the club domain; an admin claim alone does not permit another domain. Password accounts are accepted for approval only in local emulators, still on the club domain. Changes are logged in `adminAccessAudit`; removed admins are signed out.
 - Image upload fails: check Storage emulator/rules and port `9199`.
 - Stripe subscribers unavailable: reporting and live subscription validation need a server-only `STRIPE_REPORT_SECRET_KEY` with read access in the matching Stripe mode; local Stripe is not emulated. Use test mode only.
 - Port occupied: choose another frontend port and update `PUBLIC_SITE_URL`.

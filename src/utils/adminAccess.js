@@ -1,6 +1,10 @@
 export const ADMIN_DOMAIN = 'forthcanoeclub.co.uk';
 
-export const isClubEmail = (email) => typeof email === 'string' && email.toLowerCase().endsWith(`@${ADMIN_DOMAIN}`);
+export const isClubEmail = (email) => {
+  if (typeof email !== 'string' || /\s/.test(email)) return false;
+  const parts = email.toLowerCase().split('@');
+  return parts.length === 2 && parts[0].length > 0 && parts[1] === ADMIN_DOMAIN;
+};
 
 /** Checks a request to grant or remove admin access. Admins cannot remove themselves, so at least one always remains. */
 export const validateAdminChange = (body = {}, actorEmail = '') => {
@@ -22,8 +26,10 @@ export const adminCandidateProblem = (user, { allowPasswordAccounts = false } = 
   if (!isClubEmail(user.email)) return `Only @${ADMIN_DOMAIN} accounts can be admins.`;
   if (user.disabled) return 'That account is disabled.';
   if (!user.emailVerified) return 'That account has not verified its email address.';
-  const providers = (user.providerData || []).map((provider) => provider.providerId);
-  if (!providers.includes('google.com') && !(allowPasswordAccounts && providers.includes('password'))) {
+  const providers = user.providerData || [];
+  const hasGoogle = providers.some((provider) => provider.providerId === 'google.com');
+  const hasLocalPassword = allowPasswordAccounts && providers.some((provider) => provider.providerId === 'password');
+  if (!hasGoogle && !hasLocalPassword) {
     return 'That account has not signed in with Google. Ask them to sign in once at /admin with Google, then approve them.';
   }
   return '';

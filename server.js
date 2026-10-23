@@ -43,6 +43,7 @@ import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
 import { registerReceiptEmailRoutes } from './src/server/receiptEmail.js';
 import { registerRenewalRoutes } from './src/server/renewals.js';
 import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
+import { isClubEmail } from './src/utils/adminAccess.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -850,7 +851,7 @@ const requireAdmin = async (req, res) => {
   try {
     // checkRevoked makes a removed admin lose API access straight away rather than when their token expires.
     const decoded = await adminAuth.verifyIdToken(token, true);
-    if (decoded.admin !== true || !decoded.email?.toLowerCase().endsWith('@forthcanoeclub.co.uk')) {
+    if (decoded.admin !== true || !isClubEmail(decoded.email)) {
       res.status(403).json({ error: 'Admin access required.' });
       return null;
     }

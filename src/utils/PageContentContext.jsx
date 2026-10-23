@@ -4,6 +4,7 @@ import { getPageCopy, PAGE_CONTENT } from '../constants/pageContent';
 import { auth, signInWithWorkspace } from './firebase';
 import { savePageContent } from './content';
 import { apiUrl } from './api';
+import { isClubEmail } from './adminAccess.js';
 
 const PageContentContext = createContext({});
 const PageEditorContext = createContext(null);
@@ -27,7 +28,7 @@ export function PageContentProvider({ value, children }) {
       try {
         if (user && !user.isAnonymous) {
           const token = await user.getIdTokenResult();
-          if (token.claims.admin === true && user.email?.toLowerCase().endsWith('@forthcanoeclub.co.uk')) approved = user;
+          if (token.claims.admin === true && isClubEmail(user.email)) approved = user;
         }
       } catch {
         approved = null;
