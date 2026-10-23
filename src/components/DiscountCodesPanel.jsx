@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { apiUrl } from '../utils/api';
 import { saveProduct } from '../utils/content';
 import { scopeLabel, VOUCHER_CATEGORIES, voucherRows, voucherScope } from '../utils/vouchers';
+import PagedAdminList from './PagedAdminList';
 
 const TYPES = [
   ['multiplier', 'Percentage off (%)'],
@@ -151,9 +152,9 @@ export default function DiscountCodesPanel({ adminUser, products }) {
         </div>
         <fieldset className="CheckoutFieldset">
           <legend>Applies to</legend>
-          {sellable.map((product) => (
+          <PagedAdminList items={sellable} label="discount products" renderItem={(product) => (
             <label key={product.id} className="CheckoutCheck"><input type="checkbox" checked={draft.productIds.includes(product.id)} onChange={() => toggleProduct(product.id)} /> {product.name}</label>
-          ))}
+          )} />
         </fieldset>
         <label className="CheckoutCheck"><input type="checkbox" checked={draft.singleUse || draft.discountType === 'credit'} disabled={draft.discountType === 'credit'} onChange={(event) => update('singleUse', event.target.checked)} /> Single use (disabled after one order){draft.discountType === 'credit' ? ' - always on for this type' : ''}</label>
         {message && <p className="StatusText StatusTextSuccess">{message}</p>}
@@ -174,9 +175,9 @@ export default function DiscountCodesPanel({ adminUser, products }) {
           </fieldset>
           <fieldset className="CheckoutFieldset">
             <legend>Products</legend>
-            {voucherSpendable.map((product) => (
+            <PagedAdminList items={voucherSpendable} label="voucher products" renderItem={(product) => (
               <label key={product.id} className="CheckoutCheck"><input type="checkbox" checked={scopeDraft.productIds.includes(product.id)} onChange={() => toggleScope('productIds', product.id)} /> {product.name}</label>
-            ))}
+            )} />
           </fieldset>
           <button className="FormSubmitButton" type="submit">Save voucher rules</button>
           <button type="button" className="PrimaryActionButtonCompact" onClick={() => setScopeDraft(null)}>Cancel</button>

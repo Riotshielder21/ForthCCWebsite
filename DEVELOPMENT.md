@@ -48,6 +48,8 @@ In remote VS Code, forward ports `3000`, `3002`, `4000`, `8080`, `9099` and `919
 
 The emulator seed also creates paid example orders for each purchasable starter product, plus family and sibling households, a five-day course, multiple shirt sizes, mixed carts and a voucher. These synthetic records are visible in the Reports page and are only written after the local-emulator guard succeeds.
 
+The admin catalogue, discount product choices and voucher product choices use Up/More paging, showing 7-10 items according to browser height. Check that paging replaces rather than appends items, selections survive paging and resizing, and deleting products on the last page does not leave an empty page. The short vertical transitions respect reduced-motion preferences.
+
 ## Build And Test
 
 ```bash

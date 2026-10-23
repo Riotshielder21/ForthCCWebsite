@@ -5,6 +5,7 @@ import { isLockedProduct } from '../utils/tripDiscount';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
 import DiscountCodesPanel from '../components/DiscountCodesPanel';
+import PagedAdminList from '../components/PagedAdminList';
 import VolunteersPanel from '../components/VolunteersPanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
 import AdminAccessPanel from '../components/AdminAccessPanel';
@@ -224,7 +225,7 @@ export default function AdminPage({ products, onNavigate }) {
             <div className="AdminListHeader"><h3 className="tile_heading_bold_1">Catalogue ({products.length})</h3><button type="button" className="PrimaryActionButtonCompact" onClick={startNewProduct}>New</button></div>
             <button className="ContentLink AdminSeedButton" onClick={handleSeed}>Copy starter catalog</button>
             <div className="AdminProducts">
-              {products.map((product) => <button key={product.id} className={`AdminProduct ${selectedProduct === product.id ? 'is-selected' : ''}`} onClick={() => editProduct(product)}><strong>{product.name}</strong><span>{product.category}</span></button>)}
+              <PagedAdminList items={products} label="catalogue items" renderItem={(product) => <button key={product.id} className={`AdminProduct ${selectedProduct === product.id ? 'is-selected' : ''}`} onClick={() => editProduct(product)}><strong>{product.name}</strong><span>{product.category}</span></button>} />
             </div>
             {!products.length && <p className="text_container">No products. Add a new item or restore the starter catalogue.</p>}
           </aside>

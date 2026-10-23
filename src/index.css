@@ -873,6 +873,44 @@
 
   .AdminProducts {
     @apply mt-5 space-y-1;
+    --admin-list-row-height: 4rem;
+  }
+
+  .AdminPagedListHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .AdminPageButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--fcc-color-border);
+    border-radius: 0.75rem;
+    color: var(--fcc-color-ink);
+    background: var(--fcc-color-surface-subtle);
+    font-size: 0.85rem;
+    font-weight: 700;
+  }
+
+  .AdminPageButton:hover:not(:disabled) { background: var(--fcc-color-accent-soft); }
+  .AdminPageButton:disabled { opacity: 0.4; cursor: not-allowed; }
+  .AdminPageMore { width: 100%; margin-top: 0.5rem; }
+  .AdminPageRange { font-size: 0.8rem; color: var(--fcc-color-copy); }
+  .AdminPagedListItems {
+    min-height: calc(var(--admin-list-page-size) * var(--admin-list-row-height, 1.75rem));
+  }
+  .AdminPagedListBatch { display: flex; flex-direction: column; gap: 0.25rem; }
+  .AdminPagedListBatch .CheckoutCheck { min-height: 1.5rem; }
+  @media (prefers-reduced-motion: no-preference) {
+    .AdminPagedListBatch { animation: adminListDown 180ms ease-out; }
+    .AdminPagedList[data-direction="up"] .AdminPagedListBatch { animation-name: adminListUp; }
   }
 
   .AdminProduct {
@@ -1328,6 +1366,16 @@
 @keyframes pageFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes adminListDown {
+  from { opacity: 0; transform: translateY(0.75rem); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes adminListUp {
+  from { opacity: 0; transform: translateY(-0.75rem); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes toastSlideIn {
