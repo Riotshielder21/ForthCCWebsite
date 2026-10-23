@@ -144,7 +144,40 @@ await test('paid checkout returns a private itemized receipt shared with the ema
   assert.match(response.json.copy, /Add-ons:/);
   const mail = (await db.collection('testMail').where('orderRef', '==', orderRef).get()).docs[0].data();
   assert.ok(mail.body.startsWith(response.json.copy), 'email and website use the same receipt copy');
+  assert.ok(mail.subject.includes(orderRef), 'receipt reference is searchable in the email subject');
+  assert.ok(mail.html.includes(orderRef) && mail.html.includes('Receipt Member'), 'formatted email includes the reference and member');
+  assert.ok(mail.html.includes(mail.retrievalUrl), 'formatted email links to the saved receipt');
+  const linked = await call('GET', `/api/orders/${mail.retrievalUrl.split('/order/')[1]}`);
+  assert.equal(linked.status, 200);
+  assert.ok(linked.json.items.every((item) => item.personNames.join(', ') === 'Receipt Member'), 'every purchase has its assigned name');
+  assert.ok(!('people' in linked.json) && !('receipt' in linked.json), 'raw people and legacy receipt data are not exposed');
+  assert.ok(!JSON.stringify(linked.json).includes(receiptEmail) && !JSON.stringify(linked.json).includes(details.dob), 'names do not expose email or DOB');
   assert.equal((await call('GET', `${receiptPath.slice(0, receiptPath.indexOf('&receipt_token='))}&receipt_token=${'0'.repeat(64)}`)).status, 404);
+});
+
+await test('admin-chosen person details appear in the receipt email only', async () => {
+  assert.equal((await call('GET', '/api/admin/receipt-email')).status, 401);
+  assert.equal((await call('POST', '/api/admin/receipt-email', { body: { personFields: ['dob'] } })).status, 401);
+  const saved = await call('POST', '/api/admin/receipt-email', { headers: admin, body: { personFields: ['phone', 'dob', 'emergencyContact', 'notAField'] } });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.json.personFields, ['dob', 'phone', 'emergencyContact']);
+  try {
+    const buyer = email('receipt-fields');
+    const details = adultDetails({ firstName: 'Fields', lastName: 'Member', email: buyer });
+    const started = await checkout(buyer, build(['membership-adult'], [details]));
+    assert.equal(started.status, 200);
+    assert.equal((await pay(started.json.orderRef)).status, 200);
+    const mail = (await db.collection('testMail').where('orderRef', '==', started.json.orderRef).get()).docs[0].data();
+    const dob = details.dob.split('-').reverse().join('/');
+    for (const content of [mail.body, mail.html]) {
+      assert.ok(content.includes(dob) && content.includes('07700 900111') && content.includes('Pat Friend (Friend), 07700 900222'), 'chosen details are emailed');
+      assert.ok(!content.includes('Asthma') && !content.includes('1 River Road'), 'unchosen details are not emailed');
+    }
+    const linked = JSON.stringify((await call('GET', `/api/orders/${mail.retrievalUrl.split('/order/')[1]}`)).json);
+    assert.ok(linked.includes('Fields Member') && !linked.includes(dob) && !linked.includes(details.dob) && !linked.includes('07700'), 'the receipt link stays name-only');
+  } finally {
+    assert.equal((await call('POST', '/api/admin/receipt-email', { headers: admin, body: { personFields: [] } })).status, 200);
+  }
 });
 
 await test('voucher-only purchase needs no membership and creates a voucher on the customer record', async () => {
@@ -173,12 +206,14 @@ await test('voucher-only purchase needs no membership and creates a voucher on t
   assert.ok(stored.vouchers.some((entry) => entry.code === voucher.code), 'voucher saved on customer record');
 });
 
-await test('receipt link shows items but no personal details', async () => {
+await test('voucher receipt links show unassigned items without contact details', async () => {
   const mail = (await db.collection('testMail').where('orderRef', '==', shared.voucherOrder).get()).docs[0].data();
   const key = mail.retrievalUrl.split('/order/')[1];
   const receipt = await call('GET', `/api/orders/${key}`);
   assert.equal(receipt.status, 200);
   assert.ok(receipt.json.items.length === 1);
+  assert.deepEqual(receipt.json.items[0].personNames, []);
+  assert.ok(receipt.json.copy.includes(shared.voucherOrder), 'plain-text saved receipt includes its order reference');
   assert.ok(!('people' in receipt.json) && !JSON.stringify(receipt.json).includes('@'), 'no people or email in the receipt API');
 });
 
@@ -667,10 +702,15 @@ await test('a voucher is accepted once, taken off the price, then shows as used'
 await test('event tickets list attendees with contact and emergency details, even for existing members', async () => {
   const schedule = { mode: 'consecutive', startDate: '2027-04-05', startTime: '15:00', endTime: '17:00', days: 5, timeZone: 'Europe/London' };
   const eventId = `E2E-EVENT-${run}`;
-  await db.collection('products').doc(eventId).set({ name: 'E2E five-day course', category: 'EVENTS', type: 'event-ticket', basePrice: 50, eventSchedule: schedule });
+  const imageUrl = 'https://example.test/course.jpg';
+  await db.collection('products').doc(eventId).set({ name: 'E2E five-day course', category: 'EVENTS', type: 'event-ticket', basePrice: 50, eventSchedule: schedule, imageUrl });
   const line = { id: eventId, lineId: `ev-${run}`, name: 'E2E five-day course', category: 'EVENTS', type: 'event-ticket', basePrice: 50 };
   const people = assignLines([], [line], makeId).map((person) => ({ ...person, returning: true, firstName: 'Alex', lastName: 'Adult', dob: yearsAgo(35), disclaimerAccepted: true }));
   const orderRef = await buy(shared.alex, { lines: [line], people });
+  const savedOrder = (await db.collection('orders').doc(orderRef).get()).data();
+  assert.equal(savedOrder.items[0].imageUrl, imageUrl, 'order retains the catalogue event image');
+  const mail = (await db.collection('testMail').where('orderRef', '==', orderRef).get()).docs[0].data();
+  assert.ok(mail.html.includes(`src="${imageUrl}"`), 'event receipt email displays the saved image');
   const report = await call('GET', '/api/admin/reports?kind=events', { headers: admin });
   const record = report.json.records.find((entry) => entry.id === orderRef);
   assert.equal(record.items.length, 1);

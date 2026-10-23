@@ -22,7 +22,7 @@ import { sanitizePerson, validateCheckout, peopleNeedingMembership, peopleGrante
 import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
 import { buildRawEmail } from './src/utils/mail.js';
-import { buildReceiptSummary, receiptEmailCopy } from './src/utils/receipt.js';
+import { buildReceiptSummary, buildLinkedReceipt, receiptEmailCopy, receiptEmailHtml } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation, stripeSubscriberReport } from './src/utils/stripeReports.js';
 import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
@@ -40,6 +40,7 @@ import { registerBoathouseRoutes } from './src/server/boathouse.js';
 import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
 import { registerEventRosterRoutes } from './src/server/eventRosters.js';
 import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
+import { registerReceiptEmailRoutes } from './src/server/receiptEmail.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1076,6 +1077,7 @@ registerAdminAccessRoutes(app, { rateLimit, requireAdmin, auth: () => adminAuth,
 const { sendDueRosters } = registerEventRosterRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerMemberCheckRoutes(app, { rateLimit, requireAdmin, db: () => adminDb });
+const { loadReceiptPersonFields } = registerReceiptEmailRoutes(app, { rateLimit, requireAdmin, db: () => adminDb });
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
@@ -1770,7 +1772,8 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       ...(item.type === 'voucher' ? { voucherValue: item.basePrice, voucherScope: voucherScope(item) } : {}),
       ...(item.category === 'EVENTS' ? {
         eventSchedule: validateEventSchedule(item.eventSchedule),
-        ...(storedPeople.some((person) => person.lineIds.includes(item.lineId) && person.ownKitLineIds.includes(item.lineId)) ? { ownKit: true } : {})
+        ...(storedPeople.some((person) => person.lineIds.includes(item.lineId) && person.ownKitLineIds.includes(item.lineId)) ? { ownKit: true } : {}),
+        ...(typeof item.imageUrl === 'string' && item.imageUrl ? { imageUrl: item.imageUrl } : {})
       } : {})
     }));
     const total = pricing.total;
@@ -1866,10 +1869,10 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
   }
 });
 
-/** Sends a plain-text email through Workspace; the emulator stack writes it to `testMail` instead. */
-const sendEmail = async ({ to, subject, body, record = {} }) => {
+/** Sends email through Workspace; the emulator stack writes it to `testMail` instead. */
+const sendEmail = async ({ to, subject, body, html, record = {} }) => {
   if (localFirebase) {
-    await adminDb.collection('testMail').add({ email: to, subject, body, ...record, createdAt: Timestamp.now() });
+    await adminDb.collection('testMail').add({ email: to, subject, body, ...(html ? { html } : {}), ...record, createdAt: Timestamp.now() });
     return true;
   }
   const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
@@ -1877,18 +1880,19 @@ const sendEmail = async ({ to, subject, body, record = {} }) => {
     console.error('Email not sent: set GOOGLE_WORKSPACE_DELEGATED_USER (and a service account with domain-wide delegation).');
     return false;
   }
-  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body });
+  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body, html });
   await gmailApi.users.messages.send({ userId: 'me', requestBody: { raw } });
   return true;
 };
 
 const sendOrderEmail = async ({ email, orderRef, accessToken, items, people = [], total, vouchers = [], siteUrl = '', billingMode = 'annual' }) => {
   const orderSiteUrl = siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
-  const receipt = buildReceiptSummary(orderRef, { email, items, people, total, vouchers, billingMode });
+  // Admin-chosen person details go in the email only, never the shareable receipt link.
+  const receipt = buildReceiptSummary(orderRef, { email, items, people, total, vouchers, billingMode }, { personFields: await loadReceiptPersonFields() });
   const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${accessToken}`;
   const body = [receiptEmailCopy(receipt), '', `Retrieve your receipt and subscription information: ${retrievalUrl}`, '',
     'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n');
-  return sendEmail({ to: email, subject: 'Your Forth Canoe Club purchase', body,
+  return sendEmail({ to: email, subject: `Your Forth Canoe Club receipt - ${orderRef}`, body, html: receiptEmailHtml(receipt, retrievalUrl),
     record: { orderRef, items, people, total, receipt, retrievalUrl, vouchers } });
 };
 
@@ -1906,10 +1910,7 @@ app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => 
     if (fields.expiresAt?.toDate() < new Date()) return res.status(410).json({ error: 'This receipt link has expired.' });
 
     res.json({
-      orderRef,
-      receipt: fields.receipt || {},
-      items: fields.items || [],
-      total: fields.total || '0',
+      ...buildLinkedReceipt(orderRef, fields),
       createdAt: fields.createdAt?.toDate?.() || null,
       expiresAt: fields.expiresAt?.toDate?.() || null
     });

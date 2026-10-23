@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, ShieldX } from 'lucide-react';
+import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, ShieldX, ShieldCheck, KeyRound, HeartHandshake } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl } from '../utils/api';
 import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows } from '../utils/adminReports';
@@ -7,6 +7,15 @@ import { eventScheduleLabel } from '../utils/catalogue';
 import CustomerVouchers from '../components/CustomerVouchers';
 import MonthlyPayments from '../components/MonthlyPayments';
 import GdprErasurePanel from '../components/GdprErasurePanel';
+import ReceiptEmailPanel from '../components/ReceiptEmailPanel';
+import VolunteersPanel from '../components/VolunteersPanel';
+import BoathouseCodePanel from '../components/BoathouseCodePanel';
+import AdminAccessPanel from '../components/AdminAccessPanel';
+
+const RECORD_TABS = [[Users, 'subscribers', 'Stripe subscribers'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Users, 'members', 'Member register']];
+// Settings tabs show a single panel instead of a records table.
+const SETTINGS_TABS = [[Mail, 'receipt-emails', 'Receipt emails', ReceiptEmailPanel],
+  [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [KeyRound, 'boathouse', 'Boathouse code', BoathouseCodePanel], [ShieldCheck, 'admins', 'Website admins', AdminAccessPanel]];
 
 const detailValue = (value) => {
   if (value === true) return 'Yes';
@@ -59,6 +68,7 @@ export default function AdminReportsPage({ onNavigate }) {
   const closeButton = useRef(null);
   const returnFocus = useRef(null);
   const purchaseReport = kind === 'orders' || kind === 'events';
+  const SettingsPanel = SETTINGS_TABS.find(([, id]) => id === kind)?.[3];
 
   const load = async (nextCursor = null) => {
     const revision = ++generation.current;
@@ -91,7 +101,8 @@ export default function AdminReportsPage({ onNavigate }) {
     setCheckedAt(null);
     setStripeMode('');
     setClubYearEnd(null);
-    if (adminUser) load();
+    if (adminUser && !SettingsPanel) load();
+    else setLoading(false);
     return () => { generation.current += 1; };
   }, [kind, adminUser]);
 
@@ -216,11 +227,11 @@ export default function AdminReportsPage({ onNavigate }) {
   if (!authReady) return <p className="SectionHero" role="status">Restoring your session…</p>;
   if (!adminUser) return <div className="SectionHero"><h2 className="tile_heading_bold_1">Admin reports</h2><button className="PrimaryActionButton" onClick={() => onNavigate('admin')}>Admin login</button></div>;
   return <div className="AdminReports PageFadeIn">
-    <header className="ReportsHeader"><div><h2 className="tile_heading_bold_1">Reports & records</h2><span className="text_container">{records.length} loaded records{cursor ? ' (more available)' : ''}</span></div>
+    <header className="ReportsHeader"><div><h2 className="tile_heading_bold_1">Reports & records</h2>{!SettingsPanel && <span className="text_container">{records.length} loaded records{cursor ? ' (more available)' : ''}</span>}</div>
       <button className="EditorCommand" onClick={() => onNavigate('admin')}><ArrowLeft size={18} /> Website editor</button>
     </header>
     <div className="ReportsTabs" role="tablist" aria-label="Report type">
-      {[[Users, 'subscribers', 'Stripe subscribers'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Users, 'members', 'Member register']].map(([Icon, id, label]) => <button key={id} role="tab" disabled={scheduleBusy} aria-selected={kind === id} className={kind === id ? 'is-selected' : ''} onClick={() => {
+      {[...RECORD_TABS, ...SETTINGS_TABS].map(([Icon, id, label]) => <button key={id} role="tab" disabled={scheduleBusy} aria-selected={kind === id} className={kind === id ? 'is-selected' : ''} onClick={() => {
         if (id === kind) return;
         generation.current += 1;
         setRecords([]);
@@ -230,6 +241,7 @@ export default function AdminReportsPage({ onNavigate }) {
         setKind(id); setSourceFilter('all'); setTierFilter('all'); setStatus(id === 'members' ? 'Current' : id === 'subscribers' ? 'Active' : 'all'); setPurchaseType('all'); setSearch(''); setMessage('');
       }}><Icon size={18} /> {label}</button>)}
     </div>
+    {SettingsPanel ? <SettingsPanel adminUser={adminUser} /> : <>
     <div className="ReportsFilters">
       <label className="ReportsSearch"><Search size={18} /><input aria-label="Search report" placeholder={purchaseReport ? 'Email, order, or product' : 'Name, email, or member ID'} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{(kind === 'subscribers' ? ['Active', 'Inactive'] : purchaseReport ? ['paid', 'pending', 'failed', 'cancelled'] : ['Current', 'Expired', 'Unverified expiry', ...new Set(records.map((record) => record.status).filter((value) => !['Current', 'Expired', 'Unverified expiry'].includes(value)))]).map((value) => <option key={value}>{value}</option>)}</select></label>
@@ -269,6 +281,7 @@ export default function AdminReportsPage({ onNavigate }) {
       {!filtered.length && <tr><td colSpan="7">{loading ? 'Loading records…' : 'No matching records.'}</td></tr>}
     </tbody></table></div>
     {cursor && <button className="EditorCommand SpaceT4" disabled={loading} onClick={() => load(cursor)}>{loading ? 'Loading…' : 'Load next 100 records'}</button>}
+    </>}
     {(selected || deleting) && <div className="ReportsModalBackdrop"><section className="ReportsDialog" role="dialog" aria-modal="true" aria-labelledby="record-dialog-title">
       <div className="ReportsHeader"><h3 id="record-dialog-title" className="tile_heading_bold_1">{deleting ? 'Delete record' : 'Record details'}</h3><button ref={closeButton} className="EditorIconButton" aria-label="Close record dialog" disabled={deleteBusy || scheduleBusy} onClick={() => { setSelected(null); setDeleting(null); }}><X size={18} /></button></div>
       <p className="ReportRecordId">{(selected || deleting).id}</p>
