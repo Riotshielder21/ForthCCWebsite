@@ -4,10 +4,11 @@ import {
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
-import { calculateCart } from './utils/pricing';
-import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft } from './utils/checkout';
+import { calculateCart, expandClubYearLines } from './utils/pricing';
+import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
+import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson } from './utils/checkout';
 import CheckoutPage from './pages/CheckoutPage';
-import { eventScheduleLabel } from './utils/catalogue';
+import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
 import { itemLabel, productLimits } from './utils/inventory';
 import SiteNavigation from './components/SiteNavigation';
 import HomePage from './pages/HomePage';
@@ -31,6 +32,21 @@ import './index.css';
 
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
+// Club-year items carry which club year they are for; a choice no longer on sale falls back to the default.
+const withClubYear = (product, choice) => {
+  const resolved = resolveClubYearChoice(product, choice) || defaultClubYearChoice(product);
+  const { clubYearChoice: _previous, ...rest } = product;
+  return resolved ? { ...rest, clubYearChoice: resolved } : rest;
+};
+const groupKey = (line) => `${line.id}|${line.size || ''}|${line.clubYearChoice || ''}`;
+const choiceLabel = (choice) => {
+  const year = clubYearOf(new Date());
+  return choice === 'this' ? `This club year (${clubYearLabel(year)})`
+    : choice === 'next' ? `Next club year (${clubYearLabel(year + 1)})`
+    : `Both (${clubYearLabel(year)} and ${clubYearLabel(year + 1)})`;
+};
+const dayLabel = (date) => date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/London' });
+
 export default function App() {
   const [initialDraft] = useState(loadDraft);
   const [currentPage, setCurrentPage] = useState(() => {
@@ -46,12 +62,23 @@ export default function App() {
   });
   const [products, setProducts] = useState(PRODUCTS);
   const [availability, setAvailability] = useState({});
+  const productsRef = useRef(products);
+  productsRef.current = products;
   const [pageContent, setPageContent] = useState({});
   const [cart, setCart] = useState(() => (initialDraft?.cart || [])
-    .map((line) => { const product = PRODUCTS.find((candidate) => candidate.id === line.id); return product ? { ...product, lineId: line.lineId } : null; })
+    .map((line) => { const product = PRODUCTS.find((candidate) => candidate.id === line.id); return product ? { ...withClubYear(normaliseProduct(product), line.clubYearChoice), lineId: line.lineId, ...(line.size ? { size: line.size } : {}) } : null; })
     .filter(Boolean));
   const [isCartOpen, setIsCartOpen] = useState(false);
+  useEffect(() => {
+    if (!isCartOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [isCartOpen]);
   const [isAnnual, setIsAnnual] = useState(initialDraft?.isAnnual ?? true);
+  // Monthly billing is only offered when something in the basket allows it.
+  const monthlyAvailable = cart.some((item) => item.allowMonthly);
+  const annualBilling = isAnnual || !monthlyAvailable;
   const [activeCategory, setActiveCategory] = useState('ALL');
 
   const [promoInput, setPromoInput] = useState('');
@@ -101,21 +128,21 @@ export default function App() {
     return Math.max(0, (remaining[product.category === 'MERCHANDISE' ? size : 'all'] ?? 0) - inBasket);
   };
 
-  const addToCart = (product, size = '') => {
+  const addToCart = (product, size = '', clubYearChoice = undefined) => {
     if (product.type === 'external') return;
     const label = itemLabel({ ...product, size });
     if (stockLeft(product, size) <= 0) {
       showToast(`${label} is sold out`);
       return;
     }
-    setCart((prev) => [...prev, { ...product, lineId: newId(), ...(size ? { size } : {}) }]);
+    setCart((prev) => [...prev, { ...withClubYear(product, clubYearChoice), lineId: newId(), ...(size ? { size } : {}) }]);
     showToast(`${label} added to basket`);
   };
 
   // Identical items are interchangeable, so reducing always takes the most recently added one and its form goes with it.
-  const removeOneFromCart = (productId, size = '') => {
+  const removeOneFromCart = (key) => {
     setCart((prev) => {
-      const index = prev.map((item) => `${item.id}|${item.size || ''}`).lastIndexOf(`${productId}|${size}`);
+      const index = prev.map(groupKey).lastIndexOf(key);
       return index < 0 ? prev : prev.filter((_, position) => position !== index);
     });
   };
@@ -126,12 +153,44 @@ export default function App() {
       .map((line) => {
         const product = products.find((candidate) => candidate.id === line.id);
         if (!product || (product.category === 'MERCHANDISE' && !Object.hasOwn(productLimits(product) || {}, line.size))) return null;
-        return { ...product, lineId: line.lineId, ...(line.size ? { size: line.size } : {}) };
+        return { ...withClubYear(product, line.clubYearChoice), lineId: line.lineId, ...(line.size ? { size: line.size } : {}) };
       })
       .filter(Boolean));
   }, [products]);
 
+  // A renewal email link (/membership?renew=TOKEN) replaces the basket with next year's renewal; the token leaves the address bar.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('renew');
+    if (!token) return;
+    params.delete('renew');
+    window.history.replaceState(null, '', `${window.location.pathname}${params.size ? `?${params}` : ''}`);
+    setCurrentPage((page) => (page === 'home' ? 'membership' : page));
+    fetch(apiUrl(`/api/renewals/${encodeURIComponent(token)}`), { cache: 'no-store' })
+      .then(async (response) => ({ ok: response.ok, result: await response.json().catch(() => null) }))
+      .then(({ ok, result }) => {
+        if (!ok || !result) throw new Error(result?.error || 'Could not load your renewal. Add your membership to the basket instead.');
+        const lines = result.items.map((item) => {
+          const product = productsRef.current.find((candidate) => candidate.id === item.id);
+          return product ? { ...withClubYear(normaliseProduct(product), item.clubYearChoice), lineId: item.lineId } : null;
+        }).filter(Boolean);
+        setCart(lines);
+        setPeople(result.people.map((person) => ({ ...blankPerson(person.id), ...person, verifiedDob: person.dob })));
+        setCheckoutEmail(result.email);
+        setIsAnnual(result.billingMode !== 'monthly');
+        setCheckoutError('');
+      })
+      .catch((error) => setCheckoutError(error.message))
+      .finally(() => setIsCartOpen(true));
+  }, []);
+
   useEffect(() => { setPeople((prev) => assignLines(prev, cart, newId)); }, [cart]);
+  // A checkout refusal (e.g. "needs a membership") describes the basket it was given, so it goes once the basket changes.
+  const cartKey = cart.map((line) => line.lineId).join('|');
+  const refusedCartKey = useRef(cartKey);
+  useEffect(() => {
+    if (refusedCartKey.current !== cartKey) setCheckoutError('');
+  }, [cartKey]);
 
   // The draft lives in this tab's sessionStorage only, so a customer can return to add a membership.
   useEffect(() => {
@@ -143,7 +202,7 @@ export default function App() {
       return;
     }
     if (!cart.length && !people.length && !checkoutEmail) clearDraft();
-    else saveDraft({ email: checkoutEmail, people, cart: cart.map(({ id, lineId, size }) => ({ id, lineId, ...(size ? { size } : {}) })), isAnnual });
+    else saveDraft({ email: checkoutEmail, people, cart: cart.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), isAnnual });
   }, [currentPage, cart, people, checkoutEmail, isAnnual]);
 
   const handleStartCheckout = () => {
@@ -187,15 +246,16 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: checkoutEmail.trim(),
-          items: cart.map(({ id, lineId }) => ({ id, lineId })),
+          items: cart.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })),
           people,
           discountCode: activePromo?.code || '',
-          billingMode: isAnnual ? 'annual' : 'monthly'
+          billingMode: annualBilling ? 'annual' : 'monthly'
         })
       });
       const order = await response.json();
       if (!response.ok) {
-        if (['membership_required', 'renews_via_justgo', 'membership_active', 'renewal_unconfirmed', 'sold_out'].includes(order.code)) {
+        if (['membership_required', 'renews_via_justgo', 'membership_active', 'renewal_unconfirmed', 'sold_out', 'club_year_unavailable', 'already_held'].includes(order.code)) {
+          refusedCartKey.current = cartKey;
           setCheckoutError(order.error);
           if (order.code === 'sold_out') refreshAvailability();
           handleBackToBasket();
@@ -225,6 +285,7 @@ export default function App() {
           discountValue: validation.discountValue,
           allowsAnnualStacking: validation.allowsAnnualStacking === true,
           productIds: validation.productIds || [],
+          categories: validation.categories || [],
           code
         });
         setPromoError(null);
@@ -238,45 +299,30 @@ export default function App() {
     }
   };
 
-  const getClubYearContext = () => {
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
-    const clubYearStartYear = currentMonth >= 2 ? currentYear : currentYear - 1;
-    const clubYearStart = new Date(clubYearStartYear, 2, 1, 0, 0, 0, 0);
-    const nextClubYearStart = new Date(clubYearStartYear + 1, 2, 1, 0, 0, 0, 0);
-    const monthsRemaining = Math.max(
-      1,
-      (nextClubYearStart.getFullYear() - now.getFullYear()) * 12 + (nextClubYearStart.getMonth() - now.getMonth())
-    );
-
-    return {
-      now,
-      clubYearStart,
-      nextClubYearStart,
-      monthsRemaining
-    };
-  };
-
-  const calculations = useMemo(() => calculateCart(cart, isAnnual, activePromo), [cart, isAnnual, activePromo]);
+  // A line for both club years is priced as this year's line plus next year's.
+  const calculations = useMemo(() => calculateCart(expandClubYearLines(cart), annualBilling, activePromo), [cart, annualBilling, activePromo]);
 
   const cartGroups = useMemo(() => {
     const groups = new Map();
     for (const line of cart) {
-      const key = `${line.id}|${line.size || ''}`;
+      const key = groupKey(line);
       if (groups.has(key)) groups.get(key).lines.push(line);
       else groups.set(key, { key, item: line, lines: [line] });
     }
     return [...groups.values()];
   }, [cart]);
 
-  const removeAllFromCart = (productId, size = '') => setCart((prev) => prev.filter((line) => line.id !== productId || (line.size || '') !== size));
+  const removeAllFromCart = (key) => setCart((prev) => prev.filter((line) => groupKey(line) !== key));
+  const setGroupClubYear = (key, choice) => setCart((prev) => prev.map((line) => groupKey(line) === key ? { ...line, clubYearChoice: choice } : line));
   const clearCart = () => {
     if (window.confirm('Remove everything from your basket?')) setCart([]);
   };
 
-  const getPricedItemDetails = (item) => calculations.items.find((pricedItem) => pricedItem.lineId === item.lineId)
-    || calculateCart([item], isAnnual).items[0];
+  const getPricedItemDetails = (item) => {
+    const parts = calculations.items.filter((pricedItem) => pricedItem.sourceLineId === item.lineId);
+    const priced = parts.length ? parts : calculateCart(expandClubYearLines([item]), annualBilling).items;
+    return { displayPrice: priced.reduce((sum, part) => sum + part.displayPrice, 0), label: priced.map((part) => part.label).join(' + ') };
+  };
 
   const getItemDisplayPrice = (item) => {
     return getPricedItemDetails(item).displayPrice.toFixed(2);
@@ -284,12 +330,6 @@ export default function App() {
 
   const getItemBillingLabel = (item) =>
     getPricedItemDetails(item).label;
-
-  const getKitHireMonthly = (item) => {
-    const clubYear = getClubYearContext();
-    const months = clubYear.monthsRemaining;
-    return (item.basePrice / months).toFixed(2);
-  };
 
   const renderPage = () => {
     if (currentPage === 'order-lookup') return <OrderLookupPage />;
@@ -330,7 +370,6 @@ export default function App() {
             addToCart={addToCart}
             removeOneFromCart={removeOneFromCart}
             getItemDisplayPrice={getItemDisplayPrice}
-            getKitHireMonthly={getKitHireMonthly}
             products={products}
             onNavigate={setCurrentPage}
           />
@@ -366,7 +405,7 @@ export default function App() {
         onCartOpen={currentPage === 'checkout' ? handleBackToBasket : () => setIsCartOpen(true)}
       />
 
-      <main>
+      <main className="SiteMain">
         {renderPage()}
       </main>
 
@@ -394,16 +433,16 @@ export default function App() {
       {isCartOpen && (
         <div className="CartOverlay">
           <div className="CartBackdrop" onClick={() => setIsCartOpen(false)} />
-          <div className="CartPanel" style={{ animation: 'slideInFromRight 500ms ease-out' }}>
+          <div className="CartPanel" role="dialog" aria-modal="true" aria-labelledby="basket-title" style={{ animation: 'slideInFromRight 500ms ease-out' }}>
             <div className="CartHeader">
-              <h2 className="CartTitle">Your Basket</h2>
+              <h2 className="CartTitle" id="basket-title">Your Basket</h2>
               <button onClick={() => setIsCartOpen(false)} className="CartCloseButton" aria-label="Close basket">
                 <X className="IconXl" />
               </button>
             </div>
 
-            <div className="CartBody">
-              <div className="BillingToggle">
+            <div className="CartControls">
+              {monthlyAvailable && <div className="BillingToggle">
                 <button
                   onClick={() => setIsAnnual(false)}
                   className={`BillingToggleButton ${!isAnnual ? 'BillingToggleButtonActive' : 'BillingToggleButtonIdle'}`}
@@ -416,16 +455,20 @@ export default function App() {
                 >
                   Club Year / Annual
                 </button>
-              </div>
+              </div>}
 
+              {cart.length > 0 && (
+                <button type="button" onClick={clearCart} className="CartClearButton">Clear basket</button>
+              )}
+            </div>
+
+            <div className="CartBody" tabIndex={0} role="region" aria-label="Basket items">
               <div className="CartItemList">
-                {cart.length > 0 && (
-                  <button type="button" onClick={clearCart} className="CartClearButton">Clear basket</button>
-                )}
                 {cart.length === 0 ? (
                   <div className="CartEmptyState">
                     <ShoppingBag />
                     <p className="CartEmptyText">Basket is empty</p>
+                    {checkoutError && <p className="StatusText StatusTextError" role="alert">{checkoutError}</p>}
                   </div>
                 ) : (
                   cartGroups.map(({ key, item, lines }) => (
@@ -434,6 +477,12 @@ export default function App() {
                         <div>
                           <h4 className="CartItemTitle">{itemLabel(item)}</h4>
                           {item.eventSchedule && <p className="text_container text_container_note">{eventScheduleLabel(item.eventSchedule)}</p>}
+                          {clubYearChoices(item).length > 1 && (
+                            <select value={item.clubYearChoice} onChange={(event) => setGroupClubYear(key, event.target.value)}
+                              className="FormInput CartClubYear" aria-label={`Club year for ${itemLabel(item)}`}>
+                              {clubYearChoices(item).map((choice) => <option key={choice} value={choice}>{choiceLabel(choice)}</option>)}
+                            </select>
+                          )}
                           <span className="CartItemMeta">
                             {getItemBillingLabel(item)}
                           </span>
@@ -441,7 +490,7 @@ export default function App() {
                         <div className="CartItemActions">
                           <span className="CartItemPrice">£{lines.reduce((sum, line) => sum + Number(getItemDisplayPrice(line)), 0).toFixed(2)}</span>
                           <button
-                            onClick={() => removeOneFromCart(item.id, item.size || '')}
+                            onClick={() => removeOneFromCart(key)}
                             className="CartRemoveButton"
                             aria-label={`Remove one ${itemLabel(item)}`}
                             title="Remove one"
@@ -450,7 +499,7 @@ export default function App() {
                           </button>
                           <span className="CartItemQuantity" aria-label={`${lines.length} in basket`}>{lines.length}</span>
                           <button
-                            onClick={() => addToCart(item, item.size || '')}
+                            onClick={() => addToCart(item, item.size || '', item.clubYearChoice)}
                             className="CartRemoveButton"
                             disabled={stockLeft(item, item.size || '') <= 0}
                             aria-label={`Add another ${itemLabel(item)}`}
@@ -459,7 +508,7 @@ export default function App() {
                             <Plus className="IconMd" />
                           </button>
                           <button
-                            onClick={() => removeAllFromCart(item.id, item.size || '')}
+                            onClick={() => removeAllFromCart(key)}
                             className="CartRemoveButton"
                             aria-label={`Remove all ${itemLabel(item)} from basket`}
                             title="Remove all"
@@ -495,7 +544,7 @@ export default function App() {
                       </button>
                     </div>
                     {promoError && (
-                      <p className="StatusText StatusTextError">
+                      <p className="StatusText StatusTextError" role="alert">
                         <AlertCircle className="IconSm" /> {promoError}
                       </p>
                     )}
@@ -507,7 +556,7 @@ export default function App() {
                   </div>
                 </div>
                   {/* Cost Breakdown Section */}
-                  {isAnnual ? (
+                  {annualBilling ? (
                     // Annual mode: Only show Year 1 upfront cost
                     <div className="CartBreakdown">
                       <div className="CartBreakdownLabel">Your Cost</div>
@@ -516,21 +565,21 @@ export default function App() {
                       </div>
                     </div>
                   ) : (
-                    // Monthly mode: Show Month 1 upfront and monthly recurring
+                    // Monthly mode: what is taken now, then each club year's direct debit (1st of the month, last on 1 February).
                     <div className="CartBreakdown">
                       <div className="CartBreakdownLabel">Cost Breakdown</div>
                       <div className="CartSummaryLine">
-                        1st Month Upfront: £{calculations.year1Total.toFixed(2)}
+                        Due now: £{calculations.year1Total.toFixed(2)}
                       </div>
-                      {calculations.recurringMonthlyTotal > 0 && (
-                        <div className="CartSummaryLine">
-                          Then Monthly: £{calculations.recurringMonthlyTotal.toFixed(2)}
+                      {calculations.monthlySchedule.map((debit) => (
+                        <div key={debit.firstDebit.getTime()} className="CartSummaryLine">
+                          Then £{debit.monthly.toFixed(2)} a month from {dayLabel(debit.firstDebit)} to {dayLabel(new Date(debit.cutoff.getTime() - 14 * 24 * 60 * 60 * 1000))} ({clubYearLabel(debit.clubYear)})
                         </div>
-                      )}
+                      ))}
                     </div>
                   )}
                   
-                  {isAnnual && calculations.annualSaving > 0 && (
+                  {annualBilling && calculations.annualSaving > 0 && (
                     <div className="CartSummaryLine">
                       Annual Saving: -£{calculations.annualSaving.toFixed(2)}
                     </div>
@@ -545,7 +594,7 @@ export default function App() {
                   <div className="CartSummaryTotal">
                     Total £{calculations.total.toFixed(2)}
                   </div>
-                  {checkoutError && <p className="StatusText StatusTextError">{checkoutError}</p>}
+                  {checkoutError && <p className="StatusText StatusTextError" role="alert">{checkoutError}</p>}
                 </div>
                 <button
                   onClick={handleStartCheckout}

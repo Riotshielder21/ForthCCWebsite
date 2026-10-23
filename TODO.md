@@ -1,32 +1,20 @@
 # TODO
 
-## Shop types and vouchers
+## Club years, monthly payments and renewals
 
-- Product Type follows Category and is not free choice:
-  - Vouchers: always a voucher.
-  - Events: always an event ticket.
-  - Subscriptions: always a subscription.
-  - Membership: fixed price only (never prorated, never monthly).
-  - Services: choose Fixed, Prorated or Subscription.
-  - Add a Prorated service price mode; keep Membership fixed and keep Membership and Vouchers excluded from monthly billing.
-  - Add an admin-controlled "Allow monthly payments" setting per eligible product.
-- Existing products are mapped to the new types automatically and keep their saved prices (`yearly-service` and friends).
-  - Configure generated voucher credit eligibility by category or product; retain support for custom fixed discount codes.
-- Discount code list:
-  - A voucher shop item appears once, under the shop item's name.
-  - Code and description get separate columns instead of being stacked.
-- Course and shop products need an admin-controlled membership rule: no membership required, membership required, or membership included. Checkout and reports must enforce and show the selected rule.
-
-## Club-year access and renewal
-
-- A held service or subscription blocks buying it again while active.
-- Early renewal opens two months before expiry (1 January). Payment is scheduled to start on 1 March.
-- Apply consistent club-year expiry to memberships, services and subscriptions using the product's fixed, proration or subscription pricing mode.
-- A monthly Stripe subscriber stays blocked while their Stripe subscription is active.
+- **Stripe test mode:** check that a subscription cancelled at the cut-off stops retries and creates no credit or 1 March invoice; that a backdated subscription (delayed Bacs payment) charges the missed month once; and how Bacs mandate delays affect a first debit on the 1st. Turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st).
+- **Webhook:** add `customer.subscription.deleted` to the Dashboard webhook endpoints (test and live).
+- **Renewal job deployment:** create a `renewal-job-token` secret, pass it to Cloud Run as `RENEWAL_JOB_TOKEN` in `.github/workflows/firebase-hosting.yml`, and install `config/fcc-renewals.{service,timer}` on the server with `RENEWAL_JOB_TOKEN` and `RENEWAL_JOB_URL` in its `.env`. Until then staff can send renewal emails from the admin page.
+- **Renewal email wording:** the email uses template text for now; agree the final wording with the club (`renewalEmail` in `src/utils/renewals.js`).
+- GDPR erasure cancels the person's subscriptions but does not blank the payer email and names on `subscriptions/{id}` records.
 
 ## Email and receipts
 
-- Receipt email code is fixed (delegation now applied, UTF-8 encoding, recipient validation, clear log when unconfigured). Still to verify on the live project: domain-wide delegation for the Gmail scope, then send a real test purchase and check the receipt, voucher codes and receipt links.
+- Verify a real purchase on the live project: receipt delivery from the configured no-reply address, voucher codes and secure receipt links. Confirm domain-wide delegation for the Gmail scope if delivery fails.
+- Verify the organisation footer on a real delivered email. The website mail sender does not append an organisation footer; check Google Workspace **Append footer** rules (including inherited/overlapping rules) for duplicate insertion and HTML/plain-text formatting. Keep one owner for the footer rather than also adding it to the receipt template.
+- Add an admin editor for the confirmation-email layout of an individual purchased item: per-product choice of which purchase, membership and booking fields appear, their order and presentation (including the event image), with a preview and matching HTML/plain-text output. A club-wide choice of extra person details (Admin → **Receipt email details**) already exists; per-item fields must stay email-only, like it.
+- Agree with the club which person details (DOB, address, emergency contact, medical) should be switched on in **Receipt email details** in production, particularly for children. All are off by default.
+- Add inline/CID event-image attachments, calendar invitations and downloadable/PDF receipts. Hosted HTTPS event images are already supported, but email clients may block them; historical orders without saved images remain text-only.
 
 ## Retention and long-term statistics (needs its own design)
 
@@ -37,22 +25,27 @@
 
 1. **`membershipTerms`.** One document per person per club year (tier, start, end, order, source). `status` and `validUntil` stay on the member as the current term. Replaces `history[]` and `privileges[]`.
 2. **Orders.** Money in whole pence; subtotal, discount and discount code; refunds as a status (stock released) instead of deleting the order; top-level `membershipIds`; one receipt token; grouped fulfilment, Stripe and payment-failure fields; people reduced to references once the purchase is recorded; remove the legacy `receipt`.
-3. **Other collections.** Remove `customers` (`lists` stays: it holds form submissions and volunteer induction state); discount codes get one `status`, a `type` and `sourceProductId`; products get `active`, `sortOrder`, `pricingMode`, `allowMonthly`; the Stripe mirror gets `membershipIds` and drops copied names and emails; one audit log with a reason.
+3. **Other collections.** Remove `customers` (`lists` stays: it holds form submissions and volunteer induction state); discount codes get one `status`, a `type` and `sourceProductId`; products get `active` and `sortOrder`, with existing records backfilled for the implemented `pricingMode` and `allowMonthly` fields; the Stripe mirror gets `membershipIds` and drops copied names and emails; one audit log with a reason.
 4. Extend `scripts/migrate-schema.js` with a step for each remaining change above, tested against old-shape records, and take a Firestore export before running it with `--apply`.
 
 ## Security review (outstanding)
 
 1. Add analytics consent controls.
 2. Switch the full Content-Security-Policy from report-only to enforced (Firebase Hosting and the API) once the browser console shows no violations on every page, including admin sign-in, image upload and Stripe checkout.
+3. HTTPS certificate
 
 ## Volunteering
 
-- Choose who tells new volunteers about inductions; the form only records the sign-up. Volunteer codes are emailed, so they depend on the email delivery fix above.
+- Choose who tells new volunteers about inductions; the form only records the sign-up.
+- a check-in page that has authorization for all the confirmed volunteers. That's for club night each week. 
+  And each week at club night, people will sign up using the same QR code and that they just put their email address and date of birth in to check in because obviously that would make them a member. And the person who's a volunteer on club night would have access to the check-in page, which is like the admin page. And that means they'll be able to see if they need to purchase boat hire or not, or if they're a member or not, which is simple because they won't be able to check in. And that simplifies that process. CHeck in is email and dob for members, volunteer checks paid for membership and a flag of having been at clubnight befores.
 
 ## Flow test failures (pre-existing)
 
-`scripts/test-checkout-flow.js` fails these six scenarios on the branch before and after the security work, most likely expectations left over from before households were split out:
+`scripts/test-checkout-flow.js` fails these eight scenarios (still failing identically with and without the receipt email changes), most likely expectations left over from before households were split out:
 
+- adult membership plus boat hire is recorded on the membership, customer and order;
+- consent and policy wording is recorded as numbered versions that follow changes;
 - a returning member can add an add-on with only name and date of birth (address is now on the household, not the member);
 - multiple copies of shop services in one mixed basket (the per-member item list now includes every item bought);
 - family membership emergency contact (`undefined` instead of `false`);
@@ -60,11 +53,28 @@
 - reports: member register count (23 records where 19 are expected);
 - replaying a webhook (`shared.family` is unset because the family scenario failed first).
 
+On an emulator that has run the flow test many times, the report-based scenarios (junior household, JustGo sync and uploads, event tickets, merchandise, reports) also fail: the admin reports return the first 100 records ordered by document id, so this run's records can fall onto a later page. Restart the emulators without imported data before relying on them.
+
 
 Feature WishList
-- Boathouse codes save in admin portal
-- Codes sent automatically if changed to active volunteers
-- Volunteers send codes when checked in
-- PVG and Safeguarding status on members (particularly volunteers) (expired, active, due to expire)
-- Trip single day events should get discounts automatically applied at checkout if someone has annual boathire, and / or subscription. Need to delete lock them as it breaks the feature but a subscriber gets 10 off, a equipment hire gets 10 off. either need to delete lock them or make a feature that allows a configurable subscription or service item that does this. (eg, keyhire doesnt apply discount)
-- Events should have a leader field and email, the email is public but importantly the event should have a close date and a it will automatically email a list of atendees to the lead. with well formatted emergency contacts, and medical details. It should also attach info on if a person needs boathire, or has already paid. If a person needs boathire it will just point out this info. this can be obtained from their membership record or not. (usually because an event will or will not require membership (tickbox for admin)) its a lookup of kithire situ. events can have a checkbox for the participant at the add-on section saying, i have my own kit.
+- An authentication code to virify email address so users can amend membership details, emergency contact, address, phone number email etc.. this is hard.
+- 20+ hour volunteer category gets key access added to record
+- 40+ hour gets boathire added to record and taking out a subscript automatically applies discount no need for a code, same way boathire and keyhire works on events (statistic tracking)
+- 60+ gets boathire and keyhire added and an email to ask them if they want to use their volunteering to come to coached (subscription) (which adds a gold if they click the link?) (tracking statistics) 
+
+## PRe Flight checks
+- Committee Content Review
+- Committee sanction publishing
+- Test member review
+- Test admin side
+- MOST IMPORTANT, MOVING AWAY FROM BOOKWHEN, EVENTBIRTE, HUMANITIX
+- GDPR NOTICE
+- DISCLAIMER for all activities
+- PHOTO CONSENT POLICY
+- Media content
+- COPYRIGHT NOTICE
+
+## Final DEPLOY TODO
+ - Import existing members (if before March)
+ - Import all current subscribers, and probably transition away from bookwhen strip setup 
+ - Import all current payments for boathire, and keyhire and the current volunteer list.

@@ -72,6 +72,9 @@ test('one membership report covers JustGo and website records', () => {
   assert.equal(normalized.email, 'pat@example.com');
   assert.equal(normalized.parent, 'Pat Web, Parent, 7');
   assert.equal(normalized.address, '2 Road, EH2');
+  const included = membershipReport('MEM-3', { firstName: 'Cal', lastName: 'Course', membershipTier: 'adult', status: 'active', validUntil: '2099-03-01',
+    membershipIncludedWith: { productId: 'course', name: 'Beginner course', orderRef: 'FCC-1' } });
+  assert.deepEqual([included.tier, included.includedWith], ['adult', 'Beginner course']);
 });
 
 test('event attendee exports use the linked household as the canonical source of contact details', () => {
@@ -171,4 +174,12 @@ test('JustGo status follows the upload attempts, and the staff list holds only m
   assert.equal(rows.length, 1);
   assert.equal(rows[0].length, justgoUploadHeaders.length);
   assert.deepEqual([rows[0][0], rows[0][1], rows[0][10], rows[0][11], rows[0][12]], ['M3', 'Ann', 'PS123', 3, 'Invitation expired']);
+});
+
+test('the member register shows PVG and safeguarding status with expiry dates', () => {
+  const now = new Date('2026-06-15T12:00:00Z');
+  const record = membershipReport('pvg-1', { firstName: 'Pat', lastName: 'Volunteer', checks: { pvg: { expiresOn: '2026-08-01' }, safeguarding: { expiresOn: '2026-01-01' } } }, now);
+  assert.equal(record.pvg, 'Due to expire (01/08/2026)');
+  assert.equal(record.safeguarding, 'Expired (01/01/2026)');
+  assert.equal(membershipReport('pvg-2', {}, now).pvg, 'Not recorded');
 });

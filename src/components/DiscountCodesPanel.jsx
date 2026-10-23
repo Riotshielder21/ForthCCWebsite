@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiUrl } from '../utils/api';
+import { saveProduct } from '../utils/content';
+import { scopeLabel, VOUCHER_CATEGORIES, voucherRows, voucherScope } from '../utils/vouchers';
+import PagedAdminList from './PagedAdminList';
 
 const TYPES = [
   ['multiplier', 'Percentage off (%)'],
@@ -14,12 +17,15 @@ const describe = (code) => code.discountType === 'multiplier'
 
 export default function DiscountCodesPanel({ adminUser, products }) {
   const [codes, setCodes] = useState([]);
+  const [voucherSummaries, setVoucherSummaries] = useState([]);
   const [draft, setDraft] = useState(EMPTY);
   const [editing, setEditing] = useState(null);
+  const [scopeDraft, setScopeDraft] = useState(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const sellable = products.filter((product) => product.type !== 'external');
   const nameFor = (id) => products.find((product) => product.id === id)?.name || id;
+  const voucherSpendable = sellable.filter((product) => product.category !== 'MEMBERSHIP');
 
   const request = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
@@ -35,7 +41,9 @@ export default function DiscountCodesPanel({ adminUser, products }) {
 
   const load = useCallback(async () => {
     try {
-      setCodes((await request('/api/admin/discount-codes')).codes);
+      const result = await request('/api/admin/discount-codes');
+      setCodes(result.codes);
+      setVoucherSummaries(result.vouchers || []);
     } catch (loadError) {
       setError(loadError.message);
     }
@@ -89,6 +97,29 @@ export default function DiscountCodesPanel({ adminUser, products }) {
     });
   };
 
+  const vouchers = voucherRows(products, voucherSummaries);
+  const voucherStatus = (row) => row.issued
+    ? `${row.issued} issued: ${row.active} active${row.active ? ` (£${row.unspent.toFixed(2)} unspent)` : ''}, ${row.used} used, ${row.expired} expired`
+    : 'None issued yet';
+
+  const toggleScope = (field, value) => setScopeDraft((current) => ({ ...current, [field]: current[field].includes(value)
+    ? current[field].filter((candidate) => candidate !== value)
+    : [...current[field], value] }));
+
+  const saveScope = async (event) => {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    try {
+      const product = products.find((candidate) => candidate.id === scopeDraft.productId);
+      await saveProduct({ ...product, voucherScope: voucherScope({ voucherScope: scopeDraft }) });
+      setMessage(`${product.name} vouchers updated. Codes bought from now on use the new rules.`);
+      setScopeDraft(null);
+    } catch (saveError) {
+      setError(saveError.message);
+    }
+  };
+
   const cancelEdit = () => { setEditing(null); setDraft(EMPTY); };
 
   const toggleActive = async (code) => {
@@ -104,7 +135,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
   return (
     <section className="main_tile SpaceT6">
       <div className="AdminListHeader"><div><span className="tile_eyebrow">Shop</span><h3 className="tile_heading_bold_2">Discount codes</h3></div></div>
-      <p className="text_container SpaceB4">Choose products to limit a code to them. With none selected a code covers everything except membership.</p>
+      <p className="text_container SpaceB4">Choose products to limit a code to them. With none selected a code covers everything except membership. Each voucher shop item is listed once below; Individual voucher codes are shown on the buyer's record in Reports.</p>
       <form className="CheckoutDetails" onSubmit={handleSave}>
         <div className="CheckoutGrid">
           <label className="FormLabel">Code<input className="FormInput" required disabled={Boolean(editing)} pattern="[A-Za-z0-9-]{3,64}" maxLength={64} value={draft.code} onChange={(event) => update('code', event.target.value.toUpperCase())} /></label>
@@ -121,9 +152,9 @@ export default function DiscountCodesPanel({ adminUser, products }) {
         </div>
         <fieldset className="CheckoutFieldset">
           <legend>Applies to</legend>
-          {sellable.map((product) => (
+          <PagedAdminList items={sellable} label="discount products" renderItem={(product) => (
             <label key={product.id} className="CheckoutCheck"><input type="checkbox" checked={draft.productIds.includes(product.id)} onChange={() => toggleProduct(product.id)} /> {product.name}</label>
-          ))}
+          )} />
         </fieldset>
         <label className="CheckoutCheck"><input type="checkbox" checked={draft.singleUse || draft.discountType === 'credit'} disabled={draft.discountType === 'credit'} onChange={(event) => update('singleUse', event.target.checked)} /> Single use (disabled after one order){draft.discountType === 'credit' ? ' - always on for this type' : ''}</label>
         {message && <p className="StatusText StatusTextSuccess">{message}</p>}
@@ -132,14 +163,47 @@ export default function DiscountCodesPanel({ adminUser, products }) {
         {editing && <button type="button" className="PrimaryActionButtonCompact" onClick={cancelEdit}>Cancel editing</button>}
       </form>
 
-      {codes.length > 0 && (
+      {scopeDraft && (
+        <form className="CheckoutDetails SpaceT4" onSubmit={saveScope}>
+          <h4 className="CartItemTitle">What {nameFor(scopeDraft.productId)} codes can be spent on</h4>
+          <p className="text_container">Tick categories, products or both. With nothing ticked, the credit covers everything except membership. Changes apply to vouchers bought from now on; codes already issued keep their rules.</p>
+          <fieldset className="CheckoutFieldset">
+            <legend>Categories</legend>
+            {VOUCHER_CATEGORIES.map((category) => (
+              <label key={category} className="CheckoutCheck"><input type="checkbox" checked={scopeDraft.categories.includes(category)} onChange={() => toggleScope('categories', category)} /> All {category.toLowerCase()}</label>
+            ))}
+          </fieldset>
+          <fieldset className="CheckoutFieldset">
+            <legend>Products</legend>
+            <PagedAdminList items={voucherSpendable} label="voucher products" renderItem={(product) => (
+              <label key={product.id} className="CheckoutCheck"><input type="checkbox" checked={scopeDraft.productIds.includes(product.id)} onChange={() => toggleScope('productIds', product.id)} /> {product.name}</label>
+            )} />
+          </fieldset>
+          <button className="FormSubmitButton" type="submit">Save voucher rules</button>
+          <button type="button" className="PrimaryActionButtonCompact" onClick={() => setScopeDraft(null)}>Cancel</button>
+        </form>
+      )}
+
+      {(codes.length > 0 || vouchers.length > 0) && (
         <div style={{ overflowX: 'auto' }}>
           <table className="text_container SpaceT4" style={{ width: '100%', textAlign: 'left' }}>
-            <thead><tr><th>Code</th><th>Discount</th><th>Applies to</th><th>Status</th><th>Expires</th><th /></tr></thead>
+            <thead><tr><th>Code</th><th>Description</th><th>Discount</th><th>Applies to</th><th>Status</th><th>Expires</th><th /></tr></thead>
             <tbody>
+              {vouchers.map((row) => (
+                <tr key={`voucher-${row.key}`}>
+                  <td>Shop voucher{row.product ? '' : ' (no longer in the shop)'}</td>
+                  <td>{row.name}</td>
+                  <td>{row.product ? `£${Number(row.product.basePrice).toFixed(2)} credit per code` : 'Credit'}</td>
+                  <td>{row.product ? scopeLabel(voucherScope(row.product), nameFor) : ''}</td>
+                  <td>{voucherStatus(row)}</td>
+                  <td>1 year after purchase</td>
+                  <td>{row.product && <button type="button" className="PrimaryActionButtonCompact" onClick={() => setScopeDraft({ productId: row.product.id, ...voucherScope(row.product) })}>Edit</button>}</td>
+                </tr>
+              ))}
               {codes.map((code) => (
                 <tr key={code.code}>
-                  <td><code>{code.code}</code><br />{code.label}</td>
+                  <td><code>{code.code}</code></td>
+                  <td>{code.label}</td>
                   <td>{describe(code)}</td>
                   <td>{code.productIds.length ? code.productIds.map(nameFor).join(', ') : 'Everything except membership'}</td>
                   <td>{code.used ? 'used' : code.expired ? 'expired' : code.active ? 'active' : 'disabled'}{code.singleUse ? ' (single use)' : ''}</td>

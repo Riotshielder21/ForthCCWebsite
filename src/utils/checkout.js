@@ -1,3 +1,5 @@
+import { productMembershipRule } from './catalogue.js';
+import { clubYearDates, clubYearOf } from './clubYear.js';
 // Placeholder wording: replace with the club's approved disclaimer; the new wording is recorded as the next policy version after release.
 export const DISCLAIMER_TEXT = 'I confirm the details given are correct and I accept the Forth Canoe Club participation and safety disclaimer. For under-18s, the parent/guardian accepts on their behalf.';
 export const PHOTO_CONSENT_TEXT = 'Photo and video consent';
@@ -63,12 +65,14 @@ export const assignLines = (people, lines, makeId) => {
   for (const line of personLines) {
     if (assigned.has(line.lineId)) continue;
     let target = next.find((person) => !holdsEquivalent(person, line, lines));
-    if (!target) {
+    const created = !target;
+    if (created) {
       target = blankPerson(makeId());
       next.push(target);
     }
     target.lineIds = [...target.lineIds, line.lineId];
-    if (isMembership(line)) target.ownsMembership = true;
+    // Only someone created for the membership leaves with it; a person already filled in for an add-on stays.
+    if (isMembership(line) && created) target.ownsMembership = true;
     assigned.add(line.lineId);
     // A new family membership starts as two adults and a child; later edits are never reseeded.
     if (isFamilyMembership(line)) {
@@ -110,6 +114,7 @@ export const sanitizePerson = (person) => ({
   address: text(person?.address, 300), postcode: text(person?.postcode, 12),
   affiliationNumber: text(person?.affiliationNumber, 40), swimming: text(person?.swimming, 20), medical: text(person?.medical, 1000),
   photoConsent: person?.photoConsent === true, disclaimerAccepted: person?.disclaimerAccepted === true,
+  ownKitLineIds: Array.isArray(person?.ownKitLineIds) ? person.ownKitLineIds.filter((id) => typeof id === 'string').map((id) => id.slice(0, 64)).slice(0, 20) : [],
   emergencyContact: { name: text(person?.emergencyContact?.name, 120), phone: text(person?.emergencyContact?.phone, 40), relationship: text(person?.emergencyContact?.relationship, 60) },
   guardian: { name: text(person?.guardian?.name, 120), phone: text(person?.guardian?.phone, 40), email: text(person?.guardian?.email, 254).toLowerCase(), relationship: text(person?.guardian?.relationship, 60), address: text(person?.guardian?.address, 300), postcode: text(person?.guardian?.postcode, 12) }
 });
@@ -209,10 +214,28 @@ export const validateCheckout = ({ lines, people, now = new Date() }) => {
   return errors;
 };
 
-// People buying non-membership items who have no membership line of their own.
-export const peopleNeedingMembership = (lines, people) => people.filter((person) => {
+// Membership lines never need one. Events, services and subscriptions follow their membership rule; anything else does.
+export const lineMembershipRule = (line) => isMembership(line) ? null : productMembershipRule(line) || 'required';
+export const requiresMembership = (line) => !isMembership(line) && lineMembershipRule(line) === 'required';
+export const grantsMembership = (line) => !isMembership(line) && lineMembershipRule(line) === 'included';
+
+// People buying items that need membership who have no membership line (or membership-included item) of their own.
+// Lines are per club year (see expandClubYearLines): a next-year add-on needs a next-year membership. Once this year's
+// membership is no longer sold (from 8 February), next year's membership in the basket also covers this year's items.
+const partOf = (line) => line.clubYearPart === 'next' ? 'next' : 'this';
+export const membershipPartsNeeded = (lines, person, now = new Date()) => {
   const held = person.lineIds.map((id) => lines.find((line) => line.lineId === id)).filter(Boolean);
-  return held.some((line) => !isMembership(line)) && !held.some(isMembership);
+  const covered = new Set(held.filter((line) => isMembership(line) || grantsMembership(line)).map(partOf));
+  if (covered.has('next') && now >= clubYearDates(clubYearOf(now)).membershipSaleEnds) covered.add('this');
+  return [...new Set(held.filter(requiresMembership).map(partOf))].filter((part) => !covered.has(part));
+};
+export const peopleNeedingMembership = (lines, people, now = new Date()) => people.filter((person) => membershipPartsNeeded(lines, person, now).length > 0);
+
+// People who become members through a membership-included item rather than a membership line for the same club year.
+export const peopleGrantedMembership = (lines, people) => people.filter((person) => {
+  const held = person.lineIds.map((id) => lines.find((line) => line.lineId === id)).filter(Boolean);
+  const bought = new Set(held.filter(isMembership).map(partOf));
+  return held.some((line) => grantsMembership(line) && !bought.has(partOf(line)));
 });
 
 export const normaliseName = (value) => String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();

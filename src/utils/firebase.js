@@ -4,6 +4,7 @@ import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import { apiUrl } from './api.js';
+import { ADMIN_DOMAIN, isClubEmail } from './adminAccess.js';
 
 const runtimeEnv = typeof import.meta.env !== 'undefined' ? import.meta.env : process.env;
 const localEmulators = runtimeEnv.DEV === true && runtimeEnv.VITE_USE_FIREBASE_EMULATORS === 'true';
@@ -95,11 +96,9 @@ export const signInWithWorkspace = async () => {
   }
 
   const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ hd: 'forthcanoeclub.co.uk' });
+  provider.setCustomParameters({ hd: ADMIN_DOMAIN });
   const result = await signInWithPopup(auth, provider);
-  const email = result.user.email?.toLowerCase() || '';
-
-  if (!email.endsWith('@forthcanoeclub.co.uk')) {
+  if (!isClubEmail(result.user.email)) {
     await auth.signOut();
     throw new Error('Use a Forth Canoe Club Google Workspace account.');
   }

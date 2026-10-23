@@ -1,5 +1,4 @@
 ﻿import express from 'express';
-import { rateLimit as expressRateLimit, ipKeyGenerator } from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { domainToASCII } from 'url';
@@ -14,12 +13,16 @@ import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } f
 import { PAGE_CONTENT } from './src/constants/pageContent.js';
 import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
-import { calculateCart } from './src/utils/pricing.js';
-import { sanitizePerson, validateCheckout, peopleNeedingMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
+import { calculateCart, expandClubYearLines, expandPeopleLines, NEXT_YEAR_LINE_SUFFIX } from './src/utils/pricing.js';
+import { clubYearOf, clubYearDates, clubYearLabel, clubYearKind, resolveClubYearChoice, nextFirst, holdsForClubYear } from './src/utils/clubYear.js';
+import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
+import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
+import { bookingsClosed } from './src/utils/eventRoster.js';
+import { sanitizePerson, validateCheckout, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
 import { buildRawEmail } from './src/utils/mail.js';
-import { buildReceiptSummary, receiptEmailCopy } from './src/utils/receipt.js';
+import { buildReceiptSummary, buildLinkedReceipt, receiptEmailCopy, receiptEmailHtml } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation, stripeSubscriberReport } from './src/utils/stripeReports.js';
 import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
@@ -27,26 +30,26 @@ import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProble
 import { deletionAuditEntry } from './src/utils/privacy.js';
 import { CURRENT_MEMBERSHIP_VERSION } from './src/utils/schema.js';
 import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from './src/utils/households.js';
+import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive, endedAtCutoff } from './src/utils/subscriptions.js';
 import { registerGdprRoutes } from './src/server/gdpr.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
+import { registerBoathouseRoutes } from './src/server/boathouse.js';
+import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
+import { registerEventRosterRoutes } from './src/server/eventRosters.js';
+import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
+import { registerReceiptEmailRoutes } from './src/server/receiptEmail.js';
+import { registerRenewalRoutes } from './src/server/renewals.js';
+import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
+import { isClubEmail } from './src/utils/adminAccess.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const rateLimit = (limit, windowMs) => expressRateLimit({
-  windowMs,
-  limit,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  keyGenerator: (req) => `${ipKeyGenerator(req.ip || '')}:${req.path}`,
-  validate: { xForwardedForHeader: false },
-  message: { error: 'Too many requests. Try again shortly.' }
-});
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isValidEmail = (value) => {
@@ -101,12 +104,14 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: (origin, callback) => callback(null, isAllowedOrigin(origin, corsOrigins, { allowLocalhost: allowLocalhostOrigins })),
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
   maxAge: 600
 }));
 app.use(express.static('dist'));
+// Everything after static files (API and the SPA fallback) shares one per-visitor ceiling; routes add tighter limits.
+app.use(baselineRateLimit);
 
-const stripeRequest = async (path, params, method = 'POST') => {
+const stripeRequest = async (path, params, method = 'POST', { idempotencyKey } = {}) => {
   const secretKey = process.env.STRIPE_SECRET_KEY || '';
   if (!secretKey.startsWith('sk_test_')) {
     throw new Error('Stripe checkout requires a test-mode secret key. Live payments are disabled.');
@@ -115,9 +120,10 @@ const stripeRequest = async (path, params, method = 'POST') => {
     method,
     headers: {
       Authorization: `Bearer ${secretKey}`,
-      'Content-Type': 'application/x-www-form-urlencoded'
+      'Content-Type': 'application/x-www-form-urlencoded',
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {})
     },
-    ...(method === 'GET' ? {} : { body: new URLSearchParams(params) })
+    ...(method === 'GET' || !params ? {} : { body: new URLSearchParams(params) })
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || 'Stripe request failed.');
@@ -156,10 +162,12 @@ const toMembershipRecord = (document) => {
   return {
     id: document.id, affiliationNumber: data.affiliationNumber || '', email: data.email || '', householdId: data.householdId || '', dob: data.dob || '',
     firstName: data.firstName || '', lastName: data.lastName || '', status: data.status, validUntil: data.validUntil?.toMillis() || 0,
+    clubYears: Array.isArray(data.clubYears) ? data.clubYears.map(Number).filter(Number.isFinite) : [],
     justgo: data.justgoSyncStatus === 'synced' || data.renewalMethod === 'justgo',
     renewalMethod: data.renewalMethod || '', justgoSyncStatus: data.justgoSyncStatus || '', lastJustgoSync: data.lastJustgoSync?.toMillis() || 0,
     stripeMembershipSubscriptionId: data.stripeMembershipSubscriptionId || '', stripeMembershipMode: data.stripeMembershipMode || '',
-    hasStripeMembershipReference: Object.hasOwn(data, 'stripeMembershipSubscriptionId'), history: Array.isArray(data.history) ? data.history : []
+    hasStripeMembershipReference: Object.hasOwn(data, 'stripeMembershipSubscriptionId'), history: Array.isArray(data.history) ? data.history : [],
+    familyTier: data.membershipTier === 'family'
   };
 };
 
@@ -190,10 +198,14 @@ const stripeSubscriptionIsActive = async (member) => {
   const subscription = await stripeReportRequest(secrets[0])(
     `subscriptions/${encodeURIComponent(linkedMember.stripeMembershipSubscriptionId)}?expand[]=customer&expand[]=latest_invoice.payment_intent.latest_charge`
   );
-  return stripeSubscriberReport(subscription).status === 'Active';
+  const report = stripeSubscriberReport(subscription);
+  // A subscription ended at the 15 February cut-off still covers the membership to 1 March.
+  // Our club-year subscriptions wait as `trialing` until the first 1st.
+  const clubYearWaiting = subscription.status === 'trialing' && subscription.metadata?.club_year && !subscription.pause_collection;
+  return report.status === 'Active' || Boolean(clubYearWaiting) || (endedAtCutoff(subscription) && !report.paymentReversed);
 };
 
-const findMembership = async (person) => {
+const findMembership = async (person, now = new Date()) => {
   const memberships = adminDb.collection('memberships');
   const [byNumber, byEmail, households] = await Promise.all([
     person.affiliationNumber ? memberships.where('affiliationNumber', '==', person.affiliationNumber).limit(5).get() : null,
@@ -214,7 +226,7 @@ const findMembership = async (person) => {
     .map((document) => [document.id, document.data()]));
   const asMatchRecord = (document) => {
     const data = document.data();
-    return { ...toMembershipRecord(document), email: data.email || householdById.get(data.householdId)?.email || '' };
+    return { ...toMembershipRecord(document), email: data.email || householdById.get(data.householdId)?.email || '', contactOnly: data.contactOnly === true };
   };
   const contactName = person.junior ? person.guardian.name : `${person.firstName} ${person.lastName}`;
   const matchingHouseholds = households.docs.filter((household) =>
@@ -235,17 +247,17 @@ const findMembership = async (person) => {
     console.error('Stripe subscription validation failed:', error.message);
     return { conflict: result.conflict, reason: result.reason, validationError: true, existing: null };
   }
-  const activity = match ? membershipActivity(match) : 'inactive';
+  const activity = match ? membershipActivity(match, now) : 'inactive';
   return {
     conflict: result.conflict, reason: result.reason,
     contactHouseholdId: matchingHouseholds.length === 1 ? matchingHouseholds[0].id : '',
-    existing: match ? { id: match.id, householdId: match.householdId,
-      active: stripeActive && activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil } : null
+    existing: match ? { id: match.id, householdId: match.householdId, family: Boolean(match.familyTier && match.householdId),
+      active: stripeActive && activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil, clubYears: match.clubYears || [], contactOnly: match.contactOnly } : null
   };
 };
 
-const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripeSubscriptionId = '', stripeMode = 'test', householdSnapshots = new Map() }) => {
-  const validUntil = Timestamp.fromDate(clubYearEnd());
+const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, householdSnapshots = new Map() }) => {
+  const paidYear = clubYearOf(paidAt.toDate());
   const membershipIds = [];
   const households = new Map();
   for (const person of order.people || []) {
@@ -271,18 +283,31 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
   }
   for (const person of order.people || []) {
     const lines = person.lineIds.map((id) => order.items.find((item) => item.lineId === id)).filter(Boolean);
-    const membershipLine = lines.find(isMembership);
-    // Event tickets stay in the purchase history; privileges are ongoing entitlements.
+    const yearOf = (item) => item.clubYear || paidYear;
+    // Lines are per club year, so a renewal bought alongside this year's membership is a second membership line.
+    const membershipLines = lines.filter(isMembership).sort((a, b) => yearOf(a) - yearOf(b));
+    const membershipLine = membershipLines.at(-1);
+    const grantedYears = Array.isArray(person.grantMembershipYears) ? person.grantMembershipYears : person.grantMembership ? [paidYear] : [];
+    const includedLines = lines.filter((item) => grantsMembership(item) && grantedYears.includes(yearOf(item)));
+    const includedLine = !membershipLine ? includedLines.at(-1) : null;
+    const coveredYears = [...new Set([...membershipLines, ...includedLines].map(yearOf))].sort();
+    // Membership runs to 1 March after the latest club year bought.
+    const validUntil = coveredYears.length ? Timestamp.fromDate(clubYearDates(coveredYears.at(-1)).end) : null;
+    const grantedTier = person.junior ? 'junior' : 'adult';
+    // Event tickets stay in the purchase history; privileges are ongoing entitlements for their club year.
     const privileges = lines.filter((item) => !isMembership(item) && item.category !== 'EVENTS')
-      .map((item) => ({ productId: item.id, name: item.name, type: item.type, orderRef, grantedAt: paidAt }));
-    const historyEntry = { orderRef, paidAt, items: lines.map((item) => ({ id: item.id, name: item.name, price: item.price })) };
-    const { id, lineIds, membershipId, existingMember, householdId, ...details } = person;
+      .map((item) => ({ productId: item.id, name: item.name, type: item.type, orderRef, grantedAt: paidAt, ...(item.lineId ? { lineId: item.lineId } : {}),
+        ...(item.clubYear ? { clubYear: item.clubYear } : {}) }));
+    const historyEntry = { orderRef, paidAt, items: lines.map((item) => ({ id: item.id, name: item.name, price: item.price, ...(item.clubYear ? { clubYear: item.clubYear } : {}) })) };
+    const { id, lineIds, membershipId, existingMember, householdId, ownKitLineIds, grantMembership: _grant, grantMembershipYears: _years, heldClubYears: _held, subscriptionGroup: _group, ...details } = person;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
     membershipIds.push(membershipId);
     transaction.set(adminDb.collection('memberships').doc(membershipId), {
       ...(existingMember ? {} : {
         ...details, source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`)
       }),
+      // Non-members booking open events are kept as contact-only records until they buy a membership.
+      ...(membershipLine || includedLine ? { contactOnly: FieldValue.delete() } : existingMember ? {} : { contactOnly: true }),
       schemaVersion: CURRENT_MEMBERSHIP_VERSION,
       ...(householdId ? { householdId } : {}),
       ...Object.fromEntries(HOUSEHOLD_MEMBER_FIELDS.map((key) => [key, FieldValue.delete()])),
@@ -291,13 +316,12 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
         disclaimer: { ...order.policyVersions?.disclaimer, acceptedAt: paidAt, by: person.junior ? 'guardian' : 'self' },
         ...(existingMember ? {} : { photoVideo: { ...order.policyVersions?.photoVideo, accepted: person.photoConsent === true, recordedAt: paidAt, by: person.junior ? 'guardian' : 'self' } })
       },
-      ...(membershipLine ? { status: 'active', validUntil, membershipTier: membershipLine.membershipTier || '', justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.affiliationNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
-      ...(stripeSubscriptionId && membershipLine?.type === 'subscription'
-        ? { stripeMembershipSubscriptionId: stripeSubscriptionId, stripeMembershipMode: stripeMode }
-        : {}),
-      ...(membershipLine && (!stripeSubscriptionId || membershipLine.type !== 'subscription')
+      ...(membershipLine || includedLine ? { status: 'active', validUntil, clubYears: FieldValue.arrayUnion(...new Set([...(person.heldClubYears || []), ...coveredYears])), membershipTier: membershipLine ? membershipLine.membershipTier || '' : grantedTier, justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.affiliationNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
+      // A monthly membership is linked to its subscription once that is set up after payment (setUpSubscriptions).
+      ...(membershipLine && !membershipLine.monthly
         ? { stripeMembershipSubscriptionId: '', stripeMembershipMode: '' }
         : {}),
+      ...(includedLine ? { stripeMembershipSubscriptionId: '', stripeMembershipMode: '', membershipIncludedWith: { productId: includedLine.id, name: includedLine.name, orderRef } } : {}),
       ...(privileges.length ? { privileges: FieldValue.arrayUnion(...privileges) } : {}),
       history: FieldValue.arrayUnion(historyEntry),
       updatedAt: paidAt
@@ -312,7 +336,7 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, stripe
   }, { merge: true });
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [], siteUrl = '', billingMode = 'annual', receiptViewTokenHash = '', stockProductIds = [], policyVersions = null }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [], siteUrl = '', billingMode = 'annual', receiptViewTokenHash = '', stockProductIds = [], policyVersions = null, subscriptionPlan = null }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     email: email.toLowerCase(),
@@ -327,6 +351,7 @@ const createFirestoreOrder = async ({ orderRef, email, items, total, status, str
     billingMode,
     receiptViewTokenHash,
     discountCodeId,
+    ...(subscriptionPlan ? { subscriptionPlan } : {}),
     createdAt: Timestamp.now(),
     expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
   });
@@ -408,6 +433,299 @@ const recordPaymentFailureAttempt = async (intent) => {
   });
 };
 
+/**
+ * Marks a pending order paid and writes its membership records, vouchers and stock holds.
+ * Returns the order with its receipt access token, or null when it was already fulfilled.
+ */
+const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '', setupIntent = '' }) => {
+  const accessToken = createAccessToken();
+  const fields = await adminDb.runTransaction(async (transaction) => {
+    const orderDocument = adminDb.collection('orders').doc(orderRef);
+    const document = await transaction.get(orderDocument);
+    if (!document.exists) throw new Error('Order not found.');
+    const order = document.data();
+    if (order.stripeSessionId !== sessionId || Math.round(Number(order.total) * 100) !== amountTotal) {
+      throw new Error('Payment does not match the order.');
+    }
+    if (order.emailSent === true) return null;
+    if (order.emailSendingUntil?.toMillis() > Date.now()) throw new Error('Receipt delivery is already in progress.');
+    const stock = await readStock(transaction, order.stockProductIds || []);
+    const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
+    const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
+    const memberIds = [...new Set((order.people || []).map((person) => person.membershipId).filter(Boolean))];
+    const memberDocuments = memberIds.length
+      ? await transaction.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id)))
+      : [];
+    const memberHouseholds = new Map(memberDocuments.filter((member) => member.exists)
+      .map((member) => [member.id, member.data().householdId || '']));
+    const groups = new Map();
+    for (const person of order.people || []) {
+      const key = householdGroupKey(person);
+      const group = groups.get(key) || [];
+      group.push(person);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      const householdIds = [...new Set(group.map((person) => person.householdId || memberHouseholds.get(person.membershipId)).filter(Boolean))];
+      if (householdIds.length > 1) throw new Error('Checkout people reference different households.');
+      const householdId = householdIds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
+      group.forEach((person) => { person.householdId = householdId; });
+    }
+    const householdIds = [...new Set((order.people || []).map((person) => person.householdId).filter(Boolean))];
+    const householdDocuments = householdIds.length
+      ? await transaction.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id)))
+      : [];
+    const householdSnapshots = new Map(householdDocuments.map((household) => [household.id, household]));
+    if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
+    const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
+      code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
+      name: item.name,
+      productId: item.id,
+      scope: voucherScope(item),
+      value: item.voucherValue,
+      expiresAt: Timestamp.fromDate(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000))
+    }));
+    if (!order.vouchers) {
+      for (const voucher of vouchers) {
+        transaction.create(adminDb.collection('discountCodes').doc(voucher.code), {
+          code: voucher.code, label: voucher.name, discountType: 'credit', discountValue: voucher.value,
+          ...(voucher.productId ? { sourceProductId: voucher.productId } : {}),
+          productIds: voucher.scope.productIds, categories: voucher.scope.categories,
+          used: false, singleUse: true, excludedCategories: ['MEMBERSHIP'],
+          orderRef, email: order.email, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
+        });
+      }
+    }
+    if (discount?.singleUse) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
+    // Paid stock holds never lapse; rebuilt from the order in case the reservation was already cleared.
+    stock.forEach((snapshot) => transaction.set(snapshot.ref, {
+      holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
+    }));
+    const paidAt = order.paidAt || Timestamp.now();
+    if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt, householdSnapshots });
+    transaction.update(orderDocument, {
+      people: order.people || [],
+      status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
+      stripePaymentIntentId: paymentIntent, ...(setupIntent ? { stripeSetupIntentId: setupIntent } : {}),
+      paidAt,
+      emailSendingUntil: Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000))
+    });
+    return { ...order, vouchers };
+  });
+  return fields && { ...fields, accessToken };
+};
+
+/** Lets newly-qualified volunteers know the boathouse code, then emails the receipt. */
+const deliverOrder = async (orderRef, fields) => {
+  // A volunteer who was inducted before joining gets their code once this purchase makes them a member.
+  try { await settleVolunteersFor([fields.email, ...(fields.people || []).map(contactEmail)].map(normalizeEmail)); }
+  catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
+  try {
+    const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken: fields.accessToken, items: fields.items, people: fields.people, total: fields.total,
+      vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode });
+    await updateFirestoreOrder(orderRef, { emailSent, emailSendingUntil: null, ...(emailSent ? { emailSentAt: Timestamp.now() } : {}) });
+    if (!emailSent) throw new Error('Receipt email is not configured.');
+  } catch (error) {
+    await updateFirestoreOrder(orderRef, { emailSendingUntil: null });
+    throw error;
+  }
+};
+
+// While a club-year subscription waits for its first debit, its period ends at that debit.
+const periodEnd = (subscription) => subscription.current_period_end || subscription.items?.data?.[0]?.current_period_end || 0;
+const stripeId = (value) => value?.id || value || '';
+const unixSeconds = (timestamp) => Math.floor(timestamp.toMillis() / 1000);
+
+// Card and bank-account fingerprints stay the same when the same details are entered again at a later checkout.
+const paymentFingerprint = async (id) => {
+  if (!id) return '';
+  const method = await stripeRequest(`payment_methods/${encodeURIComponent(id)}`, null, 'GET');
+  return method.card?.fingerprint || method.bacs_debit?.fingerprint || method.sepa_debit?.fingerprint || method.id;
+};
+
+const monthlyPriceParams = (prefix, item, product) => {
+  const key = (name) => prefix ? `${prefix}[price_data]${name}` : `price_data${name}`;
+  return [[key('[currency]'), 'gbp'], [key('[product]'), product],
+    [key('[unit_amount]'), String(Math.round(Number(item.monthlyAmount ?? item.price) * 100))], [key('[recurring][interval]'), 'month']];
+};
+
+/**
+ * Starts or joins one club year's monthly payments for a paid order. Checkout took the joining share of the current
+ * month and saved the card or bank account; debits then run on the 1st from `firstDebitAt` and the subscription is
+ * cancelled at the club-year cut-off (15 February), so the last debit is 1 February. Items paid with the same details
+ * as a live subscription for the same club year join it, so they share one debit; different details may belong to
+ * someone else, so they get their own subscription.
+ */
+const setUpSubscriptionGroup = async ({ order, orderRef, group, lineById, paymentMethod, customer, fingerprint }) => {
+  const firstDebit = unixSeconds(group.firstDebitAt);
+  const cutoff = unixSeconds(group.cutoffAt);
+  const debitPassed = firstDebit <= Date.now() / 1000;
+  const owned = await adminDb.collection('subscriptions').where('email', '==', order.email).where('status', '==', 'active').limit(20).get();
+  let target = null;
+  let otherLive = false;
+  for (const document of owned.docs.filter((candidate) => candidate.data().clubYear === group.clubYear)) {
+    const candidate = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
+    if (!subscriptionLive(candidate)) continue;
+    if (await paymentFingerprint(stripeId(candidate.default_payment_method)) === fingerprint) {
+      target = candidate;
+      break;
+    }
+    otherLive = true;
+  }
+  const products = new Map();
+  for (const lineId of group.lineIds) {
+    products.set(lineId, (await stripeRequest('products', [['name', itemLabel(lineById.get(lineId))], ['metadata[line_id]', lineId]], 'POST',
+      { idempotencyKey: `${orderRef}-${lineId}-product` })).id);
+  }
+  const itemMetadata = (prefix, lineId) => [[`${prefix}[line_id]`, lineId], [`${prefix}[order_ref]`, orderRef], [`${prefix}[club_year]`, String(group.clubYear)]];
+  if (target) {
+    // A missed 1st (a delayed bank payment) is charged pro rata on the next debit; otherwise the next debit is a full month.
+    for (const lineId of group.lineIds) {
+      await stripeRequest('subscription_items', [['subscription', target.id], ['proration_behavior', debitPassed && target.status === 'active' ? 'create_prorations' : 'none'],
+        ...monthlyPriceParams('', lineById.get(lineId), products.get(lineId)), ...itemMetadata('metadata', lineId)], 'POST', { idempotencyKey: `${orderRef}-${lineId}-item` });
+    }
+    return { subscription: await stripeRequest(`subscriptions/${encodeURIComponent(target.id)}`, null, 'GET'), created: false };
+  }
+  const base = [['customer', customer], ['default_payment_method', paymentMethod], ['metadata[order_ref]', orderRef],
+    ['metadata[club_year]', String(group.clubYear)], ['metadata[cutoff_at]', String(cutoff)],
+    ...group.lineIds.flatMap((lineId, index) => [...monthlyPriceParams(`items[${index}]`, lineById.get(lineId), products.get(lineId)),
+      ...itemMetadata(`items[${index}][metadata]`, lineId)])];
+  let subscription;
+  if (!debitPassed) {
+    // Nothing is due until the first 1st, so the subscription waits (Stripe calls it trialing) until then.
+    subscription = await stripeRequest('subscriptions', [...base, ['trial_end', String(firstDebit)], ['cancel_at', String(cutoff)], ['proration_behavior', 'none']],
+      'POST', { idempotencyKey: `${orderRef}-${group.clubYear}-subscription` });
+  } else {
+    // The first 1st has passed (a delayed bank payment), so that month is charged now and debits continue from the next 1st.
+    subscription = await stripeRequest('subscriptions', [...base, ['backdate_start_date', String(firstDebit)],
+      ['billing_cycle_anchor', String(Math.floor(nextFirst(new Date()).getTime() / 1000))], ['proration_behavior', 'create_prorations']],
+    'POST', { idempotencyKey: `${orderRef}-${group.clubYear}-subscription` });
+    // Without prorations the final month is not refunded on cancellation; the 1 February debit covers to 1 March.
+    subscription = await stripeRequest(`subscriptions/${encodeURIComponent(subscription.id)}`, [['cancel_at', String(cutoff)], ['proration_behavior', 'none']],
+      'POST', { idempotencyKey: `${orderRef}-${group.clubYear}-cancel-at` });
+  }
+  return { subscription, created: true, newPaymentDetails: otherLive };
+};
+
+/**
+ * Records the monthly items on a paid order against the payer's subscriptions, one per club year. Each item records
+ * which members receive it. Safe to repeat: a recorded plan is skipped and Stripe calls use idempotency keys. A change
+ * Stripe refuses is marked failed for staff rather than retried.
+ */
+const setUpSubscriptions = async (orderRef) => {
+  const orderReference = adminDb.collection('orders').doc(orderRef);
+  const order = (await orderReference.get()).data();
+  const plan = order?.subscriptionPlan;
+  if (order?.status !== 'paid' || !plan || plan.recordedAt) return;
+  const lineById = new Map(order.items.map((item) => [item.lineId, item]));
+  const now = Timestamp.now();
+  const results = [];
+  let next;
+  try {
+    const intent = order.stripePaymentIntentId
+      ? await stripeRequest(`payment_intents/${encodeURIComponent(order.stripePaymentIntentId)}`, null, 'GET')
+      : order.stripeSetupIntentId ? await stripeRequest(`setup_intents/${encodeURIComponent(order.stripeSetupIntentId)}`, null, 'GET') : null;
+    const paymentMethod = stripeId(intent?.payment_method);
+    if (!paymentMethod) throw new Error('Stripe did not save a payment method at checkout.');
+    const customer = stripeId(intent.customer) || await stripeCustomerFor(order.email);
+    const fingerprint = await paymentFingerprint(paymentMethod);
+    for (const group of plan.groups || []) {
+      const result = await setUpSubscriptionGroup({ order, orderRef, group, lineById, paymentMethod, customer, fingerprint });
+      results.push({ group, ...result });
+    }
+    const batch = adminDb.batch();
+    const memberItems = new Map();
+    for (const { group, subscription, created } of results) {
+      const itemIds = stripeItemLines(subscription, group.lineIds);
+      const items = group.lineIds.map((lineId) => {
+        const line = lineById.get(lineId);
+        return { lineId, orderRef, productId: line?.id || '', name: line?.name || '', monthlyAmount: Number(line?.monthlyAmount ?? line?.price ?? 0),
+          clubYear: group.clubYear, stripeItemId: itemIds.get(lineId) || '', ...lineHolders(lineId, order.people), status: 'active' };
+      });
+      const membershipIds = [...new Set(items.flatMap((item) => item.membershipIds))];
+      const names = [...new Set(items.flatMap((item) => item.names))];
+      batch.set(adminDb.collection('subscriptions').doc(subscription.id), {
+        email: order.email, stripeMode: order.stripeMode || 'test', status: 'active', updatedAt: now, clubYear: group.clubYear,
+        firstDebitAt: group.firstDebitAt, cancelAt: group.cutoffAt,
+        orderRefs: FieldValue.arrayUnion(orderRef), items: FieldValue.arrayUnion(...items),
+        ...(membershipIds.length ? { membershipIds: FieldValue.arrayUnion(...membershipIds) } : {}),
+        ...(names.length ? { names: FieldValue.arrayUnion(...names) } : {}),
+        ...(created ? { orderRef, createdAt: now } : {})
+      }, { merge: true });
+      batch.set(adminDb.collection('customers').doc(customerId(order.email)), { subscriptionIds: FieldValue.arrayUnion(subscription.id) }, { merge: true });
+      for (const membershipId of membershipIds) {
+        // Members see what they receive and who pays for it, even when the subscription belongs to someone else.
+        const received = items.filter((item) => item.membershipIds.includes(membershipId)).map(({ lineId, productId, name, monthlyAmount, clubYear }) => ({
+          subscriptionId: subscription.id, lineId, orderRef, productId, name, monthlyAmount, clubYear, payerEmail: order.email, status: 'active', startedAt: order.paidAt || now }));
+        const entry = memberItems.get(membershipId) || { subscriptionIds: [], received: [], membershipSubscription: null };
+        entry.subscriptionIds.push(subscription.id);
+        entry.received.push(...received);
+        // The latest club year's membership subscription is the one checked when the member buys again.
+        if (received.some((item) => lineById.get(item.lineId)?.category === 'MEMBERSHIP')
+          && (!entry.membershipSubscription || entry.membershipSubscription.clubYear < group.clubYear)) {
+          entry.membershipSubscription = { id: subscription.id, clubYear: group.clubYear };
+        }
+        memberItems.set(membershipId, entry);
+      }
+    }
+    for (const [membershipId, entry] of memberItems) {
+      batch.set(adminDb.collection('memberships').doc(membershipId), {
+        subscriptionIds: FieldValue.arrayUnion(...entry.subscriptionIds), subscriptionItems: FieldValue.arrayUnion(...entry.received),
+        ...(entry.membershipSubscription ? { stripeMembershipSubscriptionId: entry.membershipSubscription.id, stripeMembershipMode: order.stripeMode || 'test' } : {}) }, { merge: true });
+    }
+    await batch.commit();
+    const groups = (plan.groups || []).map((group) => {
+      const result = results.find((candidate) => candidate.group === group);
+      return { ...group, stripeSubscriptionId: result.subscription.id, created: result.created, ...(result.newPaymentDetails ? { newPaymentDetails: true } : {}) };
+    });
+    next = { ...plan, groups, status: 'active', recordedAt: now,
+      stripeItemIds: Object.fromEntries(results.flatMap(({ group, subscription }) => [...stripeItemLines(subscription, group.lineIds)])),
+      ...(groups.some((group) => group.newPaymentDetails) ? { newPaymentDetails: true } : {}) };
+  } catch (error) {
+    console.error('Could not set up the monthly payments on %s: %s', orderRef, error.message);
+    next = { ...plan, status: 'failed', error: error.message.slice(0, 300), recordedAt: now,
+      ...(results.length ? { partialSubscriptionIds: results.map(({ subscription }) => subscription.id) } : {}) };
+  }
+  const subscriptionFor = new Map((next.groups || []).filter((group) => group.stripeSubscriptionId)
+    .flatMap((group) => group.lineIds.map((lineId) => [lineId, group.stripeSubscriptionId])));
+  await orderReference.update({
+    subscriptionPlan: next,
+    stripeSubscriptionIds: [...new Set(subscriptionFor.values())],
+    subscriptionSetupNeedsStaff: next.status === 'failed',
+    items: order.items.map((item) => subscriptionFor.has(item.lineId)
+      ? { ...item, stripeSubscriptionId: subscriptionFor.get(item.lineId), stripeSubscriptionItemId: next.stripeItemIds?.[item.lineId] || '' } : item)
+  });
+};
+
+/**
+ * Subscriptions are cancelled at the club-year cut-off. Stripe stops retrying a failed 1 February debit then, so its
+ * unpaid invoice is voided (no later collection) and the subscription is flagged for staff. Any other ending (Stripe
+ * giving up on failed payments, or a cancellation outside this site) is flagged too.
+ */
+const recordSubscriptionEnded = async (subscription) => {
+  if (!adminDb) return;
+  const reference = adminDb.collection('subscriptions').doc(subscription.id);
+  const document = await reference.get();
+  if (!document.exists) return;
+  const atCutoff = endedAtCutoff(subscription);
+  const voided = [];
+  if (atCutoff) {
+    const open = await stripeRequest(`invoices?${new URLSearchParams({ subscription: subscription.id, status: 'open', limit: '20' })}`, null, 'GET');
+    for (const invoice of open.data || []) {
+      await stripeRequest(`invoices/${encodeURIComponent(invoice.id)}/void`, [], 'POST', { idempotencyKey: `${invoice.id}-void` });
+      voided.push({ id: invoice.id, amountDue: (invoice.amount_due || 0) / 100 });
+    }
+  }
+  const data = document.data();
+  const now = Timestamp.now();
+  await reference.set({
+    ...(data.status === 'active' ? { status: 'ended' } : {}),
+    endedAt: subscription.ended_at ? Timestamp.fromMillis(subscription.ended_at * 1000) : now, endedAtCutoff: atCutoff, updatedAt: now,
+    ...(voided.length ? { voidedInvoices: voided } : {}),
+    ...((voided.length || (!atCutoff && data.status === 'active')) ? { needsStaff: true } : {})
+  }, { merge: true });
+};
+
 app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const signature = req.headers['stripe-signature'];
@@ -433,95 +751,20 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
       await recordPaymentFailureAttempt(event.data.object);
       return res.json({ received: true });
     }
+    if (event.type === 'customer.subscription.deleted') {
+      await recordSubscriptionEnded(event.data.object);
+      return res.json({ received: true });
+    }
     if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
       const session = event.data.object;
       if (!['paid', 'no_payment_required'].includes(session.payment_status)) return res.json({ received: true });
       const orderRef = session.metadata?.order_ref;
       if (!orderRef || !adminDb) return res.status(400).send('Order metadata is missing.');
-      const accessToken = createAccessToken();
-      const fields = await adminDb.runTransaction(async (transaction) => {
-        const orderDocument = adminDb.collection('orders').doc(orderRef);
-        const document = await transaction.get(orderDocument);
-        if (!document.exists) throw new Error('Order not found.');
-        const order = document.data();
-        if (order.stripeSessionId !== session.id || Math.round(Number(order.total) * 100) !== session.amount_total) {
-          throw new Error('Payment does not match the order.');
-        }
-        if (order.emailSent === true) return null;
-        if (order.emailSendingUntil?.toMillis() > Date.now()) throw new Error('Receipt delivery is already in progress.');
-        const stock = await readStock(transaction, order.stockProductIds || []);
-        const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
-        const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
-        const memberIds = [...new Set((order.people || []).map((person) => person.membershipId).filter(Boolean))];
-        const memberDocuments = memberIds.length
-          ? await transaction.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id)))
-          : [];
-        const memberHouseholds = new Map(memberDocuments.filter((member) => member.exists)
-          .map((member) => [member.id, member.data().householdId || '']));
-        const groups = new Map();
-        for (const person of order.people || []) {
-          const key = householdGroupKey(person);
-          const group = groups.get(key) || [];
-          group.push(person);
-          groups.set(key, group);
-        }
-        for (const group of groups.values()) {
-          const householdIds = [...new Set(group.map((person) => person.householdId || memberHouseholds.get(person.membershipId)).filter(Boolean))];
-          if (householdIds.length > 1) throw new Error('Checkout people reference different households.');
-          const householdId = householdIds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
-          group.forEach((person) => { person.householdId = householdId; });
-        }
-        const householdIds = [...new Set((order.people || []).map((person) => person.householdId).filter(Boolean))];
-        const householdDocuments = householdIds.length
-          ? await transaction.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id)))
-          : [];
-        const householdSnapshots = new Map(householdDocuments.map((household) => [household.id, household]));
-        if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
-        const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
-          code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
-          name: item.name,
-          value: item.voucherValue,
-          expiresAt: Timestamp.fromDate(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000))
-        }));
-        if (!order.vouchers) {
-          for (const voucher of vouchers) {
-            transaction.create(adminDb.collection('discountCodes').doc(voucher.code), {
-              code: voucher.code, label: voucher.name, discountType: 'credit', discountValue: voucher.value,
-              used: false, singleUse: true, excludedCategories: ['MEMBERSHIP'],
-              orderRef, email: order.email, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
-            });
-          }
-        }
-        if (discount?.singleUse) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
-        // Paid stock holds never lapse; rebuilt from the order in case the reservation was already cleared.
-        stock.forEach((snapshot) => transaction.set(snapshot.ref, {
-          holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
-        }));
-        const paidAt = order.paidAt || Timestamp.now();
-        if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt,
-          stripeSubscriptionId: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test', householdSnapshots });
-        transaction.update(orderDocument, {
-          people: order.people || [],
-          status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
-          stripePaymentIntentId: session.payment_intent || '', stripeSubscriptionId: session.subscription || '',
-          paidAt,
-          emailSendingUntil: Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000))
-        });
-        return { ...order, vouchers };
-      });
-      if (!fields) return res.json({ received: true });
-      // A volunteer who was inducted before joining gets their code once this purchase makes them a member.
-      try { await settleVolunteersFor([fields.email, ...(fields.people || []).map(contactEmail)].map(normalizeEmail)); }
-      catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
-      try {
-        const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken, items: fields.items, people: fields.people, total: fields.total,
-          vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode });
-        await updateFirestoreOrder(orderRef, { emailSent, emailSendingUntil: null, ...(emailSent ? { emailSentAt: Timestamp.now() } : {}) });
-        if (!emailSent) throw new Error('Receipt email is not configured.');
-      } catch (error) {
-        await updateFirestoreOrder(orderRef, { emailSendingUntil: null });
-        throw error;
-      }
+      // Setup-mode sessions (nothing due now, monthly payments to come) have no amount.
+      const fields = await fulfilOrder({ orderRef, sessionId: session.id, amountTotal: session.amount_total ?? 0, paymentIntent: stripeId(session.payment_intent),
+        setupIntent: stripeId(session.setup_intent), stripeMode: session.livemode ? 'live' : 'test' });
+      if (fields) await deliverOrder(orderRef, fields);
+      await setUpSubscriptions(orderRef);
     }
     res.json({ received: true });
   } catch (error) {
@@ -541,6 +784,11 @@ let driveApi;
 let sheetsApi;
 const localFirebase = process.env.LOCAL_FIREBASE_EMULATORS === 'true';
 if (localFirebase) assertLocalFirebase(process.env);
+// Flow tests check the club-year sale windows by sending `X-Test-Now`; only the local emulator stack honours it.
+const requestNow = (req) => {
+  const requested = localFirebase ? Date.parse(req.get('x-test-now') || '') : NaN;
+  return Number.isFinite(requested) ? new Date(requested) : new Date();
+};
 try {
   const credentialsPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || join(__dirname, 'google-service-account.json');
   const credentialsJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
@@ -601,8 +849,9 @@ const requireAdmin = async (req, res) => {
     return null;
   }
   try {
-    const decoded = await adminAuth.verifyIdToken(token);
-    if (decoded.admin !== true || !decoded.email?.toLowerCase().endsWith('@forthcanoeclub.co.uk')) {
+    // checkRevoked makes a removed admin lose API access straight away rather than when their token expires.
+    const decoded = await adminAuth.verifyIdToken(token, true);
+    if (decoded.admin !== true || !isClubEmail(decoded.email)) {
       res.status(403).json({ error: 'Admin access required.' });
       return null;
     }
@@ -676,7 +925,7 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
         members = new Map([...members].map(([id, member]) => [id, { ...member, household: households.get(member.householdId) || {} }]));
       }
     }
-    const records = documents.map((document) => (req.query.kind === 'members'
+    const records = documents.filter((document) => req.query.kind !== 'members' || document.data().contactOnly !== true).map((document) => (req.query.kind === 'members'
       ? membershipReport(document.id, document.data(), new Date(), households.get(document.data().householdId) || {})
       : orderReport(document.id, document.data(), members)));
     res.json({ records: eventReport ? records.filter((record) => record.items.some((item) => item.category === 'EVENTS'))
@@ -688,6 +937,120 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
     res.status(500).json({ error: 'Could not retrieve report.' });
   }
 });
+
+const isoTime = (value) => value?.toDate ? value.toDate().toISOString() : value || '';
+const subscriptionView = (document) => {
+  const data = document.data();
+  return { id: document.id, ...data, createdAt: isoTime(data.createdAt), updatedAt: isoTime(data.updatedAt), cancelledAt: isoTime(data.cancelledAt),
+    items: (data.items || []).map((item) => ({ ...item, cancelledAt: isoTime(item.cancelledAt) })) };
+};
+
+app.get('/api/admin/subscriptions', rateLimit(60, 60 * 1000), async (req, res) => {
+  try {
+    if (!await requireAdmin(req, res)) return;
+    if (!adminDb) return res.status(503).json({ error: 'Subscription storage is not configured.' });
+    const subscriptions = adminDb.collection('subscriptions');
+    const text = (name) => typeof req.query[name] === 'string' ? req.query[name].trim().slice(0, 254) : '';
+    const query = text('orderRef') ? subscriptions.where('orderRefs', 'array-contains', text('orderRef'))
+      : text('membershipId') ? subscriptions.where('membershipIds', 'array-contains', text('membershipId'))
+      : text('email') ? subscriptions.where('email', '==', normalizeEmail(text('email'))) : null;
+    if (!query) return res.status(400).json({ error: 'Choose an order, member or customer.' });
+    const snapshot = await query.limit(50).get();
+    const order = text('orderRef') ? (await adminDb.collection('orders').doc(text('orderRef')).get()).data() : null;
+    const plan = order?.subscriptionPlan;
+    res.json({ subscriptions: snapshot.docs.map(subscriptionView),
+      failed: plan?.status === 'failed' ? [{ key: text('orderRef'), lineIds: plan.lineIds, error: plan.error,
+        names: [...new Set(plan.lineIds.flatMap((lineId) => lineHolders(lineId, order.people).names))],
+        itemNames: plan.lineIds.map((lineId) => order.items.find((item) => item.lineId === lineId)?.name).filter(Boolean) }] : [] });
+  } catch (error) {
+    console.error('Subscription lookup failed:', error.message);
+    res.status(500).json({ error: 'Could not load the monthly payments.' });
+  }
+});
+
+/**
+ * Stops monthly payments for some or all items on a payer's subscription, straight away and without a refund; the
+ * debit drops by those items from the next payment, and the subscription is cancelled once nothing is left on it.
+ * What was bought stays in the history; the matching entitlements end, and a cancelled membership runs to the
+ * paid-up date.
+ */
+const cancelSubscriptionLines = async (req, res, pick, action) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  if (!adminDb) return res.status(503).json({ error: 'Subscription storage is not configured.' });
+  const reference = adminDb.collection('subscriptions').doc(String(req.params.id).slice(0, 100));
+  const document = await reference.get();
+  if (!document.exists) return res.status(404).json({ error: 'Subscription not found.' });
+  const record = document.data();
+  const active = activeSubscriptionItems(record);
+  const ending = pick(active);
+  if (!ending.length) return res.status(409).json({ error: 'Those monthly payments are already cancelled.' });
+  const stripeSubscription = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
+  const paidUntil = periodEnd(stripeSubscription) ? Timestamp.fromMillis(periodEnd(stripeSubscription) * 1000) : null;
+  const wholeSubscription = ending.length === active.length;
+  if (wholeSubscription) {
+    if (stripeSubscription.status !== 'canceled') await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'DELETE');
+  } else {
+    for (const item of ending) {
+      if (!item.stripeItemId) throw new Error(`No Stripe item is recorded for ${item.name}.`);
+      await stripeRequest(`subscription_items/${encodeURIComponent(item.stripeItemId)}?proration_behavior=none`, null, 'DELETE');
+    }
+  }
+  const now = Timestamp.now();
+  const endingLines = new Set(ending.map((item) => item.lineId));
+  const by = admin.email || admin.uid;
+  const batch = adminDb.batch();
+  batch.update(reference, {
+    items: record.items.map((item) => endingLines.has(item.lineId) ? { ...item, status: 'cancelled', cancelledAt: now, cancelledBy: by } : item),
+    ...(wholeSubscription ? { status: 'cancelled', cancelledAt: now, cancelledBy: by } : {}), updatedAt: now
+  });
+  const orderRefs = [...new Set(ending.map((item) => item.orderRef || record.orderRef).filter(Boolean))];
+  const orders = orderRefs.length ? await adminDb.getAll(...orderRefs.map((ref) => adminDb.collection('orders').doc(ref))) : [];
+  const orderLines = new Map();
+  for (const order of orders.filter((entry) => entry.exists)) {
+    order.data().items.forEach((item) => orderLines.set(item.lineId, item));
+    batch.update(order.ref, { items: order.data().items.map((item) => endingLines.has(item.lineId) ? { ...item, monthlyCancelledAt: now } : item) });
+  }
+  const endsMembership = ending.some((item) => orderLines.get(item.lineId)?.category === 'MEMBERSHIP');
+  const memberIds = [...new Set(ending.flatMap((item) => item.membershipIds || record.membershipIds || []))];
+  const members = memberIds.length ? await adminDb.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id))) : [];
+  for (const member of members.filter((entry) => entry.exists)) {
+    const data = member.data();
+    const linkedMembership = endsMembership && data.stripeMembershipSubscriptionId === document.id;
+    batch.update(member.ref, {
+      privileges: (data.privileges || []).map((privilege) => endingLines.has(privilege.lineId) && !privilege.endedAt ? { ...privilege, endedAt: now } : privilege),
+      subscriptionItems: (data.subscriptionItems || []).map((item) => endingLines.has(item.lineId) && item.status === 'active'
+        ? { ...item, status: 'cancelled', cancelledAt: now } : item),
+      ...(linkedMembership ? { stripeMembershipSubscriptionId: '', monthlyPaymentsCancelledAt: now,
+        ...(paidUntil && (!data.validUntil || data.validUntil.toMillis() > paidUntil.toMillis()) ? { validUntil: paidUntil } : {}) } : {}),
+      updatedAt: now
+    });
+  }
+  batch.set(adminDb.collection('adminSubscriptionAudit').doc(), {
+    adminUid: admin.uid, adminEmail: admin.email || '', action: wholeSubscription ? 'cancel-subscription' : action,
+    stripeSubscriptionId: document.id, orderRefs, lineIds: [...endingLines], ...(req.params.membershipId ? { membershipId: String(req.params.membershipId) } : {}), checkedAt: now
+  });
+  await batch.commit();
+  res.json({ subscription: subscriptionView(await reference.get()), cancelledWholeSubscription: wholeSubscription, cancelledLineIds: [...endingLines] });
+};
+
+const cancelRoute = (pick, action, failure) => async (req, res) => {
+  try { await cancelSubscriptionLines(req, res, (active) => pick(active, req), action); }
+  catch (error) {
+    console.error(`${failure}:`, error.message);
+    res.status(502).json({ error: `Stripe did not make the change: ${error.message}` });
+  }
+};
+
+app.post('/api/admin/subscriptions/:id/items/:lineId/cancel', rateLimit(20, 60 * 1000),
+  cancelRoute((active, req) => active.filter((item) => item.lineId === String(req.params.lineId)), 'cancel-items', 'Cancelling a monthly item failed'));
+
+// Stops everything one member receives on a payer's subscription; the payer keeps paying for everyone else.
+app.post('/api/admin/subscriptions/:id/members/:membershipId/cancel', rateLimit(20, 60 * 1000),
+  cancelRoute((active, req) => active.filter((item) => (item.membershipIds || []).includes(String(req.params.membershipId))), 'cancel-member', 'Cancelling a member\'s monthly items failed'));
+
+app.post('/api/admin/subscriptions/:id/cancel', rateLimit(20, 60 * 1000),
+  cancelRoute((active) => active, 'cancel-subscription', 'Cancelling a subscription failed'));
 
 app.post('/api/admin/subscribers/:id/club-year-cancellation', rateLimit(10, 60 * 1000), async (req, res) => {
   const admin = await requireAdmin(req, res);
@@ -771,10 +1134,19 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
   }
 });
 
-registerGdprRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
-registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
-const { settleVolunteersFor } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
+registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
+registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
+const { settleVolunteersFor, notifyBoathouseCode } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
+registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyBoathouseCode });
+registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });
+const { sendDueRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
+  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
+const { loadReceiptPersonFields } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
+registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
+  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
+  siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
@@ -1045,7 +1417,8 @@ const discountFailure = (discount) => {
 const publicDiscount = (discount) => ({
   label: discount.label || 'Discount', discountType: discount.discountType || 'multiplier',
   discountValue: discount.discountValue ?? 0.25, allowsAnnualStacking: discount.allowsAnnualStacking === true,
-  productIds: Array.isArray(discount.productIds) ? discount.productIds : []
+  productIds: Array.isArray(discount.productIds) ? discount.productIds : [],
+  categories: Array.isArray(discount.categories) ? discount.categories : []
 });
 
 app.post('/api/discount-codes/validate', rateLimit(30, 60 * 1000), async (req, res) => {
@@ -1131,7 +1504,7 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
           id: document.id, name: `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.name || 'Unnamed',
           membershipTier: data.membershipTier || '', status: data.status === 'active' && data.validUntil?.toMillis() <= now ? 'expired' : data.status || 'unknown',
           validUntil: data.validUntil?.toMillis() || 0, affiliationNumber: data.affiliationNumber || '',
-          privileges: (data.privileges || []).map((privilege) => privilege.name)
+          privileges: (data.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => privilege.name)
         };
       }),
       orders: orderSnapshot.docs.map((document) => {
@@ -1151,13 +1524,17 @@ app.get('/api/admin/discount-codes', rateLimit(30, 60 * 1000), async (req, res) 
     if (!adminDb) return res.status(503).json({ error: 'Discount storage is not configured.' });
     const snapshot = await adminDb.collection('discountCodes').get();
     const now = Date.now();
+    const vouchers = summariseVoucherCodes(snapshot.docs.map((document) => document.data()).map((data) => ({
+      orderRef: data.orderRef, sourceProductId: data.sourceProductId, label: data.label, discountValue: data.discountValue,
+      used: data.used === true, expiresAt: data.expiresAt?.toMillis() || 0
+    })), now);
     const codes = snapshot.docs.map((document) => document.data()).filter((data) => !data.orderRef).map((data) => ({
       code: data.code, label: data.label || '', discountType: data.discountType || 'multiplier',
       discountValue: data.discountValue ?? 0.25, productIds: Array.isArray(data.productIds) ? data.productIds : [],
       singleUse: data.singleUse === true, used: data.used === true, active: data.active !== false,
       expired: data.expiresAt?.toMillis() <= now, expiresAt: data.expiresAt?.toMillis() || 0, createdAt: data.createdAt?.toMillis() || 0
     })).sort((a, b) => b.createdAt - a.createdAt).slice(0, 500);
-    res.json({ codes });
+    res.json({ codes, vouchers });
   } catch (error) {
     console.error('Could not list discount codes:', error.message);
     res.status(500).json({ error: 'Could not load discount codes.' });
@@ -1329,17 +1706,24 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const catalog = resolveCatalogue(PRODUCTS, catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
     const lineIds = requestedItems.map((item) => typeof item?.lineId === 'string' ? item.lineId.slice(0, 64) : '');
     const catalogItems = requestedItems.map((item) => catalog.find((product) => product.id === item?.id));
-    if (catalogItems.some((item) => !item || item.type === 'external' || !Number.isFinite(item.basePrice) || item.basePrice < 0) || lineIds.some((id) => !id) || new Set(lineIds).size !== lineIds.length) {
+    if (catalogItems.some((item) => !item || item.type === 'external' || !Number.isFinite(item.basePrice) || item.basePrice < 0) || lineIds.some((id) => !id || id.includes(NEXT_YEAR_LINE_SUFFIX)) || new Set(lineIds).size !== lineIds.length) {
       return res.status(400).json({ error: 'Your basket contains an unavailable item. Please refresh the shop.' });
     }
+    const now = requestNow(req);
     const selected = catalogItems.map((item, index) => ({ ...item, lineId: lineIds[index],
-      ...(isMerchandise(item) ? { size: typeof requestedItems[index]?.size === 'string' ? requestedItems[index].size.trim().slice(0, 40) : '' } : {}) }));
+      ...(isMerchandise(item) ? { size: typeof requestedItems[index]?.size === 'string' ? requestedItems[index].size.trim().slice(0, 40) : '' } : {}),
+      ...(clubYearKind(item) ? { clubYearChoice: resolveClubYearChoice(item, requestedItems[index]?.clubYearChoice, now) } : {}) }));
+    const offSale = selected.find((item) => clubYearKind(item) && !item.clubYearChoice);
+    if (offSale) {
+      return res.status(400).json({ code: 'club_year_unavailable', error: `${offSale.name} is not on sale for the club year chosen. Choose the club year again in your basket.` });
+    }
     const unsized = selected.find((item) => isMerchandise(item) && !Object.hasOwn(productLimits(item) || {}, item.size));
     if (unsized) return res.status(400).json({ error: `Choose an available size for ${unsized.name}.` });
     for (const item of selected.filter((product) => product.category === 'EVENTS')) {
       try { validateEventSchedule(item.eventSchedule); }
       catch (error) { return res.status(400).json({ error: `Invalid event schedule for ${item.name}.` }); }
       if (item.type !== 'event-ticket') return res.status(400).json({ error: 'Event tickets must use one-off event pricing.' });
+      if (bookingsClosed(item)) return res.status(400).json({ error: `Bookings for ${item.name} have closed. Remove it from your basket.` });
     }
     if (!Array.isArray(req.body.people) || req.body.people.length > 20) {
       return res.status(400).json({ error: 'Add the details for each person in your basket.' });
@@ -1350,12 +1734,16 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       .map((person) => person.returning
         ? { ...person, email: person.email || email, guardian: { ...person.guardian, email: person.guardian.email || email } }
         : person);
-    const detailErrors = validateCheckout({ lines: selected, people });
+    const detailErrors = validateCheckout({ lines: selected, people, now });
     if (detailErrors.length) return res.status(400).json({ error: detailErrors[0], details: detailErrors });
-    const needsMembership = new Set(peopleNeedingMembership(selected, people).map((person) => person.id));
+    // From here each line covers one club year; a 'both' line becomes this year's line and a next-year line.
+    const lines = expandClubYearLines(selected);
+    const linePeople = expandPeopleLines(people, selected);
+    const getsMembership = new Set(peopleGrantedMembership(lines, linePeople).map((person) => person.id));
+    const nextYearEnd = clubYearDates(clubYearOf(now) + 1).end.getTime();
     const storedPeople = [];
-    for (const person of withFamilyContacts(people, selected)) {
-      const { existing, conflict, reason, validationError, contactHouseholdId } = await findMembership(person);
+    for (const person of withFamilyContacts(linePeople, lines)) {
+      const { existing, conflict, reason, validationError, contactHouseholdId } = await findMembership(person, now);
       if (validationError) {
         return res.status(503).json({ error: 'We could not confirm your Stripe direct-debit subscription. Your basket is unchanged; please try again shortly.' });
       }
@@ -1373,33 +1761,60 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
           error: `We could not match ${person.firstName} ${person.lastName} with that date of birth. Check the date of birth, or enter your full details instead.`
         });
       }
-      const buysMembership = person.lineIds.some((id) => isMembership(selected.find((line) => line.lineId === id)));
+      const membershipParts = person.lineIds.map((id) => lines.find((line) => line.lineId === id)).filter(isMembership)
+        .map((line) => line.clubYearPart === 'next' ? 'next' : 'this');
+      const buysMembership = membershipParts.length > 0;
+      // An active member is covered for next year once their renewal is recorded, and for this year unless they have only
+      // bought next year (which covers this year too from 8 February). Records from before club years were recorded
+      // count as this year's.
+      const currentClubYear = clubYearOf(now);
+      const coversNextYear = Boolean(existing?.active && existing.validUntil >= nextYearEnd);
+      const heldYears = existing?.clubYears || [];
+      const coversThisYear = Boolean(existing?.active && (!heldYears.length || heldYears.some((year) => year <= currentClubYear)
+        || (coversNextYear && now >= clubYearDates(currentClubYear).membershipSaleEnds)));
+      const covers = (part) => part === 'this' ? coversThisYear : coversNextYear;
+      const neededParts = membershipPartsNeeded(lines, person, now).filter((part) => !covers(part));
       // From 1 March every JustGo member is inactive until the nightly sync confirms their direct-debit renewal.
-      if (existing?.awaitingRenewal && renewalConfirmationOpen() && (buysMembership || needsMembership.has(person.id))) {
+      if (existing?.awaitingRenewal && renewalConfirmationOpen(now) && (buysMembership || neededParts.length || getsMembership.has(person.id))) {
         return res.status(409).json({
           code: 'renewal_unconfirmed', personIds: [person.id],
           error: `${person.firstName} ${person.lastName}'s membership renews through JustGo direct debit and is still being confirmed for the new club year. This usually completes within a day, so please try again then or contact secretary@forthcanoeclub.co.uk. There is no need to buy a membership here.`
         });
       }
-      if (buysMembership && existing?.active) {
+      if (membershipParts.some(covers)) {
         const name = `${person.firstName} ${person.lastName}`;
+        const renewalOpen = now >= clubYearDates(clubYearOf(now)).renewalOpens;
         return res.status(409).json({
           code: existing.justgo ? 'renews_via_justgo' : 'membership_active', personIds: [person.id],
           error: existing.justgo
             ? `${name} is already an active member and renews through JustGo, so no membership is needed here. Remove the membership from your basket; add-ons can still be bought.`
-            : `${name} is already an active member until ${new Date(existing.validUntil).toLocaleDateString('en-GB')}. Remove the membership from your basket; add-ons can still be bought.`
+            : `${name} is already an active member until ${new Date(existing.validUntil).toLocaleDateString('en-GB', { timeZone: 'Europe/London' })}. ${renewalOpen && !coversNextYear
+              ? `To renew, choose club year ${clubYearLabel(clubYearOf(now) + 1)} only for the membership in your basket.`
+              : 'Remove the membership from your basket; add-ons can still be bought.'}`
         });
       }
-      if (needsMembership.has(person.id) && !existing?.active) {
+      const grantYears = getsMembership.has(person.id) ? [...new Set(person.lineIds.map((id) => lines.find((line) => line.lineId === id))
+        .filter((line) => line && grantsMembership(line) && !membershipParts.includes(line.clubYearPart === 'next' ? 'next' : 'this'))
+        .map((line) => line.clubYearPart === 'next' ? 'next' : 'this'))]
+        .filter((part) => !covers(part))
+        .map((part) => currentClubYear + (part === 'next' ? 1 : 0)) : [];
+      if (neededParts.length) {
         return res.status(409).json({
           code: 'membership_required', personIds: [person.id],
-          error: existing?.awaitingRenewal
+          error: existing?.contactOnly
+            ? `${person.firstName} ${person.lastName} is on our contact list from an event booking but is not a club member, so these items need a membership. Add a membership to your basket.`
+            : existing?.awaitingRenewal
             ? `${person.firstName} ${person.lastName}'s JustGo renewal has not been confirmed for this club year, so add-ons cannot be bought yet. If you have renewed, it can take a day to appear; otherwise add a membership to your basket. Questions: secretary@forthcanoeclub.co.uk.`
             : `${person.firstName} ${person.lastName} needs a Forth Canoe Club membership before buying these items. Add a membership to your basket, or check the membership number or date of birth and email you entered. If you are already a member through JustGo your record can take a day to appear; contact secretary@forthcanoeclub.co.uk.`
         });
       }
       storedPeople.push({ ...person, membershipId: existing?.id || `MEM-${crypto.randomUUID().toUpperCase()}`,
-        existingMember: Boolean(existing), ...((existing?.householdId || contactHouseholdId)
+        existingMember: Boolean(existing),
+        // A membership-included item makes the person a member for its club year unless they already are one.
+        ...(grantYears.length ? { grantMembership: true, grantMembershipYears: grantYears } : {}),
+        // Keeps this year in the record's club years when a member from before club years were recorded renews.
+        ...(coversThisYear ? { heldClubYears: [currentClubYear] } : {}),
+        ...((existing?.householdId || contactHouseholdId)
           ? { householdId: existing?.householdId || contactHouseholdId } : {}) });
     }
     const householdGroups = new Map();
@@ -1417,6 +1832,20 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       const householdId = existingHouseholds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
       group.forEach((person) => { person.householdId = householdId; });
     }
+    // Club-year items cannot be bought twice for the same person and club year.
+    const existingIds = [...new Set(storedPeople.filter((person) => person.existingMember).map((person) => person.membershipId))];
+    const memberData = new Map(existingIds.length ? (await adminDb.getAll(...existingIds.map((id) => adminDb.collection('memberships').doc(id))))
+      .filter((document) => document.exists).map((document) => [document.id, document.data()]) : []);
+    for (const person of storedPeople.filter((candidate) => memberData.has(candidate.membershipId))) {
+      const held = person.lineIds.map((id) => lines.find((line) => line.lineId === id))
+        .find((line) => line && !isMembership(line) && line.category !== 'EVENTS' && clubYearKind(line)
+          && holdsForClubYear(memberData.get(person.membershipId), line.id, clubYearOf(now) + (line.clubYearPart === 'next' ? 1 : 0)));
+      if (held) {
+        const year = clubYearLabel(clubYearOf(now) + (held.clubYearPart === 'next' ? 1 : 0));
+        return res.status(409).json({ code: 'already_held', personIds: [person.id], lineId: held.sourceLineId,
+          error: `${person.firstName} ${person.lastName} already has ${held.name} for club year ${year}. Remove it from your basket or choose another club year.` });
+      }
+    }
     let promo = null;
     const code = typeof req.body.discountCode === 'string' ? req.body.discountCode.trim().toUpperCase() : '';
     const discountDocument = code ? await findDiscountCode(code) : null;
@@ -1425,7 +1854,12 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       if (message) return res.status(400).json({ error: message });
       promo = publicDiscount(discountDocument.data());
     }
-    const pricing = calculateCart(selected, billingMode === 'annual', promo);
+    // Single-day trips are discounted for attendees holding boat hire or a subscription this club year, or buying one now.
+    const tripPrivileges = new Map();
+    if (selected.some(isTripEvent)) {
+      for (const person of storedPeople) if (memberData.has(person.membershipId)) tripPrivileges.set(person.id, memberData.get(person.membershipId).privileges || []);
+    }
+    const pricing = calculateCart(applyTripDiscounts(lines, storedPeople, tripPrivileges, now), billingMode === 'annual', promo, now);
     if (promo && pricing.promoDiscountValue <= 0) return res.status(400).json({ error: 'This code does not apply to the items in your basket.' });
     const siteUrl = checkoutSiteOrigin(req);
     const receiptViewToken = createAccessToken();
@@ -1439,46 +1873,84 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       reservedDocument = discountDocument.ref;
     }
     const items = pricing.items.map((item) => ({
-      id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, price: item.displayPrice,
+      id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, pricingMode: item.pricingMode, price: item.displayPrice,
+      monthly: Boolean(item.monthlyBilling),
+      ...(item.clubYear ? { clubYear: item.clubYear, clubYearPart: item.clubYearPart, label: item.label } : {}),
+      ...(item.sourceLineId !== item.lineId ? { sourceLineId: item.sourceLineId } : {}),
+      ...(item.monthlyBilling ? { monthlyAmount: item.monthlyAmount, debits: item.debits,
+        ...(item.debits ? { firstDebitAt: Timestamp.fromDate(item.firstDebit), cutoffAt: Timestamp.fromDate(item.cutoff) } : {}) } : {}),
+      ...(lineMembershipRule(item) && item.category !== 'MERCHANDISE' && item.category !== 'VOUCHERS' ? { membershipRule: lineMembershipRule(item) } : {}),
+      ...(item.tripSaving > 0 ? { tripDiscount: item.tripSaving, tripDiscountReasons: item.tripDiscountReasons } : {}),
       ...(item.size ? { size: item.size } : {}),
       ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),
-      ...(item.type === 'voucher' ? { voucherValue: item.basePrice } : {}),
-      ...(item.category === 'EVENTS' ? { eventSchedule: validateEventSchedule(item.eventSchedule) } : {})
+      ...(item.type === 'voucher' ? { voucherValue: item.basePrice, voucherScope: voucherScope(item) } : {}),
+      ...(item.category === 'EVENTS' ? {
+        eventSchedule: validateEventSchedule(item.eventSchedule),
+        ...(storedPeople.some((person) => person.lineIds.includes(item.lineId) && person.ownKitLineIds.includes(item.lineId)) ? { ownKit: true } : {}),
+        ...(typeof item.imageUrl === 'string' && item.imageUrl ? { imageUrl: item.imageUrl } : {})
+      } : {})
     }));
     const total = pricing.total;
     reservedStockIds = await reserveStock(orderRef, selected, catalog);
     const policyVersions = await currentCheckoutPolicies(adminDb, isLive());
-    await createFirestoreOrder({ orderRef, email, items, total, status: 'pending', discountCodeId: discountDocument?.id || null,
-      people: storedPeople, siteUrl, billingMode, receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions });
-    const hasRecurringItem = billingMode === 'monthly' && items.some((item) => item.type === 'subscription');
-    const oneOffCredit = hasRecurringItem && promo?.discountType === 'credit';
-    let coupon;
-    if (oneOffCredit) {
-      coupon = await stripeRequest('coupons', [['amount_off', String(Math.round(pricing.promoDiscountValue * 100))], ['currency', 'gbp'], ['duration', 'once']]);
+    const hasRecurringItem = items.some((item) => item.monthly);
+    // Checkout takes the joining share of this month (and anything paid up front) and saves the payment details. Each
+    // club year's monthly items are then set up after payment as a subscription debited on the 1st (see setUpSubscriptions).
+    const debited = items.filter((item) => item.monthly && item.debits > 0);
+    const groups = [...new Set(debited.map((item) => item.clubYear))].sort().map((clubYear) => {
+      const groupItems = debited.filter((item) => item.clubYear === clubYear);
+      return { clubYear, lineIds: groupItems.map((item) => item.lineId), firstDebitAt: groupItems[0].firstDebitAt, cutoffAt: groupItems[0].cutoffAt };
+    });
+    const subscriptionPlan = groups.length ? { status: 'pending', lineIds: debited.map((item) => item.lineId), groups } : null;
+    const checkoutTotal = total;
+    // Stripe will not take a £0 payment, so a fully discounted basket with no monthly payments is completed here instead.
+    const free = !subscriptionPlan && Math.round(checkoutTotal * 100) === 0;
+    const freeSessionId = free ? `cs_free_${crypto.randomBytes(16).toString('hex')}` : '';
+    await createFirestoreOrder({ orderRef, email, items, total: checkoutTotal, status: 'pending', discountCodeId: discountDocument?.id || null, stripeSessionId: freeSessionId,
+      people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions,
+      subscriptionPlan });
+    if (free) {
+      const fields = await fulfilOrder({ orderRef, sessionId: freeSessionId, amountTotal: 0 });
+      await updateFirestoreOrder(orderRef, { paymentMethod: 'free' });
+      try { if (fields) await deliverOrder(orderRef, fields); }
+      catch (error) { console.error('Free order completed but the receipt email failed:', error.message); }
+      const params = new URLSearchParams({ session_id: freeSessionId, receipt_token: receiptViewToken });
+      return res.json({ success: true, free: true, orderRef, sessionId: freeSessionId, checkoutUrl: `${siteUrl}/payment-success?${params}` });
     }
-    const lineItems = items.flatMap((item, index) => [
+    const dateLabel = (timestamp) => timestamp.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/London' });
+    const money = (value) => `£${Number(value).toFixed(2)}`;
+    const debitText = groups.map((group) => {
+      const monthly = debited.filter((item) => item.clubYear === group.clubYear).reduce((sum, item) => sum + Number(item.monthlyAmount), 0);
+      return `${money(monthly)} a month by direct debit on the 1st from ${dateLabel(group.firstDebitAt)} to ${dateLabel(new Timestamp(group.cutoffAt.seconds - 14 * 24 * 60 * 60, 0))} (club year ${clubYearLabel(group.clubYear)})`;
+    }).join('; ');
+    // Nothing due now but monthly payments to come: Checkout only saves the payment details.
+    const setupOnly = Math.round(checkoutTotal * 100) === 0;
+    const charged = items.filter((item) => Math.round(Number(item.price) * 100) > 0);
+    const lineItems = setupOnly ? [] : charged.flatMap((item, index) => [
       [`line_items[${index}][price_data][currency]`, 'gbp'],
-      [`line_items[${index}][price_data][product_data][name]`, itemLabel(item)],
-      [`line_items[${index}][price_data][unit_amount]`, String(Math.round((oneOffCredit ? pricing.items[index].subtotalPrice : Number(item.price)) * 100))],
-      [`line_items[${index}][quantity]`, '1'],
-      ...(billingMode === 'monthly' && item.type === 'subscription'
-        ? [[`line_items[${index}][price_data][recurring][interval]`, 'month']]
-        : [])
+      [`line_items[${index}][price_data][product_data][name]`, item.clubYear ? `${itemLabel(item)} – ${item.label}` : itemLabel(item)],
+      [`line_items[${index}][price_data][product_data][metadata][line_id]`, item.lineId],
+      [`line_items[${index}][price_data][unit_amount]`, String(Math.round(Number(item.price) * 100))],
+      [`line_items[${index}][quantity]`, '1']
     ]);
     const session = await stripeRequest('checkout/sessions', [
       ...lineItems,
-      ...(coupon ? [['discounts[0][coupon]', coupon.id]] : []),
       ['expires_at', String(Math.floor(Date.now() / 1000) + 3600)],
-      ['mode', hasRecurringItem ? 'subscription' : 'payment'],
+      ['mode', setupOnly ? 'setup' : 'payment'],
       ['customer', await stripeCustomerFor(email)],
-      ...(!hasRecurringItem ? [['payment_intent_data[metadata][order_ref]', orderRef]] : []),
+      ...(setupOnly
+        ? [['currency', 'gbp'], ['setup_intent_data[metadata][order_ref]', orderRef]]
+        : [['payment_intent_data[metadata][order_ref]', orderRef],
+          // Saves the card or bank account for the monthly direct debits set up after payment.
+          ...(subscriptionPlan ? [['payment_intent_data[setup_future_usage]', 'off_session']] : [])]),
+      ...(debitText ? [['custom_text[submit][message]', `Your payment details are saved for ${debitText}.`.slice(0, 1200)]] : []),
       ['success_url', `${siteUrl}/payment-success?session_id={CHECKOUT_SESSION_ID}&receipt_token=${receiptViewToken}`],
       ['cancel_url', `${siteUrl}/membership`],
       ['metadata[order_ref]', orderRef],
-      ['metadata[total]', String(total)],
-      ['metadata[billing_mode]', billingMode]
+      ['metadata[total]', String(checkoutTotal)],
+      ['metadata[billing_mode]', hasRecurringItem ? 'monthly' : 'annual']
     ]);
-    await updateFirestoreOrder(orderRef, { stripeSessionId: session.id, stripeSubscriptionId: session.subscription || '', stripeMode: session.livemode ? 'live' : 'test' });
+    await updateFirestoreOrder(orderRef, { stripeSessionId: session.id, stripeMode: session.livemode ? 'live' : 'test' });
 
     res.json({ success: true, orderRef, sessionId: session.id, checkoutUrl: session.url });
   } catch (error) {
@@ -1502,10 +1974,10 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
   }
 });
 
-/** Sends a plain-text email through Workspace; the emulator stack writes it to `testMail` instead. */
-const sendEmail = async ({ to, subject, body, record = {} }) => {
+/** Sends email through Workspace; the emulator stack writes it to `testMail` instead. */
+const sendEmail = async ({ to, subject, body, html, record = {} }) => {
   if (localFirebase) {
-    await adminDb.collection('testMail').add({ email: to, subject, body, ...record, createdAt: Timestamp.now() });
+    await adminDb.collection('testMail').add({ email: to, subject, body, ...(html ? { html } : {}), ...record, createdAt: Timestamp.now() });
     return true;
   }
   const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
@@ -1513,18 +1985,19 @@ const sendEmail = async ({ to, subject, body, record = {} }) => {
     console.error('Email not sent: set GOOGLE_WORKSPACE_DELEGATED_USER (and a service account with domain-wide delegation).');
     return false;
   }
-  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body });
+  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body, html });
   await gmailApi.users.messages.send({ userId: 'me', requestBody: { raw } });
   return true;
 };
 
 const sendOrderEmail = async ({ email, orderRef, accessToken, items, people = [], total, vouchers = [], siteUrl = '', billingMode = 'annual' }) => {
   const orderSiteUrl = siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
-  const receipt = buildReceiptSummary(orderRef, { email, items, people, total, vouchers, billingMode });
+  // Admin-chosen person details go in the email only, never the shareable receipt link.
+  const receipt = buildReceiptSummary(orderRef, { email, items, people, total, vouchers, billingMode }, { personFields: await loadReceiptPersonFields() });
   const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${accessToken}`;
   const body = [receiptEmailCopy(receipt), '', `Retrieve your receipt and subscription information: ${retrievalUrl}`, '',
     'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n');
-  return sendEmail({ to: email, subject: 'Your Forth Canoe Club purchase', body,
+  return sendEmail({ to: email, subject: `Your Forth Canoe Club receipt - ${orderRef}`, body, html: receiptEmailHtml(receipt, retrievalUrl),
     record: { orderRef, items, people, total, receipt, retrievalUrl, vouchers } });
 };
 
@@ -1542,10 +2015,7 @@ app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => 
     if (fields.expiresAt?.toDate() < new Date()) return res.status(410).json({ error: 'This receipt link has expired.' });
 
     res.json({
-      orderRef,
-      receipt: fields.receipt || {},
-      items: fields.items || [],
-      total: fields.total || '0',
+      ...buildLinkedReceipt(orderRef, fields),
       createdAt: fields.createdAt?.toDate?.() || null,
       expiresAt: fields.expiresAt?.toDate?.() || null
     });
@@ -1591,6 +2061,13 @@ if (adminDb && isLive()) {
   setInterval(recordPolicyVersions, 60 * 60 * 1000).unref();
 } else if (adminDb) {
   console.log('WEBSITE_ISLIVE is not true: consent and policy wording is not versioned and consent records show pre-live.');
+}
+
+if (adminDb) {
+  // Event leaders get their attendee list once bookings close.
+  const sendRosters = () => sendDueRosters().catch((error) => console.error('Event roster check failed:', error.message));
+  sendRosters();
+  setInterval(sendRosters, 60 * 60 * 1000).unref();
 }
 
 app.listen(PORT, process.env.HOST || '0.0.0.0', () => {

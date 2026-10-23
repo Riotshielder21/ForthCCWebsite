@@ -2,14 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import {
   addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, personKind, familyRole, resolvedKind, FAMILY_ADULT_MAX,
-  displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT
+  displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT, requiresMembership, grantsMembership
 } from '../utils/checkout';
 import { apiUrl } from '../utils/api';
+import { applyTripDiscounts, isTripEvent } from '../utils/tripDiscount';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, onBack, onReset, onPay, makeId }) {
   const addOnLines = lines.filter((line) => needsPerson(line) && !isMembership(line));
+  const openToNonMembers = addOnLines.some((line) => !requiresMembership(line));
   const [stepKey, setStepKey] = useState('email');
   const [errors, setErrors] = useState([]);
   const [emailKnown, setEmailKnown] = useState(false);
@@ -134,7 +136,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const tierName = (line) => ({ adult: 'Adult', junior: 'Junior', family: 'Family' })[line?.membershipTier] || 'Membership';
   const heading = !person ? '' : memberships.length
     ? `Membership ${membershipSteps.indexOf(person) + 1} of ${membershipSteps.length} (${tierName(memberships[0])})`
-    : 'Existing member';
+    : held(person).some(grantsMembership) ? 'Attendee (club membership included)'
+    : openToNonMembers && !held(person).some(requiresMembership) ? 'Attendee' : 'Existing member';
   const memberField = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.value }));
   const memberCheck = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.checked }));
   const shownErrors = [...errors, ...(serverErrors || []).filter((message) => !errors.includes(message))];
@@ -162,7 +165,11 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
           <div className="CheckoutDetails">
             <h2 className="page_heading_bold_1">{heading}</h2>
             {canRemove && <button type="button" className="PrimaryActionButtonCompact" onClick={() => removePerson(person)}>Cancel and remove this person</button>}
-            <p className="CartItemMeta">{memberships.length ? memberships.map(lineLabel).join(', ') : 'Existing member. Add-ons are chosen on a later step.'}</p>
+            <p className="CartItemMeta">{memberships.length ? memberships.map(lineLabel).join(', ') : heading === 'Attendee'
+              ? 'Club members can confirm with their date of birth. Not a member? Fill in your details below. Tickets are assigned on a later step.'
+              : heading === 'Attendee (club membership included)'
+              ? 'Not a member yet? Fill in your details below and you become a club member until 1 March. Existing members can confirm with their date of birth. Items are assigned on a later step.'
+              : 'Existing member. Add-ons are chosen on a later step.'}</p>
 
             {!person.returning && !person.firstName && emailKnown && (
               <div className="CheckoutSection">
@@ -260,6 +267,13 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                       <h4 className="CartItemTitle">Family member {seat + 2}</h4>
                       {familyCount > 1 && <button type="button" className="CartRemoveButton" onClick={() => removeMember(member.id)}>Remove</button>}
                     </div>
+                    {member.returning ? <>
+                      <p className="text_container"><strong>{displayName(member)}</strong> (existing member)</p>
+                      <label className="FormLabel">Confirm date of birth
+                        <input className="FormInput" type="date" required value={member.dob} onChange={memberField(member.id, 'dob')} />
+                      </label>
+                      <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(member.id, (candidate) => ({ ...candidate, returning: false, firstName: '', lastName: '', dob: '', verifiedDob: '' }))}>Not them / enter full details</button>
+                    </> : <>
                     <fieldset className="CheckoutFieldset">
                       <legend>This person is</legend>
                       <label className="CheckoutCheck"><input type="radio" name={`kind-${member.id}`} checked={!member.junior} disabled={member.junior === true && familyAdults >= FAMILY_ADULT_MAX} onChange={() => update(member.id, (candidate) => ({ ...candidate, junior: false }))} /> An adult (18 or over)</label>
@@ -279,6 +293,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     <label className="FormLabel">Medical conditions or notes<textarea className="FormInput" rows="2" maxLength={1000} value={member.medical} onChange={memberField(member.id, 'medical')} /></label>
                     <p className="CartItemMeta">{member.junior ? 'Parents are their emergency contact.' : 'Shares the family contact details and family emergency contact.'}</p>
                     <label className="CheckoutCheck"><input type="checkbox" checked={member.photoConsent} onChange={memberCheck(member.id, 'photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
+                    </>}
                     <label className="CheckoutCheck"><input type="checkbox" checked={member.disclaimerAccepted} onChange={memberCheck(member.id, 'disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
                   </section>
                 ))}
@@ -294,16 +309,30 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
         {current === 'assign' && (
           <div className="CheckoutDetails">
             <h2 className="page_heading_bold_1">Who are the add-ons for?</h2>
-            <p className="text_container">Memberships are already assigned. Choose who each add-on is for.</p>
-            {addOnLines.map((line) => (
-              <label key={line.lineId} className="FormLabel">{lineLabel(line)}
-                <select className="FormInput" value={people.find((candidate) => candidate.lineIds.includes(line.lineId))?.id || ''} onChange={(event) => onPeopleChange(assignLine(people, line.lineId, event.target.value))}>
-                  <option value="">Choose…</option>
-                  {people.map((candidate) => <option key={candidate.id} value={candidate.id}>{personLabel(candidate)}</option>)}
-                </select>
-              </label>
-            ))}
-            <button type="button" className="PrimaryActionButtonCompact" onClick={() => addPerson()}>Add another person (existing member)</button>
+            <p className="text_container">Memberships are already assigned. Choose who each add-on is for.{addOnLines.some((line) => line.category === 'EVENTS') ? ' Without their own kit, event attendees need annual boat hire; the leader will be told who needs it.' : ''}</p>
+            {addOnLines.map((line) => {
+              const holder = people.find((candidate) => candidate.lineIds.includes(line.lineId));
+              const ownKit = Boolean(holder?.ownKitLineIds?.includes(line.lineId));
+              return (
+                <div key={line.lineId} className="CheckoutSection">
+                  <label className="FormLabel">{lineLabel(line)}
+                    <select className="FormInput" value={holder?.id || ''} onChange={(event) => onPeopleChange(assignLine(people, line.lineId, event.target.value))}>
+                      <option value="">Choose…</option>
+                      {people.map((candidate) => <option key={candidate.id} value={candidate.id}>{personLabel(candidate)}</option>)}
+                    </select>
+                  </label>
+                  {line.category === 'EVENTS' && (
+                    <label className="FormLabel AdminCheckbox">
+                      <input type="checkbox" disabled={!holder} checked={ownKit} onChange={(event) => update(holder.id, (candidate) => ({ ...candidate,
+                        ownKitLineIds: event.target.checked ? [...(candidate.ownKitLineIds || []), line.lineId] : (candidate.ownKitLineIds || []).filter((id) => id !== line.lineId) }))} />
+                      I have my own kit (boat, paddle and buoyancy aid) for this event
+                    </label>
+                  )}
+                  {line.leaderName && <p className="CartItemMeta">Led by {line.leaderName}{line.leaderEmail ? ` (${line.leaderEmail})` : ''}</p>}
+                </div>
+              );
+            })}
+            <button type="button" className="PrimaryActionButtonCompact" onClick={() => addPerson()}>{openToNonMembers ? 'Add another person' : 'Add another person (existing member)'}</button>
           </div>
         )}
 
@@ -318,7 +347,15 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
               </div>
             ))}
             {lines.filter((line) => !needsPerson(line)).map((line) => <p key={line.lineId} className="text_container">{line.name}</p>)}
-            <p className="CartSummaryTotal">Total £{total.toFixed(2)}</p>
+            {lines.some(isTripEvent) && (
+              <div className="CheckoutSection">
+                <p className="text_container">Single-day trips are £10 cheaper for each attendee with annual boat hire, and another £10 with a coaching subscription, bought this club year or in this basket. The discount is applied on the payment page; if it covers the whole order there is nothing to pay and your booking is confirmed straight away.</p>
+                {applyTripDiscounts(lines, people).filter((line) => line.tripDiscount).map((line) => (
+                  <p key={line.lineId} className="CartItemMeta">{personLabel(people.find((candidate) => candidate.lineIds.includes(line.lineId)))}: £{line.tripDiscount} off {line.name} ({line.tripDiscountReasons.join(' and ')} in this basket)</p>
+                ))}
+              </div>
+            )}
+            <p className="CartSummaryTotal">Total £{total.toFixed(2)}{lines.some(isTripEvent) ? ' before trip discounts' : ''}</p>
           </div>
         )}
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=FCC renewal emails (1 February first email, 15 February reminder; renewed members are skipped)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=fcc-web
+EnvironmentFile=/home/fcc-web/FCCWebsite/.env
+# RENEWAL_JOB_URL is the API's /api/jobs/renewals URL. The token goes to curl on stdin so it never shows in the process list.
+ExecStart=/bin/sh -c 'printf "Authorization: Bearer %%s\\n" "$$RENEWAL_JOB_TOKEN" | /usr/bin/curl --fail-with-body --silent --show-error --max-time 600 -X POST -H @- "$$RENEWAL_JOB_URL"'
+StandardOutput=journal
+StandardError=journal

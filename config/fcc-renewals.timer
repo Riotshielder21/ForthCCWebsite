@@ -1,0 +1,9 @@
+[Unit]
+Description=FCC renewal emails on 1 and 15 February
+
+[Timer]
+OnCalendar=*-02-01,15 09:00:00 Europe/London
+Persistent=true
+
+[Install]
+WantedBy=timers.target

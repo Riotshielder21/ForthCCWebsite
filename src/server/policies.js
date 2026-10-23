@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Timestamp } from 'firebase-admin/firestore';
 import { CHECKOUT_POLICY_KEYS, POLICY_DEFINITIONS, planPolicyUpdates } from '../utils/policies.js';
 import { PRE_LIVE_VERSION } from '../utils/live.js';
+import { rateLimit } from './rateLimit.js';
 
 /** Published page content for the pages policies read from: local build output when present, otherwise the hosted website. */
 export const loadPublishedPages = async ({ distDirectory, siteUrl, pageIds }) => {
@@ -64,7 +65,7 @@ export const currentCheckoutPolicies = async (db, live = true) => {
   return Object.fromEntries(Object.entries(CHECKOUT_POLICY_KEYS).map(([name, key]) => [name, { policyKey: key, version: byKey.get(key) || 0 }]));
 };
 
-export const registerPolicyRoutes = (app, { rateLimit, requireAdmin, db, distDirectory, siteUrl, live }) => {
+export const registerPolicyRoutes = (app, { requireAdmin, db, distDirectory, siteUrl, live }) => {
   app.get('/api/admin/policies', rateLimit(30, 60 * 1000), async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;

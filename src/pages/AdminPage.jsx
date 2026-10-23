@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
 import { removeProduct, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
+import { isLockedProduct } from '../utils/tripDiscount';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
 import DiscountCodesPanel from '../components/DiscountCodesPanel';
-import VolunteersPanel from '../components/VolunteersPanel';
+import PagedAdminList from '../components/PagedAdminList';
+import EventRosterControl from '../components/EventRosterControl';
 import { apiUrl } from '../utils/api';
-import { validateEventSchedule, eventScheduleLabel } from '../utils/catalogue';
+import { validateEventSchedule, eventScheduleLabel, normaliseProduct } from '../utils/catalogue';
 import { cleanStockFields } from '../utils/inventory';
+import { cleanEventDetails } from '../utils/eventRoster';
 
 const EMPTY_PRODUCT = {
   id: '',
@@ -15,15 +18,26 @@ const EMPTY_PRODUCT = {
   category: 'SERVICES',
   basePrice: 0,
   description: '',
-  type: 'annual-oneoff',
+  type: 'yearly-service',
+  pricingMode: 'fixed',
+  allowMonthly: false,
   hasAnnualDiscount: false,
   imageUrl: '',
   capacity: '',
   variants: [{ size: '', stock: 0 }],
-  eventSchedule: { mode: 'single', startDate: '', startTime: '15:00', endTime: '17:00', days: 1, weeks: 1, timeZone: 'Europe/London' }
+  eventSchedule: { mode: 'single', startDate: '', startTime: '15:00', endTime: '17:00', days: 1, weeks: 1, timeZone: 'Europe/London' },
+  leaderName: '', leaderEmail: '', closeDate: '', membershipRule: 'required'
 };
 
-const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description', 'type', 'imageUrl'];
+const MEMBERSHIP_RULE_LABELS = { required: 'Club members only', none: 'Open to non-members', included: 'Club membership included' };
+const MEMBERSHIP_RULE_NOTES = {
+  required: 'Buyers must already be members, or add a membership to their basket.',
+  none: 'Non-members can buy. They are kept as contacts, not members, and do not appear in the member register.',
+  included: 'Each person becomes an adult or junior club member (by age) until 1 March. Existing members pay the same price.'
+};
+
+const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description', 'imageUrl'];
+const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorated 60%: full price, then 60% from 1 October', subscription: 'Prorated monthly: monthly price for each month left to 1 March' };
 
 export default function AdminPage({ products, onNavigate }) {
   const editor = usePageEditor();
@@ -37,12 +51,15 @@ export default function AdminPage({ products, onNavigate }) {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [formDraft, setFormDraft] = useState({ name: '', description: '', fields: 'Name\nEmail\nResponse' });
 
-  const updateDraft = (field, value) => setDraft((current) => ({ ...current, [field]: value,
-    ...(field === 'category' && value === 'EVENTS' ? { type: 'event-ticket', hasAnnualDiscount: false } : {}),
-    ...(field === 'category' && value === 'MERCHANDISE' ? { type: 'merchandise', hasAnnualDiscount: false } : {}),
-    ...(field === 'category' && value !== 'EVENTS' && current.type === 'event-ticket' ? { type: 'annual-oneoff' } : {}),
-    ...(field === 'category' && value !== 'MERCHANDISE' && current.type === 'merchandise' ? { type: 'annual-oneoff' } : {})
-  }));
+  // Type, pricing mode and monthly billing follow the category (see productTerms).
+  const updateDraft = (field, value) => setDraft((current) => {
+    const next = { ...current, [field]: value };
+    if (field === 'category' && value === 'SUBSCRIPTIONS' && current.category !== 'SUBSCRIPTIONS') next.allowMonthly = true;
+    if (field === 'category' && value === 'SERVICES' && current.category !== 'SERVICES') next.pricingMode = 'fixed';
+    if (field === 'pricingMode' && value === 'subscription' && current.pricingMode !== 'subscription') next.allowMonthly = true;
+    const terms = normaliseProduct(next);
+    return { ...terms, ...(terms.pricingMode === 'subscription' ? {} : { hasAnnualDiscount: false }) };
+  });
   const updateVariant = (index, field, value) => setDraft((current) => ({ ...current,
     variants: (current.variants || []).map((variant, position) => position === index ? { ...variant, [field]: value } : variant)
   }));
@@ -90,7 +107,7 @@ export default function AdminPage({ products, onNavigate }) {
 
   const editProduct = (product) => {
     setSelectedProduct(product.id);
-    setDraft({ ...EMPTY_PRODUCT, ...product, eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
+    setDraft({ ...EMPTY_PRODUCT, ...normaliseProduct(product), eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
     setMessage('');
     resetImageInput();
   };
@@ -108,18 +125,16 @@ export default function AdminPage({ products, onNavigate }) {
     try {
       const product = {
         ...draft,
+        ...normaliseProduct(draft),
         basePrice: Number(draft.basePrice),
-        hasAnnualDiscount: Boolean(draft.hasAnnualDiscount)
+        hasAnnualDiscount: Boolean(draft.hasAnnualDiscount) && normaliseProduct(draft).pricingMode === 'subscription'
       };
       if (product.category === 'MERCHANDISE') {
-        product.type = 'merchandise';
-        product.hasAnnualDiscount = false;
         Object.assign(product, cleanStockFields(product));
       }
       if (product.category === 'EVENTS') {
-        product.type = 'event-ticket';
-        product.hasAnnualDiscount = false;
         product.eventSchedule = validateEventSchedule(product.eventSchedule);
+        Object.assign(product, cleanEventDetails(product));
         Object.assign(product, cleanStockFields(product));
       }
       await saveProduct(product);
@@ -207,15 +222,16 @@ export default function AdminPage({ products, onNavigate }) {
             <div className="AdminListHeader"><h3 className="tile_heading_bold_1">Catalogue ({products.length})</h3><button type="button" className="PrimaryActionButtonCompact" onClick={startNewProduct}>New</button></div>
             <button className="ContentLink AdminSeedButton" onClick={handleSeed}>Copy starter catalog</button>
             <div className="AdminProducts">
-              {products.map((product) => <button key={product.id} className={`AdminProduct ${selectedProduct === product.id ? 'is-selected' : ''}`} onClick={() => editProduct(product)}><strong>{product.name}</strong><span>{product.category}</span></button>)}
+              <PagedAdminList items={products} label="catalogue items" renderItem={(product) => <button key={product.id} className={`AdminProduct ${selectedProduct === product.id ? 'is-selected' : ''}`} onClick={() => editProduct(product)}><strong>{product.name}</strong><span>{product.category}</span></button>} />
             </div>
             {!products.length && <p className="text_container">No products. Add a new item or restore the starter catalogue.</p>}
           </aside>
           <form className="main_tile AdminEditor" onSubmit={handleSave}>
-            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && <button type="button" className="CartRemoveButton" onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
-            {EDITABLE_FIELDS.filter((field) => field !== 'type' || !['EVENTS', 'MERCHANDISE'].includes(draft.category)).map((field) => (
-              <label className="FormLabel" key={field}>{field === 'basePrice' ? 'Price' : field}
-                {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' || field === 'type' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{(field === 'category' ? CATEGORIES.filter((category) => category !== 'ALL') : ['external', 'voucher', 'annual-oneoff', 'yearly-service', 'subscription']).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required={field !== 'imageUrl'} />}
+            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && !isLockedProduct(selectedProduct) && <button type="button" className="CartRemoveButton" onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
+            {selectedProduct && isLockedProduct(selectedProduct) && <p className="text_container text_container_note">This product cannot be removed: holding it gives £10 off single-day trips at checkout.</p>}
+            {EDITABLE_FIELDS.map((field) => (
+              <label className="FormLabel" key={field}>{field === 'basePrice' ? (draft.pricingMode === 'subscription' ? 'Monthly price' : 'Price') : field}
+                {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{CATEGORIES.filter((category) => category !== 'ALL').map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required={field !== 'imageUrl'} />}
               </label>
             ))}
             {draft.category === 'EVENTS' && <fieldset className="AdminEventSchedule">
@@ -230,6 +246,14 @@ export default function AdminPage({ products, onNavigate }) {
               <p className="text_container text_container_note">When every ticket is sold the event leaves the shop. Delete a refunded order in Reports to free its place.</p>
               <p className="text_container text_container_note">One ticket covers the whole event/course. Times are Europe/London.</p>
             </fieldset>}
+            {draft.category === 'EVENTS' && <fieldset className="AdminEventSchedule">
+              <legend className="tile_heading_bold_1">Event leader</legend>
+              <label className="FormLabel">Leader name<input className="FormInput" maxLength={120} value={draft.leaderName || ''} onChange={(event) => updateDraft('leaderName', event.target.value)} /></label>
+              <label className="FormLabel">Leader email (shown in the shop)<input className="FormInput" type="email" maxLength={254} value={draft.leaderEmail || ''} onChange={(event) => updateDraft('leaderEmail', event.target.value)} /></label>
+              <label className="FormLabel">Bookings close (end of this day)<input className="FormInput" type="date" max={draft.eventSchedule.startDate || undefined} value={draft.closeDate || ''} onChange={(event) => updateDraft('closeDate', event.target.value)} /></label>
+              <p className="text_container text_container_note">When bookings close, the leader is emailed the attendee list once, with emergency contacts, medical details and who needs boat hire. Leave blank to keep bookings open.</p>
+              {selectedProduct && <EventRosterControl adminUser={adminUser} productId={selectedProduct} saved={Boolean(products.find((product) => product.id === selectedProduct)?.leaderEmail)} />}
+            </fieldset>}
             {draft.category === 'MERCHANDISE' && <fieldset className="AdminEventSchedule">
               <legend className="tile_heading_bold_1">Sizes and stock</legend>
               {(draft.variants || []).map((variant, index) => (
@@ -242,7 +266,18 @@ export default function AdminPage({ products, onNavigate }) {
               <button type="button" className="EditorCommand" onClick={addVariant}>Add size</button>
               <p className="text_container text_container_note">Customers choose a size and quantity. A size that sells out is greyed out, and the item leaves the shop when every size is gone. Delete a refunded order in Reports to return its stock.</p>
             </fieldset>}
-            {draft.category !== 'EVENTS' && draft.category !== 'MERCHANDISE' && <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.hasAnnualDiscount} onChange={(event) => updateDraft('hasAnnualDiscount', event.target.checked)} /> Annual discount applies</label>}
+            {draft.category === 'SERVICES'
+              ? <label className="FormLabel">Pricing<select className="FormInput" value={draft.pricingMode} onChange={(event) => updateDraft('pricingMode', event.target.value)}>{Object.entries(PRICING_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              : <p className="text_container text_container_note">{{ MEMBERSHIP: draft.type === 'external' ? 'External link: bought through JustGo, not this shop.' : 'Membership is a fixed club-year price. It is never prorated or paid monthly.', SUBSCRIPTIONS: 'Subscription: monthly price for each month left to 1 March.', VOUCHERS: 'Voucher: a fixed price that issues a credit code.', EVENTS: 'Event ticket: a fixed price for the whole event or course.', MERCHANDISE: 'Merchandise: a fixed price per item.' }[draft.category]}</p>}
+            {draft.pricingMode === 'subscription' && <>
+              <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.allowMonthly === true} onChange={(event) => updateDraft('allowMonthly', event.target.checked)} /> Allow monthly payments</label>
+              <p className="text_container text_container_note">{draft.allowMonthly ? 'Customers can pay monthly by direct debit, or pay up front to 1 March.' : 'Customers pay up front for the months left until 1 March.'}</p>
+              <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.hasAnnualDiscount} onChange={(event) => updateDraft('hasAnnualDiscount', event.target.checked)} /> 20% off when paid up front</label>
+            </>}
+            {draft.membershipRule && <>
+              <label className="FormLabel">Membership<select className="FormInput" value={draft.membershipRule} onChange={(event) => updateDraft('membershipRule', event.target.value)}>{Object.entries(MEMBERSHIP_RULE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <p className="text_container text_container_note">{MEMBERSHIP_RULE_NOTES[draft.membershipRule]}</p>
+            </>}
             <label className="FormLabel">Product image<input key={fileInputKey} className="FormInput" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={(event) => { setImageFile(event.target.files?.[0] || null); setMessage(''); setError(''); }} /></label>
             <button type="button" className="EditorCommand" onClick={handleImageUpload} disabled={!imageFile || uploading}>
               {uploading ? <Loader2 className="IconMd animate-spin" /> : <Upload className="IconMd" />} {uploading ? `Uploading ${imageFile?.name || 'image'}…` : 'Upload image'}
@@ -255,7 +290,6 @@ export default function AdminPage({ products, onNavigate }) {
           </form>
         </div>
         <DiscountCodesPanel adminUser={adminUser} products={products} />
-        <VolunteersPanel adminUser={adminUser} />
         <form className="main_tile AdminFormBuilder SpaceT6" onSubmit={handleCreateForm}>
           <div className="AdminListHeader"><div><span className="tile_eyebrow">Google Workspace</span><h3 className="tile_heading_bold_2">Create a form</h3></div></div>
           <p className="text_container SpaceB4">Creates one response spreadsheet in the current club-year folder on the Shared Drive.</p>

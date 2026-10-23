@@ -2,18 +2,22 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
+    function isClubAdmin() {
+      return request.auth != null
+        && request.auth.token.admin == true
+        && request.auth.token.email is string
+        && request.auth.token.email.lower().matches('[^@\\s]+@forthcanoeclub[.]co[.]uk');
+    }
+
     match /pages/{pageId}/{tileId}/{fileName} {
       allow read: if true;
-      allow write: if request.auth != null
-        && request.auth.token.admin == true
-        && request.auth.token.email.matches('.*@forthcanoeclub[.]co[.]uk')
+      allow write: if isClubAdmin()
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)');
     }
     match /products/{productId}/{fileName} {
       allow read: if true;
-      allow write: if request.auth != null
-        && request.auth.token.admin == true
+      allow write: if isClubAdmin()
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)');
     }

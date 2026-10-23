@@ -3,9 +3,12 @@ import { ShoppingCart, Plus, Minus, ExternalLink, ChevronDown, Pencil } from 'lu
 import { DISCOUNTS, CATEGORIES } from '../constants/products';
 import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { eventScheduleLabel } from '../utils/catalogue';
+import { isTripEvent } from '../utils/tripDiscount';
+import { bookingsClosed, formatDate } from '../utils/eventRoster';
 import { productLimits } from '../utils/inventory';
+import { scopeLabel, voucherScope } from '../utils/vouchers';
 
-export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, getKitHireMonthly, products, onNavigate }) {
+export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, onNavigate }) {
   const copy = usePageContent('membership');
   const { adminUser } = usePageEditor();
   const [selectedTier, setSelectedTier] = useState('adult');
@@ -145,6 +148,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
             const inStock = (size) => !remaining || (remaining[size] ?? 0) > 0;
             const size = merchandise ? (sizeChoice[product.id] && inStock(sizeChoice[product.id]) ? sizeChoice[product.id] : sizes.find(inStock) || sizes[0] || '') : '';
             const placesLeft = product.category === 'EVENTS' ? remaining?.all : null;
+            const closed = product.category === 'EVENTS' && bookingsClosed(product);
             return (
             <div key={product.id} className="shop_product_tile">
               {product.imageUrl && <img className="shop_product_image" src={product.imageUrl} alt="" />}
@@ -159,6 +163,11 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
               </div>
               <p className="shop_product_description">{product.description}</p>
               {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
+              {isTripEvent(product) && <p className="text_container text_container_note">£10 off with annual boat hire, and £10 off with a coaching subscription.</p>}
+              {product.category === 'EVENTS' && product.leaderName && <p className="text_container SpaceB4">Led by {product.leaderName}{product.leaderEmail && <> (<a className="ContentLink" href={`mailto:${product.leaderEmail}`}>{product.leaderEmail}</a>)</>}</p>}
+              {product.membershipRule === 'none' && <p className="text_container text_container_note">Open to non-members.</p>}
+              {product.membershipRule === 'included' && <p className="text_container text_container_note">Club membership included until 1 March.</p>}
+              {product.category === 'EVENTS' && product.closeDate && <p className="text_container SpaceB4">{closed ? 'Bookings have closed.' : `Book by ${formatDate(product.closeDate)}.`}</p>}
               {placesLeft > 0 && placesLeft <= 5 && <p className="text_container SpaceB4" role="status">Only {placesLeft} {placesLeft === 1 ? 'place' : 'places'} left</p>}
               {merchandise && sizes.length > 0 && (
                 <label className="FormLabel SpaceB4">Size
@@ -169,13 +178,11 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
               )}
               <div className="shop_product_footer">
                 <div>
-                  {product.type === 'yearly-service' ? (
+                  {product.pricingMode === 'prorated' ? (
                     <>
-                      <div className="shop_product_price">£{product.basePrice.toFixed(2)}</div>
+                      <div className="shop_product_price">£{getItemDisplayPrice(product)}</div>
                       <div className="shop_product_meta">{copy.annualPriceLabel}</div>
-                      <div className="KitHireMonthlyLabel">
-                        or £{getKitHireMonthly(product)} /month
-                      </div>
+                      {Number(getItemDisplayPrice(product)) < product.basePrice && <div className="KitHireMonthlyLabel">Reduced from £{product.basePrice.toFixed(2)} for the rest of the club year</div>}
                     </>
                   ) : (
                     <>
@@ -187,10 +194,13 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                           : product.type === 'voucher'
                           ? copy.voucherPriceLabel
                           : product.type === 'merchandise' ? 'Per item'
-                          : product.type === 'annual-oneoff'
-                            ? copy.clubYearPriceLabel
-                            : copy.monthlyPriceLabel}
+                          : product.pricingMode === 'subscription'
+                            ? copy.monthlyPriceLabel
+                          : product.type === 'yearly-service' ? copy.annualPriceLabel
+                            : copy.clubYearPriceLabel}
                       </div>
+                      {product.pricingMode === 'subscription' && !product.allowMonthly && <div className="KitHireMonthlyLabel">Paid up front to 1 March</div>}
+                      {product.type === 'voucher' && <div className="KitHireMonthlyLabel">Spend on: {scopeLabel(voucherScope(product), (id) => products.find((candidate) => candidate.id === id)?.name || id).replace(/^Everything/, 'everything')}</div>}
                     </>
                   )}
                 </div>
@@ -198,7 +208,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                   <a href={product.externalLink} target="_blank" rel="noreferrer" className="PrimaryActionButton">
                     {copy.externalAction} <ExternalLink className="IconSm" />
                   </a>
-                ) : purchaseControl(product, () => addToCart(product, size), size)}
+                ) : closed ? <span className="shop_product_meta">Bookings closed</span> : purchaseControl(product, () => addToCart(product, size), size)}
               </div>
             </div>
             );

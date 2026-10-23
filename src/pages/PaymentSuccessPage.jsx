@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { apiUrl } from '../utils/api';
+import PurchaseReceipt from '../components/PurchaseReceipt';
 
 const RECEIPT_KEY = 'fcc-payment-receipt';
 
@@ -74,10 +75,11 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
   const paid = status === 'paid';
   const failed = status === 'payment_failed';
   const expired = status === 'expired';
+  const free = sessionId.startsWith('cs_free_');
   const Icon = paid ? CheckCircle2 : failed || expired || status === 'unavailable' ? AlertCircle : Loader2;
-  const title = paid ? 'Payment confirmed' : failed ? 'Payment not completed' : expired ? 'Checkout expired' : 'Checking payment';
+  const title = paid ? (free ? 'Booking confirmed' : 'Payment confirmed') : failed ? 'Payment not completed' : expired ? 'Checkout expired' : 'Checking payment';
   const message = paid
-    ? `Your payment is confirmed. A copy of this receipt and a secure order link will be sent to ${receipt?.receipt.payerEmail || 'the checkout email address'}.`
+    ? `${free ? 'Your discounts cover the whole order, so there is nothing to pay and your booking is confirmed.' : 'Your payment is confirmed.'} A copy of this receipt and a secure order link will be sent to ${receipt?.receipt.payerEmail || 'the checkout email address'}.`
     : failed
       ? 'Stripe could not complete this payment. Your basket and checkout details are saved; return to your basket to try again or choose another payment method.'
       : expired
@@ -89,17 +91,15 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
   return (
     <div className="SectionBottom PageFadeIn">
       <div className="ReceiptWrapper">
-        <div className="main_tile text-center">
+        <div className="ReceiptHeader">
           <Icon className="ReceiptCheckIcon" aria-hidden="true" />
           <h2 className="tile_heading_bold_1">{title}</h2>
-          <p className="text_container">{message}</p>
-          {paid && receipt && <section className="ReceiptCard ReceiptEmailCopy" aria-label="Purchase receipt">
-            <pre>{receipt.copy}</pre>
-          </section>}
-          {paid && receiptUnavailable && <p className="text_container SpaceT4" role="status">The payment is confirmed, but the website receipt could not be loaded. Please check your email for its copy.</p>}
-          {paid && <p className="text_container SpaceT4">Please allow a few minutes for the confirmation email to arrive.</p>}
-          {(failed || expired) && <button className="PrimaryActionButtonCompact SpaceT4" type="button" onClick={onReturnToBasket}>Return to basket</button>}
+          <p className="PageIntroCentered">{message}</p>
         </div>
+        {paid && receipt && <PurchaseReceipt receipt={receipt.receipt} />}
+        {paid && receiptUnavailable && <p className="text_container SpaceT4 text-center" role="status">The {free ? 'booking' : 'payment'} is confirmed, but the website receipt could not be loaded. Please check your email for its copy.</p>}
+        {paid && <p className="text_container SpaceT4 text-center">Please allow a few minutes for the confirmation email to arrive.</p>}
+        {(failed || expired) && <div className="text-center"><button className="PrimaryActionButtonCompact SpaceT4" type="button" onClick={onReturnToBasket}>Return to basket</button></div>}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { membershipActivity } from './membership.js';
 import { itemLabel } from './inventory.js';
 import { memberIsJunior } from './households.js';
+import { checkLabel } from './safeguarding.js';
 
 export const reportDate = (value) => {
   if (!value) return null;
@@ -32,7 +33,7 @@ export const subscriptionWarning = (fields) => Boolean(fields.stripeSubscription
 
 // `member` is the person's current membership record: existing members only confirm a few details at checkout,
 // so the rest (contact, emergency, medical) is read from their record.
-const personReport = (person, items, member = {}) => {
+export const personReport = (person, items, member = {}) => {
   const household = member.household || {};
   const junior = person.junior === true || Boolean(member.emergencyNote) || memberIsJunior(member);
   const guardian = person.guardian || {};
@@ -66,7 +67,9 @@ export const orderReport = (id, fields, members = new Map()) => ({
   total: Number.isFinite(Number(fields.total)) ? Number(fields.total) : 0,
   createdAt: reportDate(fields.createdAt),
   paidAt: reportDate(fields.paidAt),
-  stripeSubscriptionId: fields.stripeSubscriptionId || '',
+  // Orders for several people hold one Stripe subscription per person (or family).
+  stripeSubscriptionId: [...new Set([fields.stripeSubscriptionId, ...(Array.isArray(fields.stripeSubscriptionIds) ? fields.stripeSubscriptionIds : [])].filter(Boolean))].join(', '),
+  ...(fields.subscriptionSetupNeedsStaff === true ? { monthlyPaymentSetupFailed: true } : {}),
   stripePaymentIntentId: fields.stripePaymentIntentId || '',
   subscriptionWarning: subscriptionWarning(fields),
   items: (Array.isArray(fields.items) ? fields.items : []).map((item) => ({
@@ -100,6 +103,7 @@ export const membershipReport = (id, fields, now = new Date(), household = field
   return {
     id, name: `${fields.firstName || ''} ${fields.lastName || ''}`.trim() || fields.name || '', email: household.email || fields.email || '',
     affiliationNumber: fields.affiliationNumber || '', tier: fields.membershipTier || '',
+    includedWith: fields.membershipIncludedWith?.name || '',
     status: membershipActivity({ status: fields.status, validUntil: expiry, renewalMethod: fields.renewalMethod, justgoSyncStatus: fields.justgoSyncStatus, lastJustgoSync: reportDate(fields.lastJustgoSync) }, now) === 'awaiting-renewal'
       ? 'Awaiting renewal'
       : memberState({ status: fields.status, expiry: fields.validUntil || fields.expiry }, now),
@@ -119,7 +123,8 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     householdId: fields.householdId || '',
     medical: fields.medical || '', swimming: fields.swimming || '',
     photoConsent: fields.consents?.photoVideo?.accepted === true || fields.photoConsent === true,
-    familyGroup: fields.familyGroup || '', privileges: [...new Set((fields.privileges || []).map((privilege) => String(privilege.name || privilege.productId || '')))],
+    pvg: checkLabel(fields.checks?.pvg?.expiresOn, now), safeguarding: checkLabel(fields.checks?.safeguarding?.expiresOn, now),
+    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set((fields.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => String(privilege.name || privilege.productId || '')))],
     history: (fields.history || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
   };
 };

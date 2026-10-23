@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LIST_TYPES, validateListSubmission, sheetCell, matchesVolunteer, volunteerCodeDecision } from './lists.js';
+import { LIST_TYPES, validateListSubmission, sheetCell, matchesVolunteer, volunteerCodeDecision, boathouseCodeDecision } from './lists.js';
 
 const valid = { name: 'Ann Paddler', email: 'Ann@Example.com', category: 'Equipment Needed', items: ['What equipment do you need?: 2 paddles'], notes: '' };
 
@@ -48,4 +48,15 @@ test('volunteer codes need an induction and an active membership, and are issued
   assert.equal(volunteerCodeDecision({ inducted: false, memberActive: false }), 'awaiting-induction');
   assert.equal(volunteerCodeDecision({ inducted: true, memberActive: true }), 'issue');
   assert.equal(volunteerCodeDecision({ inducted: true, memberActive: true, codeIssued: true }), 'issued');
+});
+
+test('the boathouse code goes to inducted, active volunteers who are active members, once per code version', () => {
+  const ready = { inducted: true, active: true, memberActive: true, codeVersion: 2, sentVersion: 1 };
+  assert.equal(boathouseCodeDecision(ready), 'send');
+  assert.equal(boathouseCodeDecision({ ...ready, sentVersion: 0 }), 'send');
+  assert.equal(boathouseCodeDecision({ ...ready, sentVersion: 2 }), 'up-to-date');
+  assert.equal(boathouseCodeDecision({ ...ready, codeVersion: 0 }), 'no-code');
+  assert.equal(boathouseCodeDecision({ ...ready, inducted: false }), 'not-active');
+  assert.equal(boathouseCodeDecision({ ...ready, active: false }), 'not-active');
+  assert.equal(boathouseCodeDecision({ ...ready, memberActive: false }), 'not-active');
 });
