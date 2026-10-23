@@ -51,12 +51,20 @@ const personDetails = (person, keys) => RECEIPT_PERSON_FIELDS
   .map((field) => ({ label: field.label, value: String(field.value(person) ?? '').trim() }))
   .filter((detail) => detail.value);
 
+// Club-year items carry the label shown in the basket, e.g. "80% of this month now, then monthly from 1 Nov 2026".
+const receiptBilling = (item, order) => {
+  const monthly = typeof item.monthly === 'boolean' ? item.monthly : order.billingMode === 'monthly' && item.type === 'subscription';
+  if (item.label && item.clubYear) {
+    return monthly && item.debits > 0 ? `${item.label} at £${Number(item.monthlyAmount || 0).toFixed(2)} a month` : item.label;
+  }
+  return monthly ? 'per month' : '';
+};
 
 const receiptItems = (items, order) => items.map((item) => ({
   name: itemLabel(item) || 'Item',
   personNames: receiptItemNames(item, Array.isArray(order.people) ? order.people : []),
   price: Number(item.price || 0),
-  billing: (typeof item.monthly === 'boolean' ? item.monthly : order.billingMode === 'monthly' && item.type === 'subscription') ? 'per month' : '',
+  billing: receiptBilling(item, order),
   schedule: item.eventSchedule ? eventScheduleLabel(item.eventSchedule) : '',
   ...(item.category === 'EVENTS' && item.imageUrl ? { imageUrl: item.imageUrl } : {})
 }));

@@ -105,12 +105,21 @@ export const registerGdprRoutes = (app, { rateLimit, requireAdmin, db, stripeRep
     const subscriptions = new Map();
     const warnings = [];
     for (const record of targets) if (record.stripeMembershipSubscriptionId) subscriptions.set(record.stripeMembershipSubscriptionId, record.stripeMembershipMode || 'test');
+    // Monthly payments are recorded per club year in `subscriptions`, which lists the members each one pays for.
+    const candidates = new Map();
     for (const order of orders.values()) {
-      if (!order.stripeSubscriptionId) continue;
-      const people = order.people || [];
-      const everyoneErased = people.length ? people.every((person) => targetIds.has(person.membershipId)) : erasedEmails.has(normalizeEmail(order.email));
-      if (everyoneErased) subscriptions.set(order.stripeSubscriptionId, order.stripeMode || 'test');
-      else warnings.push(`Subscription ${order.stripeSubscriptionId} also covers people who are staying, so it was not cancelled. Review it in Stripe.`);
+      for (const id of new Set([order.stripeSubscriptionId, ...(Array.isArray(order.stripeSubscriptionIds) ? order.stripeSubscriptionIds : [])].filter(Boolean))) {
+        if (!candidates.has(id)) candidates.set(id, order);
+      }
+    }
+    for (const record of targets) for (const id of Array.isArray(record.subscriptionIds) ? record.subscriptionIds : []) if (!candidates.has(id)) candidates.set(id, null);
+    for (const [id, order] of candidates) {
+      const stored = await adminDb.collection('subscriptions').doc(id).get();
+      const covered = stored.exists ? stored.data().membershipIds || [] : (order?.people || []).map((person) => person.membershipId);
+      const payer = normalizeEmail(stored.exists ? stored.data().email : order?.email || '');
+      const everyoneErased = covered.length ? covered.every((membershipId) => targetIds.has(membershipId)) : erasedEmails.has(payer);
+      if (everyoneErased) subscriptions.set(id, (stored.exists ? stored.data().stripeMode : order?.stripeMode) || 'test');
+      else if (!subscriptions.has(id)) warnings.push(`Subscription ${id} also covers people who are staying, so it was not cancelled. Review it in Stripe.`);
     }
 
     const emailList = [...erasedEmails];
@@ -202,8 +211,14 @@ export const registerGdprRoutes = (app, { rateLimit, requireAdmin, db, stripeRep
         }
       }
 
-      const batch = adminDb.batch();
       const targetIds = new Set(scope.targets.map((record) => record.id));
+      const renewalInvites = [];
+      for (let index = 0; index < scope.targets.length; index += 30) {
+        const ids = scope.targets.slice(index, index + 30).map((record) => record.id);
+        renewalInvites.push(...(await adminDb.collection('renewalInvites').where('membershipIds', 'array-contains-any', ids).get()).docs);
+      }
+      const batch = adminDb.batch();
+      new Map(renewalInvites.map((document) => [document.id, document])).forEach((document) => batch.delete(document.ref));
       const replaceHouseholds = new Set(leftHouseholdIds(scope.family, scope.targets));
       scope.targets.forEach((record) => batch.delete(adminDb.collection('memberships').doc(record.id)));
       if (left.length && shared) {

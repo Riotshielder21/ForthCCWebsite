@@ -77,7 +77,7 @@ test('product terms follow the category, and only services choose a pricing mode
 });
 
 test('a subscription that does not allow monthly payments is charged up front even in monthly mode', () => {
-  const now = new Date(2026, 9, 9);
+  const now = new Date(2026, 9, 1);
   const upfront = normaliseProduct({ id: 'up', category: 'SUBSCRIPTIONS', basePrice: 10, allowMonthly: false });
   const monthly = normaliseProduct({ id: 'mo', category: 'SUBSCRIPTIONS', basePrice: 10 });
   const fixed = normaliseProduct({ id: 'fx', category: 'SERVICES', type: 'yearly-service', pricingMode: 'fixed', basePrice: 85 });

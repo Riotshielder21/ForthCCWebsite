@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, ShieldX, ShieldCheck, KeyRound, HeartHandshake } from 'lucide-react';
+import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl } from '../utils/api';
 import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows } from '../utils/adminReports';
@@ -8,13 +8,14 @@ import CustomerVouchers from '../components/CustomerVouchers';
 import MonthlyPayments from '../components/MonthlyPayments';
 import GdprErasurePanel from '../components/GdprErasurePanel';
 import ReceiptEmailPanel from '../components/ReceiptEmailPanel';
+import RenewalsPanel from '../components/RenewalsPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
 import AdminAccessPanel from '../components/AdminAccessPanel';
 
 const RECORD_TABS = [[Users, 'subscribers', 'Stripe subscribers'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Users, 'members', 'Member register']];
 // Settings tabs show a single panel instead of a records table.
-const SETTINGS_TABS = [[Mail, 'receipt-emails', 'Receipt emails', ReceiptEmailPanel],
+const SETTINGS_TABS = [[Mail, 'receipt-emails', 'Receipt emails', ReceiptEmailPanel], [Repeat, 'renewals', 'Renewal emails', RenewalsPanel],
   [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [KeyRound, 'boathouse', 'Boathouse code', BoathouseCodePanel], [ShieldCheck, 'admins', 'Website admins', AdminAccessPanel]];
 
 const detailValue = (value) => {
@@ -149,6 +150,22 @@ export default function AdminReportsPage({ onNavigate }) {
       setSelected(null);
       setMessage(action === 'retry' ? 'Queued for another automatic JustGo upload.' : 'Marked as added to JustGo by staff. The next sync will link them.');
       load();
+    } catch (actionError) {
+      setError(actionError.message);
+    }
+  };
+
+  const sendRenewal = async (id) => {
+    setError('');
+    try {
+      const token = await adminUser.getIdToken(true);
+      const response = await fetch(apiUrl('/api/admin/renewals/send'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ membershipId: id }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not send the renewal email.');
+      setSelected(null);
+      setMessage(result.emails
+        ? `Renewal email sent for ${result.members} member${result.members === 1 ? '' : 's'} at this contact address.`
+        : 'No renewal email sent: this member has renewed, renews through JustGo, or their membership does not end this club year.');
     } catch (actionError) {
       setError(actionError.message);
     }
@@ -295,6 +312,7 @@ export default function AdminReportsPage({ onNavigate }) {
           <button className="EditorCommand" type="button" onClick={() => justgoAction(selected.id, 'retry')}>Retry automatic JustGo upload</button>
           <button className="EditorCommand" type="button" onClick={() => justgoAction(selected.id, 'manual')}>Staff added them in JustGo</button>
         </div>}
+        {kind === 'members' && <div className="ReportsRowActions"><button className="EditorCommand" type="button" onClick={() => sendRenewal(selected.id)}><Mail size={18} /> Send renewal email</button></div>}
         {(kind === 'orders' || kind === 'members') && <MonthlyPayments key={selected.id} adminUser={adminUser}
           query={new URLSearchParams(kind === 'orders' ? { orderRef: selected.id } : { membershipId: selected.id }).toString()} />}
         {selected.email && <CustomerVouchers adminUser={adminUser} email={selected.email} />}

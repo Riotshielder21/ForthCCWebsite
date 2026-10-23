@@ -1,50 +1,23 @@
 # TODO
 
-## Club-year access and renewal
+## Club years, monthly payments and renewals (built; check before live)
 
-- A held service or subscription blocks buying it again while active.
-- Early renewal opens two months before expiry (1 January). Next year's membership and up-front items are charged at checkout; next year's monthly items are first debited on 1 March (see **Payment schedule** below).
-- Apply consistent club-year expiry to memberships, services and subscriptions using the product's fixed, proration or subscription pricing mode.
-- A monthly Stripe subscriber stays blocked while their Stripe subscription is active.
-- Adding a product without membership correctly flags it needs membership. BUT when adding it to the cart the error doesnt go away, and then if you remove the membership after adding it, the whole contact details you entered disapear.
-- Pre-filled renewal cart: a renewal email to every member with expiring items, with a link carrying enough data to add all their items (membership and monthly items) to the cart. Sent to everyone on 1 February; before then it is optional (on request). Without it, the renewal cart is not pre-filled.
+Built as agreed: club-year choice (this/next/both from 1 January), one subscription per payer per club year per payment method on the 1st with the 15 February cut-off, joining-month charges, setup-mode Checkout when nothing is due now, next-year membership covering this year from 8 February, and renewal emails with a prefilled-basket link (see `DEVELOPMENT.md`: **Club Years**, **Monthly Subscriptions**, **Renewal Emails**). Still to do:
 
-## Payment schedule (agreed, not built)
-
-Everything monthly ends with the club year, and every direct debit is on the 1st of the month. This "joining-month charge" is separate from the shop's **Prorated 60%** pricing mode.
-
-- **Bug to fix first:** Stripe subscriptions currently have no end date, so monthly debits would carry on after 1 March, and they are taken on the day of the first checkout rather than the 1st.
-- **Checkout** charges everything due now: annual and one-off items in full, plus a joining-month charge for each monthly item on the 20% / 40% / 60% / 80% scale.
-- **Scale (agreed):** the share of the month still to run, rounded up to the next 20%, using the real month length. For a 30-day month: 1st–6th 100% (a full month), 7th–12th 80%, 13th–18th 60%, 19th–24th 40%, 25th onwards 20%.
-- **"Pay up front" prices** use the same scale for the current month, then full months to 1 March.
-- **Subscriptions** are anchored to the 1st (`billing_cycle_anchor`, no proration), so the first direct debit is the next 1st. Items added later get their own joining-month charge and join the existing debit from the next 1st. This replaces the current "charge to the payer's usual date" logic and its 30p and renewal-race cases.
-- **Memberships and monthly items lapse on 1 March**, and no payment is taken in the last two weeks of February.
-- **February cut-off (agreed):** the last debit is 1 February. Every subscription is set to stop at the start of 15 February (`cancel_at` with `proration_behavior=none`, set by the webhook just after Checkout because Checkout cannot set it). A failed 1 February debit can be retried only until then; any invoice still unpaid at the cut-off is voided and flagged for staff. Cover still runs to 1 March in our records. Check in Stripe test mode that cancellation stops retries and creates no credit or 1 March invoice.
-- **Buying from 1 January (agreed):** checkout asks, for each membership and monthly item, whether it is for **this club year**, **next club year** or **both**.
-  - **This year, monthly items:** in January, a subscription as usual (last debit 1 February). In February (1st–14th only), no subscription; the joining-month charge is the only payment.
-  - **This year, membership:** full price, sold until 7 February (the end of February's first week). From 8 February a membership is for **next year** only: checkout does not offer this year or both. The club's insurance rule covers the gap until 1 March.
-  - To confirm when built: from 8 February, does a next-year membership in the basket satisfy the membership requirement for this year's monthly items (bought until 14 February)?
-  - **Next year:** next year's membership and up-front items are charged at checkout; monthly items get a subscription scheduled to start on 1 March, with its first debit on 1 March.
-  - **Both:** this year's charge as above, plus next year's as above, in one checkout.
-  - From 15 February nothing is sold for this year (monthly items stop then; this year's membership already stopped on 8 February); only **next year** is offered.
-  - Stripe check: Checkout can delay a subscription's first debit (`subscription_data[trial_end]`) only if it is at least 2 days away, so purchases on 27–28 February (29th in a leap year) need the subscription created by the webhook from the saved payment details instead.
-- **Different card or bank details** keep getting their own subscription (also on the 1st, with the same February cut-off).
-- Bacs needs a few working days for a new mandate, so someone joining at the end of a month may have their first debit a few days after the 1st.
-- No live subscriptions exist yet, so nothing needs migrating.
-
-## Renewals (agreed, not built)
-
-- Early renewal opens on 1 January (matches the access rule above). From then, checkout asks whether a membership is for this club year, next club year or both (see **Buying from 1 January** above).
-- A renewal is a cart that includes a membership for someone who has an active subscription, or one due to stop on 1 March.
-- **While the old subscription is still active** (before the 15 February cut-off): extend it by a year (move `cancel_at` to the next year's cut-off) and set its items to the monthly items in the renewal cart. Items not in the cart stop on 1 March. Debits carry on on the 1st with no gap.
-- **After it has stopped** (from 15 February, or earlier if cancelled; Stripe cannot restart a cancelled subscription): a new subscription through Checkout, asking for payment details again.
-- Only what is in the renewal cart continues; the cart is not pre-filled (see the renewal email item above).
-- **Paying for a renewal (agreed):** a renewal bought from 1 January charges next year's membership and up-front items at checkout. Monthly items continue on the 1st as above.
-- **Member records (agreed):** every membership and item records the club year it covers, named by the year it starts (1 March 2027 – 28/29 February 2028 is **2027**). A member with a 2028 renewal booked before 1 March 2028 shows **2027, 2028**, and stays **active** with no gap; admins only rely on the active status. This fits the `membershipTerms` (one per person per club year) step of the data model migration below.
+- **Stripe test mode:** check that a subscription cancelled at the cut-off stops retries and creates no credit or 1 March invoice; that a backdated subscription (delayed Bacs payment) charges the missed month once; and how Bacs mandate delays affect a first debit on the 1st. Turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st).
+- **Webhook:** add `customer.subscription.deleted` to the Dashboard webhook endpoints (test and live).
+- **Renewal job deployment:** create a `renewal-job-token` secret, pass it to Cloud Run as `RENEWAL_JOB_TOKEN` in `.github/workflows/firebase-hosting.yml`, and install `config/fcc-renewals.{service,timer}` on the server with `RENEWAL_JOB_TOKEN` and `RENEWAL_JOB_URL` in its `.env`. Until then staff can send renewal emails from the admin page.
+- **Renewal email wording:** the email uses template text for now; agree the final wording with the club (`renewalEmail` in `src/utils/renewals.js`).
+- Members who hold only next year show as active in reports and the register (as agreed: admins rely on the active status), even before 1 March.
+- GDPR erasure cancels the person's subscriptions but does not blank the payer email and names on `subscriptions/{id}` records.
 
 ## Email and receipts
 
-- Receipt email code is fixed (delegation now applied, UTF-8 encoding, recipient validation, clear log when unconfigured). Still to verify on the live project: domain-wide delegation for the Gmail scope, then send a real test purchase and check the receipt, voucher codes and receipt links.
+- Verify a real purchase on the live project: receipt delivery from the configured no-reply address, voucher codes and secure receipt links. Confirm domain-wide delegation for the Gmail scope if delivery fails.
+- Verify the organisation footer on a real delivered email. The website mail sender does not append an organisation footer; check Google Workspace **Append footer** rules (including inherited/overlapping rules) for duplicate insertion and HTML/plain-text formatting. Keep one owner for the footer rather than also adding it to the receipt template.
+- Add an admin editor for the confirmation-email layout of an individual purchased item: per-product choice of which purchase, membership and booking fields appear, their order and presentation (including the event image), with a preview and matching HTML/plain-text output. A club-wide choice of extra person details (Admin → **Receipt email details**) already exists; per-item fields must stay email-only, like it.
+- Agree with the club which person details (DOB, address, emergency contact, medical) should be switched on in **Receipt email details** in production, particularly for children. All are off by default.
+- Add inline/CID event-image attachments, calendar invitations and downloadable/PDF receipts. Hosted HTTPS event images are already supported, but email clients may block them; historical orders without saved images remain text-only.
 
 ## Retention and long-term statistics (needs its own design)
 
@@ -55,22 +28,27 @@ Everything monthly ends with the club year, and every direct debit is on the 1st
 
 1. **`membershipTerms`.** One document per person per club year (tier, start, end, order, source). `status` and `validUntil` stay on the member as the current term. Replaces `history[]` and `privileges[]`.
 2. **Orders.** Money in whole pence; subtotal, discount and discount code; refunds as a status (stock released) instead of deleting the order; top-level `membershipIds`; one receipt token; grouped fulfilment, Stripe and payment-failure fields; people reduced to references once the purchase is recorded; remove the legacy `receipt`.
-3. **Other collections.** Remove `customers` (`lists` stays: it holds form submissions and volunteer induction state); discount codes get one `status`, a `type` and `sourceProductId`; products get `active`, `sortOrder`, `pricingMode`, `allowMonthly`; the Stripe mirror gets `membershipIds` and drops copied names and emails; one audit log with a reason.
+3. **Other collections.** Remove `customers` (`lists` stays: it holds form submissions and volunteer induction state); discount codes get one `status`, a `type` and `sourceProductId`; products get `active` and `sortOrder`, with existing records backfilled for the implemented `pricingMode` and `allowMonthly` fields; the Stripe mirror gets `membershipIds` and drops copied names and emails; one audit log with a reason.
 4. Extend `scripts/migrate-schema.js` with a step for each remaining change above, tested against old-shape records, and take a Firestore export before running it with `--apply`.
 
 ## Security review (outstanding)
 
 1. Add analytics consent controls.
 2. Switch the full Content-Security-Policy from report-only to enforced (Firebase Hosting and the API) once the browser console shows no violations on every page, including admin sign-in, image upload and Stripe checkout.
+3. HTTPS certificate
 
 ## Volunteering
 
-- Choose who tells new volunteers about inductions; the form only records the sign-up. Volunteer codes are emailed, so they depend on the email delivery fix above.
+- Choose who tells new volunteers about inductions; the form only records the sign-up.
+- a check-in page that has authorization for all the confirmed volunteers. That's for club night each week. 
+  And each week at club night, people will sign up using the same QR code and that they just put their email address and date of birth in to check in because obviously that would make them a member. And the person who's a volunteer on club night would have access to the check-in page, which is like the admin page. And that means they'll be able to see if they need to purchase boat hire or not, or if they're a member or not, which is simple because they won't be able to check in. And that simplifies that process. CHeck in is email and dob for members, volunteer checks paid for membership and a flag of having been at clubnight befores.
 
 ## Flow test failures (pre-existing)
 
-`scripts/test-checkout-flow.js` fails these six scenarios on the branch before and after the security work, most likely expectations left over from before households were split out:
+`scripts/test-checkout-flow.js` fails these eight scenarios (still failing identically with and without the receipt email changes), most likely expectations left over from before households were split out:
 
+- adult membership plus boat hire is recorded on the membership, customer and order;
+- consent and policy wording is recorded as numbered versions that follow changes;
 - a returning member can add an add-on with only name and date of birth (address is now on the household, not the member);
 - multiple copies of shop services in one mixed basket (the per-member item list now includes every item bought);
 - family membership emergency contact (`undefined` instead of `false`);
@@ -78,5 +56,28 @@ Everything monthly ends with the club year, and every direct debit is on the 1st
 - reports: member register count (23 records where 19 are expected);
 - replaying a webhook (`shared.family` is unset because the family scenario failed first).
 
+On an emulator that has run the flow test many times, the report-based scenarios (junior household, JustGo sync and uploads, event tickets, merchandise, reports) also fail: the admin reports return the first 100 records ordered by document id, so this run's records can fall onto a later page. Restart the emulators without imported data before relying on them.
+
 
 Feature WishList
+- An authentication code to virify email address so users can amend membership details, emergency contact, address, phone number email etc.. this is hard.
+- 20+ hour volunteer category gets key access added to record
+- 40+ hour gets boathire added to record and taking out a subscript automatically applies discount no need for a code, same way boathire and keyhire works on events (statistic tracking)
+- 60+ gets boathire and keyhire added and an email to ask them if they want to use their volunteering to come to coached (subscription) (which adds a gold if they click the link?) (tracking statistics) 
+
+## PRe Flight checks
+- Committee Content Review
+- Committee sanction publishing
+- Test member review
+- Test admin side
+- MOST IMPORTANT, MOVING AWAY FROM BOOKWHEN, EVENTBIRTE, HUMANITIX
+- GDPR NOTICE
+- DISCLAIMER for all activities
+- PHOTO CONSENT POLICY
+- Media content
+- COPYRIGHT NOTICE
+
+## Final DEPLOY TODO
+ - Import existing members (if before March)
+ - Import all current subscribers, and probably transition away from bookwhen strip setup 
+ - Import all current payments for boathire, and keyhire and the current volunteer list.

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, peopleGrantedMembership, requiresMembership, grantsMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem, displayName
+  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, membershipPartsNeeded, peopleGrantedMembership, requiresMembership, grantsMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem, displayName
 } from './checkout.js';
 
 const now = new Date(2026, 9, 11);
@@ -27,6 +27,17 @@ test('two junior memberships create two people; hire joins the first', () => {
 
 test('vouchers never need a person', () => {
   assert.equal(assignLines([], [voucher], makeId).length, 0);
+});
+
+test('removing a membership added after an add-on keeps the person and their details', () => {
+  let people = assignLines([], [hire], makeId).map((person) => ({ ...person, firstName: 'Kept' }));
+  people = assignLines(people, [hire, junior(1)], makeId);
+  assert.equal(people.length, 1);
+  assert.deepEqual(people[0].lineIds, ['h1', 'j1']);
+  people = assignLines(people, [hire], makeId);
+  assert.equal(people.length, 1);
+  assert.equal(people[0].firstName, 'Kept');
+  assert.deepEqual(people[0].lineIds, ['h1']);
 });
 
 test('removed lines are unassigned', () => {
@@ -462,4 +473,17 @@ test('a returning member name stays masked until the unlocking date of birth is 
   assert.equal(displayName({ ...picked, dob: '1990-02-04' }), 'J*** S***');
   assert.equal(displayName({ ...picked, verifiedDob: undefined }), 'J*** S***');
   assert.equal(displayName({ returning: false, firstName: 'New', lastName: 'Person', dob: '' }), 'New Person');
+});
+
+test('membership is needed per club year; from 8 February next year\'s membership covers this year\'s items', () => {
+  const membershipLine = (part) => ({ lineId: `m-${part}`, id: 'adult', category: 'MEMBERSHIP', type: 'annual-oneoff', ...(part === 'next' ? { clubYearPart: 'next' } : {}) });
+  const hireLine = (part) => ({ ...hire, lineId: `h-${part}`, ...(part === 'next' ? { clubYearPart: 'next' } : {}) });
+  const person = (...lineIds) => ({ id: 'p', lineIds });
+  const lines = [membershipLine('this'), membershipLine('next'), hireLine('this'), hireLine('next')];
+  const january = new Date(2027, 0, 20);
+  assert.deepEqual(membershipPartsNeeded(lines, person('m-this', 'h-this', 'h-next'), january), ['next']);
+  assert.deepEqual(membershipPartsNeeded(lines, person('m-next', 'h-this'), january), ['this']);
+  assert.deepEqual(membershipPartsNeeded(lines, person('m-next', 'h-this'), new Date(2027, 1, 8)), []);
+  assert.deepEqual(membershipPartsNeeded(lines, person('m-this', 'm-next', 'h-this', 'h-next'), january), []);
+  assert.equal(peopleNeedingMembership(lines, [person('h-next')], january).length, 1);
 });

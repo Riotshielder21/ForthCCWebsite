@@ -11,13 +11,14 @@ export const lineHolders = (lineId, people) => {
   };
 };
 
-// Share of the current billing period left, used to charge a new item only up to the payer's next monthly payment.
-export const remainingPeriodShare = (periodStart, periodEnd, now) => {
-  if (!(periodEnd > periodStart)) return 1;
-  return Math.min(1, Math.max(0, (periodEnd - now) / (periodEnd - periodStart)));
-};
+// A subscription waiting for its first debit on the 1st is `trialing` in Stripe; both still take payments.
+export const subscriptionLive = (subscription) => ['active', 'trialing'].includes(subscription?.status);
 
-export const firstPaymentPence = (monthlyPence, share) => Math.round(monthlyPence * share);
+// Club-year subscriptions are cancelled at the 15 February cut-off (metadata `cutoff_at`); cover still runs to 1 March.
+export const endedAtCutoff = (subscription) => {
+  const cutoff = Number(subscription?.metadata?.cutoff_at) || 0;
+  return Boolean(cutoff && subscription.status === 'canceled' && subscription.ended_at && Math.abs(subscription.ended_at - cutoff) < 24 * 60 * 60);
+};
 
 // Stripe subscription items carry our order line id, either on the item or (for Checkout-created items) on its product.
 export const stripeItemLines = (subscription, lineIds) => {

@@ -267,6 +267,13 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                       <h4 className="CartItemTitle">Family member {seat + 2}</h4>
                       {familyCount > 1 && <button type="button" className="CartRemoveButton" onClick={() => removeMember(member.id)}>Remove</button>}
                     </div>
+                    {member.returning ? <>
+                      <p className="text_container"><strong>{displayName(member)}</strong> (existing member)</p>
+                      <label className="FormLabel">Confirm date of birth
+                        <input className="FormInput" type="date" required value={member.dob} onChange={memberField(member.id, 'dob')} />
+                      </label>
+                      <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(member.id, (candidate) => ({ ...candidate, returning: false, firstName: '', lastName: '', dob: '', verifiedDob: '' }))}>Not them / enter full details</button>
+                    </> : <>
                     <fieldset className="CheckoutFieldset">
                       <legend>This person is</legend>
                       <label className="CheckoutCheck"><input type="radio" name={`kind-${member.id}`} checked={!member.junior} disabled={member.junior === true && familyAdults >= FAMILY_ADULT_MAX} onChange={() => update(member.id, (candidate) => ({ ...candidate, junior: false }))} /> An adult (18 or over)</label>
@@ -286,6 +293,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     <label className="FormLabel">Medical conditions or notes<textarea className="FormInput" rows="2" maxLength={1000} value={member.medical} onChange={memberField(member.id, 'medical')} /></label>
                     <p className="CartItemMeta">{member.junior ? 'Parents are their emergency contact.' : 'Shares the family contact details and family emergency contact.'}</p>
                     <label className="CheckoutCheck"><input type="checkbox" checked={member.photoConsent} onChange={memberCheck(member.id, 'photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
+                    </>}
                     <label className="CheckoutCheck"><input type="checkbox" checked={member.disclaimerAccepted} onChange={memberCheck(member.id, 'disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
                   </section>
                 ))}

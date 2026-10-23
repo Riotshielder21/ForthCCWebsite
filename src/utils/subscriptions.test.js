@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lineHolders, remainingPeriodShare, firstPaymentPence, stripeItemLines, activeSubscriptionItems, monthlyTotal } from './subscriptions.js';
+import { lineHolders, subscriptionLive, endedAtCutoff, stripeItemLines, activeSubscriptionItems, monthlyTotal } from './subscriptions.js';
 
 const person = (membershipId, lineIds, extra = {}) => ({ id: membershipId, membershipId, firstName: membershipId, lastName: 'Test', lineIds, ...extra });
 
@@ -11,13 +11,16 @@ test('each line records which members receive it', () => {
   assert.deepEqual(lineHolders('none', people), { membershipIds: [], names: [] });
 });
 
-test('a new item is charged only up to the payer\'s next monthly payment', () => {
-  assert.equal(remainingPeriodShare(0, 100, 25), 0.75);
-  assert.equal(remainingPeriodShare(0, 100, 150), 0);
-  assert.equal(remainingPeriodShare(0, 100, -10), 1);
-  assert.equal(remainingPeriodShare(0, 0, 0), 1);
-  assert.equal(firstPaymentPence(2000, 0.75), 1500);
-  assert.equal(firstPaymentPence(999, 1 / 3), 333);
+test('a subscription waiting for its first debit still counts as live', () => {
+  assert.deepEqual(['active', 'trialing', 'past_due', 'canceled', undefined].map((status) => subscriptionLive({ status })), [true, true, false, false, false]);
+});
+
+test('a subscription ending at its club-year cut-off is told apart from other cancellations', () => {
+  const cutoff = 1802649600;
+  assert.equal(endedAtCutoff({ status: 'canceled', ended_at: cutoff + 5, metadata: { cutoff_at: String(cutoff) } }), true);
+  assert.equal(endedAtCutoff({ status: 'canceled', ended_at: cutoff - 30 * 24 * 60 * 60, metadata: { cutoff_at: String(cutoff) } }), false);
+  assert.equal(endedAtCutoff({ status: 'canceled', ended_at: cutoff, metadata: {} }), false);
+  assert.equal(endedAtCutoff({ status: 'active', metadata: { cutoff_at: String(cutoff) } }), false);
 });
 
 test('Stripe items are matched to order lines by metadata', () => {

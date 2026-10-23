@@ -52,6 +52,8 @@ In remote VS Code, forward ports `3000`, `3002`, `4000`, `8080`, `9099` and `919
 
 The emulator seed also creates paid example orders for each purchasable starter product, plus family and sibling households, a five-day course, multiple shirt sizes, mixed carts and a voucher. These synthetic records are visible in the Reports page and are only written after the local-emulator guard succeeds.
 
+For mobile layout checks, use portrait viewports of 390x844, 360x640 and 320x568, plus landscape at 667x375 and 844x390. A short page (such as an unavailable receipt) should leave no gap below the footer. In a long basket, only the item list should scroll: the heading, billing controls, discount entry, errors, totals and Checkout button stay visible. Check both billing modes with a discount error and a checkout rejection, and confirm closing the basket restores page scrolling. Short landscape screens place the summary beside the item list.
+
 The admin catalogue, discount product choices and voucher product choices use Up/More paging, showing 7-10 items according to browser height. Check that paging replaces rather than appends items, selections survive paging and resizing, and deleting products on the last page does not leave an empty page. The short vertical transitions respect reduced-motion preferences.
 
 ## Build And Test
@@ -86,14 +88,14 @@ With the emulators running and `.env.emulator` loaded, seed them, start the API 
 ```bash
 set -a; source .env.emulator; set +a
 node scripts/seed-emulators.js
-WEBSITE_ISLIVE=true STRIPE_SUBSCRIPTION_ADMIN_KEY=sk_test_local_admin PORT=3010 STRIPE_SECRET_KEY=sk_test_local_fixture STRIPE_WEBHOOK_SECRET=whsec_local_only node --import ./scripts/mock-stripe.mjs server.js
+RENEWAL_JOB_TOKEN=local-renewal-job-token-0123456789abcdef PUBLIC_SITE_URL=https://fccwebsite-23cfc.web.app PUBLIC_SITE_URLS=https://staging.example.test WEBSITE_ISLIVE=true STRIPE_SUBSCRIPTION_ADMIN_KEY=sk_test_local_admin PORT=3010 STRIPE_SECRET_KEY=sk_test_local_fixture STRIPE_WEBHOOK_SECRET=whsec_local_only node --import ./scripts/mock-stripe.mjs server.js
 ```
 
-The test API needs `WEBSITE_ISLIVE=true` (the flow test checks policy versions) and a Stripe write key (the GDPR erasure test cancels a subscription). The origin and CORS checks expect `PUBLIC_SITE_URL=https://fccwebsite-23cfc.web.app` and `PUBLIC_SITE_URLS=https://staging.example.test` in the API environment.
+The test API needs `WEBSITE_ISLIVE=true` (the flow test checks policy versions) and a Stripe write key (the GDPR erasure test cancels a subscription). The origin, CORS and renewal-link checks expect the `PUBLIC_SITE_URL` and `PUBLIC_SITE_URLS` shown, and the renewal test needs the same `RENEWAL_JOB_TOKEN` in the API and test environments.
 
 ```bash
 set -a; source .env.emulator; set +a
-node scripts/test-checkout-flow.js
+RENEWAL_JOB_TOKEN=local-renewal-job-token-0123456789abcdef node scripts/test-checkout-flow.js
 ```
 
 Use a different `TEST_API_PORT` if you change `PORT`. The test adds records with unique `@example.test` emails and does not remove them.
@@ -103,10 +105,10 @@ Use a different `TEST_API_PORT` if you change `PORT`. The test adds records with
 For a real sandbox checkout, run the local stack above and forward webhooks:
 
 ```bash
-stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired,payment_intent.payment_failed --forward-to localhost:3002/api/stripe/webhook
+stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired,payment_intent.payment_failed,customer.subscription.deleted --forward-to localhost:3002/api/stripe/webhook
 ```
 
-For a Dashboard webhook endpoint, subscribe to those same five events. The `reporting.*` events are unrelated to checkout and are not needed. One endpoint handles all of these events; its signing secret is specific to that endpoint and mode, so use the test secret for sandbox and the live secret only for a live deployment.
+For a Dashboard webhook endpoint, subscribe to those same six events. The `reporting.*` events are unrelated to checkout and are not needed. One endpoint handles all of these events; its signing secret is specific to that endpoint and mode, so use the test secret for sandbox and the live secret only for a live deployment.
 
 `PUBLIC_SITE_URL` is the canonical frontend origin. If the same API serves other approved frontend domains, list their origins in `PUBLIC_SITE_URLS` separated by commas. Stripe returns and receipt links use the checkout origin only when it is on this allowlist; other origins fall back to the canonical site.
 
@@ -128,24 +130,34 @@ A voucher item's **Edit** button in that list sets what its credit can be spent 
 
 Events, services and subscriptions also have a **Membership** rule (`membershipRule`, see `productMembershipRule` in `src/utils/catalogue.js`): *Club members only* (`required`, the default), *Open to non-members* (`none`; buyers who are not members are kept as contact-only records outside the member register) or *Club membership included* (`included`). An included product makes each person who is not already an active member an adult or junior member (by age) until 1 March: the order person carries `grantMembership`, and payment writes the same active membership, tier and queued JustGo upload as buying a membership, plus `membershipIncludedWith` (shown in the member register as "Included with …"). Active members pay the same price and keep their membership. Older events saved with `membershipRequired: false` read as `none`; `membershipRequired` is still written for compatibility. Order lines record the rule.
 
+## Club Years
+
+The club year runs from 1 March and is named by the year it starts (1 March 2027 – 28/29 February 2028 is **2027**). Dates and sale windows are in `src/utils/clubYear.js` and use London time.
+
+- **Sale windows:** before 1 January only this club year is sold. From 1 January the basket asks, for each membership, service and subscription, whether it is for **this club year**, **next club year** or **both** (`clubYearChoice` on each basket line; `both` is one line that the server splits into this year's line and a next-year line). This year's membership stops on 8 February and everything else for this year on 15 February; after that only next year is offered. Events, merchandise and vouchers have no club year.
+- **Records:** order lines and privileges record `clubYear`, and members record every club year they hold in `clubYears` (for example `[2027, 2028]` for someone who renewed early), with `validUntil` the end of the latest. Older privileges without `clubYear` use the year they were granted. A member who holds only next year is not covered for this year, except that from 8 February a next-year membership also covers the rest of this year.
+- A held service or subscription cannot be bought again for the same club year (`already_held`), and an active member cannot buy a membership for a year they already hold (`membership_active`).
+
 ## Monthly Subscriptions
 
-A payer has one Stripe subscription, so one monthly direct debit, for every monthly item they pay for with the same card or bank account, whoever it is for. Our records say which member receives each item, because Stripe only knows the payer.
+Every direct debit is on the 1st of the month and everything monthly ends with the club year. Checkout never creates subscriptions itself: it takes what is due now, saves the card or bank account, and the webhook creates or extends the subscriptions afterwards (`setUpSubscriptions` in `server.js`).
 
-- **First monthly purchase:** Checkout starts the subscription with every monthly item as a recurring line.
-- **Later purchases by the same payer** (matched on email, against their active subscription in `subscriptions`): Checkout runs as a one-off payment that saves the card or bank account. Each monthly item is charged only up to the payer's next monthly payment date, as "(to <date>, then monthly with your other items)". After payment the webhook's `setUpSubscriptions` adds the items to the existing subscription without proration, so they are collected in the same debit from then on.
-- **Different card or bank account** (compared by Stripe's payment-method fingerprint): the details may belong to someone else, so the items join whichever of the payer's subscriptions already uses those details, or otherwise get a new subscription on them, billing on the payer's usual date (`subscriptionPlan.newPaymentDetails`). Existing subscriptions and their payment details are never changed.
-- **First payment under Stripe's 30p minimum** (the payment date is only hours away): the part-month is not charged. The lines are left off the Stripe page; if nothing else is being bought, the order completes without Stripe and the items are added straight away.
-- **Renewal before the items are added** (for example a Bacs payment confirmed after the payment date): the items are added with `create_prorations`, so the rest of the new month is charged on the next debit (`subscriptionPlan.renewedBeforeAdding`).
+- **Checkout** charges annual and one-off items in full plus a **joining-month charge** for each monthly item: the share of the current month still to run, rounded up to the next 20% (`joiningShare`). The Checkout session is in `payment` mode with `setup_future_usage=off_session`. When nothing is due now (only next-year monthly items), it runs in `setup` mode and the order records `stripeSetupIntentId` instead of a payment intent.
+- **One subscription per payer per club year per card or bank account.** The order's `subscriptionPlan.groups` has one group per club year with its `firstDebitAt` and `cutoffAt`. The webhook adds the group's items to the payer's live subscription for that club year when it uses the same payment details (compared by Stripe's fingerprint), otherwise creates a new one (`newPaymentDetails` when another live one exists). Existing subscriptions' payment details are never changed.
+- **New subscriptions** wait until their first 1st (`trial_end`, which Stripe shows as *trialing*) with `cancel_at` set to the cut-off and no proration. If the first 1st has already passed (a delayed bank payment), the subscription is backdated to it (`backdate_start_date`, `billing_cycle_anchor` the next 1st, `create_prorations`) so the missed month is charged, then `cancel_at` is set. Stripe metadata records `club_year` and `cutoff_at`; only subscriptions with `club_year` count as *trialing = live*.
+- **This year's monthly items** are first debited on the next 1st. Bought from 1 to 14 February, the joining-month charge is the only payment and no subscription is made. **Next year's** monthly items are first debited on 1 March.
+- **February cut-off:** the last debit is 1 February and every subscription stops at the start of 15 February (`cancel_at`, no proration), so a failed 1 February debit is retried only until then. Cover runs to 1 March in our records. When Stripe sends `customer.subscription.deleted`, the `subscriptions` record becomes `ended`, any invoice still open is voided (`voidedInvoices`), and the record is flagged `needsStaff` if money was left unpaid or the subscription ended before its cut-off (`endedAtCutoff: false`).
 
 Stripe calls use idempotency keys, so a replayed webhook changes nothing. If Stripe refuses a change, the order's `subscriptionPlan` is marked `failed` with the error and the order gets `subscriptionSetupNeedsStaff`; staff see which item and member it was on the order.
 
+Stripe settings to check in the Dashboard (test mode first): turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st), and confirm that cancellation at the cut-off stops retries and creates no credit or 1 March invoice.
+
 Records:
 
-- **Order:** `subscriptionPlan` (`new` or `add`, the monthly lines, the target subscription and the first-payment end date) and `stripeSubscriptionIds`. Each monthly line gets `stripeSubscriptionId`/`stripeSubscriptionItemId`, and lines that joined an existing subscription record `firstPayment`/`firstPaymentUntil`. The order `total` is what was charged at checkout.
-- **`subscriptions/{id}`:** the payer email, every `orderRefs` that added to it, and its items, each with its order, monthly amount, Stripe item id, status and the `membershipIds`/`names` of who receives it.
+- **Order:** `subscriptionPlan` (`status`, the monthly `lineIds`, and the `groups` with their club year, first debit, cut-off and resulting `stripeSubscriptionId`) and `stripeSubscriptionIds`. The order `total` is what was charged at checkout.
+- **`subscriptions/{id}`:** the payer email, `clubYear`, `firstDebitAt`, `cancelAt`, every `orderRefs` that added to it, and its items, each with its order, club year, monthly amount, Stripe item id, status and the `membershipIds`/`names` of who receives it.
 - **Customer:** the payer's `subscriptionIds`.
-- **Each member who receives an item:** `subscriptionIds` and `subscriptionItems` (subscription, item, monthly amount, `payerEmail` and status), so their record shows what they get and who pays, even when someone else pays. Membership privileges record their order `lineId`.
+- **Each member who receives an item:** `subscriptionIds` and `subscriptionItems` (subscription, item, club year, monthly amount, `payerEmail` and status), so their record shows what they get and who pays, even when someone else pays. Membership privileges record their order `lineId`.
 
 In Reports, purchases and member records show **Monthly payments**: each subscription with its payer and monthly total, and one row per item with the member, order, amount and status. Staff can:
 
@@ -155,7 +167,18 @@ In Reports, purchases and member records show **Monthly payments**: each subscri
 
 Removals take effect in Stripe straight away with no refund or proration, so the payer's debit drops from the next payment; removing the last active item cancels the subscription. Cancelled items keep their purchase history. Their privilege gets `endedAt` (so it no longer counts for trip discounts or the register's Includes column), the member's `subscriptionItems` entry becomes `cancelled`, and the order line gets `monthlyCancelledAt`. Each cancellation is written to `adminSubscriptionAudit`.
 
-The flow test's Stripe mock (`scripts/mock-stripe.mjs`) keeps subscriptions in memory. Payer emails starting `new-card.` use a different card at every checkout, `renews-soon.` subscriptions renew two minutes after they start, `renewed.` subscriptions renew while a later purchase is paid, and `sub-fail.` makes adding to or creating a later subscription fail. The mock rejects any change to an existing subscription's payment details.
+The flow test's Stripe mock (`scripts/mock-stripe.mjs`) keeps subscriptions in memory and checks the parameters above (trial or backdate, `cancel_at`, proration, club-year metadata). Payer emails starting `new-card.` use a different card at every checkout, `sub-fail.` makes creating a subscription fail, and `unpaid-feb.` gives the subscription an open invoice. The mock rejects any change to an existing subscription's payment details.
+
+When the API runs against the emulators, a request header `X-Test-Now: <ISO date>` makes checkout, renewal and job routes act as if it were that time, so the flow test can check January, February and autumn rules on any day. It is ignored otherwise. Subscription setup in the webhook always uses the real time.
+
+## Renewal Emails
+
+Website members whose membership ends this club year get one renewal email per contact address (the household email, so a family gets one email). JustGo members renew through JustGo and are not emailed, nor are contact-only records. The email lists the basket and links to `/membership?renew=<token>`, which fills the basket with next year's membership (one family membership for a family) and the services and subscriptions each person holds this club year that are still sold, with monthly billing if they pay monthly now. They can remove or add items before paying. Logic is in `src/utils/renewals.js` and the routes in `src/server/renewals.js`.
+
+- **Sending:** staff can send from 1 January (Admin → Reports & records → **Renewal emails**, or **Send renewal email** on a member in Reports, which also resends). The scheduled job sends twice: on 1 February to everyone not yet emailed, and a reminder on 15 February to everyone not yet reminded. Members record `renewalInviteSentFor` and `renewalReminderSentFor` (club years), so rerunning a round emails nobody twice. Anyone already holding next year's membership (in `clubYears` or covered past 1 March) is never emailed, even if they did not renew their extras.
+- **Links:** a random token whose SHA-256 is the `renewalInvites` document id (with the email, renewal year and `membershipIds`). Links expire after 31 March. The basket is worked out when the link is opened, so members who have since renewed are left out, and the token is removed from the address bar. GDPR erasure deletes invites that name an erased member.
+- **Scheduled job:** `config/fcc-renewals.service` and `.timer` run at 09:00 London on 1 and 15 February (a missed run catches up when the server starts) and `POST` to `/api/jobs/renewals` with `Authorization: Bearer $RENEWAL_JOB_TOKEN`. Set `RENEWAL_JOB_TOKEN` (at least 32 random characters) in the API environment and, with `RENEWAL_JOB_URL` (the API's `/api/jobs/renewals` URL), in the server's `.env`. Outside 1 February to 1 March the job does nothing; from 15 February it sends the reminder round.
+- **Testing locally:** the emulator seed adds the `TEST-HH-RENEWAL` household (`renewal@example.test`): a website family whose cover ends this club year, with Boathouse Access held by the parent. Start the API with `PUBLIC_SITE_URL` set to the Vite address so links point at it. Renewals open on 1 January, so as the local test admin send with the `X-Test-Now` header (honoured only with local emulators), e.g. `POST /api/admin/renewals/send` with body `{"membershipId":"test-renewal-parent"}` and `X-Test-Now: 2027-01-05T12:00:00Z`. The email, with its link, is in `testMail` (`kind: renewal`). Opening the link before 1 January still fills the basket, but checkout for next year is refused until then. Reseeding clears the sent flag.
 
 ## Live Mode (`WEBSITE_ISLIVE`)
 

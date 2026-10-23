@@ -30,9 +30,15 @@
 
 @layer components {
   .SiteShell {
-    @apply min-h-screen bg-slate-50 selection:bg-sky-100;
+    @apply min-h-screen flex flex-col bg-slate-50 selection:bg-sky-100;
+    min-height: 100dvh;
     color: var(--fcc-color-ink);
     font-family: var(--fcc-font-body);
+  }
+
+  .SiteMain {
+    flex: 1 0 auto;
+    min-width: 0;
   }
 
   .SiteSection {
@@ -301,6 +307,8 @@
 
   .FooterBar {
     @apply py-16 px-6;
+    flex-shrink: 0;
+    padding-bottom: max(4rem, env(safe-area-inset-bottom));
     background: var(--fcc-color-ink);
     color: rgba(255, 255, 255, 0.4);
   }
@@ -324,6 +332,8 @@
 
   .CartOverlay {
     @apply fixed inset-0 z-[100] flex justify-end;
+    height: 100dvh;
+    overflow: hidden;
   }
 
   .CartBackdrop {
@@ -333,10 +343,15 @@
 
   .CartPanel {
     @apply relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col;
+    min-height: 0;
+    overflow: hidden;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .CartHeader {
     @apply p-10 flex justify-between items-center;
+    flex-shrink: 0;
   }
 
   .CartTitle {
@@ -358,7 +373,19 @@
   }
 
   .CartBody {
-    @apply px-10 flex-grow overflow-y-auto;
+    @apply px-10 overflow-y-auto;
+    flex: 1 1 0;
+    min-height: 0;
+    overscroll-behavior-y: contain;
+  }
+
+  .CartControls {
+    @apply px-10 pb-4;
+    flex-shrink: 0;
+  }
+
+  .CartControls .BillingToggle {
+    margin-bottom: 0.75rem;
   }
 
   .BillingToggle {
@@ -402,6 +429,11 @@
     font-size: 10px;
     font-weight: 900;
     letter-spacing: 0.18em;
+  }
+
+  .CartClubYear {
+    @apply mt-1 mb-1 py-1 text-xs;
+    max-width: 16rem;
   }
 
   .CartItemPrice {
@@ -475,6 +507,8 @@
 
   .CartSummary {
     @apply p-10 pt-6;
+    flex-shrink: 0;
+    border-top: 1px solid var(--fcc-color-border);
   }
 
   .CartSummaryLine {
@@ -1322,11 +1356,18 @@
   /* ─── Cart Extras ───────────────────────────────── */
 
   .CartItemRow {
-    @apply flex justify-between items-center;
+    @apply flex flex-wrap justify-between items-center gap-3;
+  }
+
+  .CartItemRow > div:first-child {
+    flex: 1 1 9rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .CartItemActions {
     @apply flex items-center gap-4;
+    margin-left: auto;
   }
 
   .CartRemoveButton {
@@ -1452,15 +1493,59 @@
 
 .CheckoutCheck:has(input:disabled) { opacity: 0.45; cursor: not-allowed; }
 
-/* The basket scrolls as a whole on short screens instead of squeezing the item list. */
-.CartPanel { overflow-y: auto; }
-.CartBody { flex-shrink: 0; min-height: 14rem; }
 .CartSummary .PromoSection { margin-top: 0; margin-bottom: 1rem; }
+.CartSummary .StatusText {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 @media (max-height: 820px), (max-width: 640px) {
   .CartHeader { padding: 1.25rem 1.5rem; }
+  .CartControls { padding-left: 1.5rem; padding-right: 1.5rem; }
   .CartBody { padding-left: 1.5rem; padding-right: 1.5rem; }
   .CartSummary { padding: 1rem 1.5rem 1.5rem; }
-  .BillingToggle { margin-bottom: 1.25rem; }
+  .CartSummaryInner { margin-bottom: 0.75rem; }
+  .CartSummary .CartBreakdown { margin-bottom: 0.5rem; padding-bottom: 0.5rem; }
+  .CartSummary .CheckoutButton { padding-top: 1rem; padding-bottom: 1rem; }
+}
+@media (max-height: 700px) {
+  .CartHeader { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  .CartTitle { font-size: 1.5rem; line-height: 1.2; }
+  .CartControls { padding-bottom: 0.5rem; }
+  .CartControls .BillingToggle { margin-bottom: 0.25rem; }
+  .CartControls .BillingToggleButton { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  .CartSummary { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  .CartSummary .PromoSection { margin-bottom: 0.25rem; }
+  .CartSummary .CartSummaryTotal { font-size: 1.75rem; }
+  .CartSummary .CartBreakdownLabel { margin-bottom: 0; }
+  .CartSummary .CartBreakdown { margin-bottom: 0.25rem; padding-bottom: 0.25rem; }
+  .CartSummaryInner { margin-bottom: 0.5rem; }
+}
+@media (max-height: 600px) and (min-width: 640px) {
+  .CartPanel {
+    max-width: 48rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+  .CartHeader { grid-column: 1; }
+  .CartControls { grid-column: 1; grid-row: 2; }
+  .CartBody { grid-column: 1; grid-row: 3; }
+  .CartSummary {
+    grid-column: 2;
+    grid-row: 1 / 4;
+    border-top: 0;
+    border-left: 1px solid var(--fcc-color-border);
+  }
+  .CartSummaryInner {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .CartSummary .CartSummaryInner > * { margin: 0; }
+  .CartSummary .CartSummaryTotal { line-height: 1.2; }
 }
 
 /* Readable, finger-sized icon and text buttons in the basket and checkout. */

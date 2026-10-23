@@ -1,16 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCart } from './pricing.js';
+import { calculateCart, expandClubYearLines, expandPeopleLines } from './pricing.js';
 import { PRODUCTS } from '../constants/products.js';
 
-const now = new Date(2026, 9, 9);
+const now = new Date(2026, 9, 1);
 const membership = { id: 'member', category: 'MEMBERSHIP', type: 'annual-oneoff', basePrice: 30 };
 const service = { id: 'service', category: 'SERVICES', type: 'annual-oneoff', basePrice: 85 };
 const subscription = { id: 'sub', category: 'SUBSCRIPTIONS', type: 'subscription', basePrice: 25, hasAnnualDiscount: true };
 
 test('each purchasable starter product can be priced as a one-item cart', () => {
-  // September: before prorated items drop to 60%.
-  const now = new Date(2026, 8, 9);
+  // 1 September: before prorated items drop to 60%, and a whole joining month for monthly items.
+  const now = new Date(2026, 8, 1);
   const products = PRODUCTS.filter((product) => product.type !== 'external');
   assert.ok(products.length > 0);
 
@@ -168,8 +168,9 @@ test('monthly subscription pricing has no annual saving and reports its discount
 test('annual subscription totals and savings use the remaining club-year months', () => {
   const february = calculateCart([subscription], true, null, new Date(2027, 1, 28));
   const march = calculateCart([subscription], true, null, new Date(2027, 2, 1));
-  assert.deepEqual([february.items[0].clubYear.monthsRemaining, february.subtotal, february.annualSaving], [1, 20, 5]);
-  assert.deepEqual([march.items[0].clubYear.monthsRemaining, march.subtotal, march.annualSaving], [12, 240, 60]);
+  // 28 February is the last 20% of the month and no full months follow; 1 March is a whole month and eleven more.
+  assert.deepEqual([february.items[0].clubYearInfo.monthsRemaining, february.subtotal, february.annualSaving], [1, 4, 1]);
+  assert.deepEqual([march.items[0].clubYearInfo.monthsRemaining, march.subtotal, march.annualSaving], [12, 240, 60]);
   assert.equal(february.recurringMonthlyTotal, 0);
   assert.equal(march.recurringMonthlyTotal, 0);
 });
@@ -180,8 +181,8 @@ test('prorated service pricing drops to 60% on 1 October', () => {
   const october = calculateCart([yearlyService], false, null, new Date(2026, 9, 1));
   const february = calculateCart([yearlyService], false, null, new Date(2027, 1, 28));
   const march = calculateCart([yearlyService], false, null, new Date(2027, 2, 1));
-  assert.deepEqual([september.items[0].clubYear.monthsRemaining, september.subtotal, september.annualSaving], [6, 85, 0]);
-  assert.deepEqual([october.items[0].clubYear.monthsRemaining, october.subtotal, october.annualSaving], [5, 51, 34]);
+  assert.deepEqual([september.items[0].clubYearInfo.monthsRemaining, september.subtotal, september.annualSaving], [6, 85, 0]);
+  assert.deepEqual([october.items[0].clubYearInfo.monthsRemaining, october.subtotal, october.annualSaving], [5, 51, 34]);
   assert.equal(february.subtotal, 51);
   assert.equal(march.subtotal, 85);
 });
@@ -234,4 +235,43 @@ test('credit limited to categories or products only covers those items', () => {
   assert.equal(credit({ categories: ['EVENTS'], productIds: ['boat-hire'] }).total, 30);
   assert.equal(credit({}).total, 30);
   assert.equal(credit({ categories: ['MERCHANDISE'] }).promoDiscountValue, 0);
+});
+
+test('monthly items charge the joining-month share now and are debited from the next 1st', () => {
+  const october = calculateCart([subscription], false, null, new Date(2026, 9, 9));
+  // 23 of October's 31 days are left, which rounds up to 80%.
+  assert.deepEqual([october.total, october.items[0].monthlyAmount, october.items[0].debits], [20, 25, 4]);
+  assert.equal(october.items[0].firstDebit.toISOString(), '2026-11-01T00:00:00.000Z');
+  assert.deepEqual(october.monthlySchedule.map(({ monthly, clubYear }) => [monthly, clubYear]), [[25, 2026]]);
+  const upFront = calculateCart([subscription], true, null, new Date(2026, 9, 9));
+  // 80% of October plus November to February, with 20% off for paying up front.
+  assert.equal(upFront.total, 96);
+});
+
+test('this year\'s monthly items bought in February are only charged for the rest of February', () => {
+  const february = calculateCart([subscription], false, null, new Date(2027, 1, 10));
+  assert.deepEqual([february.total, february.recurringMonthlyTotal, february.items[0].debits], [20, 0, 0]);
+  assert.deepEqual(february.monthlySchedule, []);
+  assert.match(february.items[0].label, /80% of this month now \(ends 1 Mar 2027\)/);
+});
+
+test('next year: membership and up-front items are charged now; monthly items start on 1 March', () => {
+  const january = new Date(2027, 0, 20);
+  const boatHire = { id: 'boat', category: 'SERVICES', type: 'yearly-service', pricingMode: 'prorated', basePrice: 85 };
+  const lines = expandClubYearLines([
+    { ...membership, lineId: 'm', clubYearChoice: 'next' },
+    { ...subscription, lineId: 's', clubYearChoice: 'both' },
+    { ...boatHire, lineId: 'b', clubYearChoice: 'both' }
+  ]);
+  assert.deepEqual(lines.map((line) => [line.lineId, line.clubYearPart || 'this', line.sourceLineId]),
+    [['m', 'next', 'm'], ['s', 'this', 's'], ['s~next', 'next', 's'], ['b', 'this', 'b'], ['b~next', 'next', 'b']]);
+  const result = calculateCart(lines, false, null, january);
+  assert.deepEqual(result.items.map((item) => [item.lineId, item.clubYear, item.displayPrice]),
+    [['m', 2027, 30], ['s', 2026, 10], ['s~next', 2027, 0], ['b', 2026, 51], ['b~next', 2027, 85]]);
+  assert.deepEqual(result.monthlySchedule.map(({ firstDebit, cutoff, monthly }) => [firstDebit.toISOString(), cutoff.toISOString(), monthly]), [
+    ['2027-02-01T00:00:00.000Z', '2027-02-15T00:00:00.000Z', 25],
+    ['2027-03-01T00:00:00.000Z', '2028-02-15T00:00:00.000Z', 25]
+  ]);
+  assert.equal(calculateCart([{ ...subscription, clubYearPart: 'next' }], true, null, january).total, 240);
+  assert.deepEqual(expandPeopleLines([{ id: 'p', lineIds: ['m', 's', 'b'] }], [{ lineId: 's', clubYearChoice: 'both' }])[0].lineIds, ['m', 's', 's~next', 'b']);
 });

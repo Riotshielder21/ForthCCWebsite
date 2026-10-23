@@ -167,3 +167,13 @@ test('stored receipt field settings are filtered to the allow-list', () => {
   assert.deepEqual(normalizeReceiptPersonFields(undefined), []);
   assert.ok(RECEIPT_PERSON_FIELDS.every((field) => field.key && field.label && typeof field.value === 'function'));
 });
+
+test('club-year items show what was paid now and the monthly debit', () => {
+  const summary = buildReceiptSummary('FCC-124', { ...order, people: [], items: [
+    { lineId: 'c', name: 'Coaching', category: 'SUBSCRIPTIONS', type: 'subscription', price: 16, monthly: true, monthlyAmount: 20, debits: 3,
+      clubYear: 2026, label: '80% of this month now, then monthly from 1 Nov 2026' },
+    { lineId: 'm', name: 'Adult membership', category: 'MEMBERSHIP', price: 25, monthly: false, clubYear: 2027, label: 'Club year 2027/28' }
+  ] });
+  assert.deepEqual(summary.otherItems.map((item) => item.billing),
+    ['80% of this month now, then monthly from 1 Nov 2026 at £20.00 a month', 'Club year 2027/28']);
+});

@@ -3,6 +3,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { PRODUCTS } from '../src/constants/products.js';
+import { clubYearDates, clubYearOf } from '../src/utils/clubYear.js';
 
 const projectId = assertLocalFirebase(process.env);
 initializeApp({ projectId });
@@ -73,6 +74,20 @@ member('test-sibling-two', {
 member('test-separate-junior', {
   firstName: 'Jordan', lastName: 'Separate', dob: '2012-02-02', membershipTier: 'junior', householdId: 'TEST-HH-SEPARATE'
 });
+// A website family whose cover ends with this club year, for testing renewal emails and links.
+const thisClubYear = clubYearOf();
+household('TEST-HH-RENEWAL', {
+  contactName: 'Rowan Renewal', contactRelationship: 'Self', email: 'renewal@example.test', phone: '07700 900999',
+  address: '5 Renewal Row', postcode: 'EH5 5EE'
+});
+for (const [id, fields] of Object.entries({
+  'test-renewal-parent': { firstName: 'Rowan', lastName: 'Renewal', dob: '1985-09-03',
+    privileges: [{ productId: 'keyhire', name: 'Boathouse Access', type: 'yearly-service', orderRef: 'TEST-RENEWAL', grantedAt: Timestamp.now(), clubYear: thisClubYear }] },
+  'test-renewal-child': { firstName: 'Robin', lastName: 'Renewal', dob: '2015-04-21' }
+})) {
+  member(id, { ...fields, searchName: `${fields.firstName} ${fields.lastName}`.toLowerCase(), membershipTier: 'family', householdId: 'TEST-HH-RENEWAL',
+    renewalMethod: 'website', clubYears: [thisClubYear], validUntil: Timestamp.fromDate(clubYearDates(thisClubYear).end) });
+}
 const course = {
   name: 'Week-long paddling course', category: 'EVENTS', type: 'event-ticket', basePrice: 120,
   capacity: 12, hasAnnualDiscount: false,
