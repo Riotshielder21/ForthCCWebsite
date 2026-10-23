@@ -7,6 +7,7 @@ import { usePageEditor } from '../utils/PageContentContext';
 import DiscountCodesPanel from '../components/DiscountCodesPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
+import AdminAccessPanel from '../components/AdminAccessPanel';
 import EventRosterControl from '../components/EventRosterControl';
 import { apiUrl } from '../utils/api';
 import { validateEventSchedule, eventScheduleLabel, normaliseProduct } from '../utils/catalogue';
@@ -293,6 +294,7 @@ export default function AdminPage({ products, onNavigate }) {
         <DiscountCodesPanel adminUser={adminUser} products={products} />
         <VolunteersPanel adminUser={adminUser} />
         <BoathouseCodePanel adminUser={adminUser} />
+        <AdminAccessPanel adminUser={adminUser} />
         <form className="main_tile AdminFormBuilder SpaceT6" onSubmit={handleCreateForm}>
           <div className="AdminListHeader"><div><span className="tile_eyebrow">Google Workspace</span><h3 className="tile_heading_bold_2">Create a form</h3></div></div>
           <p className="text_container SpaceB4">Creates one response spreadsheet in the current club-year folder on the Shared Drive.</p>

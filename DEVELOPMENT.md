@@ -183,7 +183,7 @@ Before switching to live:
 - Orders fail: start the API and Firestore, not only Vite. Check `curl --fail http://localhost:3002/health`.
 - Payment stays pending: check Stripe CLI delivery and the API signing secret. Stripe and Firebase emulators are separate services.
 - API returns HTML: check `VITE_API_BASE_URL` and restart Vite.
-- Admin denied: reseed the local admin, then sign out/in. Real accounts need the Firebase `admin: true` claim.
+- Admin denied: reseed the local admin, then sign out/in. Real accounts need the Firebase `admin: true` claim: the person signs in once at `/admin` with their club Google account, then an existing admin approves them under **Website admins** (or a developer runs `node scripts/grant-admin.js name@forthcanoeclub.co.uk`). Changes are logged in `adminAccessAudit`; removed admins are signed out.
 - Image upload fails: check Storage emulator/rules and port `9199`.
 - Stripe subscribers unavailable: reporting and live subscription validation need a server-only `STRIPE_REPORT_SECRET_KEY` with read access in the matching Stripe mode; local Stripe is not emulated. Use test mode only.
 - Port occupied: choose another frontend port and update `PUBLIC_SITE_URL`.

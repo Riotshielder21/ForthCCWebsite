@@ -37,6 +37,7 @@ import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
+import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
 import { registerEventRosterRoutes } from './src/server/eventRosters.js';
 import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
 
@@ -781,7 +782,8 @@ const requireAdmin = async (req, res) => {
     return null;
   }
   try {
-    const decoded = await adminAuth.verifyIdToken(token);
+    // checkRevoked makes a removed admin lose API access straight away rather than when their token expires.
+    const decoded = await adminAuth.verifyIdToken(token, true);
     if (decoded.admin !== true || !decoded.email?.toLowerCase().endsWith('@forthcanoeclub.co.uk')) {
       res.status(403).json({ error: 'Admin access required.' });
       return null;
@@ -1070,6 +1072,7 @@ registerPolicyRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, distDire
 const { settleVolunteersFor, notifyBoathouseCode } = registerVolunteerRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, onCodeChanged: notifyBoathouseCode });
+registerAdminAccessRoutes(app, { rateLimit, requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });
 const { sendDueRosters } = registerEventRosterRoutes(app, { rateLimit, requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerMemberCheckRoutes(app, { rateLimit, requireAdmin, db: () => adminDb });
