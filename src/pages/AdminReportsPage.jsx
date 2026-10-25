@@ -12,6 +12,8 @@ import RenewalsPanel from '../components/RenewalsPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
 import AdminAccessPanel from '../components/AdminAccessPanel';
+import PurchasedItemActions from '../components/PurchasedItemActions';
+import KeyAccessControl from '../components/KeyAccessControl';
 
 // Member register is the authoritative list, so it comes first.
 const RECORD_TABS = [[Users, 'members', 'Member register'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Repeat, 'subscribers', 'Stripe subscribers']];
@@ -75,6 +77,17 @@ export default function AdminReportsPage({ onNavigate }) {
   const returnFocus = useRef(null);
   const purchaseReport = kind === 'orders' || kind === 'events';
   const SettingsPanel = SETTINGS_TABS.find(([, id]) => id === kind)?.[3];
+  const reloadSelected = async () => {
+    const response = await fetch(apiUrl(`/api/admin/reports?${new URLSearchParams({ kind, recordId: selected.id })}`), {
+      headers: { Authorization: `Bearer ${await adminUser.getIdToken(true)}` }, cache: 'no-store'
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not reload the record.');
+    const record = result.records.find((record) => record.id === selected.id);
+    if (!record) throw new Error('Updated record could not be found. Reload the report.');
+    setSelected(record);
+    setRecords((current) => current.map((entry) => entry.id === record.id ? record : entry));
+  };
 
   const load = async (nextCursor = null) => {
     const revision = ++generation.current;
@@ -314,6 +327,8 @@ export default function AdminReportsPage({ onNavigate }) {
       <p className="ReportRecordId">{(selected || deleting).id}</p>
       {selected && <><dl className="ReportDetails">{Object.entries(selected).filter(([key]) => !['items', 'people', 'history'].includes(key)).map(([key, value]) => <React.Fragment key={key}><dt>{key.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase())}</dt><dd>{detailValue(value)}</dd></React.Fragment>)}</dl>
         {selected.items && <ul className="ReportItems">{selected.items.map((item, index) => <li key={index}>{item.name} {kind === 'subscribers' ? `${item.amount ?? 'Variable'} ${item.currency.toUpperCase()} / ${item.interval}` : item.price === null ? '' : money(item.price)}{item.eventSchedule && <p>{eventScheduleLabel(item.eventSchedule)}</p>}</li>)}</ul>}
+        {purchaseReport && selected.status === 'paid' && <PurchasedItemActions key={selected.id} order={selected} adminUser={adminUser} onChanged={reloadSelected} />}
+        {kind === 'members' && <KeyAccessControl key={selected.id} member={selected} adminUser={adminUser} onChanged={reloadSelected} />}
         {selected.people?.length > 0 && <div className="ReportPeople"><h4 className="CartItemTitle">People on this order</h4>{selected.people.map((person, index) => <dl key={index} className="ReportDetails">
           {[['Name', person.name], ['Date of birth', person.dob], ['Type', person.returningMember ? `${person.kind} (existing member)` : person.kind], ['Items', person.items.join(', ')], ['Email', person.email], ['Phone', person.phone], ['Address', person.address], ['Emergency contact', person.emergencyContact], ['Swimming', person.swimming], ['Medical', person.medical], ['Photo consent', person.photoConsent ? 'Yes' : 'No'], ['Membership ID', person.membershipId]].filter(([, value]) => value).map(([label, value]) => <React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}
         </dl>)}</div>}

@@ -18,8 +18,10 @@ export const renewalConfirmationOpen = (now = new Date()) => now.getTime() - clu
 
 // 'active' | 'expired' | 'awaiting-renewal' | 'inactive'
 export const membershipActivity = (fields, now = new Date()) => {
+  if (fields.membershipAccessEndsAt !== undefined && fields.membershipAccessEndsAt !== null && millis(fields.membershipAccessEndsAt) <= now.getTime()) return 'inactive';
   if (!/^active$/i.test(String(fields.status || ''))) return 'inactive';
-  const validUntil = millis(fields.validUntil);
+  const validUntil = fields.membershipAccessEndsAt !== undefined && fields.membershipAccessEndsAt !== null
+    ? Math.min(millis(fields.validUntil) || Infinity, millis(fields.membershipAccessEndsAt)) : millis(fields.validUntil);
   if (validUntil && validUntil <= now.getTime()) return 'expired';
   const managedByJustgo = fields.renewalMethod === 'justgo' || fields.justgoSyncStatus === 'synced';
   if (managedByJustgo && millis(fields.lastJustgoSync) < clubYearStart(now).getTime()) return 'awaiting-renewal';

@@ -46,6 +46,10 @@ test('event export lists every attendee with the details a leader needs', () => 
   assert.equal(rows[1][4], '7', 'a child is reached through the parent phone');
   const legacy = eventAttendeeRows([orderReport('O2', { email: 'old@example.com', status: 'paid', items: [{ name: 'Course', category: 'EVENTS' }] })], () => '');
   assert.equal(legacy[0][2], 'Attendee details not recorded');
+  const revoked = orderReport('O3', { people: [{ firstName: 'Ann', lineIds: ['ticket'] }],
+    items: [{ lineId: 'ticket', name: 'Course', category: 'EVENTS', revokedAt: '2026-10-01' }] });
+  assert.deepEqual(eventAttendeeRows([revoked], () => ''), [], 'revoked attendees must not reappear as legacy fallback rows');
+  assert.deepEqual(eventAttendeeRows([{ ...revoked, people: [] }], () => ''), [], 'revoked legacy tickets are omitted too');
 });
 
 test('one membership report covers JustGo and website records', () => {

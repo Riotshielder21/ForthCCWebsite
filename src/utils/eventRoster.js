@@ -53,12 +53,12 @@ export const buildRoster = (productId, orders, members = new Map(), now = new Da
   .filter((order) => order.status === 'paid')
   .flatMap((order) => {
     const items = Array.isArray(order.items) ? order.items : [];
-    return items.filter((item) => item.id === productId).map((ticket) => {
+    return items.filter((item) => item.id === productId && !item.revokedAt).map((ticket) => {
       const person = (order.people || []).find((candidate) => (candidate.lineIds || []).includes(ticket.lineId));
       if (!person) return { name: 'Attendee details not recorded', orderRef: order.id, bookedBy: order.email || '', kit: KIT.needsHire, membership: '' };
       const member = members.get(person.membershipId) || {};
       const report = personReport(person, items, member);
-      const ownLineIds = (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId)?.id).filter(Boolean);
+      const ownLineIds = (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId && !item.revokedAt)?.id).filter(Boolean);
       const heldIds = [...currentPrivilegeIds(member.privileges, now), ...ownLineIds];
       return {
         name: report.name, kind: report.kind, dob: report.dob, phone: report.phone, email: report.email,

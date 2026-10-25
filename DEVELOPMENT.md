@@ -217,6 +217,30 @@ Website members whose membership ends this club year get one renewal email per c
 - **Scheduled job:** `config/fcc-renewals.service` and `.timer` run at 09:00 London on 1 and 15 February (a missed run catches up when the server starts) and `POST` to `/api/jobs/renewals` with `Authorization: Bearer $RENEWAL_JOB_TOKEN`. Set `RENEWAL_JOB_TOKEN` (at least 32 random characters) in the API environment and, with `RENEWAL_JOB_URL` (the API's `/api/jobs/renewals` URL), in the server's `.env`. Outside 1 February to 1 March the job does nothing; from 15 February it sends the reminder round.
 - **Testing locally:** the emulator seed adds the `TEST-HH-RENEWAL` household (`renewal@example.test`): a website family whose cover ends this club year, with Boathouse Access held by the parent. Start the API with `PUBLIC_SITE_URL` set to the Vite address so links point at it. Renewals open on 1 January, so as the local test admin send with the `X-Test-Now` header (honoured only with local emulators), e.g. `POST /api/admin/renewals/send` with body `{"membershipId":"test-renewal-parent"}` and `X-Test-Now: 2027-01-05T12:00:00Z`. The email, with its link, is in `testMail` (`kind: renewal`). Opening the link before 1 January still fills the basket, but checkout for next year is refused until then. Reseeding clears the sent flag.
 
+## Boathouse Access and Purchased Item Actions
+
+The private boathouse settings hold separate gate, alarm and lockbox codes with optional notes. All three codes are required when saving; older single-code settings are read as the gate code. Changing any code increments one shared version and emails all three codes to every member with recorded key access. Notes alone do not increment the version. Saving unchanged settings retries unsuccessful deliveries; successful recipients skip that version, and a short delivery lease prevents concurrent broadcasts sending duplicates.
+
+Key hire purchases and volunteer induction grant key access on the member record. Deactivating a volunteer does not remove their key access. In a member's report details, admins can grant/restore or revoke key access with a required reason. Explicit revocation overrides purchases and induction until an admin restores access. Revocation cannot retract already disclosed physical codes: rotate the shared codes when necessary.
+
+Paid order and event report details expose actions for each purchased line:
+
+- **Revoke item:** removes its entitlement, stops the matching future monthly payments, releases its ticket/merchandise stock or disables an unused voucher. Key hire revocation also revokes the holder's key access.
+- **Refund:** issues a real Stripe refund in integer pence against the selected checkout or attributable subscription payment, bounded by the item's allocation and the charge's remaining balance. Refund alone leaves access and future billing unchanged; select the separate revoke option to stop them too.
+- Every action requires a reason and records the admin, timestamp and operation ID in `adminItemAudit`. Orders, original totals and purchase lines remain intact with refund/revocation history. Pending Stripe refunds reserve their amounts; a pending status is not confirmation that funds have reached the customer.
+
+Uncertain Stripe responses keep a persisted unfinished action. Use **Refund / retry unfinished action** on the order and retry the exact recorded request; never create a replacement refund. Stripe idempotency keys and refund metadata reconcile lost responses. The order cannot be deleted while an action is unfinished. Legacy person-level entitlements without line IDs, imported memberships without saved pre-purchase coverage, unfinished monthly setup and used/reserved vouchers require staff reconciliation rather than guessing. Multi-payment invoices also require review in Stripe. Membership revocation preserves reconstructable independent cover and marks JustGo for staff review; it does not automatically delete a JustGo membership.
+
+Refunds use the existing server Stripe write credentials and test-mode restriction; this does not enable live Stripe writes. Payment/invoice/charge/refund read access and refund write permission are required. External Stripe adjustments must still be reviewed against the item allocation; website history only records refunds initiated here.
+
+Run isolated integration checks against the existing local emulators (Stripe and email are mocked; no real refund is issued):
+
+```bash
+LOCAL_FIREBASE_EMULATORS=true GCLOUD_PROJECT=demo-fcc-item-action-tests \
+FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
+FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199 node scripts/test-item-actions.js
+```
+
 ## Live Mode (`WEBSITE_ISLIVE`)
 
 `WEBSITE_ISLIVE` tells the API whether the site holds real customers' data. It defaults to false. Set it with the `WEBSITE_ISLIVE` GitHub secret (the deploy workflow passes it to Cloud Run) and locally in `.env`.
@@ -240,7 +264,7 @@ Before switching to live:
 
 - Write and publish the privacy notice, data retention policy and first aid and safety statement, and confirm the disclaimer and photo consent wording.
 - Decide retention periods and long-term statistics together (see `TODO.md`), and finish the outstanding items in the security review there, including analytics consent.
-- Refunds still remove the order record until refunds are recorded as a status (see `TODO.md`); do not refund by deleting once live.
+- Use the purchased-item refund/revoke actions rather than deleting an order to refund it; keep the original financial history.
 - Replace the Stripe test keys with live ones; checkout currently refuses anything but test keys.
 - Create Secret Manager secrets and grant the Cloud Run service account `Secret Manager Secret Accessor` on each; the deploy maps them to the API. Until set, deletion and subscription scheduling are refused:
   - `audit-lookup-secret` → `AUDIT_LOOKUP_SECRET`: a long random value (`openssl rand -hex 32`). Never change it without migrating existing audit lookups.

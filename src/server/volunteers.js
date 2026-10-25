@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import { Timestamp } from 'firebase-admin/firestore';
-import { validateListSubmission, sheetCell, matchesVolunteer, boathouseCodeDecision, VOLUNTEER_LIST } from '../utils/lists.js';
-import { BOATHOUSE_ACCESS_POINTS, boathouseAccessFromSettings } from '../utils/boathouse.js';
+import { validateListSubmission, sheetCell, matchesVolunteer, VOLUNTEER_LIST } from '../utils/lists.js';
 import { membershipActivity } from '../utils/membership.js';
 import { checkSummary, checksManagedByJustgo } from '../utils/safeguarding.js';
 import { rateLimit } from './rateLimit.js';
@@ -11,7 +10,7 @@ import { needsRenewal } from '../utils/renewals.js';
 
 
 /** Public forms, yearly volunteer membership entitlements and privately emailed boathouse access codes. */
-export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail, loadCatalogue, requestNow = () => new Date() }) => {
+export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail, loadCatalogue, settleKeyAccess, requestNow = () => new Date() }) => {
   const lists = () => db().collection('lists');
   const signupYear = (signup) => Number.isInteger(signup.clubYear) ? signup.clubYear : clubYearOf(signup.createdAt?.toDate() || new Date());
   const benefitsReference = () => db().collection('settings').doc('volunteerBenefits');
@@ -254,50 +253,18 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
 
   const boathouseCode = async () => (await db().collection('settings').doc('boathouseCode').get()).data() || {};
 
-  /** Emails the current boathouse access codes to an active volunteer who has not had this version yet. */
+  /** Sign-ups share the member's key-access delivery record, preventing duplicate emails. */
   const settleBoathouseCode = async (signupReference, current = null) => {
     const signup = (await signupReference.get()).data();
     if (!signup || signup.listType !== VOLUNTEER_LIST) return 'not-volunteer';
-    const code = current || await boathouseCode();
-    const access = boathouseAccessFromSettings(code);
-    const ready = { inducted: signup.inducted === true, active: signup.active === true, codeVersion: code.version || 0, sentVersion: signup.boathouseCodeVersion || 0 };
-    // Membership is checked last because it can call Stripe.
-    const withoutMembership = boathouseCodeDecision({ ...ready, memberActive: true });
-    if (withoutMembership !== 'send') return withoutMembership;
-    const memberActive = await memberIsActive(await linkVolunteerMember(signupReference, signup));
-    const decision = boathouseCodeDecision({ ...ready, memberActive });
-    if (decision !== 'send') return decision;
-    try {
-      const emailSent = await sendEmail({
-        to: signup.email, subject: 'Forth Canoe Club boathouse code',
-        body: [`Hi ${signup.name},`, '',
-          ready.sentVersion ? 'The boathouse codes have changed. As an active volunteer, here are the current codes:' : 'As an active volunteer, here are the current boathouse codes:', '',
-          ...BOATHOUSE_ACCESS_POINTS.flatMap(({ key, label }) => [
-            `${label} code: ${access[`${key}Code`]}`,
-            ...(access[`${key}Note`] ? [`  ${access[`${key}Note`]}`] : []),
-            ''
-          ]),
-          'Please keep it to yourself and do not write it down where others can see it.', '',
-          'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n'),
-        record: { kind: 'boathouse-code', signupId: signupReference.id, version: code.version }
-      });
-      if (!emailSent) return 'not-sent';
-      await signupReference.update({ boathouseCodeVersion: code.version, boathouseCodeSentAt: Timestamp.now() });
-      return 'sent';
-    } catch (error) {
-      console.error('Boathouse code not emailed to a volunteer:', error.message);
-      return 'not-sent';
+    const member = await linkVolunteerMember(signupReference, signup);
+    if (!member?.exists) return 'not-active';
+    const outcome = await settleKeyAccess(member.ref, current);
+    if (outcome === 'sent' || outcome === 'up-to-date') {
+      const memberData = (await member.ref.get()).data();
+      await signupReference.update({ boathouseCodeVersion: memberData.keyAccess.sentVersion });
     }
-  };
-
-  /** After the code changes: every active volunteer who has not had this version is emailed it. */
-  const notifyBoathouseCode = async () => {
-    if (!db()) return { sent: 0, failed: 0 };
-    const code = await boathouseCode();
-    const snapshot = await lists().where('listType', '==', VOLUNTEER_LIST).where('active', '==', true).limit(500).get();
-    const outcomes = [];
-    for (const document of snapshot.docs) outcomes.push(await settleBoathouseCode(document.ref, code));
-    return { sent: outcomes.filter((outcome) => outcome === 'sent').length, failed: outcomes.filter((outcome) => outcome === 'not-sent').length };
+    return outcome;
   };
 
   /** Writes induction and yearly benefits onto the member, independently of anything they have already bought. */
@@ -311,7 +278,10 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
         inducted: volunteer.inducted === true || signup.inducted === true,
         years: { ...volunteer.years, [year]: { tier: signup.tier || '', active: signup.active === true && signup.inducted === true,
           benefits, freeProductIds: tier?.freeProductIds || [], signupId: signupReference.id } } };
-      if (JSON.stringify(next) !== JSON.stringify(volunteer)) transaction.update(memberDocument.ref, { volunteer: next });
+      if (JSON.stringify(next) !== JSON.stringify(volunteer) || (next.inducted && !current.keyAccess?.grantedAt)) {
+        transaction.update(memberDocument.ref, { volunteer: next,
+          ...(next.inducted && !current.keyAccess?.grantedAt ? { 'keyAccess.grantedAt': Timestamp.now(), 'keyAccess.source': 'volunteer-induction' } : {}) });
+      }
     });
   };
 
@@ -404,7 +374,7 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       const memberIds = [...new Set(snapshot.docs.map((document) => document.data().memberId).filter(Boolean))];
       const members = memberIds.length
         ? new Map((await db().getAll(...memberIds.map((id) => db().collection('memberships').doc(id)))).filter((document) => document.exists)
-          .map((document) => [document.id, { ...toMembershipRecord(document), justgoSyncStatus: document.data().justgoSyncStatus,
+          .map((document) => [document.id, { ...toMembershipRecord(document), keyAccess: document.data().keyAccess, justgoSyncStatus: document.data().justgoSyncStatus,
             checks: checkSummary(document.data().checks), volunteer: document.data().volunteer }]))
         : new Map();
       const volunteers = snapshot.docs.map((document) => {
@@ -414,10 +384,10 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
           id: document.id, name: data.name, email: data.email, items: data.items || [], notes: data.notes || '',
           memberId: member ? data.memberId : '', memberStatus: member ? membershipActivity(member) : 'not a member',
           inducted: data.inducted === true, codeIssued: Boolean(data.discountCode), codeEmailed: data.codeEmailed === true,
-          active: data.active === true, boathouseCodeCurrent: Boolean(codeVersion) && data.boathouseCodeVersion === codeVersion,
+          active: data.active === true, boathouseCodeCurrent: Boolean(codeVersion) && member?.keyAccess?.sentVersion === codeVersion && !member.keyAccess.revokedAt,
           tier: data.tier || '', clubYear: signupYear(data),
           benefitsEmailPending: data.active === true && Boolean(data.tier) && data.benefitsEmailedFor !== `${signupYear(data)}:${data.tier}`,
-          boathouseEmailPending: data.active === true && data.inducted === true && Boolean(codeVersion) && data.boathouseCodeVersion !== codeVersion,
+          boathouseEmailPending: data.inducted === true && !member?.keyAccess?.revokedAt && Boolean(codeVersion) && member?.keyAccess?.sentVersion !== codeVersion,
           checksSynced: checksManagedByJustgo(member),
           checks: member?.checks || null,
           createdAt: data.createdAt?.toMillis() || 0
@@ -473,5 +443,5 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
     }
   };
 
-  return { settleVolunteersFor, notifyBoathouseCode, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals };
+  return { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals };
 };

@@ -35,7 +35,8 @@ export const needsRenewal = (member, now = new Date()) => {
   const clubYear = clubYearOf(now);
   const end = clubYearDates(clubYear).end.getTime();
   const validUntil = millis(member?.validUntil);
-  return /^active$/i.test(String(member?.status || '')) && member.renewalMethod === 'website' && member.contactOnly !== true
+  return !(member?.membershipAccessEndsAt !== undefined && millis(member.membershipAccessEndsAt) <= now.getTime())
+    && /^active$/i.test(String(member?.status || '')) && member.renewalMethod === 'website' && member.contactOnly !== true
     && validUntil > now.getTime() && validUntil <= end + 24 * 60 * 60 * 1000
     && !(member.clubYears || []).map(Number).includes(clubYear + 1);
 };

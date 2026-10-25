@@ -25,7 +25,7 @@
 ## Data model migration (approved, remaining work)
 
 1. **`membershipTerms`.** One document per person per club year (tier, start, end, order, source). `status` and `validUntil` stay on the member as the current term. Replaces `history[]` and `privileges[]`.
-2. **Orders.** Money in whole pence; subtotal, discount and discount code; refunds as a status (stock released) instead of deleting the order; top-level `membershipIds`; one receipt token; grouped fulfilment, Stripe and payment-failure fields; people reduced to references once the purchase is recorded; remove the legacy `receipt`.
+2. **Orders.** Money in whole pence; subtotal, discount and discount code; top-level `membershipIds`; one receipt token; grouped fulfilment, Stripe and payment-failure fields; people reduced to references once the purchase is recorded; remove the legacy `receipt`. Item refunds and separate revocation now retain the order and release stock only on revocation.
 3. **Other collections.** Remove `customers` (`lists` stays: it holds form submissions and volunteer induction state); discount codes get one `status`, a `type` and `sourceProductId`; products get `active` and `sortOrder`, with existing records backfilled for the implemented `pricingMode` and `allowMonthly` fields; the Stripe mirror gets `membershipIds` and drops copied names and emails; one audit log with a reason.
 4. Extend `scripts/migrate-schema.js` with a step for each remaining change above, tested against old-shape records, and take a Firestore export before running it with `--apply`.
 

@@ -5,6 +5,7 @@ import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { registerVolunteerRoutes } from '../src/server/volunteers.js';
 import { registerRenewalRoutes } from '../src/server/renewals.js';
 import { registerMemberCheckRoutes } from '../src/server/memberChecks.js';
+import { registerKeyAccessRoutes } from '../src/server/keyAccess.js';
 import { clubYearOf, clubYearDates } from '../src/utils/clubYear.js';
 import { PRODUCTS } from '../src/constants/products.js';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
@@ -22,9 +23,10 @@ const requireAdmin = async (req, res) => {
   return { uid: 'test-admin', email: 'admin@forthcanoeclub.co.uk' };
 };
 const sendEmail = async (message) => { sent.push(message); return true; };
+const { settleKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => db, sendEmail });
 const volunteers = registerVolunteerRoutes(app, { requireAdmin, db: () => db, sheets: () => null,
   toMembershipRecord: (document) => ({ ...document.data(), validUntil: document.data().validUntil.toMillis() }),
-  stripeSubscriptionIsActive: async () => true, sendEmail, loadCatalogue: async () => PRODUCTS, requestNow: now });
+  stripeSubscriptionIsActive: async () => true, settleKeyAccess, sendEmail, loadCatalogue: async () => PRODUCTS, requestNow: now });
 registerMemberCheckRoutes(app, { requireAdmin, db: () => db });
 process.env.RENEWAL_JOB_TOKEN = 'local-test-volunteer-job-token-0123456789';
 registerRenewalRoutes(app, { requireAdmin, db: () => db, loadCatalogue: async () => PRODUCTS, sendEmail,

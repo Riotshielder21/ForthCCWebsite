@@ -39,11 +39,11 @@ export default function BoathouseCodePanel({ adminUser }) {
       const result = await request({ method: 'POST', body: JSON.stringify(draft) });
       setSaved(result);
       setDraft(result);
-      const notice = result.notified?.error ? ' Active volunteers could not be emailed; save again to retry.'
+      const notice = result.notified?.error ? ' Key-access holders could not be emailed; save again to retry.'
         : result.notified?.sent || result.notified?.failed
-          ? ` Emailed to ${result.notified.sent} active volunteer${result.notified.sent === 1 ? '' : 's'}${result.notified.failed ? `; ${result.notified.failed} could not be emailed (save again to retry)` : ''}.`
+          ? ` Emailed to ${result.notified.sent} key-access holder${result.notified.sent === 1 ? '' : 's'}${result.notified.failed ? `; ${result.notified.failed} could not be emailed (save again to retry)` : ''}.`
           : '';
-      setMessage(result.changed ? `Boathouse access codes saved.${notice}` : 'Notes saved; the codes are unchanged.');
+      setMessage(`${result.changed ? 'Boathouse access codes saved.' : 'Notes saved; the codes are unchanged.'}${notice}`);
     } catch (saveError) {
       setError(saveError.message);
     } finally {
@@ -54,7 +54,7 @@ export default function BoathouseCodePanel({ adminUser }) {
   return (
     <form className="main_tile SpaceT6" onSubmit={save}>
       <div className="AdminListHeader"><div><span className="tile_eyebrow">Volunteering</span><h3 className="tile_heading_bold_2">Boathouse access codes</h3></div></div>
-      <p className="text_container SpaceB4">Codes are kept on the server and only shown to admins. Changing any code emails all three codes to every active volunteer (inducted, an active member, and ticked "Active" under Volunteer sign-ups).</p>
+      <p className="text_container SpaceB4">Codes are kept on the server and only shown to admins. Changing any code emails all three codes to everyone with key access, unless an admin has revoked their access. Induction adds key access to a volunteer's member record. Previously disclosed codes cannot be recalled: rotate the codes after revoking access.</p>
       {BOATHOUSE_ACCESS_POINTS.map(({ key, label }) => (
         <div key={key} className="SpaceB4">
           <h4 className="FormLabel">{label}</h4>

@@ -1194,7 +1194,7 @@ await test('active volunteers who are inducted members get the boathouse code on
   const untick = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: false } });
   assert.equal(untick.json.boathouseCode, 'not-active');
   await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { ...changedCodes, gateCode: `${current.gateCode}-new` } });
-  assert.equal((await codeMail(shared.volunteerSignup)).length, 2, 'inactive volunteers are not emailed new codes');
+  assert.equal((await codeMail(shared.volunteerSignup)).length, 3, 'deactivation preserves key access until an admin explicitly revokes it');
 });
 
 await test('an active volunteer gets the boathouse code when checked in, or when they join after induction', async () => {

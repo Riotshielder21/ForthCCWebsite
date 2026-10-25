@@ -43,11 +43,11 @@ export const registerBoathouseRoutes = (app, { requireAdmin, db, onCodeChanged =
         transaction.set(reference(), next);
         return { ...next, changed };
       });
-      // A changed code sends all three codes to active volunteers; failures are retried on the next save or "Active" tick.
+      // Every save also retries holders who have not received this version; successful recipients are skipped.
       let notified = { sent: 0, failed: 0 };
-      if (saved.changed) {
+      if (saved.version) {
         try { notified = await onCodeChanged(); }
-        catch (notifyError) { console.error('Boathouse code saved but volunteers not notified:', notifyError.message); notified = { sent: 0, failed: 0, error: true }; }
+        catch (notifyError) { console.error('Boathouse code saved but key holders not notified:', notifyError.message); notified = { sent: 0, failed: 0, error: true }; }
       }
       res.json({ success: true, changed: saved.changed, notified, ...publicView(saved) });
     } catch (error) {
