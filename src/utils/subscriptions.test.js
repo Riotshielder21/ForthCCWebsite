@@ -32,6 +32,15 @@ test('delayed monthly setup backdates once, then applies the cancellation separa
   ]);
 });
 
+test('scheduled volunteer cancellations leave the paid period intact and stop counting after it ends', () => {
+  const record = { items: [
+    { lineId: 'finished', status: 'active', monthlyAmount: 25, cancelScheduledAt: '2020-01-01T00:00:00Z' },
+    { lineId: 'paid', status: 'active', monthlyAmount: 10, cancelScheduledAt: '2099-01-01T00:00:00Z' }
+  ] };
+  assert.deepEqual(activeSubscriptionItems(record).map((item) => item.lineId), ['paid']);
+  assert.equal(monthlyTotal(record), 10);
+});
+
 const person = (membershipId, lineIds, extra = {}) => ({ id: membershipId, membershipId, firstName: membershipId, lastName: 'Test', lineIds, ...extra });
 
 test('each line records which members receive it', () => {

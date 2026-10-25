@@ -4,7 +4,7 @@ import {
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
-import { calculateCart, expandClubYearLines } from './utils/pricing';
+import { calculateCart, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson } from './utils/checkout';
 import CheckoutPage from './pages/CheckoutPage';
@@ -29,6 +29,7 @@ import { apiUrl } from './utils/api';
 import { PRODUCTS } from './constants/products';
 import { PAGE_CONTENT } from './constants/pageContent';
 import './index.css';
+import { applyVolunteerBenefits } from './utils/volunteering';
 
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -52,6 +53,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(() => {
     if (window.location.pathname === '/admin/reports') return 'admin-reports';
     if (window.location.pathname === '/admin') return 'admin';
+    if (window.location.pathname === '/volunteering') return 'volunteering';
     if (window.location.pathname.startsWith('/order/')) return 'order-lookup';
     if (window.location.pathname === '/payment-success') return 'payment-success';
     const previewPage = window.location.pathname.startsWith('/_preview/')
@@ -90,6 +92,7 @@ export default function App() {
   const [focusPersonId, setFocusPersonId] = useState(null);
   const pageBeforeCheckout = useRef('membership');
   const [people, setPeople] = useState(initialDraft?.people || []);
+  const [volunteerTiers, setVolunteerTiers] = useState([]);
   const [checkoutErrors, setCheckoutErrors] = useState([]);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
 
@@ -300,7 +303,21 @@ export default function App() {
   };
 
   // A line for both club years is priced as this year's line plus next year's.
-  const calculations = useMemo(() => calculateCart(expandClubYearLines(cart), annualBilling, activePromo), [cart, annualBilling, activePromo]);
+  useEffect(() => {
+    fetch(apiUrl('/api/volunteer-benefits')).then(async (response) => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not load volunteer pricing.');
+      setVolunteerTiers(result.tiers);
+    }).catch((error) => setCheckoutError(error.message));
+  }, []);
+  const calculations = useMemo(() => {
+    const expanded = expandClubYearLines(cart);
+    const holders = expandPeopleLines(people, cart).map((person) => ({ ...person, membershipId: person.id }));
+    const records = new Map(people.filter((person) => person.volunteerPreview
+      && ['firstName', 'lastName', 'dob'].every((key) => person[key] === person.volunteerPreview[key]))
+      .map((person) => [person.id, person.volunteerPreview]));
+    return calculateCart(applyVolunteerBenefits(expanded, holders, records, volunteerTiers), annualBilling, activePromo);
+  }, [cart, annualBilling, activePromo, people, volunteerTiers]);
 
   const cartGroups = useMemo(() => {
     const groups = new Map();
@@ -383,7 +400,7 @@ export default function App() {
       case 'disciplines':
         return <DisciplinesPage />;
       case 'volunteering':
-        return <VolunteeringPage />;
+        return <VolunteeringPage products={products} />;
       case 'about':
         return <AboutPage />;
       case 'contact-us':

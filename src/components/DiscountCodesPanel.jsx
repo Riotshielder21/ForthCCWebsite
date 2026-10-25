@@ -186,7 +186,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
 
       {(codes.length > 0 || vouchers.length > 0) && (
         <div style={{ overflowX: 'auto' }}>
-          <table className="text_container SpaceT4" style={{ width: '100%', textAlign: 'left' }}>
+          <table className="text_container SpaceT4 DiscountCodesTable" style={{ width: '100%', textAlign: 'left' }}>
             <thead><tr><th>Code</th><th>Description</th><th>Discount</th><th>Applies to</th><th>Status</th><th>Expires</th><th /></tr></thead>
             <tbody>
               {vouchers.map((row) => (
@@ -208,10 +208,10 @@ export default function DiscountCodesPanel({ adminUser, products }) {
                   <td>{code.productIds.length ? code.productIds.map(nameFor).join(', ') : 'Everything except membership'}</td>
                   <td>{code.used ? 'used' : code.expired ? 'expired' : code.active ? 'active' : 'disabled'}{code.singleUse ? ' (single use)' : ''}</td>
                   <td>{code.expiresAt ? new Date(code.expiresAt).toLocaleDateString('en-GB') : ''}</td>
-                  <td>
-                    <button type="button" className="PrimaryActionButtonCompact" onClick={() => startEdit(code)}>Edit</button>{' '}
+                  <td><div className="DiscountCodeActions">
+                    <button type="button" className="PrimaryActionButtonCompact" onClick={() => startEdit(code)}>Edit</button>
                     <button type="button" className="PrimaryActionButtonCompact" onClick={() => toggleActive(code)}>{code.active ? 'Disable' : 'Enable'}</button>
-                  </td>
+                  </div></td>
                 </tr>
               ))}
             </tbody>

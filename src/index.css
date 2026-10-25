@@ -1330,6 +1330,9 @@
   .ReportsTable td { padding: 12px; border-bottom: 1px solid #e0e7ec; vertical-align: top; min-width: 100px; max-width: 240px; overflow-wrap: anywhere; }
   .ReportsTable tbody tr:nth-child(even) { background: #fff; }
   .ReportsRowActions { display: flex; gap: 6px; }
+  .DiscountCodesTable td, .DiscountCodesTable th { padding: 10px 8px; vertical-align: middle; }
+  .DiscountCodesTable tbody tr { border-top: 1px solid rgb(15 23 42 / 0.1); }
+  .DiscountCodeActions { display: flex; gap: 6px; flex-wrap: nowrap; }
   .ReportWarning { display: inline-block; color: #a24614; background: #fff3e6; padding: 3px 6px; font-size: 11px; margin-top: 6px; }
   .ReportsModalBackdrop { position: fixed; inset: 0; z-index: 90; background: #0007; display: grid; place-items: center; padding: 16px; }
   .ReportsDialog { background: #fff; border-radius: 8px; padding: 24px; width: min(640px, 100%); max-height: 90dvh; overflow-y: auto; }

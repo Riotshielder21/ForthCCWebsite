@@ -65,6 +65,8 @@ jobs:
             FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account-json:latest
             STRIPE_SECRET_KEY=stripe-test-secret-key:latest
             STRIPE_WEBHOOK_SECRET=stripe-test-webhook-secret:latest
+            AUDIT_LOOKUP_SECRET=audit-lookup-secret:latest
+            STRIPE_SUBSCRIPTION_ADMIN_KEY=stripe-subscription-admin-key:latest
 
       - name: Build website
         run: |

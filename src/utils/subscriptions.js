@@ -40,7 +40,11 @@ export const stripeItemLines = (subscription, lineIds) => {
   return byLine;
 };
 
-export const activeSubscriptionItems = (subscription) => (subscription.items || []).filter((item) => item.status === 'active');
+export const activeSubscriptionItems = (subscription) => (subscription.items || []).filter((item) => {
+  const scheduled = item.cancelScheduledAt;
+  const end = scheduled?.toMillis ? scheduled.toMillis() : scheduled ? new Date(scheduled).getTime() : 0;
+  return item.status === 'active' && !(end && end <= Date.now());
+});
 
 export const monthlyTotal = (subscription) => Math.round(activeSubscriptionItems(subscription)
   .reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0) * 100) / 100;

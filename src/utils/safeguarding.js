@@ -1,6 +1,9 @@
 /** PVG (Protecting Vulnerable Groups) and safeguarding training records, kept on a membership as expiry dates. */
 export const CHECK_TYPES = { pvg: 'PVG', safeguarding: 'Safeguarding' };
 export const DUE_DAYS = 90;
+
+export const checksManagedByJustgo = (member) => member?.justgoSyncStatus === 'synced' || Boolean(member?.lastJustgoSync)
+  || Object.keys(CHECK_TYPES).some((type) => member?.checks?.[type]?.source === 'justgo');
 export const CHECK_STATUS_LABELS = { none: 'Not recorded', active: 'Active', due: 'Due to expire', expired: 'Expired' };
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -38,7 +41,8 @@ export const checkLabel = (expiresOn, now = new Date()) => {
 /** Each check's expiry date and status, from a membership's `checks` field. */
 export const checkSummary = (checks = {}, now = new Date()) => Object.fromEntries(Object.keys(CHECK_TYPES).map((type) => {
   const expiresOn = parseDate(checks?.[type]?.expiresOn) ? checks[type].expiresOn : '';
-  return [type, { expiresOn, status: checkStatus(expiresOn, now) }];
+  return [type, { expiresOn, status: checks?.[type]?.source === 'justgo' ? checks[type].status || 'none' : checkStatus(expiresOn, now),
+    ...(checks?.[type]?.source === 'justgo' ? { source: 'justgo', label: checks[type].label || 'Not supplied by JustGo' } : {}) }];
 }));
 
 /** An admin update: one or both checks, each a YYYY-MM-DD expiry date or '' to clear it. */

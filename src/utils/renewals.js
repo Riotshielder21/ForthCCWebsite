@@ -93,7 +93,7 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character
  * The renewal email for one contact address: who is renewing, what the link puts in the basket, and when it expires.
  * The wording is a template until the club agrees the final text (see TODO.md).
  */
-export const renewalEmail = ({ people, items, catalog, renewalYear, link, expiresAt, reminder = false }) => {
+export const renewalEmail = ({ people, items, catalog, renewalYear, link, expiresAt, reminder = false, volunteering = { body: '', html: '' } }) => {
   const year = `${renewalYear}/${String((renewalYear + 1) % 100).padStart(2, '0')}`;
   const names = people.map((person) => [person.firstName, person.lastName].filter(Boolean).join(' ')).filter(Boolean);
   const lines = items.map((item) => {
@@ -104,10 +104,10 @@ export const renewalEmail = ({ people, items, catalog, renewalYear, link, expire
   const subject = `${reminder ? 'Reminder: renew' : 'Renew'} your Forth Canoe Club membership for ${year}`;
   const intro = `Club year ${year} starts on 1 March. Renew ${names.join(', ') || 'your membership'} using the link below. It fills your basket with:`;
   const after = `Remove anything you no longer want, or add more, before paying. Nothing is charged until you check out. The link works until ${expiry}. Renewing through JustGo instead? Ignore this email.`;
-  const body = `${intro}\n\n${lines.map((line) => `- ${line}`).join('\n')}\n\n${link}\n\n${after}\n\nForth Canoe Club`;
+  const body = `${intro}\n\n${lines.map((line) => `- ${line}`).join('\n')}\n\n${link}\n\n${after}\n\n${volunteering.body}\n\nForth Canoe Club`;
   const html = `<!doctype html><html lang="en"><body style="font-family:ui-sans-serif,system-ui,Arial,sans-serif;color:#002147;font-size:14px;line-height:1.6">
 <p>${escapeHtml(intro)}</p><ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>
 <p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;background:#002147;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:bold">Renew for ${escapeHtml(year)}</a></p>
-<p>${escapeHtml(after)}</p><p>Forth Canoe Club</p></body></html>`;
+<p>${escapeHtml(after)}</p>${volunteering.html}<p>Forth Canoe Club</p></body></html>`;
   return { subject, body, html };
 };

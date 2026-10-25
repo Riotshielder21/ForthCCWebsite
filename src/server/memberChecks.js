@@ -1,5 +1,5 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { validateCheckUpdate, checkSummary } from '../utils/safeguarding.js';
+import { validateCheckUpdate, checkSummary, checksManagedByJustgo } from '../utils/safeguarding.js';
 import { rateLimit } from './rateLimit.js';
 
 /** Admins record when a member's PVG and safeguarding training expire; the status is worked out from the date when read. */
@@ -13,7 +13,9 @@ export const registerMemberCheckRoutes = (app, { requireAdmin, db }) => {
       const { error, value } = validateCheckUpdate(req.body);
       if (error) return res.status(400).json({ error });
       const reference = db().collection('memberships').doc(req.params.id);
-      if (!(await reference.get()).exists) return res.status(404).json({ error: 'Membership not found.' });
+      const member = await reference.get();
+      if (!member.exists) return res.status(404).json({ error: 'Membership not found.' });
+      if (checksManagedByJustgo(member.data())) return res.status(409).json({ error: 'PVG and safeguarding are managed in JustGo for this member.' });
       const updatedBy = admin.email || admin.uid;
       await reference.update(Object.fromEntries(Object.entries(value).map(([type, expiresOn]) => [`checks.${type}`,
         expiresOn ? { expiresOn, updatedAt: Timestamp.now(), updatedBy } : FieldValue.delete()])));

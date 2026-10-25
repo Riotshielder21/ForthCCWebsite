@@ -1,38 +1,28 @@
-import React from 'react';
-import FormComponent from '../components/FormComponent';
+import React, { useEffect, useState } from 'react';
+import VolunteerForm from '../components/VolunteerForm';
+import { apiUrl } from '../utils/api';
 import { usePageContent } from '../utils/PageContentContext';
 import EditablePage from '../components/EditablePage';
 
-const VOLUNTEER_QUESTIONS = {
-  'Equipment Needed': [
-    { label: 'What equipment do you need?', placeholder: 'e.g. 2 paddles, buoyancy aids' },
-    { label: 'What date do you need it by?', placeholder: 'e.g. 14 March' }
-  ],
-  'Volunteer Sign-ups': [
-    { label: 'Which activities would you like to help with?', multiline: true, placeholder: 'e.g. coaching, events, maintenance, fundraising' },
-    { label: 'When are you available?', placeholder: 'e.g. Thursday evenings' }
-  ],
-  'Event Participants': [
-    { label: 'Which event?', placeholder: 'Event name' },
-    { label: 'How many people are attending?', placeholder: 'e.g. 3' }
-  ],
-  'Maintenance Tasks': [
-    { label: 'What needs doing?', multiline: true },
-    { label: 'Where is it?', placeholder: 'e.g. boathouse, trailer' }
-  ],
-  Other: [
-    { label: 'Tell us what you would like to add', multiline: true }
-  ]
-};
-
-const VOLUNTEER_CATEGORIES = Object.keys(VOLUNTEER_QUESTIONS);
-
-const handleVolunteerSuccess = (result, formData) => formData.category === 'Volunteer Sign-ups'
-  ? 'Thank you for volunteering! We will be in touch about an induction. Members are emailed a thank-you discount code once their induction is complete.'
-  : 'Submitted successfully!';
-
-export default function VolunteeringPage() {
+export default function VolunteeringPage({ products = [] }) {
   const copy = usePageContent('volunteering');
+  const [tiers, setTiers] = useState([]);
+  const [renewal, setRenewal] = useState(null);
+  const [error, setError] = useState('');
+  const [token] = useState(() => new URLSearchParams(window.location.search).get('volunteerRenew') || '');
+  const [change] = useState(() => new URLSearchParams(window.location.search).has('change'));
+  useEffect(() => {
+    if (token) window.history.replaceState({}, '', window.location.pathname);
+    const request = async (path) => {
+      const response = await fetch(apiUrl(path));
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not load volunteering.');
+      return result;
+    };
+    Promise.all([request('/api/volunteer-benefits'), token ? request(`/api/volunteers/renew/${token}`) : Promise.resolve(null)])
+      .then(([benefits, renewal]) => { setTiers(benefits.tiers); setRenewal(renewal ? { ...renewal, change } : null); })
+      .catch((error) => setError(error.message));
+  }, [token, change]);
   const opportunities = copy.waysList.split('\n').map((line) => {
     const [title, ...description] = line.split('|').map((part) => part.trim());
     return { title, description: description.join(' | ') };
@@ -77,16 +67,9 @@ export default function VolunteeringPage() {
       </div>
 
       <div className="SectionBottom">
-        <FormComponent
-          title={copy.formTitle}
-          description={copy.formDescription}
-          categories={VOLUNTEER_CATEGORIES}
-          categoryLabel="List Type"
-          questions={VOLUNTEER_QUESTIONS}
-          submitLabel="Submit"
-          endpoint="/api/lists"
-          onSuccess={handleVolunteerSuccess}
-        />
+        {error && <p className="StatusTextError" role="alert">{error}</p>}
+        {tiers.length > 0 && (!token || renewal) && <VolunteerForm tiers={tiers} products={products} renewal={renewal} token={token}
+          title={copy.formTitle} description={copy.formDescription} />}
       </div>
     </EditablePage>
   );

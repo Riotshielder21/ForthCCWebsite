@@ -79,3 +79,6 @@ Feature WishList
  - Import existing members (if before March)
  - Import all current subscribers, and probably transition away from bookwhen strip setup 
  - Import all current payments for boathire, and keyhire and the current volunteer list.
+
+## For Website
+- Make all domain token / sanitisation and fix name fields where possible, a file and secrets foir a repo to allow forking for commercialisation

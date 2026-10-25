@@ -183,3 +183,35 @@ test('the member register shows PVG and safeguarding status with expiry dates', 
   assert.equal(record.safeguarding, 'Expired (01/01/2026)');
   assert.equal(membershipReport('pvg-2', {}, now).pvg, 'Not recorded');
 });
+
+test('report filters narrow purchases, events, and options', async () => {
+  const { purchaseMatches, reportOptions, reportEventNames, onlyEvent } = await import('./adminReports.js');
+  const membership = { items: [{ category: 'MEMBERSHIP' }], subscriptionWarning: true };
+  const shop = { items: [{ category: 'MERCHANDISE' }, { category: 'SUBSCRIPTIONS' }] };
+  assert.equal(purchaseMatches(membership, 'all'), true);
+  assert.equal(purchaseMatches(membership, 'subscriptions'), true);
+  assert.equal(purchaseMatches(shop, 'subscriptions'), true);
+  assert.equal(purchaseMatches(shop, 'merchandise'), true);
+  assert.equal(purchaseMatches(shop, 'membership'), false);
+  assert.equal(purchaseMatches({ items: [{ category: 'MERCHANDISE' }] }, 'subscriptions'), false);
+  assert.deepEqual(reportOptions([{ p: ['b', 'a'] }, { p: ['a', ''] }], (record) => record.p), ['a', 'b']);
+
+  const records = [
+    { id: 'o1', total: 30, items: [{ name: 'Pool session', price: 10 }, { name: 'Intro course', price: 20 }],
+      people: [{ name: 'Ann', events: [{ name: 'Pool session' }] }, { name: 'Bob', events: [{ name: 'Intro course' }] }] },
+    { id: 'o2', total: 20, items: [{ name: 'Intro course', price: 20 }], people: [] }
+  ];
+  assert.deepEqual(reportEventNames(records), ['Intro course', 'Pool session']);
+  assert.equal(onlyEvent(records, 'all'), records);
+  const pool = onlyEvent(records, 'Pool session');
+  assert.deepEqual(pool.map((record) => [record.id, record.total, record.people.map((person) => person.name)]), [['o1', 10, ['Ann']]]);
+  assert.equal(onlyEvent(records, 'Intro course').length, 2);
+});
+
+
+test('JustGo check statuses remain authoritative while a future membership awaits upload', () => {
+  const fields = { justgoSyncStatus: 'pending', lastJustgoSync: 1, checks: { pvg: { source: 'justgo', label: 'Current' }, safeguarding: { expiresOn: '2030-01-01' } } };
+  const report = membershipReport('pending-volunteer', fields);
+  assert.equal(report.pvg, 'Current');
+  assert.equal(report.safeguarding, 'Not supplied by JustGo');
+});

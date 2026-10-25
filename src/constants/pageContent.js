@@ -51,7 +51,7 @@ export const PAGE_CONTENT = {
       quick2Action: field('Membership tile button', 'Membership'),
       quick3Eyebrow: field('Volunteer tile label', 'Get Involved'),
       quick3Title: field('Volunteer tile heading', 'Volunteer'),
-      quick3Body: field('Volunteer tile text', 'Our club runs on volunteers. Help with coaching, events, maintenance or administration and earn discount codes for your membership.', true),
+      quick3Body: field('Volunteer tile text', 'Our club runs on volunteers. Help with coaching, events, maintenance or administration and receive benefits on your membership profile after induction.', true),
       quick3Action: field('Volunteer tile button', 'Volunteering'),
       supportersEyebrow: field('Supporters label', 'Thank You'),
       supportersTitle: field('Supporters heading', 'Massive Thank You to All Our Access Project & Club Supporters'),
@@ -135,11 +135,11 @@ export const PAGE_CONTENT = {
       tier2Body: field('40+ hour tier text', 'Fixed £10/month unlimited subscriptions + free boat & equipment hire + free key hire.', true),
       tier3Eyebrow: field('60+ hour tier label', '60+ hours'),
       tier3Title: field('60+ hour tier heading', 'Core Team'),
-      tier3Body: field('60+ hour tier text', 'Free equipment hire, subscriptions, key hire, + 25% discount on coaching courses.', true),
+      tier3Body: field('60+ hour tier text', 'Free equipment hire, subscriptions and key hire. Ask the club about 25% off CVC or camping paid for at our Tully weekend trip.', true),
       waysTitle: field('Ways to Volunteer heading', 'Ways to Volunteer'),
       waysList: field('Volunteer opportunities (one per line: title | description)', 'Canal Festival | The most important community event of the year\nMaintenance | Painting, cleaning, weeding, and building at the clubhouse\nCoaching | Shadowing coaches, helping at pool and summer sessions, running beginner classes\nKey Holding | Open the club for club nights and open nights\nEquipment Repair | Plastic welding, carbon repairs, wooden canoe seats, airbag fixes\nFundraising | Grant applications, baking stalls, community events\nAccess Project | Join our subcommittee working on accessibility improvements', true),
       formTitle: field('Volunteer form heading', 'Get Involved'),
-      formDescription: field('Volunteer form description', 'Sign up for volunteering opportunities or log equipment needs.', true)
+      formDescription: field('Volunteer form description', 'Choose your hours for the club year. Your benefits are added to your membership once you are inducted.', true)
     }
   },
   about: {

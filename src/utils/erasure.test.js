@@ -9,6 +9,9 @@ test('an erasure request must match name, date of birth and email, and the membe
   assert.equal(matchesIdentity(member, request), true);
   assert.equal(matchesIdentity(member, { ...request, affiliationNumber: 'ps1' }), true);
   assert.equal(matchesIdentity(member, { ...request, affiliationNumber: 'PS2' }), false);
+  assert.equal(matchesIdentity(member, { ...request, affiliationNumber: 'FCC-ps1' }), true);
+  assert.equal(matchesIdentity({ ...member, id: 'M0007' }, { ...request, affiliationNumber: 'm0007' }), true);
+  assert.equal(matchesIdentity({ ...member, id: 'M0007' }, { ...request, affiliationNumber: 'M0008' }), false);
   assert.equal(matchesIdentity({ ...member, affiliationNumber: '' }, { ...request, affiliationNumber: 'PS2' }), true);
   assert.equal(matchesIdentity(member, { ...request, dob: '1990-01-03' }), false);
   assert.equal(matchesIdentity(member, { ...request, email: 'other@example.com' }), false);

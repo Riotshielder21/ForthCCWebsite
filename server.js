@@ -37,6 +37,9 @@ import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './s
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
+import { applyVolunteerBenefits, volunteerPrivileges } from './src/utils/volunteering.js';
+import { allocateMemberIds } from './src/utils/memberIds.js';
+import { volunteerCancellationPhases } from './src/utils/volunteerCancellation.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
 import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
 import { registerEventRosterRoutes } from './src/server/eventRosters.js';
@@ -65,6 +68,49 @@ const isValidEmail = (value) => {
   if (!domain || domain.length > 253) return false;
   const labels = domain.split('.');
   return labels.length > 1 && labels.every((label) => label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
+};
+
+const scheduleVolunteerCancellation = async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!adminDb) return res.status(503).json({ error: 'Subscription storage is not configured.' });
+    const reference = adminDb.collection('subscriptions').doc(req.params.id);
+    const document = await reference.get();
+    const item = document.data()?.items?.find((entry) => entry.lineId === req.params.lineId && entry.status === 'active');
+    if (!item || !item.membershipIds?.length) return res.status(404).json({ error: 'Active monthly item not found.' });
+    if (item.cancelScheduledAt) return res.status(409).json({ error: 'Cancellation is already scheduled for this item.' });
+    if (![clubYearOf(), clubYearOf() + 1].includes(item.clubYear)) return res.status(409).json({ error: 'Only current or next-club-year benefits can be scheduled here.' });
+    const members = new Map((await adminDb.getAll(...item.membershipIds.map((id) => adminDb.collection('memberships').doc(id))))
+      .filter((member) => member.exists).map((member) => [member.id, member.data()]));
+    const people = item.membershipIds.map((id) => ({ membershipId: id, lineIds: [item.lineId] }));
+    const priced = applyVolunteerBenefits([{ id: item.productId, lineId: item.lineId, basePrice: item.monthlyAmount,
+      clubYearPart: item.clubYear > clubYearOf() ? 'next' : 'this' }], people, members, await loadVolunteerBenefits());
+    if (!priced[0].volunteerBenefit || priced[0].basePrice !== 0) return res.status(409).json({ error: 'Every holder must have this item as a free volunteer benefit for its club year.' });
+    const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
+    if (subscription.schedule) return res.status(409).json({ error: 'Stripe already has a schedule for this subscription. Manage that schedule in Stripe to preserve its other changes.' });
+    // Validate before creating a Stripe schedule, which replaces the subscription's cancel_at.
+    volunteerCancellationPhases(subscription, { current_phase: { start_date: subscription.current_period_start || subscription.items?.data?.[0]?.current_period_start } }, item.stripeItemId);
+    const schedule = await stripeRequest('subscription_schedules', [['from_subscription', document.id]], 'POST',
+      { idempotencyKey: `volunteer-cancel-${crypto.randomUUID()}` });
+    const { params, endsAt } = volunteerCancellationPhases(subscription, schedule, item.stripeItemId);
+    try {
+      await stripeRequest(`subscription_schedules/${encodeURIComponent(schedule.id)}`, params, 'POST');
+    } catch (error) {
+      await stripeRequest(`subscription_schedules/${encodeURIComponent(schedule.id)}/release`, [['preserve_cancel_date', 'true']], 'POST');
+      await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, [['cancel_at', String(subscription.cancel_at)], ['proration_behavior', 'none']], 'POST');
+      throw error;
+    }
+    const cancelScheduledAt = Timestamp.fromMillis(endsAt * 1000);
+    await reference.update({ items: document.data().items.map((entry) => entry.lineId === item.lineId
+      ? { ...entry, cancelScheduledAt, cancellationScheduleId: schedule.id } : entry) });
+    await adminDb.collection('adminSubscriptionAudit').add({ action: 'schedule-volunteer-benefit-cancellation',
+      adminUid: admin.uid, stripeSubscriptionId: document.id, lineIds: [item.lineId], checkedAt: Timestamp.now(), cancelScheduledAt });
+    res.json({ subscription: subscriptionView(await reference.get()), cancelScheduledAt: cancelScheduledAt.toDate().toISOString() });
+  } catch (error) {
+    console.error('Could not schedule volunteer benefit cancellation:', error.message);
+    res.status(502).json({ error: `Could not schedule cancellation: ${error.message}` });
+  }
 };
 
 // Cloud Run sits behind one Google front end; trusting that hop gives each visitor their own rate-limit bucket.
@@ -257,7 +303,7 @@ const findMembership = async (person, now = new Date()) => {
   };
 };
 
-const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, householdSnapshots = new Map() }) => {
+const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, householdSnapshots = new Map(), memberSnapshots = new Map() }) => {
   const paidYear = clubYearOf(paidAt.toDate());
   const membershipIds = [];
   const households = new Map();
@@ -303,6 +349,7 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, househ
     const { id, lineIds, membershipId, existingMember, householdId, ownKitLineIds, grantMembership: _grant, grantMembershipYears: _years, heldClubYears: _held, subscriptionGroup: _group, ...details } = person;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
     membershipIds.push(membershipId);
+    const previous = memberSnapshots.get(membershipId)?.data();
     transaction.set(adminDb.collection('memberships').doc(membershipId), {
       ...(existingMember ? {} : {
         ...details, source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`)
@@ -503,7 +550,8 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
     }));
     const paidAt = order.paidAt || Timestamp.now();
-    if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt, householdSnapshots });
+    if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt, householdSnapshots,
+      memberSnapshots: new Map(memberDocuments.map((document) => [document.id, document])) });
     transaction.update(orderDocument, {
       people: order.people || [],
       status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
@@ -935,7 +983,7 @@ const isoTime = (value) => value?.toDate ? value.toDate().toISOString() : value 
 const subscriptionView = (document) => {
   const data = document.data();
   return { id: document.id, ...data, createdAt: isoTime(data.createdAt), updatedAt: isoTime(data.updatedAt), cancelledAt: isoTime(data.cancelledAt),
-    items: (data.items || []).map((item) => ({ ...item, cancelledAt: isoTime(item.cancelledAt) })) };
+    items: (data.items || []).map((item) => ({ ...item, cancelledAt: isoTime(item.cancelledAt), cancelScheduledAt: isoTime(item.cancelScheduledAt) })) };
 };
 
 app.get('/api/admin/subscriptions', rateLimit(60, 60 * 1000), async (req, res) => {
@@ -949,9 +997,21 @@ app.get('/api/admin/subscriptions', rateLimit(60, 60 * 1000), async (req, res) =
       : text('email') ? subscriptions.where('email', '==', normalizeEmail(text('email'))) : null;
     if (!query) return res.status(400).json({ error: 'Choose an order, member or customer.' });
     const snapshot = await query.limit(50).get();
+    const items = snapshot.docs.flatMap((document) => document.data().items || []);
+    const ids = [...new Set(items.flatMap((item) => item.membershipIds || []))];
+    const records = ids.length ? await adminDb.getAll(...ids.map((id) => adminDb.collection('memberships').doc(id))) : [];
+    const members = new Map(records.filter((document) => document.exists).map((document) => [document.id, document.data()]));
+    const tiers = await loadVolunteerBenefits();
+    const volunteerCancellableLineIds = items.filter((item) => {
+      if (!item.membershipIds?.length || ![clubYearOf(), clubYearOf() + 1].includes(item.clubYear)) return false;
+      const priced = applyVolunteerBenefits([{ id: item.productId, lineId: item.lineId, basePrice: item.monthlyAmount,
+        clubYearPart: item.clubYear > clubYearOf() ? 'next' : 'this' }],
+      item.membershipIds.map((id) => ({ membershipId: id, lineIds: [item.lineId] })), members, tiers)[0];
+      return item.status === 'active' && !item.cancelScheduledAt && priced.volunteerBenefit && priced.basePrice === 0;
+    }).map((item) => item.lineId);
     const order = text('orderRef') ? (await adminDb.collection('orders').doc(text('orderRef')).get()).data() : null;
     const plan = order?.subscriptionPlan;
-    res.json({ subscriptions: snapshot.docs.map(subscriptionView),
+    res.json({ subscriptions: snapshot.docs.map(subscriptionView), volunteerCancellableLineIds,
       failed: plan?.status === 'failed' ? [{ key: text('orderRef'), lineIds: plan.lineIds, error: plan.error,
         names: [...new Set(plan.lineIds.flatMap((lineId) => lineHolders(lineId, order.people).names))],
         itemNames: plan.lineIds.map((lineId) => order.items.find((item) => item.lineId === lineId)?.name).filter(Boolean) }] : [] });
@@ -991,28 +1051,30 @@ const cancelSubscriptionLines = async (req, res, pick, action) => {
   }
   const now = Timestamp.now();
   const endingLines = new Set(ending.map((item) => item.lineId));
+  const endingKeys = new Set(ending.map((item) => `${item.orderRef || record.orderRef}/${item.lineId}`));
+  const isEnding = (item, orderRef = item.orderRef) => endingKeys.has(`${orderRef}/${item.lineId}`);
   const by = admin.email || admin.uid;
   const batch = adminDb.batch();
   batch.update(reference, {
-    items: record.items.map((item) => endingLines.has(item.lineId) ? { ...item, status: 'cancelled', cancelledAt: now, cancelledBy: by } : item),
+    items: record.items.map((item) => isEnding(item, item.orderRef || record.orderRef) ? { ...item, status: 'cancelled', cancelledAt: now, cancelledBy: by } : item),
     ...(wholeSubscription ? { status: 'cancelled', cancelledAt: now, cancelledBy: by } : {}), updatedAt: now
   });
   const orderRefs = [...new Set(ending.map((item) => item.orderRef || record.orderRef).filter(Boolean))];
   const orders = orderRefs.length ? await adminDb.getAll(...orderRefs.map((ref) => adminDb.collection('orders').doc(ref))) : [];
   const orderLines = new Map();
   for (const order of orders.filter((entry) => entry.exists)) {
-    order.data().items.forEach((item) => orderLines.set(item.lineId, item));
-    batch.update(order.ref, { items: order.data().items.map((item) => endingLines.has(item.lineId) ? { ...item, monthlyCancelledAt: now } : item) });
+    order.data().items.forEach((item) => orderLines.set(`${order.id}/${item.lineId}`, item));
+    batch.update(order.ref, { items: order.data().items.map((item) => isEnding(item, order.id) ? { ...item, monthlyCancelledAt: now } : item) });
   }
-  const endsMembership = ending.some((item) => orderLines.get(item.lineId)?.category === 'MEMBERSHIP');
+  const endsMembership = ending.some((item) => orderLines.get(`${item.orderRef || record.orderRef}/${item.lineId}`)?.category === 'MEMBERSHIP');
   const memberIds = [...new Set(ending.flatMap((item) => item.membershipIds || record.membershipIds || []))];
   const members = memberIds.length ? await adminDb.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id))) : [];
   for (const member of members.filter((entry) => entry.exists)) {
     const data = member.data();
     const linkedMembership = endsMembership && data.stripeMembershipSubscriptionId === document.id;
     batch.update(member.ref, {
-      privileges: (data.privileges || []).map((privilege) => endingLines.has(privilege.lineId) && !privilege.endedAt ? { ...privilege, endedAt: now } : privilege),
-      subscriptionItems: (data.subscriptionItems || []).map((item) => endingLines.has(item.lineId) && item.status === 'active'
+      privileges: (data.privileges || []).map((privilege) => isEnding(privilege) && !privilege.endedAt ? { ...privilege, endedAt: now } : privilege),
+      subscriptionItems: (data.subscriptionItems || []).map((item) => isEnding(item) && item.status === 'active'
         ? { ...item, status: 'cancelled', cancelledAt: now } : item),
       ...(linkedMembership ? { stripeMembershipSubscriptionId: '', monthlyPaymentsCancelledAt: now,
         ...(paidUntil && (!data.validUntil || data.validUntil.toMillis() > paidUntil.toMillis()) ? { validUntil: paidUntil } : {}) } : {}),
@@ -1021,10 +1083,10 @@ const cancelSubscriptionLines = async (req, res, pick, action) => {
   }
   batch.set(adminDb.collection('adminSubscriptionAudit').doc(), {
     adminUid: admin.uid, adminEmail: admin.email || '', action: wholeSubscription ? 'cancel-subscription' : action,
-    stripeSubscriptionId: document.id, orderRefs, lineIds: [...endingLines], ...(req.params.membershipId ? { membershipId: String(req.params.membershipId) } : {}), checkedAt: now
+    stripeSubscriptionId: document.id, orderRefs, lineIds: [...endingLines], reason, checkedAt: now
   });
   await batch.commit();
-  res.json({ subscription: subscriptionView(await reference.get()), cancelledWholeSubscription: wholeSubscription, cancelledLineIds: [...endingLines] });
+  return { subscription: subscriptionView(await reference.get()), cancelledWholeSubscription: wholeSubscription, cancelledLineIds: [...endingLines] };
 };
 
 const cancelRoute = (pick, action, failure) => async (req, res) => {
@@ -1035,6 +1097,7 @@ const cancelRoute = (pick, action, failure) => async (req, res) => {
   }
 };
 
+app.post('/api/admin/subscriptions/:id/items/:lineId/volunteer-cancel', rateLimit(10, 60 * 1000), scheduleVolunteerCancellation);
 app.post('/api/admin/subscriptions/:id/items/:lineId/cancel', rateLimit(20, 60 * 1000),
   cancelRoute((active, req) => active.filter((item) => item.lineId === String(req.params.lineId)), 'cancel-items', 'Cancelling a monthly item failed'));
 
@@ -1129,8 +1192,9 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
 
 registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
 registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
-const { settleVolunteersFor, notifyBoathouseCode } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
-  toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message) });
+const { settleVolunteersFor, notifyBoathouseCode, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
+  toMembershipRecord, stripeSubscriptionIsActive, sendEmail: (message) => sendEmail(message), requestNow,
+  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyBoathouseCode });
 registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });
 const { sendDueRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
@@ -1138,6 +1202,7 @@ const { sendDueRosters } = registerEventRosterRoutes(app, { requireAdmin, db: ()
 registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadReceiptPersonFields } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
+  volunteerRenewalContent, sendVolunteerRenewals,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
 
@@ -1496,7 +1561,7 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
         return {
           id: document.id, name: `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.name || 'Unnamed',
           membershipTier: data.membershipTier || '', status: data.status === 'active' && data.validUntil?.toMillis() <= now ? 'expired' : data.status || 'unknown',
-          validUntil: data.validUntil?.toMillis() || 0, affiliationNumber: data.affiliationNumber || '',
+          validUntil: data.validUntil?.toMillis() || 0, affiliationNumber: data.affiliationNumber || '', membershipNumber: data.membershipNumber || '',
           privileges: (data.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => privilege.name)
         };
       }),
@@ -1611,7 +1676,9 @@ app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
       .map((record) => [`${record.firstName} ${record.lastName}|${record.dob || ''}`, record])).values()];
     const names = new Map();
     if (/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
-      for (const { firstName, lastName, dob: held } of records) if (held === dob) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName });
+      for (const { firstName, lastName, dob: held, volunteer } of records) if (held === dob) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName,
+        ...(volunteer?.inducted ? { volunteer: { inducted: true, years: Object.fromEntries(Object.entries(volunteer.years || {})
+          .map(([year, value]) => [year, { active: value.active === true, tier: value.tier }])) } } : {}) });
     }
     res.json({ exists: records.length > 0, names: [...names.values()] });
   } catch (error) {
@@ -1801,7 +1868,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
             : `${person.firstName} ${person.lastName} needs a Forth Canoe Club membership before buying these items. Add a membership to your basket, or check the membership number or date of birth and email you entered. If you are already a member through JustGo your record can take a day to appear; contact secretary@forthcanoeclub.co.uk.`
         });
       }
-      storedPeople.push({ ...person, membershipId: existing?.id || `MEM-${crypto.randomUUID().toUpperCase()}`,
+      storedPeople.push({ ...person, membershipId: existing?.id || '',
         existingMember: Boolean(existing),
         // A membership-included item makes the person a member for its club year unless they already are one.
         ...(grantYears.length ? { grantMembership: true, grantMembershipYears: grantYears } : {}),
@@ -1849,10 +1916,15 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
     // Single-day trips are discounted for attendees holding boat hire or a subscription this club year, or buying one now.
     const tripPrivileges = new Map();
+    const volunteerTiers = await loadVolunteerBenefits();
     if (selected.some(isTripEvent)) {
-      for (const person of storedPeople) if (memberData.has(person.membershipId)) tripPrivileges.set(person.id, memberData.get(person.membershipId).privileges || []);
+      for (const person of storedPeople) if (memberData.has(person.membershipId)) {
+        const data = memberData.get(person.membershipId);
+        tripPrivileges.set(person.id, [...(data.privileges || []), ...volunteerPrivileges(data, volunteerTiers, now)]);
+      }
     }
-    const pricing = calculateCart(applyTripDiscounts(lines, storedPeople, tripPrivileges, now), billingMode === 'annual', promo, now);
+    const volunteerLines = applyVolunteerBenefits(lines, storedPeople, memberData, volunteerTiers, now);
+    const pricing = calculateCart(applyTripDiscounts(volunteerLines, storedPeople, tripPrivileges, now), billingMode === 'annual', promo, now);
     if (promo && pricing.promoDiscountValue <= 0) return res.status(400).json({ error: 'This code does not apply to the items in your basket.' });
     const siteUrl = checkoutSiteOrigin(req);
     const receiptViewToken = createAccessToken();
@@ -1867,7 +1939,8 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
     const items = pricing.items.map((item) => ({
       id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, pricingMode: item.pricingMode, price: item.displayPrice,
-      monthly: Boolean(item.monthlyBilling),
+      monthly: Boolean(item.monthlyBilling && item.monthlyAmount > 0),
+      ...(item.volunteerBenefit ? { volunteerBenefit: true } : {}),
       ...(item.clubYear ? { clubYear: item.clubYear, clubYearPart: item.clubYearPart, label: item.label } : {}),
       ...(item.sourceLineId !== item.lineId ? { sourceLineId: item.sourceLineId } : {}),
       ...(item.monthlyBilling ? { monthlyAmount: item.monthlyAmount, debits: item.debits,
@@ -1887,6 +1960,9 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     reservedStockIds = await reserveStock(orderRef, selected, catalog);
     const policyVersions = await currentCheckoutPolicies(adminDb, isLive());
     const hasRecurringItem = items.some((item) => item.monthly);
+    // New people get their permanent short ID only once the checkout has passed every check.
+    const newPeople = storedPeople.filter((person) => !person.membershipId);
+    (await allocateMemberIds(adminDb, newPeople.length)).forEach((id, index) => { newPeople[index].membershipId = id; });
     // Checkout takes the joining share of this month (and anything paid up front) and saves the payment details. Each
     // club year's monthly items are then set up after payment as a subscription debited on the 1st (see setUpSubscriptions).
     const debited = items.filter((item) => item.monthly && item.debits > 0);

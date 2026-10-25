@@ -183,7 +183,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                   <div className="CheckoutNames">
                     {choices.map((name) => (
                       <button key={`${name.firstName} ${name.lastName}`} type="button" className="PrimaryActionButtonCompact"
-                        onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob, verifiedDob: dobCheck.dob }))}>
+                        onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob, verifiedDob: dobCheck.dob,
+                          volunteerPreview: name.volunteer ? { volunteer: name.volunteer, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob } : null }))}>
                         {name.firstName} {name.lastName}
                       </button>
                     ))}

@@ -146,6 +146,12 @@ A voucher item's **Edit** button in that list sets what its credit can be spent 
 
 Events, services and subscriptions also have a **Membership** rule (`membershipRule`, see `productMembershipRule` in `src/utils/catalogue.js`): *Club members only* (`required`, the default), *Open to non-members* (`none`; buyers who are not members are kept as contact-only records outside the member register) or *Club membership included* (`included`). An included product makes each person who is not already an active member an adult or junior member (by age) until 1 March: the order person carries `grantMembership`, and payment writes the same active membership, tier and queued JustGo upload as buying a membership, plus `membershipIncludedWith` (shown in the member register as "Included with …"). Active members pay the same price and keep their membership. Older events saved with `membershipRequired: false` read as `none`; `membershipRequired` is still written for compatibility. Order lines record the rule.
 
+## Member IDs
+
+- Each `memberships` document has a short, permanent ID (`M0001`, `M0002`, …) allocated from the `counters/memberships` counter by checkout, `scripts/justgo-sync.py` and `scripts/migrate-members.js`. It never changes.
+- `membershipNumber` is `FCC-<Paddle Scotland number>` (4–8 digits). JustGo sync sets it and updates it if the number changes. Until then, admins see "Awaiting Paddle Scotland sync".
+- Admins see both in Reports & records. Members are shown neither.
+
 ## Club Years
 
 The club year runs from 1 March and is named by the year it starts (1 March 2027 – 28/29 February 2028 is **2027**). Dates and sale windows are in `src/utils/clubYear.js` and use London time.
@@ -190,6 +196,20 @@ When the API runs against the emulators, a request header `X-Test-Now: <ISO date
 
 ## Renewal Emails
 
+### Volunteer membership benefits
+
+The Volunteering page contains only the volunteer form and its 20+/40+/60+ hour benefit brackets. Other list forms and current-club-year custom forms are on Contact us. Edit volunteer pricing under **Website editor → Volunteer hour brackets**. Defaults: 20+ gives £5/month off Blue and Gold plus free key hire; 40+ caps those subscriptions at £10/month plus free boat/equipment and key hire; 60+ makes those subscriptions and hires free. The 60+ manual benefit is a request for 25% off CVC **or** camping paid for at the Tully weekend, not an automatic coaching discount. Equivalent rates apply to up-front payments.
+
+In **Reports & records → Volunteers**, each sign-up is a row. Select the bracket and use the single induction/activation control. Deactivation preserves induction history. Legacy sign-ups need a bracket selected before activation; no hours commitment is assumed. Opening the volunteer table reconciles older inducted sign-ups into their matched membership records without sending emails; no bracket or benefits are invented for legacy rows. Confirming a volunteer renewal reuses an existing sign-up for that member and year, retaining their answers. `memberships.volunteer` holds induction and `years.<clubYear>` holds active status, bracket and benefit descriptions, shown in the member register's Includes and record details. Existing purchases and payments are never removed or refunded. Old thank-you codes are left intact; new sign-ups receive automatic benefits instead of new generic 25% codes.
+
+PVG and safeguarding are editable expiry dates before the first JustGo sync. Afterwards they are read-only JustGo text statuses, including when a future-year membership purchase is still pending upload. The CSV sync imports optional `PVG Status` and `Safeguarding Status` columns; missing columns mean “Not supplied by JustGo”, never assumed clearance.
+
+At membership renewal, volunteers who have not opted in for next year also get links to keep or change their hours commitment. Members who have already renewed membership receive **only a volunteer reminder**, on the same two February rounds, while they still need to opt in. Paid benefits do not imply a volunteer opt-in. Links are hashed in `volunteerRenewals`, expire after March, and only update volunteering after an explicit form POST; opening an email link does not activate benefits. `volunteerRenewalSentFor` deduplicates each round. GDPR erasure removes these links and contact-form submissions.
+
+For an already-paid monthly item that is now completely free for every holder, the member's **Monthly payments** view offers a manual cancellation schedule. Staff must confirm it; Stripe retains the paid phase, removes only that item at its end, and preserves other items and the club-year cutoff. Existing Stripe schedules or additional billing settings require staff to manage the change in Stripe rather than overwrite them. No payment is changed by volunteer activation itself.
+
+Validation: `node --test src/utils/volunteering.test.js`; with `.env.emulator` loaded, `node scripts/test-volunteering.js` runs an isolated `demo-fcc-volunteer-tests` project and cleans up its fixtures.
+
 Website members whose membership ends this club year get one renewal email per contact address (the household email, so a family gets one email). JustGo members renew through JustGo and are not emailed, nor are contact-only records. The email lists the basket and links to `/membership?renew=<token>`, which fills the basket with next year's membership (one family membership for a family) and the services and subscriptions each person holds this club year that are still sold, with monthly billing if they pay monthly now. They can remove or add items before paying. Logic is in `src/utils/renewals.js` and the routes in `src/server/renewals.js`.
 
 - **Sending:** staff can send from 1 January (Admin → Reports & records → **Renewal emails**, or **Send renewal email** on a member in Reports, which also resends). The scheduled job sends twice: on 1 February to everyone not yet emailed, and a reminder on 15 February to everyone not yet reminded. Members record `renewalInviteSentFor` and `renewalReminderSentFor` (club years), so rerunning a round emails nobody twice. Anyone already holding next year's membership (in `clubYears` or covered past 1 March) is never emailed, even if they did not renew their extras.
@@ -219,10 +239,12 @@ The wording the club must be able to prove it showed (disclaimer, photo and vide
 Before switching to live:
 
 - Write and publish the privacy notice, data retention policy and first aid and safety statement, and confirm the disclaimer and photo consent wording.
-- Set `AUDIT_LOOKUP_SECRET` (a long random value kept in Secret Manager; losing it breaks erasure lookups of earlier deletions).
 - Decide retention periods and long-term statistics together (see `TODO.md`), and finish the outstanding items in the security review there, including analytics consent.
 - Refunds still remove the order record until refunds are recorded as a status (see `TODO.md`); do not refund by deleting once live.
 - Replace the Stripe test keys with live ones; checkout currently refuses anything but test keys.
+- Create Secret Manager secrets and grant the Cloud Run service account `Secret Manager Secret Accessor` on each; the deploy maps them to the API. Until set, deletion and subscription scheduling are refused:
+  - `audit-lookup-secret` → `AUDIT_LOOKUP_SECRET`: a long random value (`openssl rand -hex 32`). Never change it without migrating existing audit lookups.
+  - `stripe-subscription-admin-key` → `STRIPE_SUBSCRIPTION_ADMIN_KEY`: a Stripe restricted key (same mode as the report key) with subscription read/write and customer, invoice, payment-intent and charge read access.
 
 ## Basic Debugging
 

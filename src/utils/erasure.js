@@ -10,9 +10,11 @@ export const identityEmails = (fields, household = fields.household || {}) =>
 export const matchesIdentity = (fields, { email, firstName, lastName, dob, affiliationNumber }, household = fields.household || {}) => {
   const sameName = normaliseName(`${fields.firstName || ''} ${fields.lastName || ''}`) === normaliseName(`${firstName || ''} ${lastName || ''}`);
   const sameEmail = identityEmails(fields, household).includes(normaliseEmail(email));
-  const given = String(affiliationNumber || '').trim().toLowerCase();
+  // Staff may give the Paddle Scotland number, the FCC- membership number or the permanent club ID.
+  const given = String(affiliationNumber || '').trim().toLowerCase().replace(/^fcc-/, '');
   const held = String(fields.affiliationNumber || '').trim().toLowerCase();
-  return sameName && sameEmail && Boolean(dob) && fields.dob === dob && (!given || !held || given === held);
+  const sameNumber = !given || given === String(fields.id || '').toLowerCase() || !held || given === held;
+  return sameName && sameEmail && Boolean(dob) && fields.dob === dob && sameNumber;
 };
 
 /** Everyone sharing the record's family membership, or just the record when it is not part of a family. */

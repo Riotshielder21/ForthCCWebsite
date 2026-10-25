@@ -1,7 +1,8 @@
 import { membershipActivity } from './membership.js';
 import { itemLabel } from './inventory.js';
 import { memberIsJunior } from './households.js';
-import { checkLabel } from './safeguarding.js';
+import { checkLabel, checksManagedByJustgo } from './safeguarding.js';
+import { volunteerProfileLabels } from './volunteering.js';
 
 export const reportDate = (value) => {
   if (!value) return null;
@@ -100,9 +101,12 @@ export const membershipReport = (id, fields, now = new Date(), household = field
   const householdEmergency = household.emergencyContact || {};
   const junior = memberIsJunior(fields, now);
   const expiry = reportDate(fields.validUntil || fields.expiry);
+  const check = (type) => checksManagedByJustgo(fields)
+    ? (fields.checks?.[type]?.source === 'justgo' ? fields.checks[type].label || 'Not supplied by JustGo' : 'Not supplied by JustGo')
+    : checkLabel(fields.checks?.[type]?.expiresOn, now);
   return {
     id, name: `${fields.firstName || ''} ${fields.lastName || ''}`.trim() || fields.name || '', email: household.email || fields.email || '',
-    affiliationNumber: fields.affiliationNumber || '', tier: fields.membershipTier || '',
+    affiliationNumber: fields.affiliationNumber || '', membershipNumber: fields.membershipNumber || '', tier: fields.membershipTier || '',
     includedWith: fields.membershipIncludedWith?.name || '',
     status: membershipActivity({ status: fields.status, validUntil: expiry, renewalMethod: fields.renewalMethod, justgoSyncStatus: fields.justgoSyncStatus, lastJustgoSync: reportDate(fields.lastJustgoSync) }, now) === 'awaiting-renewal'
       ? 'Awaiting renewal'
@@ -123,8 +127,9 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     householdId: fields.householdId || '',
     medical: fields.medical || '', swimming: fields.swimming || '',
     photoConsent: fields.consents?.photoVideo?.accepted === true || fields.photoConsent === true,
-    pvg: checkLabel(fields.checks?.pvg?.expiresOn, now), safeguarding: checkLabel(fields.checks?.safeguarding?.expiresOn, now),
-    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set((fields.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => String(privilege.name || privilege.productId || '')))],
+    pvg: check('pvg'), safeguarding: check('safeguarding'),
+    volunteer: volunteerProfileLabels(fields, now).join('; '),
+    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set([...(fields.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => String(privilege.name || privilege.productId || '')), ...volunteerProfileLabels(fields, now)])],
     history: (fields.history || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
   };
 };
@@ -159,3 +164,27 @@ export const reportCsv = (headers, rows) => [headers, ...rows].map((row) => row.
   const safe = /^[\s]*[=+@-]/.test(text) || /^[\t\r\n]/.test(text) ? `'${text}` : text;
   return `"${safe.replace(/"/g, '""')}"`;
 }).join(',')).join('\r\n');
+// Report filters. Each works on loaded records, so CSV and email exports follow whatever is shown.
+export const PURCHASE_TYPES = [['membership', 'Membership'], ['subscriptions', 'Subscriptions'], ['events', 'Events'],
+  ['merchandise', 'Merchandise'], ['services', 'Services'], ['vouchers', 'Vouchers']];
+
+export const purchaseMatches = (record, type) => {
+  if (type === 'all') return true;
+  if (type === 'subscriptions') return Boolean(record.subscriptionWarning) || (record.items || []).some((item) => item.category === 'SUBSCRIPTIONS');
+  return (record.items || []).some((item) => item.category === type.toUpperCase());
+};
+
+export const reportOptions = (records, values) => [...new Set(records.flatMap((record) => values(record)).filter(Boolean))]
+  .sort((a, b) => a.localeCompare(b));
+
+export const reportEventNames = (records) => reportOptions(records, (record) => (record.items || []).map((item) => item.name));
+
+// Narrows event-ticket orders to one event, so totals, the table and the attendee export cover only that event.
+export const onlyEvent = (records, name) => name === 'all' ? records : records
+  .filter((record) => (record.items || []).some((item) => item.name === name))
+  .map((record) => {
+    const items = record.items.filter((item) => item.name === name);
+    return { ...record, items, total: items.reduce((sum, item) => sum + (item.price || 0), 0),
+      people: (record.people || []).map((person) => ({ ...person, events: (person.events || []).filter((event) => event.name === name) }))
+        .filter((person) => person.events.length) };
+  });

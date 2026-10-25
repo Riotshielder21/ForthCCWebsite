@@ -36,7 +36,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       if (!document.exists) return { status: 404, error: 'Member record not found.' };
       matched = [asRecord(document)];
     } else {
-      const identity = { email: normalizeEmail(body.email), firstName: text(body.firstName, 80), lastName: text(body.lastName, 80), dob: text(body.dob, 10), affiliationNumber: text(body.affiliationNumber, 40) };
+      const identity = { email: normalizeEmail(body.email), firstName: text(body.firstName, 80), lastName: text(body.lastName, 80), dob: text(body.dob, 10), affiliationNumber: text(body.affiliationNumber, 40).replace(/^fcc-/i, '') };
       if (!isValidEmail(identity.email) || !identity.firstName || !identity.lastName || !/^\d{4}-\d{2}-\d{2}$/.test(identity.dob)) {
         return { status: 400, error: 'Enter the email, first name, last name and date of birth.' };
       }
@@ -217,6 +217,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       for (let index = 0; index < scope.targets.length; index += 30) {
         const ids = scope.targets.slice(index, index + 30).map((record) => record.id);
         renewalInvites.push(...(await adminDb.collection('renewalInvites').where('membershipIds', 'array-contains-any', ids).get()).docs);
+        renewalInvites.push(...(await adminDb.collection('volunteerRenewals').where('memberId', 'in', ids).get()).docs);
       }
       const batch = adminDb.batch();
       new Map(renewalInvites.map((document) => [document.id, document])).forEach((document) => batch.delete(document.ref));
@@ -238,6 +239,10 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       scope.orderUpdates.forEach(({ id, update }) => batch.update(adminDb.collection('orders').doc(id), { ...update, personalDataErasedAt: Timestamp.now() }));
       scope.discountCodes.forEach((document) => batch.update(document.ref, { email: '***', name: '***' }));
       scope.lists.forEach((document) => batch.delete(document.ref));
+      for (const email of scope.erasedEmails) {
+        const forms = await adminDb.collection('formSubmissions').where('email', '==', email).get();
+        forms.docs.forEach((document) => batch.delete(document.ref));
+      }
       [...scope.mirrorCustomers, ...scope.mirrorSubscriptions].forEach((document) => batch.update(document.ref, { name: '', email: '' }));
       for (const [id, mode] of cancellations) {
         batch.set(adminDb.collection('stripeSubscriptions').doc(`FCC-${mode}-${id}`), { status: 'Inactive', stripeStatus: 'canceled', reason: 'Cancelled for GDPR erasure', name: '', email: '' }, { merge: true });

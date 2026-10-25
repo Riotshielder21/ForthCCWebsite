@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import VolunteerBenefitsPanel from '../components/VolunteerBenefitsPanel';
 import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
 import { removeProduct, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
 import { isLockedProduct } from '../utils/tripDiscount';
@@ -290,6 +291,7 @@ export default function AdminPage({ products, onNavigate }) {
           </form>
         </div>
         <DiscountCodesPanel adminUser={adminUser} products={products} />
+        <VolunteerBenefitsPanel adminUser={adminUser} products={products} />
         <form className="main_tile AdminFormBuilder SpaceT6" onSubmit={handleCreateForm}>
           <div className="AdminListHeader"><div><span className="tile_eyebrow">Google Workspace</span><h3 className="tile_heading_bold_2">Create a form</h3></div></div>
           <p className="text_container SpaceB4">Creates one response spreadsheet in the current club-year folder on the Shared Drive.</p>
