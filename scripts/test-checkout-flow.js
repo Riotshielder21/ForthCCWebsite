@@ -1124,24 +1124,27 @@ await test('a non-member volunteer inducted first gets their code when a members
   assert.equal((await db.collection('testMail').where('signupId', '==', signupId).get()).size, 1);
 });
 
-await test('admins save the boathouse code privately; only a changed code bumps its version', async () => {
+await test('admins save the three boathouse codes privately; only a changed code bumps their version', async () => {
   assert.equal((await call('GET', '/api/admin/boathouse-code')).status, 401);
-  assert.equal((await call('POST', '/api/admin/boathouse-code', { body: { code: '1111' } })).status, 401);
-  assert.equal((await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code: '' } })).status, 400);
+  const access = { gateCode: `G${run}`, alarmCode: `A${run}`, lockboxCode: `L${run}`, gateNote: 'Front gate', alarmNote: '', lockboxNote: 'Key box' };
+  assert.equal((await call('POST', '/api/admin/boathouse-code', { body: access })).status, 401);
+  assert.equal((await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { ...access, alarmCode: '' } })).status, 400);
   const before = (await call('GET', '/api/admin/boathouse-code', { headers: admin })).json;
-  const code = `B${run}`.slice(0, 40);
-  const saved = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code, note: 'Side door padlock' } });
+  const saved = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: access });
   assert.equal(saved.status, 200, saved.text);
   assert.equal(saved.json.changed, true);
   assert.equal(saved.json.version, before.version + 1);
   const loaded = (await call('GET', '/api/admin/boathouse-code', { headers: admin })).json;
-  assert.equal(loaded.code, code);
-  assert.equal(loaded.note, 'Side door padlock');
+  assert.equal(loaded.gateCode, access.gateCode);
+  assert.equal(loaded.gateNote, 'Front gate');
+  assert.equal(loaded.alarmCode, access.alarmCode);
+  assert.equal(loaded.lockboxCode, access.lockboxCode);
+  assert.equal(loaded.lockboxNote, 'Key box');
   assert.equal(loaded.updatedBy, 'admin@forthcanoeclub.co.uk');
-  const noteOnly = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code, note: 'Main door' } });
+  const noteOnly = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { ...access, gateNote: 'Main gate' } });
   assert.equal(noteOnly.json.changed, false);
   assert.equal(noteOnly.json.version, saved.json.version);
-  assert.equal((await db.collection('settings').doc('boathouseCode').get()).data().note, 'Main door');
+  assert.equal((await db.collection('settings').doc('boathouseCode').get()).data().gateNote, 'Main gate');
 });
 
 await test('active volunteers who are inducted members get the boathouse code once, and again when it changes', async () => {
@@ -1156,7 +1159,10 @@ await test('active volunteers who are inducted members get the boathouse code on
   assert.equal(ticked.json.boathouseCode, 'sent');
   const current = (await db.collection('settings').doc('boathouseCode').get()).data();
   const [first] = await codeMail(shared.volunteerSignup);
-  assert.match(first.body, new RegExp(current.code));
+  for (const field of ['gateCode', 'alarmCode', 'lockboxCode']) assert.ok(first.body.includes(current[field]), `email includes ${field}`);
+  assert.match(first.body, /Gate code: /);
+  assert.match(first.body, /Alarm code: /);
+  assert.match(first.body, /Lockbox code: /);
   assert.equal(first.version, current.version);
   const again = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: true } });
   assert.equal(again.json.boathouseCode, 'up-to-date');
@@ -1174,21 +1180,26 @@ await test('active volunteers who are inducted members get the boathouse code on
   assert.equal((await call('PATCH', `/api/admin/volunteers/${newcomerId}`, { headers: admin, body: { active: true } })).json.boathouseCode, 'not-active');
   assert.equal((await codeMail(newcomerId)).length, 0);
 
-  const noteOnly = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code: current.code, note: 'Back door' } });
+  const noteOnly = await call('POST', '/api/admin/boathouse-code', {
+    headers: admin, body: { ...current, gateNote: 'Back door' }
+  });
   assert.equal(noteOnly.json.changed, false);
   assert.equal((await codeMail(shared.volunteerSignup)).length, 1, 'a note-only save emails nobody');
 
-  const changed = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code: `C${run}`.slice(0, 40), note: 'Back door' } });
+  const changedCodes = { ...current, alarmCode: `${current.alarmCode}-new` };
+  const changed = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: changedCodes });
   assert.equal(changed.json.changed, true);
   assert.ok(changed.json.notified.sent >= 1, changed.text);
   const mails = await codeMail(shared.volunteerSignup);
   assert.equal(mails.length, 2);
-  assert.ok(mails.some((mail) => mail.version === changed.json.version && /has changed/.test(mail.body)));
+  const updatedMail = mails.find((mail) => mail.version === changed.json.version);
+  assert.match(updatedMail.body, /boathouse codes have changed/i);
+  for (const field of ['gateCode', 'alarmCode', 'lockboxCode']) assert.ok(updatedMail.body.includes(changedCodes[field]), `updated email includes ${field}`);
   assert.equal((await codeMail(newcomerId)).length, 0, 'still nothing for a volunteer who is not inducted');
 
   const untick = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: false } });
   assert.equal(untick.json.boathouseCode, 'not-active');
-  await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { code: `D${run}`.slice(0, 40) } });
+  await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { ...changedCodes, gateCode: `${current.gateCode}-new` } });
   assert.equal((await codeMail(shared.volunteerSignup)).length, 2, 'inactive volunteers are not emailed new codes');
 });
 

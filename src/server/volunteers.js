@@ -3,6 +3,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { validateListSubmission, sheetCell, matchesVolunteer, volunteerCodeDecision, boathouseCodeDecision, VOLUNTEER_LIST } from '../utils/lists.js';
 import { membershipActivity } from '../utils/membership.js';
 import { checkSummary } from '../utils/safeguarding.js';
+import { BOATHOUSE_ACCESS_POINTS, boathouseAccessFromSettings } from '../utils/boathouse.js';
 import { rateLimit } from './rateLimit.js';
 
 const VOLUNTEER_DISCOUNT = 0.25;
@@ -12,7 +13,7 @@ const CODE_DAYS = 365;
  * Public list submissions and the volunteer reward. A sign-up is only linked to a membership when the name and a contact
  * email both match; nothing is revealed to the submitter. An admin ticks "inducted", and the code is emailed once the
  * volunteer is both inducted and an active member (re-checked after every paid order for that email). Volunteers an admin
- * also ticks "Active" are emailed the boathouse code once they are checked in (inducted) as active members, and again
+ * also ticks "Active" are emailed the boathouse access codes once they are checked in (inducted) as active members, and again
  * whenever it changes.
  */
 export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail }) => {
@@ -73,11 +74,12 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
 
   const boathouseCode = async () => (await db().collection('settings').doc('boathouseCode').get()).data() || {};
 
-  /** Emails the current boathouse code to an active volunteer who has not had this version yet. */
+  /** Emails the current boathouse access codes to an active volunteer who has not had this version yet. */
   const settleBoathouseCode = async (signupReference, current = null) => {
     const signup = (await signupReference.get()).data();
     if (!signup || signup.listType !== VOLUNTEER_LIST) return 'not-volunteer';
     const code = current || await boathouseCode();
+    const access = boathouseAccessFromSettings(code);
     const ready = { inducted: signup.inducted === true, active: signup.active === true, codeVersion: code.version || 0, sentVersion: signup.boathouseCodeVersion || 0 };
     // Membership is checked last because it can call Stripe.
     const withoutMembership = boathouseCodeDecision({ ...ready, memberActive: true });
@@ -89,8 +91,12 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       const emailSent = await sendEmail({
         to: signup.email, subject: 'Forth Canoe Club boathouse code',
         body: [`Hi ${signup.name},`, '',
-          ready.sentVersion ? 'The boathouse code has changed. As an active volunteer, here is the new code:' : 'As an active volunteer, here is the current boathouse code:', '',
-          code.code, ...(code.note ? ['', code.note] : []), '',
+          ready.sentVersion ? 'The boathouse codes have changed. As an active volunteer, here are the current codes:' : 'As an active volunteer, here are the current boathouse codes:', '',
+          ...BOATHOUSE_ACCESS_POINTS.flatMap(({ key, label }) => [
+            `${label} code: ${access[`${key}Code`]}`,
+            ...(access[`${key}Note`] ? [`  ${access[`${key}Note`]}`] : []),
+            ''
+          ]),
           'Please keep it to yourself and do not write it down where others can see it.', '',
           'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n'),
         record: { kind: 'boathouse-code', signupId: signupReference.id, version: code.version }
@@ -232,7 +238,7 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       if (!inducted && document.data().discountCode) return res.status(409).json({ error: 'A code has already been issued to this volunteer.' });
       await reference.update({ inducted, inductedBy: inducted ? admin.uid : null, inductedAt: inducted ? Timestamp.now() : null });
       const outcome = await settleVolunteer(reference);
-      // Checking a volunteer in also gives an active volunteer the boathouse code.
+      // Checking a volunteer in also gives an active volunteer the boathouse access codes.
       res.json({ success: true, outcome, boathouseCode: inducted ? await settleBoathouseCode(reference) : 'not-active' });
     } catch (error) {
       console.error('Could not update volunteer:', error.message);

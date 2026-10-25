@@ -1,15 +1,15 @@
 import { Timestamp } from 'firebase-admin/firestore';
-import { validateBoathouseCode } from '../utils/boathouse.js';
+import { boathouseAccessFromSettings, validateBoathouseCode } from '../utils/boathouse.js';
 import { rateLimit } from './rateLimit.js';
 
 /**
- * The boathouse access code is kept in a private settings document (the Firestore rules deny browsers) and is only
- * read and changed through these admin routes. `version` goes up whenever the code itself changes.
+ * Boathouse access codes are kept in a private settings document (the Firestore rules deny browsers) and are only
+ * read and changed through these admin routes. `version` goes up whenever any code changes.
  */
 export const registerBoathouseRoutes = (app, { requireAdmin, db, onCodeChanged = async () => ({ sent: 0, failed: 0 }) }) => {
   const reference = () => db().collection('settings').doc('boathouseCode');
   const publicView = (data = {}) => ({
-    code: data.code || '', note: data.note || '', version: data.version || 0,
+    ...boathouseAccessFromSettings(data), version: data.version || 0,
     updatedAt: data.updatedAt?.toMillis() || 0, updatedBy: data.updatedBy || ''
   });
   const boathouseCodeReadLimiter = rateLimit(30, 60 * 1000);
@@ -37,12 +37,13 @@ export const registerBoathouseRoutes = (app, { requireAdmin, db, onCodeChanged =
       res.set('Cache-Control', 'no-store');
       const saved = await db().runTransaction(async (transaction) => {
         const current = (await transaction.get(reference())).data() || {};
-        const changed = current.code !== value.code;
+        const previous = boathouseAccessFromSettings(current);
+        const changed = ['gateCode', 'alarmCode', 'lockboxCode'].some((field) => previous[field] !== value[field]);
         const next = { ...value, version: (current.version || 0) + (changed ? 1 : 0), updatedAt: Timestamp.now(), updatedBy: admin.email || admin.uid };
         transaction.set(reference(), next);
         return { ...next, changed };
       });
-      // A changed code goes straight to every active volunteer; a failed email is retried on the next save or "Active" tick.
+      // A changed code sends all three codes to active volunteers; failures are retried on the next save or "Active" tick.
       let notified = { sent: 0, failed: 0 };
       if (saved.changed) {
         try { notified = await onCodeChanged(); }
