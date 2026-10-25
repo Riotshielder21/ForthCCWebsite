@@ -2,7 +2,8 @@
 
 ## Club years, monthly payments and renewals
 
-- **Stripe test mode:** check that a subscription cancelled at the cut-off stops retries and creates no credit or 1 March invoice; that a backdated subscription (delayed Bacs payment) charges the missed month once; and how Bacs mandate delays affect a first debit on the 1st. Turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st).
+- **Stripe test mode:** card-based Test Clocks verify twelve full monthly payments when subscriptions end on 1 March, no extra March invoice, no cancellation credit, stopping automatic failed-payment retries at cancellation, and one delayed December catch-up charge. Still test actual Bacs mandate/settlement delays and webhook-driven voiding and membership updates through real checkout. Turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st).
+- **Existing monthly subscriptions:** review active club-year subscriptions already scheduled to end on 15 February and move them to 1 March where appropriate; the code change does not bulk-update existing Stripe records.
 - **Webhook:** add `customer.subscription.deleted` to the Dashboard webhook endpoints (test and live).
 - **Renewal job deployment:** create a `renewal-job-token` secret, pass it to Cloud Run as `RENEWAL_JOB_TOKEN` in `.github/workflows/firebase-hosting.yml`, and install `config/fcc-renewals.{service,timer}` on the server with `RENEWAL_JOB_TOKEN` and `RENEWAL_JOB_URL` in its `.env`. Until then staff can send renewal emails from the admin page.
 - **Renewal email wording:** the email uses template text for now; agree the final wording with the club (`renewalEmail` in `src/utils/renewals.js`).

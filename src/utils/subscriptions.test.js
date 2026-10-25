@@ -1,6 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lineHolders, subscriptionLive, endedAtCutoff, stripeItemLines, activeSubscriptionItems, monthlyTotal } from './subscriptions.js';
+import { lineHolders, subscriptionLive, endedAtCutoff, clubYearEndUpdate, stripeItemLines, activeSubscriptionItems, monthlyTotal } from './subscriptions.js';
+import { createClubYearSubscription } from '../server/clubYearSubscription.js';
+
+test('future monthly billing preserves the trial, subscription end and idempotency key', async () => {
+  const calls = [];
+  const firstDebit = Date.parse('2027-03-01T00:00:00Z') / 1000;
+  const subscriptionEnd = Date.parse('2028-03-01T00:00:00Z') / 1000;
+  const base = [['customer', 'cus_example']];
+  const expected = { id: 'sub_example' };
+  const result = await createClubYearSubscription(async (...args) => { calls.push(args); return expected; }, {
+    base, firstDebit, subscriptionEnd, orderRef: 'order', clubYear: 2027, now: new Date('2027-01-05T12:00:00Z')
+  });
+  assert.equal(result, expected);
+  assert.deepEqual(calls, [['subscriptions', [...base, ['trial_end', String(firstDebit)], ['cancel_at', String(subscriptionEnd)], ['proration_behavior', 'none']],
+    'POST', { idempotencyKey: 'order-2027-subscription' }]]);
+  assert.deepEqual(base, [['customer', 'cus_example']]);
+});
+
+test('delayed monthly setup backdates once, then applies the cancellation separately', async () => {
+  const calls = [];
+  const firstDebit = Date.parse('2026-12-01T00:00:00Z') / 1000;
+  const subscriptionEnd = Date.parse('2027-03-01T00:00:00Z') / 1000;
+  await createClubYearSubscription(async (...args) => { calls.push(args); return { id: 'sub_example' }; }, {
+    base: [], firstDebit, subscriptionEnd, orderRef: 'order', clubYear: 2026, now: new Date('2026-12-04T12:00:00Z')
+  });
+  assert.deepEqual(calls, [
+    ['subscriptions', [['backdate_start_date', String(firstDebit)], ['billing_cycle_anchor', String(Date.parse('2027-01-01T00:00:00Z') / 1000)],
+      ['proration_behavior', 'create_prorations']], 'POST', { idempotencyKey: 'order-2026-subscription' }],
+    ['subscriptions/sub_example', [['cancel_at', String(subscriptionEnd)], ['proration_behavior', 'none']], 'POST', { idempotencyKey: 'order-2026-cancel-at' }]
+  ]);
+});
 
 const person = (membershipId, lineIds, extra = {}) => ({ id: membershipId, membershipId, firstName: membershipId, lastName: 'Test', lineIds, ...extra });
 
@@ -21,6 +51,18 @@ test('a subscription ending at its club-year cut-off is told apart from other ca
   assert.equal(endedAtCutoff({ status: 'canceled', ended_at: cutoff - 30 * 24 * 60 * 60, metadata: { cutoff_at: String(cutoff) } }), false);
   assert.equal(endedAtCutoff({ status: 'canceled', ended_at: cutoff, metadata: {} }), false);
   assert.equal(endedAtCutoff({ status: 'active', metadata: { cutoff_at: String(cutoff) } }), false);
+});
+
+test('only the matching app-managed club-year cutoff is extended to the full club-year end', () => {
+  const oldEnd = Date.parse('2027-02-15T00:00:00Z') / 1000;
+  const newEnd = Date.parse('2027-03-01T00:00:00Z') / 1000;
+  const managed = { metadata: { club_year: '2026', cutoff_at: String(oldEnd) }, cancel_at: oldEnd };
+  assert.deepEqual(clubYearEndUpdate(managed, 2026, newEnd), [
+    ['cancel_at', String(newEnd)], ['metadata[cutoff_at]', String(newEnd)], ['proration_behavior', 'none']
+  ]);
+  assert.equal(clubYearEndUpdate({ ...managed, cancel_at: oldEnd - 3600 }, 2026, newEnd), null, 'preserve a distinct earlier manual cancellation');
+  assert.equal(clubYearEndUpdate(managed, 2027, newEnd), null, 'do not change another club year');
+  assert.equal(clubYearEndUpdate({ ...managed, cancel_at: newEnd }, 2026, newEnd), null, 'do not rewrite an already-correct end');
 });
 
 test('Stripe items are matched to order lines by metadata', () => {

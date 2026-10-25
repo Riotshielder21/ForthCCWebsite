@@ -268,9 +268,9 @@ test('next year: membership and up-front items are charged now; monthly items st
   const result = calculateCart(lines, false, null, january);
   assert.deepEqual(result.items.map((item) => [item.lineId, item.clubYear, item.displayPrice]),
     [['m', 2027, 30], ['s', 2026, 10], ['s~next', 2027, 0], ['b', 2026, 51], ['b~next', 2027, 85]]);
-  assert.deepEqual(result.monthlySchedule.map(({ firstDebit, cutoff, monthly }) => [firstDebit.toISOString(), cutoff.toISOString(), monthly]), [
-    ['2027-02-01T00:00:00.000Z', '2027-02-15T00:00:00.000Z', 25],
-    ['2027-03-01T00:00:00.000Z', '2028-02-15T00:00:00.000Z', 25]
+  assert.deepEqual(result.monthlySchedule.map(({ firstDebit, subscriptionEnd, monthly }) => [firstDebit.toISOString(), subscriptionEnd.toISOString(), monthly]), [
+    ['2027-02-01T00:00:00.000Z', '2027-03-01T00:00:00.000Z', 25],
+    ['2027-03-01T00:00:00.000Z', '2028-03-01T00:00:00.000Z', 25]
   ]);
   assert.equal(calculateCart([{ ...subscription, clubYearPart: 'next' }], true, null, january).total, 240);
   assert.deepEqual(expandPeopleLines([{ id: 'p', lineIds: ['m', 's', 'b'] }], [{ lineId: 's', clubYearChoice: 'both' }])[0].lineIds, ['m', 's', 's~next', 'b']);

@@ -102,6 +102,20 @@ RENEWAL_JOB_TOKEN=local-renewal-job-token-0123456789abcdef node scripts/test-che
 
 Use a different `TEST_API_PORT` if you change `PORT`. The test adds records with unique `@example.test` emails and does not remove them.
 
+## Real Stripe Test Clocks
+
+Unlike the mocked checkout flow, this calls Stripe's real sandbox using the same subscription-creation function as the API. It does not exercise Checkout, webhook delivery, Firebase membership updates, Bacs mandates or renewal emails.
+
+Save a restricted sandbox key outside the repository, either alone or as `STRIPE_SANDBOX_TEST_KEY=rk_test_...`, and protect the file with `chmod 600`. It needs test-clock, customer, payment-method, product and subscription write access, plus invoice read access. Use a dedicated sandbox: its billing settings and webhook endpoints affect the results.
+
+```bash
+node scripts/test-stripe-clocks.js /absolute/path/to/stripe-sandbox.env
+```
+
+The script creates synthetic clock-bound customers, advances through deferred starts and year-end cancellation, checks exact invoice amounts and retries, and tests one delayed-payment catch-up. It deletes only this run's clocks/customers/subscriptions and archives its products, including after failures; Stripe's inline prices cannot be edited. It never reads real member data. To repeat one case, set `STRIPE_CLOCK_CASE=current-year`, `next-year`, `delayed-payment` or `failed-payment`.
+
+Subscriptions now end at 1 March so the final 1 February debit covers a full February billing period. The test clock asserts three full payments for a November start, twelve full payments for a January next-year renewal, one full catch-up payment for delayed setup, and no March debit. This is card-based Stripe evidence, not proof of Bacs timing or end-to-end membership activation.
+
 ## Stripe Webhook Test
 
 For a real sandbox checkout, run the local stack above and forward webhooks:
@@ -145,14 +159,15 @@ The club year runs from 1 March and is named by the year it starts (1 March 2027
 Every direct debit is on the 1st of the month and everything monthly ends with the club year. Checkout never creates subscriptions itself: it takes what is due now, saves the card or bank account, and the webhook creates or extends the subscriptions afterwards (`setUpSubscriptions` in `server.js`).
 
 - **Checkout** charges annual and one-off items in full plus a **joining-month charge** for each monthly item: the share of the current month still to run, rounded up to the next 20% (`joiningShare`). The Checkout session is in `payment` mode with `setup_future_usage=off_session`. When nothing is due now (only next-year monthly items), it runs in `setup` mode and the order records `stripeSetupIntentId` instead of a payment intent.
-- **One subscription per payer per club year per card or bank account.** The order's `subscriptionPlan.groups` has one group per club year with its `firstDebitAt` and `cutoffAt`. The webhook adds the group's items to the payer's live subscription for that club year when it uses the same payment details (compared by Stripe's fingerprint), otherwise creates a new one (`newPaymentDetails` when another live one exists). Existing subscriptions' payment details are never changed.
-- **New subscriptions** wait until their first 1st (`trial_end`, which Stripe shows as *trialing*) with `cancel_at` set to the cut-off and no proration. If the first 1st has already passed (a delayed bank payment), the subscription is backdated to it (`backdate_start_date`, `billing_cycle_anchor` the next 1st, `create_prorations`) so the missed month is charged, then `cancel_at` is set. Stripe metadata records `club_year` and `cutoff_at`; only subscriptions with `club_year` count as *trialing = live*.
+- **One subscription per payer per club year per card or bank account.** The order's `subscriptionPlan.groups` has one group per club year with its `firstDebitAt` and `cutoffAt` (1 March). The webhook adds the group's items to the payer's live subscription for that club year when it uses the same payment details (compared by Stripe's fingerprint), otherwise creates a new one (`newPaymentDetails` when another live one exists). Existing subscriptions' payment details are never changed.
+- **New subscriptions** wait until their first 1st (`trial_end`, which Stripe shows as *trialing*) with `cancel_at` set to 1 March and no proration. If the first 1st has already passed (a delayed bank payment), the subscription is backdated to it (`backdate_start_date`, `billing_cycle_anchor` the next 1st, `create_prorations`) so the missed month is charged, then `cancel_at` is set to 1 March. Stripe metadata records `club_year` and `cutoff_at`; only subscriptions with `club_year` count as *trialing = live*.
 - **This year's monthly items** are first debited on the next 1st. Bought from 1 to 14 February, the joining-month charge is the only payment and no subscription is made. **Next year's** monthly items are first debited on 1 March.
-- **February cut-off:** the last debit is 1 February and every subscription stops at the start of 15 February (`cancel_at`, no proration), so a failed 1 February debit is retried only until then. Cover runs to 1 March in our records. When Stripe sends `customer.subscription.deleted`, the `subscriptions` record becomes `ended`, any invoice still open is voided (`voidedInvoices`), and the record is flagged `needsStaff` if money was left unpaid or the subscription ended before its cut-off (`endedAtCutoff: false`).
+- **February sales cut-off and subscription end are separate:** current-year sales close on 15 February, but every subscription ends at the start of 1 March (`cancel_at`, no proration). The last full monthly debit is 1 February, giving 12 full payments for a full club year. Failed February payments may retry until 1 March; an invoice still open at cancellation is voided and flagged for staff. When Stripe sends `customer.subscription.deleted`, the `subscriptions` record becomes `ended`; it is flagged `needsStaff` if money was left unpaid or it ended before the scheduled boundary (`endedAtCutoff: false`).
+- Existing subscriptions created before this change keep their earlier Stripe cancellation date unless reused by a new order. Review and reschedule any existing club-year subscriptions from 15 February to 1 March separately; this change does not bulk-update Stripe records.
 
 Stripe calls use idempotency keys, so a replayed webhook changes nothing. If Stripe refuses a change, the order's `subscriptionPlan` is marked `failed` with the error and the order gets `subscriptionSetupNeedsStaff`; staff see which item and member it was on the order.
 
-Stripe settings to check in the Dashboard (test mode first): turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st), and confirm that cancellation at the cut-off stops retries and creates no credit or 1 March invoice.
+Stripe settings to check in the Dashboard (test mode first): turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st), and confirm that cancellation at 1 March stops retries and creates no credit or March invoice.
 
 Records:
 

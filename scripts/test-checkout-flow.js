@@ -1466,7 +1466,7 @@ await test('a payer has one monthly subscription per club year for everyone they
   const [group] = order.subscriptionPlan.groups;
   assert.equal(group.clubYear, autumnYear);
   assert.equal(group.firstDebitAt.toMillis(), seconds(new Date(Date.UTC(autumnYear, 10, 1))) * 1000, 'debits start on 1 November');
-  assert.equal(group.cutoffAt.toMillis(), thisYear.cutoff.getTime(), 'and stop at the 15 February cut-off');
+  assert.equal(group.cutoffAt.toMillis(), thisYear.end.getTime(), 'and stop at the 1 March club-year end');
   assert.equal(group.created, true);
   assert.equal(order.stripeSubscriptionIds.length, 1, 'one Stripe subscription (one direct debit) for everything the payer pays monthly');
   const [subscriptionId] = order.stripeSubscriptionIds;
@@ -1474,7 +1474,7 @@ await test('a payer has one monthly subscription per club year for everyone they
   assert.equal(order.subscriptionSetupNeedsStaff, false);
   const stored = (await db.collection('subscriptions').doc(subscriptionId).get()).data();
   assert.equal(stored.clubYear, autumnYear);
-  assert.equal(stored.cancelAt.toMillis(), thisYear.cutoff.getTime());
+  assert.equal(stored.cancelAt.toMillis(), thisYear.end.getTime());
   assert.deepEqual((await db.collection('customers').doc(customerKey(payer)).get()).data().subscriptionIds, [subscriptionId]);
 
   const monaId = order.people.find((person) => person.firstName === 'Mona').membershipId;
@@ -1559,9 +1559,9 @@ await test('from January members renew for next club year or buy both, with a se
     { id: 'membership-adult', clubYear: autumnYear + 1, price: order.items.find((item) => item.id === 'membership-adult' && item.clubYear === autumnYear + 1).price }
   ], '"both" is one basket line charged as two club years; next year\'s monthly item has nothing due now');
   assert.deepEqual(order.subscriptionPlan.groups.map(({ clubYear, firstDebitAt, cutoffAt }) => [clubYear, firstDebitAt.toMillis(), cutoffAt.toMillis()]), [
-    [autumnYear, Date.UTC(autumnYear + 1, 1, 1), thisYear.cutoff.getTime()],
-    [autumnYear + 1, nextYear.start.getTime(), nextYear.cutoff.getTime()]
-  ], 'this year is debited on 1 February only; next year from 1 March to 1 February');
+    [autumnYear, Date.UTC(autumnYear + 1, 1, 1), thisYear.end.getTime()],
+    [autumnYear + 1, nextYear.start.getTime(), nextYear.end.getTime()]
+  ], 'this year gets its 1 February debit; next year gets twelve debits from 1 March through 1 February');
   assert.equal(new Set(order.stripeSubscriptionIds).size, 2, 'each club year has its own subscription, cancelled at its own cut-off');
   const [member] = await membershipsFor(payer);
   assert.deepEqual([...member.clubYears].sort(), [autumnYear, autumnYear + 1]);
@@ -1611,21 +1611,21 @@ await test('this year\'s membership stops on 8 February and its monthly items ar
   assert.equal((await checkout(late.email, withChoice(build(['membership-adult'], [late]), 'next'), {}, lateFebruary)).status, 200);
 });
 
-await test('a subscription ending at the cut-off voids an unpaid February debit and is flagged for staff', async () => {
+await test('a subscription ending at the club-year boundary voids an unpaid February debit and is flagged for staff', async () => {
   const ending = async (address, name, endedAt) => {
     const order = await orderData(await buy(address, lessonFor(name), { billingMode: 'monthly' }, autumn));
     const [id] = order.stripeSubscriptionIds;
     const result = await sendWebhook({ type: 'customer.subscription.deleted', data: { object: {
-      id, status: 'canceled', ended_at: endedAt, metadata: { club_year: String(autumnYear), cutoff_at: String(seconds(thisYear.cutoff)) } } } });
+      id, status: 'canceled', ended_at: endedAt, metadata: { club_year: String(autumnYear), cutoff_at: String(seconds(thisYear.end)) } } } });
     assert.equal(result.status, 200, result.text);
     return (await db.collection('subscriptions').doc(id).get()).data();
   };
-  const unpaid = await ending(email('unpaid-feb'), 'Una', seconds(thisYear.cutoff) + 5);
+  const unpaid = await ending(email('unpaid-feb'), 'Una', seconds(thisYear.end) + 5);
   assert.equal(unpaid.status, 'ended');
   assert.equal(unpaid.endedAtCutoff, true);
   assert.deepEqual(unpaid.voidedInvoices.map((invoice) => invoice.amountDue), [20], 'Stripe will not collect it later');
   assert.equal(unpaid.needsStaff, true);
-  const paid = await ending(email('paid-feb'), 'Pia', seconds(thisYear.cutoff) + 5);
+  const paid = await ending(email('paid-feb'), 'Pia', seconds(thisYear.end) + 5);
   assert.equal(paid.endedAtCutoff, true);
   assert.ok(!paid.needsStaff, 'a fully paid year ends quietly');
   const early = await ending(email('ended-early'), 'Eli', seconds(thisYear.start) + 60);
@@ -1636,8 +1636,8 @@ await test('a subscription ending at the cut-off voids an unpaid February debit 
 await test('a delayed bank payment backdates the subscription to its missed 1st', async () => {
   // Checkout 40 days ago, paid only now: the first 1st has passed.
   const checkedOut = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
-  const { debits, cutoff } = monthlyDebits(clubYearOf(checkedOut), checkedOut);
-  const schedule = debits > 0 && nextFirst(new Date()) < cutoff;
+  const { debits, subscriptionEnd } = monthlyDebits(clubYearOf(checkedOut), checkedOut);
+  const schedule = debits > 0 && nextFirst(new Date()) < subscriptionEnd;
   if (!schedule) { console.log('       (skipped: too close to the club-year change)'); return; }
   const orderRef = await buy(email('delayed'), lessonFor('Del'), { billingMode: 'monthly' }, testNow(checkedOut));
   const order = await orderData(orderRef);

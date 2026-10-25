@@ -573,7 +573,7 @@ export default function App() {
                       </div>
                       {calculations.monthlySchedule.map((debit) => (
                         <div key={debit.firstDebit.getTime()} className="CartSummaryLine">
-                          Then £{debit.monthly.toFixed(2)} a month from {dayLabel(debit.firstDebit)} to {dayLabel(new Date(debit.cutoff.getTime() - 14 * 24 * 60 * 60 * 1000))} ({clubYearLabel(debit.clubYear)})
+                          Then £{debit.monthly.toFixed(2)} a month on the 1st from {dayLabel(debit.firstDebit)} through February ({clubYearLabel(debit.clubYear)})
                         </div>
                       ))}
                     </div>

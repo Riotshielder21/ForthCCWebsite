@@ -14,7 +14,8 @@ import { PAGE_CONTENT } from './src/constants/pageContent.js';
 import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart, expandClubYearLines, expandPeopleLines, NEXT_YEAR_LINE_SUFFIX } from './src/utils/pricing.js';
-import { clubYearOf, clubYearDates, clubYearLabel, clubYearKind, resolveClubYearChoice, nextFirst, holdsForClubYear } from './src/utils/clubYear.js';
+import { clubYearOf, clubYearDates, clubYearLabel, clubYearKind, resolveClubYearChoice, holdsForClubYear } from './src/utils/clubYear.js';
+import { createClubYearSubscription } from './src/server/clubYearSubscription.js';
 import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
 import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
@@ -30,7 +31,7 @@ import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProble
 import { deletionAuditEntry } from './src/utils/privacy.js';
 import { CURRENT_MEMBERSHIP_VERSION } from './src/utils/schema.js';
 import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from './src/utils/households.js';
-import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive, endedAtCutoff } from './src/utils/subscriptions.js';
+import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive, endedAtCutoff, clubYearEndUpdate } from './src/utils/subscriptions.js';
 import { registerGdprRoutes } from './src/server/gdpr.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
@@ -199,7 +200,7 @@ const stripeSubscriptionIsActive = async (member) => {
     `subscriptions/${encodeURIComponent(linkedMember.stripeMembershipSubscriptionId)}?expand[]=customer&expand[]=latest_invoice.payment_intent.latest_charge`
   );
   const report = stripeSubscriberReport(subscription);
-  // A subscription ended at the 15 February cut-off still covers the membership to 1 March.
+  // A club-year subscription ends at the 1 March boundary after covering the full February payment period.
   // Our club-year subscriptions wait as `trialing` until the first 1st.
   const clubYearWaiting = subscription.status === 'trialing' && subscription.metadata?.club_year && !subscription.pause_collection;
   return report.status === 'Active' || Boolean(clubYearWaiting) || (endedAtCutoff(subscription) && !report.paymentReversed);
@@ -552,13 +553,13 @@ const monthlyPriceParams = (prefix, item, product) => {
 /**
  * Starts or joins one club year's monthly payments for a paid order. Checkout took the joining share of the current
  * month and saved the card or bank account; debits then run on the 1st from `firstDebitAt` and the subscription is
- * cancelled at the club-year cut-off (15 February), so the last debit is 1 February. Items paid with the same details
+ * cancelled at the club-year end (1 March), so the last debit is 1 February. Items paid with the same details
  * as a live subscription for the same club year join it, so they share one debit; different details may belong to
  * someone else, so they get their own subscription.
  */
 const setUpSubscriptionGroup = async ({ order, orderRef, group, lineById, paymentMethod, customer, fingerprint }) => {
   const firstDebit = unixSeconds(group.firstDebitAt);
-  const cutoff = unixSeconds(group.cutoffAt);
+  const subscriptionEnd = unixSeconds(group.cutoffAt);
   const debitPassed = firstDebit <= Date.now() / 1000;
   const owned = await adminDb.collection('subscriptions').where('email', '==', order.email).where('status', '==', 'active').limit(20).get();
   let target = null;
@@ -579,6 +580,9 @@ const setUpSubscriptionGroup = async ({ order, orderRef, group, lineById, paymen
   }
   const itemMetadata = (prefix, lineId) => [[`${prefix}[line_id]`, lineId], [`${prefix}[order_ref]`, orderRef], [`${prefix}[club_year]`, String(group.clubYear)]];
   if (target) {
+    const endUpdate = clubYearEndUpdate(target, group.clubYear, subscriptionEnd);
+    if (endUpdate) target = await stripeRequest(`subscriptions/${encodeURIComponent(target.id)}`, endUpdate, 'POST',
+      { idempotencyKey: `${target.id}-club-year-end-${group.clubYear}-${subscriptionEnd}` });
     // A missed 1st (a delayed bank payment) is charged pro rata on the next debit; otherwise the next debit is a full month.
     for (const lineId of group.lineIds) {
       await stripeRequest('subscription_items', [['subscription', target.id], ['proration_behavior', debitPassed && target.status === 'active' ? 'create_prorations' : 'none'],
@@ -587,23 +591,12 @@ const setUpSubscriptionGroup = async ({ order, orderRef, group, lineById, paymen
     return { subscription: await stripeRequest(`subscriptions/${encodeURIComponent(target.id)}`, null, 'GET'), created: false };
   }
   const base = [['customer', customer], ['default_payment_method', paymentMethod], ['metadata[order_ref]', orderRef],
-    ['metadata[club_year]', String(group.clubYear)], ['metadata[cutoff_at]', String(cutoff)],
+    ['metadata[club_year]', String(group.clubYear)], ['metadata[cutoff_at]', String(subscriptionEnd)],
     ...group.lineIds.flatMap((lineId, index) => [...monthlyPriceParams(`items[${index}]`, lineById.get(lineId), products.get(lineId)),
       ...itemMetadata(`items[${index}][metadata]`, lineId)])];
-  let subscription;
-  if (!debitPassed) {
-    // Nothing is due until the first 1st, so the subscription waits (Stripe calls it trialing) until then.
-    subscription = await stripeRequest('subscriptions', [...base, ['trial_end', String(firstDebit)], ['cancel_at', String(cutoff)], ['proration_behavior', 'none']],
-      'POST', { idempotencyKey: `${orderRef}-${group.clubYear}-subscription` });
-  } else {
-    // The first 1st has passed (a delayed bank payment), so that month is charged now and debits continue from the next 1st.
-    subscription = await stripeRequest('subscriptions', [...base, ['backdate_start_date', String(firstDebit)],
-      ['billing_cycle_anchor', String(Math.floor(nextFirst(new Date()).getTime() / 1000))], ['proration_behavior', 'create_prorations']],
-    'POST', { idempotencyKey: `${orderRef}-${group.clubYear}-subscription` });
-    // Without prorations the final month is not refunded on cancellation; the 1 February debit covers to 1 March.
-    subscription = await stripeRequest(`subscriptions/${encodeURIComponent(subscription.id)}`, [['cancel_at', String(cutoff)], ['proration_behavior', 'none']],
-      'POST', { idempotencyKey: `${orderRef}-${group.clubYear}-cancel-at` });
-  }
+  const subscription = await createClubYearSubscription(stripeRequest, {
+    base, firstDebit, subscriptionEnd, orderRef, clubYear: group.clubYear
+  });
   return { subscription, created: true, newPaymentDetails: otherLive };
 };
 
@@ -698,7 +691,7 @@ const setUpSubscriptions = async (orderRef) => {
 };
 
 /**
- * Subscriptions are cancelled at the club-year cut-off. Stripe stops retrying a failed 1 February debit then, so its
+ * Subscriptions are cancelled at the club-year end. Stripe stops retrying a failed 1 February debit then, so its
  * unpaid invoice is voided (no later collection) and the subscription is flagged for staff. Any other ending (Stripe
  * giving up on failed payments, or a cancellation outside this site) is flagged too.
  */
@@ -1878,7 +1871,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       ...(item.clubYear ? { clubYear: item.clubYear, clubYearPart: item.clubYearPart, label: item.label } : {}),
       ...(item.sourceLineId !== item.lineId ? { sourceLineId: item.sourceLineId } : {}),
       ...(item.monthlyBilling ? { monthlyAmount: item.monthlyAmount, debits: item.debits,
-        ...(item.debits ? { firstDebitAt: Timestamp.fromDate(item.firstDebit), cutoffAt: Timestamp.fromDate(item.cutoff) } : {}) } : {}),
+        ...(item.debits ? { firstDebitAt: Timestamp.fromDate(item.firstDebit), cutoffAt: Timestamp.fromDate(item.subscriptionEnd) } : {}) } : {}),
       ...(lineMembershipRule(item) && item.category !== 'MERCHANDISE' && item.category !== 'VOUCHERS' ? { membershipRule: lineMembershipRule(item) } : {}),
       ...(item.tripSaving > 0 ? { tripDiscount: item.tripSaving, tripDiscountReasons: item.tripDiscountReasons } : {}),
       ...(item.size ? { size: item.size } : {}),
@@ -1921,7 +1914,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const money = (value) => `£${Number(value).toFixed(2)}`;
     const debitText = groups.map((group) => {
       const monthly = debited.filter((item) => item.clubYear === group.clubYear).reduce((sum, item) => sum + Number(item.monthlyAmount), 0);
-      return `${money(monthly)} a month by direct debit on the 1st from ${dateLabel(group.firstDebitAt)} to ${dateLabel(new Timestamp(group.cutoffAt.seconds - 14 * 24 * 60 * 60, 0))} (club year ${clubYearLabel(group.clubYear)})`;
+      return `${money(monthly)} a month by direct debit on the 1st from ${dateLabel(group.firstDebitAt)} through February (club year ${clubYearLabel(group.clubYear)})`;
     }).join('; ');
     // Nothing due now but monthly payments to come: Checkout only saves the payment details.
     const setupOnly = Math.round(checkoutTotal * 100) === 0;
