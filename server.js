@@ -1941,9 +1941,11 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
         .find((line) => line && !isMembership(line) && line.category !== 'EVENTS' && clubYearKind(line)
           && holdsForClubYear(memberData.get(person.membershipId), line.id, clubYearOf(now) + (line.clubYearPart === 'next' ? 1 : 0)));
       if (held) {
-        const year = clubYearLabel(clubYearOf(now) + (held.clubYearPart === 'next' ? 1 : 0));
+        const nextYearOnSale = now >= clubYearDates(clubYearOf(now)).renewalOpens;
+        const year = nextYearOnSale ? ` for club year ${clubYearLabel(clubYearOf(now) + (held.clubYearPart === 'next' ? 1 : 0))}` : '';
+        const nextStep = nextYearOnSale ? ' Remove it from your basket or choose another club year.' : ' Remove it from your basket.';
         return res.status(409).json({ code: 'already_held', personIds: [person.id], lineId: held.sourceLineId,
-          error: `${person.firstName} ${person.lastName} already has ${held.name} for club year ${year}. Remove it from your basket or choose another club year.` });
+          error: `${person.firstName} ${person.lastName} already has ${held.name}${year}.${nextStep}` });
       }
     }
     let promo = null;
