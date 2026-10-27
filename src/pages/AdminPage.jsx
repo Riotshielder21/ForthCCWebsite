@@ -74,7 +74,6 @@ export default function AdminPage({ products, onNavigate }) {
     setError('');
     try {
       await editor.login();
-      setMessage('Signed in.');
     } catch (loginError) {
       setError(loginError.message || 'Sign-in failed. Check the account and admin access.');
     }
@@ -213,7 +212,8 @@ export default function AdminPage({ products, onNavigate }) {
             <h2 className="page_heading_bold_2">Website editor</h2>
             <p className="PageIntro">Catalogue, event tickets, forms and reports.</p>
           </div>
-          <div className="AdminPreviewActions"><button className="EditorCommand" onClick={() => onNavigate('admin-reports')}><FileText size={18} /> Reports & records</button>
+          <div className="AdminPreviewActions"><span className="StatusText StatusTextSuccess" role="status">Signed in as {adminUser.email}.</span>
+          <button className="EditorCommand" onClick={() => onNavigate('admin-reports')}><FileText size={18} /> Reports & records</button>
           <button className="MobileMenuButton AdminSignOut" onClick={() => editor.logout().catch((logoutError) => setError(logoutError.message))}> <LogOut className="IconMd" /> Sign out</button></div>
         </div>
       </div>
