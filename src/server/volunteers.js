@@ -14,9 +14,32 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
   const lists = () => db().collection('lists');
   const signupYear = (signup) => Number.isInteger(signup.clubYear) ? signup.clubYear : clubYearOf(signup.createdAt?.toDate() || new Date());
   const benefitsReference = () => db().collection('settings').doc('volunteerBenefits');
+  const coordinatorReference = () => db().collection('settings').doc('volunteerCoordinator');
   const loadVolunteerBenefits = async () => (await benefitsReference().get()).data()?.tiers || DEFAULT_VOLUNTEER_BENEFITS;
   const hash = (token) => crypto.createHash('sha256').update(token).digest('hex');
   const escape = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+  const sendInductionNotification = async (reference, signup) => {
+    const coordinator = (await coordinatorReference().get()).data()?.email || '';
+    if (!coordinator) {
+      await reference.update({ inductionNotificationStatus: 'not-configured' });
+      return 'not-configured';
+    }
+    try {
+      const emailSent = await sendEmail({
+        to: coordinator,
+        subject: 'New Forth Canoe Club volunteer sign-up',
+        body: `A new volunteer sign-up needs follow-up.\n\nName: ${signup.name}\nEmail: ${signup.email}\nHours: ${signup.tier || 'Not selected'}\nClub year: ${signup.clubYear}/${signup.clubYear + 1}\nSign-up: ${reference.id}\n\nPlease contact them to arrange an induction.`,
+        record: { kind: 'volunteer-induction', signupId: reference.id }
+      });
+      if (!emailSent) throw new Error('The induction notification email could not be sent.');
+      await reference.update({ inductionNotificationStatus: 'sent', inductionNotifiedAt: Timestamp.now() });
+      return 'sent';
+    } catch (error) {
+      console.error('Could not notify volunteer induction coordinator:', error.message);
+      await reference.update({ inductionNotificationStatus: 'failed' });
+      return 'failed';
+    }
+  };
   const volunteerRenewalContent = async (members, year, siteUrl) => {
     const lines = [];
     const html = [];
@@ -214,6 +237,49 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
     }
   });
 
+  app.get('/api/admin/volunteer-coordinator', rateLimit(30, 60 * 1000), async (req, res) => {
+    try {
+      if (!await requireAdmin(req, res)) return;
+      if (!db()) return res.status(503).json({ error: 'Volunteer storage is not configured.' });
+      res.set('Cache-Control', 'no-store');
+      res.json({ email: (await coordinatorReference().get()).data()?.email || '' });
+    } catch (error) {
+      console.error('Could not load volunteer coordinator:', error.message);
+      res.status(500).json({ error: 'Could not load volunteer coordinator.' });
+    }
+  });
+  app.put('/api/admin/volunteer-coordinator', rateLimit(10, 60 * 1000), async (req, res) => {
+    try {
+      const admin = await requireAdmin(req, res);
+      if (!admin) return;
+      if (!db()) return res.status(503).json({ error: 'Volunteer storage is not configured.' });
+      const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+      if (email && (email.length > 254 || !/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(email))) {
+        return res.status(400).json({ error: 'Enter a valid coordinator email address, or leave it blank to turn off notifications.' });
+      }
+      await coordinatorReference().set({ email, updatedBy: admin.uid, updatedAt: Timestamp.now() });
+      res.json({ email });
+    } catch (error) {
+      console.error('Could not save volunteer coordinator:', error.message);
+      res.status(500).json({ error: 'Could not save volunteer coordinator.' });
+    }
+  });
+  app.post('/api/admin/volunteers/:id/notify-induction', rateLimit(10, 60 * 1000), async (req, res) => {
+    try {
+      if (!await requireAdmin(req, res)) return;
+      if (!db()) return res.status(503).json({ error: 'Volunteer storage is not configured.' });
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(req.params.id)) return res.status(400).json({ error: 'Choose a volunteer sign-up.' });
+      const reference = lists().doc(req.params.id);
+      const document = await reference.get();
+      if (!document.exists || document.data().listType !== VOLUNTEER_LIST) return res.status(404).json({ error: 'Volunteer sign-up not found.' });
+      const status = await sendInductionNotification(reference, document.data());
+      res.json({ success: status === 'sent', status });
+    } catch (error) {
+      console.error('Could not resend induction notification:', error.message);
+      res.status(500).json({ error: 'Could not resend the induction notification.' });
+    }
+  });
+
   const findVolunteerMember = async ({ name, email }) => {
     const adminDb = db();
     const [byEmail, households] = await Promise.all([
@@ -327,10 +393,12 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       const reference = await lists().add({
         ...value, status: 'pending', createdAt: Timestamp.now(),
         ...(volunteer ? { memberId: member?.id || null, inducted: member?.data().volunteer?.inducted === true,
-          clubYear: clubYearOf(requestNow(req)), active: false, discountCode: null } : {})
+          clubYear: clubYearOf(requestNow(req)), active: false, discountCode: null,
+          inductionNotificationStatus: 'pending' } : {})
       });
       if (member) await member.ref.set({ volunteer: { signupId: reference.id,
         inducted: member.data().volunteer?.inducted === true } }, { merge: true });
+      if (volunteer) await sendInductionNotification(reference, { ...value, clubYear: clubYearOf(requestNow(req)) });
 
       const spreadsheetId = process.env.GOOGLE_SHEET_ID;
       if (sheets() && spreadsheetId) {
@@ -385,6 +453,7 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
           memberId: member ? data.memberId : '', memberStatus: member ? membershipActivity(member) : 'not a member',
           inducted: data.inducted === true, codeIssued: Boolean(data.discountCode), codeEmailed: data.codeEmailed === true,
           active: data.active === true, boathouseCodeCurrent: Boolean(codeVersion) && member?.keyAccess?.sentVersion === codeVersion && !member.keyAccess.revokedAt,
+          inductionNotificationStatus: data.inductionNotificationStatus || '',
           tier: data.tier || '', clubYear: signupYear(data),
           benefitsEmailPending: data.active === true && Boolean(data.tier) && data.benefitsEmailedFor !== `${signupYear(data)}:${data.tier}`,
           boathouseEmailPending: data.inducted === true && !member?.keyAccess?.revokedAt && Boolean(codeVersion) && member?.keyAccess?.sentVersion !== codeVersion,

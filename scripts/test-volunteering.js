@@ -47,11 +47,15 @@ const member = db.collection('memberships').doc(memberId);
 const form = db.collection('forms').doc(`form-${run}`);
 const settings = db.collection('settings').doc('volunteerBenefits');
 const originalSettings = await settings.get();
+const coordinatorSettings = db.collection('settings').doc('volunteerCoordinator');
+const originalCoordinatorSettings = await coordinatorSettings.get();
 let signupId;
 try {
-  await member.set({ firstName: 'Volunteer', lastName: 'Tester', email, status: 'active', renewalMethod: 'website',
+  await coordinatorSettings.set({ email: `coordinator-${run}@example.test` });
+  await member.set({ firstName: 'Volunteer', lastName: 'Tester', email, dob: '1989-04-03', status: 'active', renewalMethod: 'website',
     validUntil: Timestamp.fromDate(clubYearDates(year).end), clubYears: [year], privileges: [{ productId: 'boat-hire', clubYear: year }] });
   assert.equal((await call('/api/lists', 'POST', { name: 'Volunteer Tester', email, listType: 'Volunteer Sign-ups', tier: '40', items: ['Coaching', 'Weekends'] })).status, 200);
+  assert.equal(sent.find((message) => message.record.kind === 'volunteer-induction')?.to, `coordinator-${run}@example.test`);
   signupId = (await db.collection('lists').where('email', '==', email).get()).docs[0].id;
   const path = `/api/admin/volunteers/${signupId}`;
   assert.equal((await call(path, 'PATCH', { active: true }, null, false)).status, 401);
@@ -62,6 +66,8 @@ try {
   assert.equal(data.volunteer.years[year].active, true);
   assert.deepEqual(data.privileges, [{ productId: 'boat-hire', clubYear: year }], 'already paid benefit is not changed');
   assert.equal(sent.filter((message) => message.record.kind === 'volunteer-benefits').length, 1);
+  assert.equal((await call('/api/admin/volunteer-coordinator')).data.email, `coordinator-${run}@example.test`);
+  assert.equal((await call('/api/admin/volunteer-coordinator', 'PUT', { email: 'not-an-email' })).status, 400);
   await call(path, 'PATCH', { active: false });
   assert.equal((await member.get()).data().volunteer.inducted, true);
   assert.equal((await member.get()).data().volunteer.years[year].active, false);
@@ -142,7 +148,7 @@ try {
   const combined = await call('/api/admin/renewals/send', 'POST', { membershipId: memberId }, `${year + 1}-01-15T09:00:00Z`);
   assert.equal(combined.data.emails, 1);
   assert.match(sent.find((message) => message.record.kind === 'renewal').body, /Keep your 40\+ hour commitment/);
-  console.log('PASS: activation, membership benefits, deactivation, JustGo statuses, two volunteer-only renewal reminders, safe renewal links and changed brackets.');
+  console.log('PASS: induction coordinator notification, membership benefits, deactivation, JustGo statuses and renewal links.');
 } finally {
   const lists = await db.collection('lists').where('memberId', '==', memberId).get();
   const links = await db.collection('volunteerRenewals').where('memberId', '==', memberId).get();
@@ -152,6 +158,8 @@ try {
   await form.delete();
   if (originalSettings.exists) await settings.set(originalSettings.data());
   else await settings.delete();
+  if (originalCoordinatorSettings.exists) await coordinatorSettings.set(originalCoordinatorSettings.data());
+  else await coordinatorSettings.delete();
   await member.delete();
   await new Promise((resolve) => server.close(resolve));
   await db.terminate();
