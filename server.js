@@ -1261,7 +1261,7 @@ registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => 
 const { sendDueRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
-const { loadReceiptPersonFields } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
+const { loadReceiptPersonFields, receiptPeopleWithRecords } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
   volunteerRenewalContent, sendVolunteerRenewals,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
@@ -2140,7 +2140,9 @@ const sendEmail = async ({ to, subject, body, html, record = {} }) => {
 const sendOrderEmail = async ({ email, orderRef, accessToken, items, people = [], total, vouchers = [], siteUrl = '', billingMode = 'annual' }) => {
   const orderSiteUrl = siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
   // Admin-chosen person details go in the email only, never the shareable receipt link.
-  const receipt = buildReceiptSummary(orderRef, { email, items, people, total, vouchers, billingMode }, { personFields: await loadReceiptPersonFields() });
+  const personFields = await loadReceiptPersonFields();
+  const receiptPeople = personFields.length ? await receiptPeopleWithRecords(people, email) : people;
+  const receipt = buildReceiptSummary(orderRef, { email, items, people: receiptPeople, total, vouchers, billingMode }, { personFields });
   const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${accessToken}`;
   const body = [receiptEmailCopy(receipt), '', `Retrieve your receipt and subscription information: ${retrievalUrl}`, '',
     'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n');

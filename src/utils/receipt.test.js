@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildReceiptSummary, buildLinkedReceipt, receiptItemNames, receiptEmailCopy, receiptEmailHtml, normalizeReceiptPersonFields, RECEIPT_PERSON_FIELDS } from './receipt.js';
+import { buildReceiptSummary, buildLinkedReceipt, receiptItemNames, receiptEmailCopy, receiptEmailHtml, normalizeReceiptPersonFields, RECEIPT_PERSON_FIELDS, receiptPersonWithRecord } from './receipt.js';
 
 const order = {
   email: 'payer@example.test', total: 75, billingMode: 'monthly',
@@ -176,4 +176,24 @@ test('club-year items show what was paid now and the monthly debit', () => {
   ] });
   assert.deepEqual(summary.otherItems.map((item) => item.billing),
     ['80% of this month now, then monthly from 1 Nov 2026 at £20.00 a month', 'Club year 2027/28']);
+});
+
+test('existing members get missing receipt details from their records only when the receipt goes to their own email', () => {
+  const person = { firstName: 'Jack', lastName: 'Watt', dob: '2000-08-23', existingMember: true, membershipId: 'M0001', photoConsent: false, phone: '' };
+  const member = { dob: '2000-08-23', swimming: 'Confident', medical: 'Asthma', affiliationNumber: '12345', consents: { photoVideo: { accepted: true } } };
+  const household = { email: 'Jack@Example.test', phone: '07000 000000', address: '1 Shore Road', postcode: 'EH1 1AA',
+    emergencyContact: { name: 'Sam Watt', relationship: 'Partner', phone: '07111 111111' } };
+  const filled = receiptPersonWithRecord(person, 'jack@example.test ', member, household);
+  const details = buildReceiptSummary('FCC-1', { people: [filled], items: [] }, { personFields: RECEIPT_PERSON_FIELDS.map((field) => field.key) }).people[0].details;
+  assert.deepEqual(details.map((detail) => detail.label), ['Date of birth', 'Phone', 'Address', 'Paddle Scotland number', 'Club membership ID',
+    'Swimming ability', 'Emergency contact', 'Medical information', 'Photo consent']);
+  assert.equal(details.find((detail) => detail.label === 'Address').value, '1 Shore Road, EH1 1AA');
+  assert.equal(details.find((detail) => detail.label === 'Photo consent').value, 'No', 'details entered at checkout win');
+
+  assert.equal(receiptPersonWithRecord(person, 'someone-else@example.test', member, household), person, 'another address gets only what was entered');
+  assert.equal(receiptPersonWithRecord({ ...person, existingMember: false }, 'jack@example.test', member, household).phone, '');
+  const junior = receiptPersonWithRecord({ ...person, junior: true, guardian: { email: 'parent@example.test' } }, 'parent@example.test', member,
+    { email: 'parent@example.test', contactName: 'Pat Parent', contactRelationship: 'Parent/Guardian', phone: '07222 222222', address: '2 Shore Road' });
+  assert.deepEqual(junior.guardian, { name: 'Pat Parent', relationship: 'Parent/Guardian', phone: '07222 222222', email: 'parent@example.test' });
+  assert.equal(junior.address, undefined, "a junior's receipt shows the guardian rather than repeating the household address as theirs");
 });

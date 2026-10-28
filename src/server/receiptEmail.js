@@ -1,5 +1,5 @@
 import { Timestamp } from 'firebase-admin/firestore';
-import { normalizeReceiptPersonFields } from '../utils/receipt.js';
+import { normalizeReceiptPersonFields, receiptPersonWithRecord } from '../utils/receipt.js';
 import { rateLimit } from './rateLimit.js';
 
 /**
@@ -20,6 +20,23 @@ export const registerReceiptEmailRoutes = (app, { requireAdmin, db }) => {
     catch (error) {
       console.error('Could not load receipt email fields:', error.message);
       return [];
+    }
+  };
+
+  /** Existing members' missing details for the receipt email; on any failure the order's own details are used. */
+  const receiptPeopleWithRecords = async (people = [], receiptEmail = '') => {
+    if (!db() || !people.some((person) => person.existingMember && person.membershipId)) return people;
+    try {
+      return await Promise.all(people.map(async (person) => {
+        if (!person.existingMember || !person.membershipId) return person;
+        const member = (await db().collection('memberships').doc(person.membershipId).get()).data();
+        const householdId = member?.householdId || person.householdId;
+        const household = householdId ? (await db().collection('households').doc(householdId).get()).data() : undefined;
+        return receiptPersonWithRecord(person, receiptEmail, member, household);
+      }));
+    } catch (error) {
+      console.error('Could not load member records for the receipt email:', error.message);
+      return people;
     }
   };
 
@@ -51,5 +68,5 @@ export const registerReceiptEmailRoutes = (app, { requireAdmin, db }) => {
     }
   });
 
-  return { loadReceiptPersonFields };
+  return { loadReceiptPersonFields, receiptPeopleWithRecords };
 };
