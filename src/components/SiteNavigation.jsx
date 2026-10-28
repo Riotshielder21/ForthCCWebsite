@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShoppingCart, Menu, X } from 'lucide-react';
+import { ShoppingCart, Menu, X, UserRound } from 'lucide-react';
 import fccLogoMark from '../assets/fcc-logo-mark.svg';
 
 const NAV_ITEMS = [
@@ -58,6 +58,15 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
         </div>
 
         <div className="MobileNavControls">
+          {mobileOpen && (
+            <a href="/my-details" className="CartToggleButton" aria-label="My details" title="My details" onClick={(event) => {
+              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              handleNav('my-details');
+            }}>
+              <UserRound className="IconLg" />
+            </a>
+          )}
           <button
             onClick={onCartOpen}
             className="CartToggleButton"

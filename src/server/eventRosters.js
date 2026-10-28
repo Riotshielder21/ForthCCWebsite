@@ -1,5 +1,6 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { buildRoster, rosterEmail, rosterDue } from '../utils/eventRoster.js';
+import { readJustgoSync } from './justgoSync.js';
 import { rateLimit } from './rateLimit.js';
 
 /**
@@ -25,7 +26,8 @@ export const registerEventRosterRoutes = (app, { requireAdmin, db, sendEmail, lo
 
   const sendRoster = async (product, orders, record) => {
     const relevant = orders.filter((order) => (order.items || []).some((item) => item.id === product.id));
-    const roster = buildRoster(product.id, relevant, await loadMembers(relevant));
+    const now = new Date();
+    const roster = buildRoster(product.id, relevant, await loadMembers(relevant), now, await readJustgoSync(db(), now));
     const { subject, body } = rosterEmail(product, roster);
     const sent = await sendEmail({ to: product.leaderEmail, subject, body, record: { type: 'event-roster', productId: product.id, attendees: roster.length } });
     if (!sent) throw new Error('The email service is not configured.');

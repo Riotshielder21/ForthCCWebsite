@@ -25,7 +25,7 @@ test('the club year is named by the year it starts and changes at London midnigh
   assert.equal(clubYearLabel(2027), '2027/28');
   assert.equal(clubYearLabel(2099), '2099/00');
   const dates = clubYearDates(2027);
-  assert.equal(dates.cutoff.toISOString(), '2028-02-15T00:00:00.000Z');
+  assert.equal(dates.salesCutoff.toISOString(), '2028-02-15T00:00:00.000Z');
   assert.equal(dates.membershipSaleEnds.toISOString(), '2028-02-08T00:00:00.000Z');
   assert.equal(dates.end.toISOString(), '2028-03-01T00:00:00.000Z');
 });
@@ -41,7 +41,7 @@ test('the joining-month charge rounds the rest of the month up to the next 20%',
   assert.equal(joiningShare(london(2027, 0, 8)), 0.8);
 });
 
-test('debits are on the 1st and stop at the February cut-off', () => {
+test('monthly debits include the full February payment and stop at the 1 March club-year end', () => {
   assert.equal(nextFirst(london(2027, 9, 15)).toISOString(), '2027-11-01T00:00:00.000Z');
   assert.equal(nextFirst(london(2027, 11, 31)).toISOString(), '2028-01-01T00:00:00.000Z');
   assert.equal(fullMonthsAfterCurrent(london(2027, 2, 1)), 11);
@@ -50,9 +50,9 @@ test('debits are on the 1st and stop at the February cut-off', () => {
   assert.equal(fullMonthsAfterCurrent(london(2028, 1, 3)), 0);
   const january = monthlyDebits(2027, london(2028, 0, 20));
   assert.deepEqual([january.firstDebit.toISOString(), january.debits], ['2028-02-01T00:00:00.000Z', 1]);
-  assert.deepEqual(monthlyDebits(2027, london(2028, 1, 3)), { firstDebit: null, debits: 0, cutoff: clubYearDates(2027).cutoff });
+  assert.deepEqual(monthlyDebits(2027, london(2028, 1, 3)), { firstDebit: null, debits: 0, subscriptionEnd: clubYearDates(2027).end });
   const next = monthlyDebits(2028, london(2028, 0, 20));
-  assert.deepEqual([next.firstDebit.toISOString(), next.debits, next.cutoff.toISOString()], ['2028-03-01T00:00:00.000Z', 12, '2029-02-15T00:00:00.000Z']);
+  assert.deepEqual([next.firstDebit.toISOString(), next.debits, next.subscriptionEnd.toISOString()], ['2028-03-01T00:00:00.000Z', 12, '2029-03-01T00:00:00.000Z']);
 });
 
 test('only membership, services and subscriptions have a club year', () => {
@@ -76,6 +76,18 @@ test('next year is on sale from 1 January; this year stops on 8 February for mem
   assert.equal(resolveClubYearChoice(membership, 'next', at(11, 1)), null);
   assert.deepEqual(clubYearsFor('both', at(0, 5)), [2027, 2028]);
   assert.deepEqual(clubYearsFor('next', at(0, 5)), [2028]);
+});
+
+test('sales close on 15 February while subscriptions continue through the February debit', () => {
+  const monthlySalesEnd = clubYearDates(2027).salesCutoff;
+  const subscriptionEnd = clubYearDates(2027).end;
+  assert.equal(monthlySalesEnd.toISOString(), '2028-02-15T00:00:00.000Z');
+  assert.equal(subscriptionEnd.toISOString(), '2028-03-01T00:00:00.000Z');
+  assert.deepEqual(clubYearChoices(monthly, new Date('2028-02-14T12:00:00Z')), ['this', 'next', 'both']);
+  assert.deepEqual(clubYearChoices(monthly, new Date('2028-02-15T00:00:00Z')), ['next']);
+  assert.deepEqual(monthlyDebits(2027, london(2028, 0, 20)), {
+    firstDebit: londonMidnight(2028, 1, 1), debits: 1, subscriptionEnd
+  });
 });
 
 test('older records take their club year from when they were granted', () => {

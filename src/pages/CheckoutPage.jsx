@@ -137,7 +137,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const heading = !person ? '' : memberships.length
     ? `Membership ${membershipSteps.indexOf(person) + 1} of ${membershipSteps.length} (${tierName(memberships[0])})`
     : held(person).some(grantsMembership) ? 'Attendee (club membership included)'
-    : openToNonMembers && !held(person).some(requiresMembership) ? 'Attendee' : 'Existing member';
+    : openToNonMembers && !held(person).some(requiresMembership) ? 'Attendee' : 'Member Details';
   const memberField = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.value }));
   const memberCheck = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.checked }));
   const shownErrors = [...errors, ...(serverErrors || []).filter((message) => !errors.includes(message))];
@@ -165,16 +165,14 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
           <div className="CheckoutDetails">
             <h2 className="page_heading_bold_1">{heading}</h2>
             {canRemove && <button type="button" className="PrimaryActionButtonCompact" onClick={() => removePerson(person)}>Cancel and remove this person</button>}
-            <p className="CartItemMeta">{memberships.length ? memberships.map(lineLabel).join(', ') : heading === 'Attendee'
-              ? 'Club members can confirm with their date of birth. Not a member? Fill in your details below. Tickets are assigned on a later step.'
-              : heading === 'Attendee (club membership included)'
-              ? 'Not a member yet? Fill in your details below and you become a club member until 1 March. Existing members can confirm with their date of birth. Items are assigned on a later step.'
-              : 'Existing member. Add-ons are chosen on a later step.'}</p>
+            {heading !== 'Member Details' && <p className="CartItemMeta">{memberships.length ? memberships.map(lineLabel).join(', ') : heading === 'Attendee'
+              ? 'Tickets are assigned on a later step.'
+              : 'Club membership until 1 March is included for non-members. Items are assigned on a later step.'}</p>}
 
             {!person.returning && !person.firstName && emailKnown && (
               <div className="CheckoutSection">
-                <h4 className="CartItemTitle">We already hold a membership under this email</h4>
-                <p className="text_container">If that is you, enter your date of birth and we will show your name so you do not have to type everything again. This may not be you, for example someone else could share this email. If so, just fill in the form below as a new entry.</p>
+                <h4 className="CartItemTitle">We already hold details under this email</h4>
+                <p className="text_container">If that is you (including if you have checked in at club night or booked an event before), enter your date of birth and we will show your name so you do not have to type everything again. This may not be you, for example someone else could share this email. If so, just fill in the form below as a new entry.</p>
                 <label className="FormLabel">Date of birth
                   <input className="FormInput" type="date" value={dobCheck.dob || ''} onChange={(event) => setDobChecks((current) => ({ ...current, [person.id]: { dob: event.target.value, names: [], checked: false } }))} />
                 </label>
@@ -183,7 +181,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                   <div className="CheckoutNames">
                     {choices.map((name) => (
                       <button key={`${name.firstName} ${name.lastName}`} type="button" className="PrimaryActionButtonCompact"
-                        onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob, verifiedDob: dobCheck.dob }))}>
+                        onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob, verifiedDob: dobCheck.dob,
+                          volunteerPreview: name.volunteer ? { volunteer: name.volunteer, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob } : null }))}>
                         {name.firstName} {name.lastName}
                       </button>
                     ))}

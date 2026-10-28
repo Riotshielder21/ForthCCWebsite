@@ -2,6 +2,7 @@ import React from 'react';
 import { Mail, MapPin, ExternalLink } from 'lucide-react';
 import { usePageContent } from '../utils/PageContentContext';
 import EditablePage from '../components/EditablePage';
+import ContactForms from '../components/ContactForms';
 
 export default function ContactUsPage() {
   const copy = usePageContent('contact');
@@ -65,6 +66,7 @@ export default function ContactUsPage() {
           <p className="text_container text_container_strong"><a data-content-field="supportEmail" href={`mailto:${copy.supportEmail}`}>{copy.supportEmail}</a></p>
         </div></div>
       </div>
+      <ContactForms />
     </EditablePage>
   );
 }

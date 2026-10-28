@@ -132,7 +132,7 @@ try {
   assert.equal((await db.collection('stripeSubscriptions').doc(firstImport.clubSubscriptionId).get()).data().scheduledCancellationAt, nextClubYearEnd());
   assert.equal((await db.collection('adminSubscriptionAudit').get()).size, 1);
   const members = await request('/api/admin/reports?kind=members', { headers });
-  assert.equal(members.result.records.find((record) => record.id === 'test-current').status, 'Current');
+  assert.equal(members.result.records.find((record) => record.id === 'test-current').status, 'Active');
   assert.equal(members.result.records.find((record) => record.id === 'test-expired').status, 'Expired');
   const remove = (acknowledgeStripe) => request('/api/admin/records/orders/TEST-SUBSCRIPTION', {
     method: 'DELETE', headers, body: JSON.stringify({ confirmId: 'TEST-SUBSCRIPTION', acknowledgeStripe })

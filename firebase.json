@@ -69,6 +69,24 @@
         ]
       },
       {
+        "source": "/{admin,api,order,my-details,check-ins,club-night,payment-success,_preview}{,/**}",
+        "headers": [
+          {
+            "key": "X-Robots-Tag",
+            "value": "noindex, nofollow, noarchive, nosnippet"
+          }
+        ]
+      },
+      {
+        "source": "/robots.txt",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public,max-age=3600"
+          }
+        ]
+      },
+      {
         "source": "/order/**",
         "headers": [
           {

@@ -28,7 +28,7 @@ export default function AdminAccessPanel({ adminUser }) {
 
   const change = async (action, target) => {
     const prompt = action === 'grant'
-      ? `Make ${target} a website admin? They will be able to see member data, cancel subscriptions, erase records and change the boathouse code.`
+      ? `Make ${target} a website admin? They will be able to see member data, cancel subscriptions, erase records and change the boathouse access codes.`
       : `Remove admin access from ${target}? They will be signed out.`;
     if (!window.confirm(prompt)) return;
     setError('');
@@ -50,7 +50,7 @@ export default function AdminAccessPanel({ adminUser }) {
   return (
     <form className="main_tile SpaceT6" onSubmit={(event) => { event.preventDefault(); change('grant', email.trim().toLowerCase()); }}>
       <div className="AdminListHeader"><div><span className="tile_eyebrow">Access</span><h3 className="tile_heading_bold_2">Website admins</h3></div></div>
-      <p className="text_container SpaceB4">Admins can see member data, cancel subscriptions, erase records and change the boathouse code. To add someone, ask them to sign in once at /admin with their @{ADMIN_DOMAIN} Google account, then approve them here.</p>
+      <p className="text_container SpaceB4">Admins can see member data, cancel subscriptions, erase records and change the boathouse access codes. To add someone, ask them to sign in once at /admin with their @{ADMIN_DOMAIN} Google account, then approve them here.</p>
       <ul className="SpaceB4">
         {admins.map((admin) => (
           <li key={admin.uid} className="AdminListHeader">

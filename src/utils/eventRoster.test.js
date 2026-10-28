@@ -70,9 +70,9 @@ test('the roster lists each paid ticket with contacts, medical details, membersh
   ]);
   const roster = buildRoster('trip', orders, members, now);
   assert.deepEqual(roster.map((row) => [row.name, row.kit, row.membership]), [
-    ['Ann Adult', KIT.boatHire, 'Current'],
-    ['Cara Contact', KIT.needsHire, 'Not a member'],
-    ['Zed Member', KIT.ownKit, 'Current']
+    ['Ann Adult', KIT.boatHire, 'Active'],
+    ['Cara Contact', KIT.needsHire, 'No'],
+    ['Zed Member', KIT.ownKit, 'Active']
   ], 'last club year\'s boat hire does not count; pending orders and other events are left out');
   assert.equal(roster[0].emergencyContact, 'Bob, Partner, 0711');
   assert.equal(roster[2].medical, 'Diabetic', 'existing members\' details come from their record');
@@ -84,6 +84,6 @@ test('the roster lists each paid ticket with contacts, medical details, membersh
   assert.match(body, /Attendees: 3\. 1 needs boat hire and has not paid for it\./);
   assert.match(body, /1\. Ann Adult \(Adult, born 1990-01-01\)\n {3}Phone: 0700 {3}Email: ann@example\.com\n {3}Emergency contact: Bob, Partner, 0711\n {3}Medical: Asthma/);
   assert.match(body, /Kit: Bringing own kit/);
-  assert.match(body, /Membership: Not a member/);
+  assert.match(body, /Membership: No\n/);
   assert.match(rosterEmail(event, []).body, /Nobody has booked\./);
 });

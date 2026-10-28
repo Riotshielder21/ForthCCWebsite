@@ -4,6 +4,7 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { reportDate } from '../src/utils/adminReports.js';
+import { allocateMemberIds, membershipNumberFor } from '../src/utils/memberIds.js';
 
 const apply = process.argv.includes('--apply');
 const appId = process.env.FCC_APP_ID || 'forth-canoe-default';
@@ -31,7 +32,7 @@ for (const document of legacy.docs) {
   const target = existing.get(affiliationNumber);
   const current = target?.data() || {};
   const fields = {
-    affiliationNumber, justgoSyncStatus: 'synced', renewalMethod: 'justgo', updatedAt: Timestamp.now(),
+    affiliationNumber, membershipNumber: membershipNumberFor(affiliationNumber), justgoSyncStatus: 'synced', renewalMethod: 'justgo', updatedAt: Timestamp.now(),
     ...(!current.validUntil && expiry ? { validUntil: Timestamp.fromDate(new Date(expiry)) } : {}),
     ...(!current.status ? { status: !expiry || new Date(expiry) >= new Date() ? 'active' : 'expired' } : {}),
     ...(!current.firstName && firstName ? { firstName } : {}),
@@ -42,7 +43,9 @@ for (const document of legacy.docs) {
   fields.searchName = `${fields.firstName || current.firstName || ''} ${fields.lastName || current.lastName || ''}`.toLowerCase().split(/\s+/).filter(Boolean).join(' ');
   if (target) merged += 1; else created += 1;
   if (apply) {
-    batch.set(target?.ref || db.collection('memberships').doc(`sca-${affiliationNumber}`), fields, { merge: true });
+    const reference = target?.ref || db.collection('memberships').doc((await allocateMemberIds(db, 1))[0]);
+    batch.set(reference, fields, { merge: true });
+    if (!target) existing.set(affiliationNumber, { ref: reference, data: () => fields });
     pending += 1;
     if (pending === 400) { await batch.commit(); batch = db.batch(); pending = 0; }
   }

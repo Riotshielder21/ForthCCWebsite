@@ -186,8 +186,8 @@ export default function DiscountCodesPanel({ adminUser, products }) {
 
       {(codes.length > 0 || vouchers.length > 0) && (
         <div style={{ overflowX: 'auto' }}>
-          <table className="text_container SpaceT4" style={{ width: '100%', textAlign: 'left' }}>
-            <thead><tr><th>Code</th><th>Description</th><th>Discount</th><th>Applies to</th><th>Status</th><th>Expires</th><th /></tr></thead>
+          <table className="text_container SpaceT4 DiscountCodesTable" style={{ width: '100%', textAlign: 'left' }}>
+            <thead><tr><th>Code</th><th>Description</th><th>Discount</th><th>Applies to</th><th>Status</th><th>Expires</th><th className="DiscountCodeActionCell"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {vouchers.map((row) => (
                 <tr key={`voucher-${row.key}`}>
@@ -197,7 +197,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
                   <td>{row.product ? scopeLabel(voucherScope(row.product), nameFor) : ''}</td>
                   <td>{voucherStatus(row)}</td>
                   <td>1 year after purchase</td>
-                  <td>{row.product && <button type="button" className="PrimaryActionButtonCompact" onClick={() => setScopeDraft({ productId: row.product.id, ...voucherScope(row.product) })}>Edit</button>}</td>
+                  <td className="DiscountCodeActionCell">{row.product && <button type="button" className="PrimaryActionButtonCompact" onClick={() => setScopeDraft({ productId: row.product.id, ...voucherScope(row.product) })}>Edit</button>}</td>
                 </tr>
               ))}
               {codes.map((code) => (
@@ -208,10 +208,10 @@ export default function DiscountCodesPanel({ adminUser, products }) {
                   <td>{code.productIds.length ? code.productIds.map(nameFor).join(', ') : 'Everything except membership'}</td>
                   <td>{code.used ? 'used' : code.expired ? 'expired' : code.active ? 'active' : 'disabled'}{code.singleUse ? ' (single use)' : ''}</td>
                   <td>{code.expiresAt ? new Date(code.expiresAt).toLocaleDateString('en-GB') : ''}</td>
-                  <td>
-                    <button type="button" className="PrimaryActionButtonCompact" onClick={() => startEdit(code)}>Edit</button>{' '}
+                  <td className="DiscountCodeActionCell"><div className="DiscountCodeActions">
+                    <button type="button" className="PrimaryActionButtonCompact" onClick={() => startEdit(code)}>Edit</button>
                     <button type="button" className="PrimaryActionButtonCompact" onClick={() => toggleActive(code)}>{code.active ? 'Disable' : 'Enable'}</button>
-                  </td>
+                  </div></td>
                 </tr>
               ))}
             </tbody>

@@ -14,6 +14,10 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  # Who is emailed when the API fails its /health check (comma separated). Applied on every deploy.
+  API_ALERT_EMAILS: Riotshielder21@gmail.com
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -57,14 +61,16 @@ jobs:
             GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk
             GOOGLE_SHARED_DRIVE_ID=0APxBZiGs6yEGUk9PVA
             GOOGLE_FORMS_ROOT_FOLDER_ID=1_ptxNQkgpJdogsjDZ4Wbqb310LCEJI4Z
-            PUBLIC_SITE_URL=https://fccwebsite-23cfc.web.app
-            PUBLIC_SITE_URLS=https://www.forthcanoeclub.co.uk,https://fccwebsite-23cfc.web.app,https://fccwebsite-23cfc.firebaseapp.com
+            PUBLIC_SITE_URL=https://new.forthcanoeclub.co.uk
+            PUBLIC_SITE_URLS=https://new.forthcanoeclub.co.uk,https://fccwebsite-23cfc.web.app,https://fccwebsite-23cfc.firebaseapp.com
             WEBSITE_ISLIVE=${{ secrets.WEBSITE_ISLIVE || 'false' }}
           secrets: |-
             GITHUB_CONTENT_TOKEN=github-content-token:latest
             FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account-json:latest
             STRIPE_SECRET_KEY=stripe-test-secret-key:latest
             STRIPE_WEBHOOK_SECRET=stripe-test-webhook-secret:latest
+            AUDIT_LOOKUP_SECRET=audit-lookup-secret:latest
+            STRIPE_SUBSCRIPTION_ADMIN_KEY=stripe-subscription-admin-key:latest
 
       - name: Build website
         run: |
@@ -94,4 +100,11 @@ jobs:
       - name: Deploy Firebase services
         run: npx firebase-tools deploy --project fccwebsite-23cfc --only hosting,firestore:rules,storage
         env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.google-auth.outputs.credentials_file_path }}
+
+      - name: Configure API outage email alert
+        run: node scripts/setup-api-monitoring.mjs
+        env:
+          API_URL: ${{ steps.deploy-api.outputs.url }}
+          GOOGLE_CLOUD_PROJECT: fccwebsite-23cfc
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.google-auth.outputs.credentials_file_path }}

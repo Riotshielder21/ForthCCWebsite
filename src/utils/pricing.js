@@ -90,7 +90,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
     const recurringMonthlyCost = schedule.debits ? monthlyRate : 0;
     return { ...item, label, subtotalPrice, displayPrice, annualSaving, promoSaving, tripSaving, promoEligible, recurringMonthlyCost, monthlyBilling,
       clubYearInfo, ...(kind ? { clubYear, clubYearPart: nextYear ? 'next' : 'this' } : {}),
-      ...(monthlyBilling ? { monthlyAmount: monthlyRate, firstDebit: schedule.firstDebit, debits: schedule.debits, cutoff: schedule.cutoff || null } : {}) };
+      ...(monthlyBilling ? { monthlyAmount: monthlyRate, firstDebit: schedule.firstDebit, debits: schedule.debits, subscriptionEnd: schedule.subscriptionEnd || null } : {}) };
   });
   let credit = promo?.discountType === 'credit' ? promo.discountValue : 0;
   for (const item of items) {
@@ -106,7 +106,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
   const debitsByStart = new Map();
   for (const item of items.filter((line) => line.recurringMonthlyCost > 0)) {
     const key = item.firstDebit.getTime();
-    const entry = debitsByStart.get(key) || { firstDebit: item.firstDebit, cutoff: item.cutoff, clubYear: item.clubYear, monthly: 0 };
+    const entry = debitsByStart.get(key) || { firstDebit: item.firstDebit, subscriptionEnd: item.subscriptionEnd, clubYear: item.clubYear, monthly: 0 };
     entry.monthly = money(entry.monthly + item.recurringMonthlyCost);
     debitsByStart.set(key, entry);
   }

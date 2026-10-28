@@ -4,7 +4,7 @@ import {
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
-import { calculateCart, expandClubYearLines } from './utils/pricing';
+import { calculateCart, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson } from './utils/checkout';
 import CheckoutPage from './pages/CheckoutPage';
@@ -16,6 +16,8 @@ import MembershipPage from './pages/MembershipPage';
 import BeginnersPage from './pages/BeginnersPage';
 import DisciplinesPage from './pages/DisciplinesPage';
 import VolunteeringPage from './pages/VolunteeringPage';
+import ClubNightPage from './pages/ClubNightPage';
+import MyDetailsPage from './pages/MyDetailsPage';
 import AboutPage from './pages/AboutPage';
 import ContactUsPage from './pages/ContactUsPage';
 import AccessProjectPage from './pages/AccessProjectPage';
@@ -29,6 +31,7 @@ import { apiUrl } from './utils/api';
 import { PRODUCTS } from './constants/products';
 import { PAGE_CONTENT } from './constants/pageContent';
 import './index.css';
+import { applyVolunteerBenefits } from './utils/volunteering';
 
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -52,6 +55,9 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState(() => {
     if (window.location.pathname === '/admin/reports') return 'admin-reports';
     if (window.location.pathname === '/admin') return 'admin';
+    if (window.location.pathname === '/volunteering') return 'volunteering';
+    if (['/check-ins', '/club-night'].includes(window.location.pathname)) return 'club-night';
+    if (window.location.pathname === '/my-details') return 'my-details';
     if (window.location.pathname.startsWith('/order/')) return 'order-lookup';
     if (window.location.pathname === '/payment-success') return 'payment-success';
     const previewPage = window.location.pathname.startsWith('/_preview/')
@@ -90,6 +96,7 @@ export default function App() {
   const [focusPersonId, setFocusPersonId] = useState(null);
   const pageBeforeCheckout = useRef('membership');
   const [people, setPeople] = useState(initialDraft?.people || []);
+  const [volunteerTiers, setVolunteerTiers] = useState([]);
   const [checkoutErrors, setCheckoutErrors] = useState([]);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
 
@@ -300,7 +307,21 @@ export default function App() {
   };
 
   // A line for both club years is priced as this year's line plus next year's.
-  const calculations = useMemo(() => calculateCart(expandClubYearLines(cart), annualBilling, activePromo), [cart, annualBilling, activePromo]);
+  useEffect(() => {
+    fetch(apiUrl('/api/volunteer-benefits')).then(async (response) => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not load volunteer pricing.');
+      setVolunteerTiers(result.tiers);
+    }).catch((error) => setCheckoutError(error.message));
+  }, []);
+  const calculations = useMemo(() => {
+    const expanded = expandClubYearLines(cart);
+    const holders = expandPeopleLines(people, cart).map((person) => ({ ...person, membershipId: person.id }));
+    const records = new Map(people.filter((person) => person.volunteerPreview
+      && ['firstName', 'lastName', 'dob'].every((key) => person[key] === person.volunteerPreview[key]))
+      .map((person) => [person.id, person.volunteerPreview]));
+    return calculateCart(applyVolunteerBenefits(expanded, holders, records, volunteerTiers), annualBilling, activePromo);
+  }, [cart, annualBilling, activePromo, people, volunteerTiers]);
 
   const cartGroups = useMemo(() => {
     const groups = new Map();
@@ -383,7 +404,11 @@ export default function App() {
       case 'disciplines':
         return <DisciplinesPage />;
       case 'volunteering':
-        return <VolunteeringPage />;
+        return <VolunteeringPage products={products} />;
+      case 'club-night':
+        return <ClubNightPage />;
+      case 'my-details':
+        return <MyDetailsPage />;
       case 'about':
         return <AboutPage />;
       case 'contact-us':
@@ -420,6 +445,18 @@ export default function App() {
             <a href="https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC050275" target="_blank" rel="noreferrer" className="FooterLink">Charity Register</a>
             <button onClick={() => setCurrentPage('contact-us')} className="FooterLink">Contact</button>
             <button className="FooterLink">Safeguarding</button>
+            <a href="/my-details" onClick={(event) => {
+              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              setCurrentPage('my-details');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }} className="FooterLink">My details</a>
+            <a href="/check-ins" onClick={(event) => {
+              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              setCurrentPage('club-night');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }} className="FooterLink">Check-ins</a>
             <a href="/admin" onClick={(event) => {
               if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
               event.preventDefault();
@@ -573,7 +610,7 @@ export default function App() {
                       </div>
                       {calculations.monthlySchedule.map((debit) => (
                         <div key={debit.firstDebit.getTime()} className="CartSummaryLine">
-                          Then £{debit.monthly.toFixed(2)} a month from {dayLabel(debit.firstDebit)} to {dayLabel(new Date(debit.cutoff.getTime() - 14 * 24 * 60 * 60 * 1000))} ({clubYearLabel(debit.clubYear)})
+                          Then £{debit.monthly.toFixed(2)} a month on the 1st from {dayLabel(debit.firstDebit)} through February ({clubYearLabel(debit.clubYear)})
                         </div>
                       ))}
                     </div>

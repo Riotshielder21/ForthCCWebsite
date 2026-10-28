@@ -3,10 +3,10 @@
 Run on a schedule (see config/fcc-upload.timer). Each website member waiting for JustGo has a `justgoUpload` record:
   queued   -> waiting for an attempt        invited -> JustGo has emailed them; waiting for them to accept
   failed   -> last attempt failed; retried later with a growing delay
-  manual   -> staff entered them by hand; the nightly sync will link them
+  manual   -> staff entered them by hand; the weekly sync will link them
 Invitations expire, so an unaccepted one counts as a failure and is sent again. After STAFF_AFTER failures the
 member is flagged `needsStaff` and appears on the register's staff list with the attempt count and last problem.
-The nightly sync (justgo-sync.py) marks them done once JustGo lists them.
+The weekly sync (justgo-sync.py) marks them done once JustGo lists them.
 """
 import asyncio
 import datetime

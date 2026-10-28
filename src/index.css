@@ -1040,7 +1040,15 @@
     white-space: pre-line;
   }
 
-  .AdminPreviewActions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 16px 0; }
+  .AdminPreviewActions { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; max-width: 100%; margin: 16px 0; }
+  .AdminPreviewActions .StatusText { margin: 0; overflow-wrap: anywhere; }
+  .AdminHeaderButtons { display: flex; align-items: center; gap: 12px; max-width: 100%; }
+  .AdminHeaderButtons > button { justify-content: center; }
+  .AdminHeaderButtons .AdminSignOut { flex-shrink: 0; white-space: nowrap; }
+  .AdminHeaderButtons svg { flex-shrink: 0; }
+  @media (min-width: 768px) {
+    .AdminPreviewActions { align-items: flex-end; }
+  }
   .PageEditorToolbar {
     position: sticky; top: 0; z-index: 40; display: flex; flex-wrap: wrap;
     align-items: center; gap: 8px; padding: 12px 24px; background: #fff;
@@ -1324,12 +1332,52 @@
   .ReportsSearch input { width: 100%; }
   .ReportsExports { border-top: 1px solid #e0e7ec; }
   .ReportNotice { color: #52636d; font-size: 13px; line-height: 1.6; margin: 8px 0 16px; }
+  .CheckinsPage { width: 100%; max-width: 760px; min-width: 0; }
+  .CheckinsTabs, .CheckinsActions { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+  .CheckinsTabs > button { flex: 1 1 120px; justify-content: center; }
+  .CheckinsTabs > button[aria-pressed="true"], .CheckinsSessions > button[aria-pressed="true"] { background: #032346; color: #fff; }
+  .CheckinsSessions { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; border: 0; min-width: 0; }
+  .CheckinsSessions > button { width: 100%; justify-content: space-between; gap: 12px; text-align: left; }
+  .CheckinsSessionTime { font-weight: 400; white-space: nowrap; }
+  .CheckinsPage .FormContainer { width: 100%; max-width: none; min-width: 0; }
+  .CheckinsPage .FormInput { width: 100%; min-width: 0; font-size: 16px; }
+  .CheckinsPage button, .CheckinsContact a { min-height: 48px; }
+  .CheckinsPage .FormSubmitButton { width: 100%; height: auto; white-space: normal; }
+  .CheckinsPage .EditorCommand { white-space: normal; }
+  .CheckinsPage .FormLabel, .CheckinsIdentity, .CheckinsContact { overflow-wrap: anywhere; }
+  .CheckinsList { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; margin: 16px 0; }
+  .CheckinsCard { min-width: 0; padding: 16px; border: 1px solid #ccd5dc; border-radius: 12px; background: #fff; }
+  .CheckinsName { font-size: 18px; font-weight: 800; overflow-wrap: anywhere; }
+  .CheckinsFacts { display: grid; gap: 12px; margin: 16px 0; }
+  .CheckinsFacts > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 12px; }
+  .CheckinsFacts dt { color: #52657b; }
+  .CheckinsFacts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .CheckinsContactButton { width: 100%; justify-content: center; }
+  .CheckinsAdminSignIn { width: 100%; justify-content: center; margin-top: 0.75rem; }
+  .CheckinsContact a { display: inline-flex; align-items: center; text-decoration: underline; }
   .ReportsTableWrap { overflow-x: auto; width: 100%; border-top: 1px solid #ccd5dc; }
   .ReportsTable { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
   .ReportsTable th { padding: 12px; background: #edf4f7; font-size: 12px; }
   .ReportsTable td { padding: 12px; border-bottom: 1px solid #e0e7ec; vertical-align: top; min-width: 100px; max-width: 240px; overflow-wrap: anywhere; }
   .ReportsTable tbody tr:nth-child(even) { background: #fff; }
+  .ReportsTable .ReportsActionsCell { position: sticky; right: 0; z-index: 1; min-width: 0; width: 1%; white-space: nowrap; background: #f8fafc; box-shadow: -8px 0 12px -10px #03234666; }
+  .ReportsTable th.ReportsActionsCell { background: #edf4f7; }
+  .ReportsTable tbody tr:nth-child(even) .ReportsActionsCell { background: #fff; }
   .ReportsRowActions { display: flex; gap: 6px; }
+  .DiscountCodesTable td, .DiscountCodesTable th { padding: 10px 8px; vertical-align: middle; }
+  .DiscountCodesTable tbody tr { border-top: 1px solid rgb(15 23 42 / 0.1); }
+  .DiscountCodeActions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: nowrap; }
+  /* Keeps Edit/Disable visible on the right while the wide table scrolls sideways on small screens. */
+  .DiscountCodesTable .DiscountCodeActionCell { position: sticky; right: 0; background: #fff; box-shadow: -10px 0 10px -10px rgb(15 23 42 / 0.35); width: 1%; white-space: nowrap; text-align: right; }
+  .VolunteerConfigBar { margin-bottom: 24px; padding: 16px; border: 2px dashed #38bdf8; border-radius: 12px; background: #f0f9ff; }
+  .VolunteerConfigBarHeader { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .VolunteerConfigBarHeader .FormLabel { display: inline-flex; align-items: center; gap: 6px; margin: 0 8px 0 0; }
+  .VolunteerConfigPanel { margin-top: 16px; padding: 16px; border-radius: 10px; background: #fff; display: grid; gap: 12px; }
+  .VolunteerVersionList { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 420px; overflow-y: auto; }
+  .VolunteerVersionItem { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid #d8dee4; border-radius: 8px; overflow-wrap: anywhere; }
+  .VolunteerLevelPicker { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+  .VolunteerLevelPicker .FormLabel { flex: 1 1 220px; }
+  .VolunteerServiceChoices { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 4px 12px; }
   .ReportWarning { display: inline-block; color: #a24614; background: #fff3e6; padding: 3px 6px; font-size: 11px; margin-top: 6px; }
   .ReportsModalBackdrop { position: fixed; inset: 0; z-index: 90; background: #0007; display: grid; place-items: center; padding: 16px; }
   .ReportsDialog { background: #fff; border-radius: 8px; padding: 24px; width: min(640px, 100%); max-height: 90dvh; overflow-y: auto; }
@@ -1344,6 +1392,7 @@
   @media (max-width: 600px) {
     .AdminReports { padding: 16px; }
     .ReportsDialog { padding: 16px; }
+    .ReportsRowActions .EditorIconButton { width: 44px; min-height: 44px; }
     .ReportsFilters label { flex-wrap: wrap; }
     .ReportsSearch { min-width: 100%; }
   }

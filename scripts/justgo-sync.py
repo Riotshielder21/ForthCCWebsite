@@ -80,9 +80,39 @@ def pick(row, *names):
 def match_key(email, dob, first, last):
     return f"{email.lower()}|{dob}|{first.lower()} {last.lower()}".strip()
 
-def household_id_for(number):
-    import hashlib
-    return "HH-JG-" + hashlib.sha256(number.encode("utf-8")).hexdigest()[:32].upper()
+class WrittenRecord:
+    """A record written earlier in this sync, matched like a Firestore snapshot by later rows."""
+    def __init__(self, reference, data):
+        self.reference, self._data = reference, data
+
+    def to_dict(self):
+        return dict(self._data)
+
+def membership_number_for(number):
+    """The Paddle Scotland number staff see, kept separate from the permanent record ID so it can change."""
+    number = str(number or "").strip()
+    return f"FCC-{number}" if number.isdigit() and 4 <= len(number) <= 8 else ""
+
+def allocate_record_id(collection, prefix, digits):
+    """Reserve a permanent short ID using the same counter as website checkout."""
+    counter = db.collection("counters").document(collection)
+    records = db.collection(collection)
+
+    @firestore.transactional
+    def take(transaction):
+        snapshot = counter.get(transaction=transaction)
+        number = (snapshot.to_dict() or {}).get("next", 1) if snapshot.exists else 1
+        if type(number) is not int or number < 1:
+            raise ValueError(f"Invalid {collection} ID counter.")
+        while records.document(f"{prefix}{number:0{digits}d}").get(transaction=transaction).exists:
+            number += 1
+        transaction.set(counter, {"next": number + 1}, merge=True)
+        return f"{prefix}{number:0{digits}d}"
+
+    return take(db.transaction())
+
+def allocate_member_id():
+    return allocate_record_id("memberships", "M", 4)
 
 async def sync_to_firestore(csv_path):
     print("Starting Firestore sync...")
@@ -118,7 +148,6 @@ async def sync_to_firestore(csv_path):
 
             existing = by_number.get(number) or by_person.get(match_key(email, dob, first, last))
             current = existing.to_dict() if existing else {}
-            reference = existing.reference if existing else memberships.document(f"sca-{number}")
 
             # JustGo is the authority on whether someone is a current member, and becomes their renewal method.
             # The exception is a website purchase awaiting upload that runs later than JustGo's record: keep it
@@ -128,9 +157,18 @@ async def sync_to_firestore(csv_path):
             website_ahead = current.get("justgoSyncStatus") == "pending" and held_until and (not valid_until or held_until > valid_until)
             fields = {
                 "affiliationNumber": number,
+                "membershipNumber": membership_number_for(number),
                 "lastJustgoSync": firestore.SERVER_TIMESTAMP,
                 "updatedAt": firestore.SERVER_TIMESTAMP,
             }
+            # Only use explicitly supplied check columns, never infer clearance from an active membership.
+            checks = dict(current.get("checks") or {})
+            for check, column in (("pvg", "PVG Status"), ("safeguarding", "Safeguarding Status")):
+                if column in row:
+                    label = pick(row, column)[:120] or "Not supplied by JustGo"
+                    checks[check] = {"source": "justgo", "label": label, "updatedAt": firestore.SERVER_TIMESTAMP}
+            if checks:
+                fields["checks"] = checks
             if not website_ahead:
                 fields.update({
                     "validUntil": valid_until,
@@ -173,7 +211,7 @@ async def sync_to_firestore(csv_path):
                 if not is_junior and any(emergency.values()):
                     contact["emergencyContact"] = emergency
                 household_id = household_by_email.get(contact["email"].lower()) if is_junior else None
-                household_id = household_id or household_id_for(number)
+                household_id = household_id or allocate_record_id("households", "H", 5)
                 fields["householdId"] = household_id
                 if household_id not in household_by_id:
                     household_fields = {**contact, "updatedAt": firestore.SERVER_TIMESTAMP, "createdAt": firestore.SERVER_TIMESTAMP}
@@ -187,7 +225,12 @@ async def sync_to_firestore(csv_path):
             name_for_search = f"{fields.get('firstName') or current.get('firstName', '')} {fields.get('lastName') or current.get('lastName', '')}"
             fields["searchName"] = " ".join(name_for_search.lower().split())
 
+            if not membership_number_for(number):
+                print(f"Warning: JustGo number {number} is not 4 to 8 digits, so no FCC membership number was set.")
+            reference = existing.reference if existing else memberships.document(allocate_member_id())
             batch.set(reference, fields, merge=True)
+            # Later rows for the same person in this file update this record rather than allocating another.
+            by_number[number] = WrittenRecord(reference, {**current, **fields})
             created += 0 if existing else 1
             linked += 1 if existing else 0
             writes += 1
@@ -198,6 +241,8 @@ async def sync_to_firestore(csv_path):
                 pending = 0
 
         batch.commit()
+        # Heartbeat: the website treats the sync as stopped (and unconfirmed members as Unavailable) when this goes stale.
+        db.collection("settings").document("justgoSync").set({"lastSuccessAt": firestore.SERVER_TIMESTAMP, "membersUpdated": writes})
         print(f"Sync complete. {writes} members updated ({created} new, {linked} matched to existing records).")
 
 if __name__ == "__main__":

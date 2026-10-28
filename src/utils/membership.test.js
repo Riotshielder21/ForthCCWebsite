@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { membershipActivity, clubYearStart, renewalConfirmationOpen } from './membership.js';
+import { membershipActivity, clubYearStart, renewalConfirmationOpen, justgoSyncHealth } from './membership.js';
 
 const synced = { status: 'active', renewalMethod: 'justgo', justgoSyncStatus: 'synced', validUntil: '2027-06-01' };
 
@@ -40,4 +40,11 @@ test('the confirmation window covers the first two weeks of the club year', () =
 test('Firestore timestamps and millisecond values are understood', () => {
   const stamp = { toMillis: () => new Date(2027, 5, 1).getTime() };
   assert.equal(membershipActivity({ ...synced, validUntil: stamp, lastJustgoSync: new Date(2026, 4, 1).getTime() }, new Date(2026, 6, 1)), 'active');
+});
+
+test('the weekly JustGo sync counts as stopped when no run has completed for eight days', () => {
+  const now = new Date('2026-10-10T12:00:00Z');
+  assert.deepEqual(justgoSyncHealth(undefined, now), { lastSuccessAt: null, healthy: false });
+  assert.equal(justgoSyncHealth({ lastSuccessAt: new Date('2026-10-03T02:00:00Z') }, now).healthy, true, 'a week since the last run is normal');
+  assert.equal(justgoSyncHealth({ lastSuccessAt: { toMillis: () => Date.parse('2026-10-02T11:00:00Z') } }, now).healthy, false);
 });

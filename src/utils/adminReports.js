@@ -1,7 +1,12 @@
-import { membershipActivity } from './membership.js';
+import { clubYearStart, renewalConfirmationOpen } from './membership.js';
+import { clubYearOf } from './clubYear.js';
+import { renewalLinkExpiresAt } from './renewals.js';
 import { itemLabel } from './inventory.js';
 import { memberIsJunior } from './households.js';
-import { checkLabel } from './safeguarding.js';
+import { checkLabel, checksManagedByJustgo } from './safeguarding.js';
+import { volunteerProfileLabels } from './volunteering.js';
+import { hasKeyAccess } from './keyAccess.js';
+import { orderLineId } from './itemActions.js';
 
 export const reportDate = (value) => {
   if (!value) return null;
@@ -21,11 +26,44 @@ export const reportDate = (value) => {
   return null;
 };
 
-export const memberState = (fields, now = new Date()) => {
-  const expiry = reportDate(fields.expiry);
-  if (expiry && new Date(expiry) < now) return 'Expired';
-  if (fields.status && !/^active$/i.test(fields.status)) return fields.status;
-  return expiry ? 'Current' : 'Unverified expiry';
+const statusDate = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value.toDate === 'function') return value.toDate();
+  if (value instanceof Date) return value;
+  if (typeof value === 'number') return new Date(value);
+  const iso = reportDate(value);
+  return iso ? new Date(iso) : null;
+};
+
+export const MEMBERSHIP_STATUSES = ['Active', 'Active (no expiry)', 'Awaiting renewal', 'Pending', 'Unavailable', 'Expired', 'Revoked', 'No'];
+
+/**
+ * The one membership status shown to admins, on event rosters and at check-ins. Active stays Active even after a renewal
+ * email is sent. Once cover ends, a member whose renewal link is still live is Awaiting renewal, then Expired when the
+ * link expires. JustGo members the sync has not confirmed this club year are Pending if never synced, Awaiting renewal
+ * during the confirmation window, then Expired if the sync is running, or Unavailable if it has stopped (`justgoSync`
+ * comes from `justgoSyncHealth`), because then we cannot tell. Imported non-active statuses are shown as recorded.
+ */
+export const membershipStatus = (fields, now = new Date(), justgoSync = { healthy: false }) => {
+  if (!fields || fields.contactOnly) return 'No';
+  const accessEnds = statusDate(fields.membershipAccessEndsAt);
+  if (accessEnds && accessEnds <= now) return 'Revoked';
+  const recorded = String(fields.status || '');
+  if (recorded && !/^(active|expired)$/i.test(recorded)) return recorded;
+  const expiry = statusDate(fields.validUntil || fields.expiry);
+  if (!recorded && !expiry) return 'No';
+  const managedByJustgo = fields.renewalMethod === 'justgo' || fields.justgoSyncStatus === 'synced';
+  const lastSync = statusDate(fields.lastJustgoSync);
+  if (managedByJustgo && !(lastSync >= clubYearStart(now))) {
+    if (!lastSync) return 'Pending';
+    if (renewalConfirmationOpen(now)) return 'Awaiting renewal';
+    if (!justgoSync?.healthy) return 'Unavailable';
+    if (!expiry || expiry > now) return 'Expired';
+  }
+  if (!/^expired$/i.test(recorded) && (!expiry || expiry > now)) return expiry ? 'Active' : 'Active (no expiry)';
+  const clubYear = clubYearOf(now);
+  const linkLive = (fields.renewalInviteSentFor || []).map(Number).includes(clubYear) && now < renewalLinkExpiresAt(clubYear);
+  return linkLive ? 'Awaiting renewal' : 'Expired';
 };
 
 export const subscriptionWarning = (fields) => Boolean(fields.stripeSubscriptionId
@@ -56,6 +94,7 @@ export const personReport = (person, items, member = {}) => {
     photoConsent: person.photoConsent === true || member.photoConsent === true,
     membershipId: person.membershipId || '', existingMember: person.existingMember === true,
     events: (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId)).filter((item) => item?.category === 'EVENTS')
+      .filter((item) => !item.revokedAt)
       .map((item) => ({ name: String(item.name || item.id || ''), ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {}) }))
   };
 };
@@ -72,9 +111,12 @@ export const orderReport = (id, fields, members = new Map()) => ({
   ...(fields.subscriptionSetupNeedsStaff === true ? { monthlyPaymentSetupFailed: true } : {}),
   stripePaymentIntentId: fields.stripePaymentIntentId || '',
   subscriptionWarning: subscriptionWarning(fields),
-  items: (Array.isArray(fields.items) ? fields.items : []).map((item) => ({
+  items: (Array.isArray(fields.items) ? fields.items : []).map((item, index) => ({
+    lineId: orderLineId(item, index), productId: item.id || '',
     name: itemLabel(item), category: String(item.category || ''),
     type: String(item.type || ''), price: Number.isFinite(Number(item.price)) ? Number(item.price) : null,
+    revokedAt: reportDate(item.revokedAt), revokedBy: item.revokedBy || '', revokeReason: item.revokeReason || '',
+    refunds: (item.refunds || []).map((refund) => ({ ...refund, at: reportDate(refund.at) })),
     ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {})
   })),
   people: (Array.isArray(fields.people) ? fields.people : []).map((person) => personReport(person, Array.isArray(fields.items) ? fields.items : [], members.get(person.membershipId) || {}))
@@ -93,20 +135,25 @@ const justgoState = (fields) => {
   return fields.justgoSyncStatus === 'synced' || fields.affiliationNumber ? 'In JustGo' : 'Not in JustGo';
 };
 
-export const membershipReport = (id, fields, now = new Date(), household = fields.household || {}) => {
+export const membershipReport = (id, fields, now = new Date(), household = fields.household || {}, justgoSync) => {
   const upload = fields.justgoUpload || {};
   const emergency = fields.emergencyContact || {};
   const guardian = fields.guardian || {};
   const householdEmergency = household.emergencyContact || {};
   const junior = memberIsJunior(fields, now);
-  const expiry = reportDate(fields.validUntil || fields.expiry);
+  const storedExpiry = reportDate(fields.validUntil || fields.expiry);
+  const accessExpiry = reportDate(fields.membershipAccessEndsAt);
+  const expiry = accessExpiry && (!storedExpiry || accessExpiry < storedExpiry) ? accessExpiry : storedExpiry;
+  const check = (type) => checksManagedByJustgo(fields)
+    ? (fields.checks?.[type]?.source === 'justgo' ? fields.checks[type].label || 'Not supplied by JustGo' : 'Not supplied by JustGo')
+    : checkLabel(fields.checks?.[type]?.expiresOn, now);
   return {
     id, name: `${fields.firstName || ''} ${fields.lastName || ''}`.trim() || fields.name || '', email: household.email || fields.email || '',
-    affiliationNumber: fields.affiliationNumber || '', tier: fields.membershipTier || '',
+    keyAccess: hasKeyAccess(fields) ? 'Granted' : fields.keyAccess?.revokedAt ? 'Revoked' : 'Not granted',
+    keyAccessReason: fields.keyAccess?.reason || '',
+    affiliationNumber: fields.affiliationNumber || '', membershipNumber: fields.membershipNumber || '', tier: fields.membershipTier || '',
     includedWith: fields.membershipIncludedWith?.name || '',
-    status: membershipActivity({ status: fields.status, validUntil: expiry, renewalMethod: fields.renewalMethod, justgoSyncStatus: fields.justgoSyncStatus, lastJustgoSync: reportDate(fields.lastJustgoSync) }, now) === 'awaiting-renewal'
-      ? 'Awaiting renewal'
-      : memberState({ status: fields.status, expiry: fields.validUntil || fields.expiry }, now),
+    status: membershipStatus(fields, now, justgoSync),
     expiry, lastUpdated: reportDate(fields.updatedAt || fields.lastUpdated), lastJustgoSync: reportDate(fields.lastJustgoSync), source: fields.source || (fields.affiliationNumber ? 'justgo' : ''),
     justgoSync: fields.justgoSyncStatus || '', renewalMethod: fields.renewalMethod || '',
     justgo: justgoState(fields),
@@ -123,8 +170,9 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     householdId: fields.householdId || '',
     medical: fields.medical || '', swimming: fields.swimming || '',
     photoConsent: fields.consents?.photoVideo?.accepted === true || fields.photoConsent === true,
-    pvg: checkLabel(fields.checks?.pvg?.expiresOn, now), safeguarding: checkLabel(fields.checks?.safeguarding?.expiresOn, now),
-    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set((fields.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => String(privilege.name || privilege.productId || '')))],
+    pvg: check('pvg'), safeguarding: check('safeguarding'),
+    volunteer: volunteerProfileLabels(fields, now).join('; '),
+    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set([...(fields.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => String(privilege.name || privilege.productId || '')), ...volunteerProfileLabels(fields, now)])],
     history: (fields.history || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
   };
 };
@@ -138,7 +186,7 @@ export const eventAttendeeRows = (records, scheduleLabel) => records.flatMap((re
     event.name, event.eventSchedule ? scheduleLabel(event.eventSchedule) : '', person.name, person.dob, person.phone, person.email,
     person.emergencyContact, person.medical, person.swimming, person.photoConsent ? 'Yes' : 'No', record.id, record.status, record.paidAt
   ]));
-  return attendees.length ? attendees : (record.items || []).map((item) => [
+  return attendees.length || record.people?.length ? attendees : (record.items || []).filter((item) => !item.revokedAt && item.category === 'EVENTS').map((item) => [
     item.name, item.eventSchedule ? scheduleLabel(item.eventSchedule) : '', 'Attendee details not recorded', '', '', record.email, '', '', '', '', record.id, record.status, record.paidAt
   ]);
 });
@@ -159,3 +207,27 @@ export const reportCsv = (headers, rows) => [headers, ...rows].map((row) => row.
   const safe = /^[\s]*[=+@-]/.test(text) || /^[\t\r\n]/.test(text) ? `'${text}` : text;
   return `"${safe.replace(/"/g, '""')}"`;
 }).join(',')).join('\r\n');
+// Report filters. Each works on loaded records, so CSV and email exports follow whatever is shown.
+export const PURCHASE_TYPES = [['membership', 'Membership'], ['subscriptions', 'Subscriptions'], ['events', 'Events'],
+  ['merchandise', 'Merchandise'], ['services', 'Services'], ['vouchers', 'Vouchers']];
+
+export const purchaseMatches = (record, type) => {
+  if (type === 'all') return true;
+  if (type === 'subscriptions') return Boolean(record.subscriptionWarning) || (record.items || []).some((item) => item.category === 'SUBSCRIPTIONS');
+  return (record.items || []).some((item) => item.category === type.toUpperCase());
+};
+
+export const reportOptions = (records, values) => [...new Set(records.flatMap((record) => values(record)).filter(Boolean))]
+  .sort((a, b) => a.localeCompare(b));
+
+export const reportEventNames = (records) => reportOptions(records, (record) => (record.items || []).map((item) => item.name));
+
+// Narrows event-ticket orders to one event, so totals, the table and the attendee export cover only that event.
+export const onlyEvent = (records, name) => name === 'all' ? records : records
+  .filter((record) => (record.items || []).some((item) => item.name === name))
+  .map((record) => {
+    const items = record.items.filter((item) => item.name === name);
+    return { ...record, items, total: items.reduce((sum, item) => sum + (item.price || 0), 0),
+      people: (record.people || []).map((person) => ({ ...person, events: (person.events || []).filter((event) => event.name === name) }))
+        .filter((person) => person.events.length) };
+  });

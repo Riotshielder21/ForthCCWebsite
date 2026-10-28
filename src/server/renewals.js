@@ -4,6 +4,7 @@ import { clubYearDates } from '../utils/clubYear.js';
 import { ageOn } from '../utils/checkout.js';
 import { needsRenewal, renewalBasket, renewalChoice, renewalEmail, renewalRound, renewalWindow } from '../utils/renewals.js';
 import { rateLimit } from './rateLimit.js';
+import { needsVolunteerRenewal } from '../utils/volunteering.js';
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 const normaliseEmail = (value) => String(value || '').trim().toLowerCase();
@@ -17,7 +18,7 @@ const DAY = 24 * 60 * 60 * 1000;
  */
 const SENT = 'renewalInviteSentFor';
 const REMINDED = 'renewalReminderSentFor';
-export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow }) => {
+export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow, volunteerRenewalContent, sendVolunteerRenewals }) => {
   const memberships = () => db().collection('memberships');
 
   /** Members needing renewal grouped by contact email; `onlyUnsent` leaves out anyone whose `field` already has this year. */
@@ -59,9 +60,12 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
         .filter((document) => document.exists).map((document) => ({ ...document.data(), id: document.id }))
         .filter((member) => needsRenewal(member, now) && (resend || !has(member, field)));
       if (!current.length) return [];
-      added = current.map((member) => ({ id: member.id, fields: [...new Set([field, SENT])].filter((name) => !has(member, name)) }));
+      added = current.map((member) => ({ id: member.id, fields: [...new Set([field, SENT])].filter((name) => !has(member, name)),
+        volunteerMark: needsVolunteerRenewal(member, window.renewalYear)
+          && !(member.volunteerRenewalSentFor || []).includes(`${window.renewalYear}:${reminder ? 'reminder' : 'first'}`) }));
       current.forEach((member) => transaction.update(memberships().doc(member.id), {
         [SENT]: FieldValue.arrayUnion(window.renewalYear), ...(reminder ? { [REMINDED]: FieldValue.arrayUnion(window.renewalYear) } : {}),
+        ...(needsVolunteerRenewal(member, window.renewalYear) ? { volunteerRenewalSentFor: FieldValue.arrayUnion(`${window.renewalYear}:${reminder ? 'reminder' : 'first'}`) } : {}),
         renewalInviteSentAt: Timestamp.fromDate(now) }));
       transaction.create(invite, { email: group.email, renewalYear: window.renewalYear, membershipIds: current.map((member) => member.id),
         expiresAt: Timestamp.fromDate(window.expiresAt), createdAt: Timestamp.now() });
@@ -70,12 +74,14 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
     if (!members.length) return 0;
     let index = 0;
     const basket = renewalBasket(members, catalog, window.clubYear, () => `r${++index}`);
-    const email = renewalEmail({ ...basket, catalog, renewalYear: window.renewalYear, link: `${siteUrl()}/membership?renew=${token}`, expiresAt: window.expiresAt, reminder });
     try {
+      const volunteering = await volunteerRenewalContent(members, window.renewalYear, siteUrl());
+      const email = renewalEmail({ ...basket, catalog, renewalYear: window.renewalYear, link: `${siteUrl()}/membership?renew=${token}`, expiresAt: window.expiresAt, reminder, volunteering });
       if (!await sendEmail({ to: group.email, ...email, record: { kind: 'renewal', membershipIds: members.map((member) => member.id) } })) throw new Error('Email is not configured.');
     } catch (error) {
-      await Promise.all([invite.delete(), ...added.filter((entry) => entry.fields.length).map((entry) => memberships().doc(entry.id)
-        .update(Object.fromEntries(entry.fields.map((name) => [name, FieldValue.arrayRemove(window.renewalYear)]))))]);
+      await Promise.all([invite.delete(), ...added.filter((entry) => entry.fields.length || entry.volunteerMark).map((entry) => memberships().doc(entry.id)
+        .update({ ...Object.fromEntries(entry.fields.map((name) => [name, FieldValue.arrayRemove(window.renewalYear)])),
+          ...(entry.volunteerMark ? { volunteerRenewalSentFor: FieldValue.arrayRemove(`${window.renewalYear}:${reminder ? 'reminder' : 'first'}`) } : {}) }))]);
       throw error;
     }
     return members.length;
@@ -145,7 +151,9 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       const now = requestNow(req);
       const round = renewalRound(now);
       if (!round) return res.json({ emails: 0, members: 0, failures: 0, waiting: true });
-      res.json({ round, ...await sendAll(now, { round }) });
+      const result = await sendAll(now, { round });
+      const volunteers = await sendVolunteerRenewals(now, round, siteUrl());
+      res.json({ round, ...result, volunteerEmails: volunteers.emails, volunteerFailures: volunteers.failures });
     } catch (error) {
       console.error('Renewal job failed:', error.message);
       res.status(500).json({ error: 'Renewal job failed.' });

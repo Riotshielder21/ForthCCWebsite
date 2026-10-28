@@ -14,10 +14,18 @@ export const lineHolders = (lineId, people) => {
 // A subscription waiting for its first debit on the 1st is `trialing` in Stripe; both still take payments.
 export const subscriptionLive = (subscription) => ['active', 'trialing'].includes(subscription?.status);
 
-// Club-year subscriptions are cancelled at the 15 February cut-off (metadata `cutoff_at`); cover still runs to 1 March.
+// Club-year subscriptions end at 1 March (metadata `cutoff_at`), after the full February debit.
 export const endedAtCutoff = (subscription) => {
   const cutoff = Number(subscription?.metadata?.cutoff_at) || 0;
   return Boolean(cutoff && subscription.status === 'canceled' && subscription.ended_at && Math.abs(subscription.ended_at - cutoff) < 24 * 60 * 60);
+};
+
+/** Move only the app-managed end for this club year; leave any separate/manual earlier cancellation untouched. */
+export const clubYearEndUpdate = (subscription, clubYear, subscriptionEnd) => {
+  const previousCutoff = Number(subscription?.metadata?.cutoff_at);
+  if (subscription?.metadata?.club_year !== String(clubYear) || !Number.isSafeInteger(previousCutoff) || previousCutoff <= 0
+    || subscription.cancel_at !== previousCutoff || previousCutoff >= subscriptionEnd) return null;
+  return [['cancel_at', String(subscriptionEnd)], ['metadata[cutoff_at]', String(subscriptionEnd)], ['proration_behavior', 'none']];
 };
 
 // Stripe subscription items carry our order line id, either on the item or (for Checkout-created items) on its product.
@@ -32,7 +40,11 @@ export const stripeItemLines = (subscription, lineIds) => {
   return byLine;
 };
 
-export const activeSubscriptionItems = (subscription) => (subscription.items || []).filter((item) => item.status === 'active');
+export const activeSubscriptionItems = (subscription) => (subscription.items || []).filter((item) => {
+  const scheduled = item.cancelScheduledAt;
+  const end = scheduled?.toMillis ? scheduled.toMillis() : scheduled ? new Date(scheduled).getTime() : 0;
+  return item.status === 'active' && !(end && end <= Date.now());
+});
 
 export const monthlyTotal = (subscription) => Math.round(activeSubscriptionItems(subscription)
   .reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0) * 100) / 100;

@@ -20,7 +20,8 @@ export const validateListSubmission = (body = {}) => {
   if (!items?.length || items.length > LIST_LIMITS.items || body.items.length > LIST_LIMITS.items) return { error: 'Please answer the questions.' };
   if (items.some((item) => item.length > LIST_LIMITS.item)) return { error: `Keep each answer under ${LIST_LIMITS.item} characters.` };
   if (notes.length > LIST_LIMITS.notes) return { error: `Keep notes under ${LIST_LIMITS.notes} characters.` };
-  return { value: { name, email, listType, items, notes } };
+  if (listType === VOLUNTEER_LIST && body.tier !== undefined && (typeof body.tier !== 'string' || !/^[a-z0-9-]{1,40}$/.test(body.tier))) return { error: 'Choose a volunteer level.' };
+  return { value: { name, email, listType, items, notes, ...(listType === VOLUNTEER_LIST && body.tier ? { tier: body.tier } : {}) } };
 };
 
 /** Stops spreadsheet apps treating submitted text as a formula. */

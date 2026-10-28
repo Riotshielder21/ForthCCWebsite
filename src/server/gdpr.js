@@ -4,6 +4,7 @@ import { identityEmails, matchesIdentity, redactOrder, sharedDetailsErrors, shar
 import { lookupKey, maskEmail, maskMembershipNumber, maskName, personLookupKeys } from '../utils/privacy.js';
 import { memberIsJunior } from '../utils/households.js';
 import { rateLimit } from './rateLimit.js';
+import { EMAIL_CODE_PURPOSES, codeDocumentId } from '../utils/emailCodes.js';
 
 const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 const subjectFor = (record) => ({ email: identityEmails(record, record.household)[0] || '', firstName: record.firstName || '', lastName: record.lastName || '', dob: record.dob || '', affiliationNumber: record.affiliationNumber || '' });
@@ -36,7 +37,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       if (!document.exists) return { status: 404, error: 'Member record not found.' };
       matched = [asRecord(document)];
     } else {
-      const identity = { email: normalizeEmail(body.email), firstName: text(body.firstName, 80), lastName: text(body.lastName, 80), dob: text(body.dob, 10), affiliationNumber: text(body.affiliationNumber, 40) };
+      const identity = { email: normalizeEmail(body.email), firstName: text(body.firstName, 80), lastName: text(body.lastName, 80), dob: text(body.dob, 10), affiliationNumber: text(body.affiliationNumber, 40).replace(/^fcc-/i, '') };
       if (!isValidEmail(identity.email) || !identity.firstName || !identity.lastName || !/^\d{4}-\d{2}-\d{2}$/.test(identity.dob)) {
         return { status: 400, error: 'Enter the email, first name, last name and date of birth.' };
       }
@@ -213,13 +214,22 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       }
 
       const targetIds = new Set(scope.targets.map((record) => record.id));
-      const renewalInvites = [];
+      const linkedRecords = [];
       for (let index = 0; index < scope.targets.length; index += 30) {
         const ids = scope.targets.slice(index, index + 30).map((record) => record.id);
-        renewalInvites.push(...(await adminDb.collection('renewalInvites').where('membershipIds', 'array-contains-any', ids).get()).docs);
+        linkedRecords.push(...(await adminDb.collection('renewalInvites').where('membershipIds', 'array-contains-any', ids).get()).docs);
+        linkedRecords.push(...(await adminDb.collection('volunteerRenewals').where('memberId', 'in', ids).get()).docs);
+        linkedRecords.push(...(await adminDb.collection('clubNightCheckins').where('memberId', 'in', ids).get()).docs);
+        linkedRecords.push(...(await adminDb.collection('clubNightAccessLog').where('memberId', 'in', ids).get()).docs);
+      }
+      for (const id of scope.erasedHouseholdIds) linkedRecords.push(...(await adminDb.collection('selfServiceChanges').where('householdId', '==', id).get()).docs);
+      for (const email of scope.erasedEmails) {
+        linkedRecords.push(...(await adminDb.collection('emailSessions').where('email', '==', email).get()).docs);
+        const codes = await adminDb.getAll(...Object.keys(EMAIL_CODE_PURPOSES).map((purpose) => adminDb.collection('emailCodes').doc(codeDocumentId(purpose, email))));
+        linkedRecords.push(...codes.filter((document) => document.exists));
       }
       const batch = adminDb.batch();
-      new Map(renewalInvites.map((document) => [document.id, document])).forEach((document) => batch.delete(document.ref));
+      new Map(linkedRecords.map((document) => [document.ref.path, document])).forEach((document) => batch.delete(document.ref));
       const replaceHouseholds = new Set(leftHouseholdIds(scope.family, scope.targets));
       scope.targets.forEach((record) => batch.delete(adminDb.collection('memberships').doc(record.id)));
       if (left.length && shared) {
@@ -238,6 +248,10 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       scope.orderUpdates.forEach(({ id, update }) => batch.update(adminDb.collection('orders').doc(id), { ...update, personalDataErasedAt: Timestamp.now() }));
       scope.discountCodes.forEach((document) => batch.update(document.ref, { email: '***', name: '***' }));
       scope.lists.forEach((document) => batch.delete(document.ref));
+      for (const email of scope.erasedEmails) {
+        const forms = await adminDb.collection('formSubmissions').where('email', '==', email).get();
+        forms.docs.forEach((document) => batch.delete(document.ref));
+      }
       [...scope.mirrorCustomers, ...scope.mirrorSubscriptions].forEach((document) => batch.update(document.ref, { name: '', email: '' }));
       for (const [id, mode] of cancellations) {
         batch.set(adminDb.collection('stripeSubscriptions').doc(`FCC-${mode}-${id}`), { status: 'Inactive', stripeStatus: 'canceled', reason: 'Cancelled for GDPR erasure', name: '', email: '' }, { merge: true });
@@ -258,7 +272,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       await batch.commit();
 
       const manual = [];
-      if (scope.targets.some((record) => record.justgoSyncStatus === 'synced' || record.renewalMethod === 'justgo' || record.affiliationNumber)) manual.push('Remove them from JustGo, or the nightly sync will recreate the record.');
+      if (scope.targets.some((record) => record.justgoSyncStatus === 'synced' || record.renewalMethod === 'justgo' || record.affiliationNumber)) manual.push('Remove them from JustGo, or the weekly sync will recreate the record.');
       if (cancellations.length) manual.push('Delete the customer in the Stripe dashboard so its name and email are removed there.');
       manual.push('Remove any rows about them from Google Sheets and form responses.');
       res.json({ success: true, erased: people.length, ordersRedacted: scope.orderUpdates.length, subscriptionsCancelled: cancellations.length, earlierDeletionsPurged: scope.auditDocs.size, warnings: scope.warnings, manual });

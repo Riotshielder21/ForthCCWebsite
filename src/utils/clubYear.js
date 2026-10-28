@@ -3,12 +3,13 @@
  * 28/29 February 2028 is 2027). Every date here is taken in Europe/London, whatever time zone the server runs in.
  *
  * Payment schedule: monthly direct debits are on the 1st; the last one is 1 February and every subscription stops at
- * the start of 15 February (the cut-off). From 1 January people can also buy for next club year.
+ * the start of 1 March. Current-year sales close earlier: memberships on 8 February and other items on 15 February.
+ * From 1 January people can also buy for next club year.
  */
 const TIME_ZONE = 'Europe/London';
 const partsFormat = new Intl.DateTimeFormat('en-GB', { timeZone: TIME_ZONE, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', hourCycle: 'h23' });
 
-export const CUTOFF_DAY = 15;
+export const CURRENT_YEAR_SALES_CUTOFF_DAY = 15;
 // This year's membership is sold until the end of February's first week.
 export const LAST_MEMBERSHIP_SALE_DAY = 7;
 export const JOINING_STEP = 0.2;
@@ -36,7 +37,7 @@ export const clubYearDates = (year) => ({
   end: londonMidnight(year + 1, 2, 1),
   renewalOpens: londonMidnight(year + 1, 0, 1),
   membershipSaleEnds: londonMidnight(year + 1, 1, LAST_MEMBERSHIP_SALE_DAY + 1),
-  cutoff: londonMidnight(year + 1, 1, CUTOFF_DAY)
+  salesCutoff: londonMidnight(year + 1, 1, CURRENT_YEAR_SALES_CUTOFF_DAY)
 });
 
 export const clubYearLabel = (year) => `${year}/${String((year + 1) % 100).padStart(2, '0')}`;
@@ -59,7 +60,7 @@ export const nextFirst = (now = new Date()) => {
   return londonMidnight(year, month + 1, 1);
 };
 
-/** Whole months after the current one until 1 March: the direct debits a subscription started now still takes. */
+/** Whole monthly debits remaining in the club year, including the final February debit. */
 export const fullMonthsAfterCurrent = (now = new Date()) => {
   const { year, month } = londonParts(now);
   return (clubYearOf(now) + 1 - year) * 12 + 1 - month;
@@ -83,7 +84,7 @@ export const clubYearChoices = (item, now = new Date()) => {
   if (!kind) return [];
   const dates = clubYearDates(clubYearOf(now));
   if (now < dates.renewalOpens) return ['this'];
-  const thisYearOnSale = now < (kind === 'membership' ? dates.membershipSaleEnds : dates.cutoff);
+  const thisYearOnSale = now < (kind === 'membership' ? dates.membershipSaleEnds : dates.salesCutoff);
   return thisYearOnSale ? ['this', 'next', 'both'] : ['next'];
 };
 
@@ -107,15 +108,17 @@ export const clubYearsFor = (choice, now = new Date()) => {
 };
 
 /**
- * When a monthly item bought now is debited. This year: from the next 1st while that is before the cut-off (so not
+ * When a monthly item bought now is debited. This year: from the next 1st while that is before 1 March (so not
  * when bought in February, when the joining-month charge is the only payment). Next year: from 1 March.
  */
 export const monthlyDebits = (clubYear, now = new Date()) => {
   const current = clubYearOf(now);
-  const { cutoff, start } = clubYearDates(clubYear);
-  if (clubYear > current) return { firstDebit: start, debits: 12, cutoff };
+  const { end, start } = clubYearDates(clubYear);
+  const subscriptionEnd = end;
+  if (clubYear > current) return { firstDebit: start, debits: 12, subscriptionEnd };
   const first = nextFirst(now);
-  return first < cutoff ? { firstDebit: first, debits: fullMonthsAfterCurrent(now), cutoff } : { firstDebit: null, debits: 0, cutoff };
+  return first < subscriptionEnd ? { firstDebit: first, debits: fullMonthsAfterCurrent(now), subscriptionEnd }
+    : { firstDebit: null, debits: 0, subscriptionEnd };
 };
 
 const toDate = (value) => {

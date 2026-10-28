@@ -1,4 +1,4 @@
-import { defaultTileLayout, getSupporterTiles } from '../utils/pageTiles.js';
+import { currentTileLayout, getSupporterTiles } from '../utils/pageTiles.js';
 
 const field = (label, value, multiline = false) => ({ label, value, multiline });
 
@@ -51,7 +51,7 @@ export const PAGE_CONTENT = {
       quick2Action: field('Membership tile button', 'Membership'),
       quick3Eyebrow: field('Volunteer tile label', 'Get Involved'),
       quick3Title: field('Volunteer tile heading', 'Volunteer'),
-      quick3Body: field('Volunteer tile text', 'Our club runs on volunteers. Help with coaching, events, maintenance or administration and earn discount codes for your membership.', true),
+      quick3Body: field('Volunteer tile text', 'Our club runs on volunteers. Help with coaching, events, maintenance or administration and receive benefits on your membership profile after induction.', true),
       quick3Action: field('Volunteer tile button', 'Volunteering'),
       supportersEyebrow: field('Supporters label', 'Thank You'),
       supportersTitle: field('Supporters heading', 'Massive Thank You to All Our Access Project & Club Supporters'),
@@ -120,26 +120,6 @@ export const PAGE_CONTENT = {
       canoeBody: field('Tile 8 description', '', true),
       paddleboardingTitle: field('Tile 9 title', ''),
       paddleboardingBody: field('Tile 9 description', '', true)
-    }
-  },
-  volunteering: {
-    label: 'Volunteering',
-    fields: {
-      title: field('Page heading', 'Volunteering'),
-      intro: field('Page introduction', 'Forth Canoe Club runs on volunteers. Every contribution — from coaching and events to maintenance and fundraising — makes a real difference. We reward volunteer commitment with substantial discounts on memberships and activities.', true),
-      tier1Eyebrow: field('20+ hour tier label', '20+ hours'),
-      tier1Title: field('20+ hour tier heading', 'Get Started'),
-      tier1Body: field('20+ hour tier text', '£5 discount per month on unlimited subscriptions + free key hire.', true),
-      tier2Eyebrow: field('40+ hour tier label', '40+ hours'),
-      tier2Title: field('40+ hour tier heading', 'Regular Volunteer'),
-      tier2Body: field('40+ hour tier text', 'Fixed £10/month unlimited subscriptions + free boat & equipment hire + free key hire.', true),
-      tier3Eyebrow: field('60+ hour tier label', '60+ hours'),
-      tier3Title: field('60+ hour tier heading', 'Core Team'),
-      tier3Body: field('60+ hour tier text', 'Free equipment hire, subscriptions, key hire, + 25% discount on coaching courses.', true),
-      waysTitle: field('Ways to Volunteer heading', 'Ways to Volunteer'),
-      waysList: field('Volunteer opportunities (one per line: title | description)', 'Canal Festival | The most important community event of the year\nMaintenance | Painting, cleaning, weeding, and building at the clubhouse\nCoaching | Shadowing coaches, helping at pool and summer sessions, running beginner classes\nKey Holding | Open the club for club nights and open nights\nEquipment Repair | Plastic welding, carbon repairs, wooden canoe seats, airbag fixes\nFundraising | Grant applications, baking stalls, community events\nAccess Project | Join our subcommittee working on accessibility improvements', true),
-      formTitle: field('Volunteer form heading', 'Get Involved'),
-      formDescription: field('Volunteer form description', 'Sign up for volunteering opportunities or log equipment needs.', true)
     }
   },
   about: {
@@ -220,6 +200,6 @@ export const getPageCopy = (pageId, saved = {}) => {
   return {
     ...Object.fromEntries(Object.entries(fields).map(([key, definition]) => [key, saved[key] ?? definition.value])),
     ...(pageId === 'home' ? { supporterTiles: getSupporterTiles(saved.supporterTiles, saved.sponsors ?? fields.sponsors.value) } : {}),
-    ...(pageId !== 'membership' ? { tileLayout: saved.tileLayout ?? defaultTileLayout(pageId) } : {})
+    ...(pageId !== 'membership' ? { tileLayout: currentTileLayout(pageId, saved.tileLayout) } : {})
   };
 };

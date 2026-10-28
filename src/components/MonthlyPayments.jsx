@@ -12,6 +12,7 @@ export default function MonthlyPayments({ adminUser, query }) {
   const [busy, setBusy] = useState('');
   const [confirming, setConfirming] = useState(null);
   const [message, setMessage] = useState('');
+  const [volunteerCancellable, setVolunteerCancellable] = useState([]);
   const membershipId = new URLSearchParams(query).get('membershipId') || '';
 
   const request = useCallback(async (path, method = 'GET') => {
@@ -26,7 +27,11 @@ export default function MonthlyPayments({ adminUser, query }) {
   useEffect(() => {
     let active = true;
     request(`/api/admin/subscriptions?${new URLSearchParams(query)}`)
-      .then((result) => active && setState({ loading: false, subscriptions: result.subscriptions, failed: result.failed || [], error: '' }))
+      .then((result) => {
+        if (!active) return;
+        setVolunteerCancellable(result.volunteerCancellableLineIds || []);
+        setState({ loading: false, subscriptions: result.subscriptions, failed: result.failed || [], error: '' });
+      })
       .catch((error) => active && setState({ loading: false, subscriptions: [], failed: [], error: error.message }));
     return () => { active = false; };
   }, [request, query]);
@@ -38,7 +43,8 @@ export default function MonthlyPayments({ adminUser, query }) {
     try {
       const result = await request(`/api/admin/subscriptions/${encodeURIComponent(subscription.id)}/${path}`, 'POST');
       setState((current) => ({ ...current, subscriptions: current.subscriptions.map((entry) => entry.id === result.subscription.id ? result.subscription : entry) }));
-      setMessage(result.cancelledWholeSubscription
+      setMessage(result.cancelScheduledAt ? `Cancellation scheduled for ${date(result.cancelScheduledAt)}. No refund or other payment changes.`
+        : result.cancelledWholeSubscription
         ? `Subscription ${subscription.id} cancelled in Stripe. Nothing was left on it, so no further payments will be taken.`
         : `${done} The payer now pays ${money(monthlyTotal(result.subscription))} a month for everything else.`);
       setConfirming(null);
@@ -81,9 +87,13 @@ export default function MonthlyPayments({ adminUser, query }) {
                     <td>{item.name}</td>
                     <td>{item.orderRef || subscription.orderRef}</td>
                     <td>{money(item.monthlyAmount)}</td>
-                    <td>{item.status === 'active' ? 'Active' : `Cancelled ${date(item.cancelledAt)}`}</td>
+                    <td>{item.cancelScheduledAt ? `Stops ${date(item.cancelScheduledAt)}` : item.status === 'active' ? 'Active' : `Cancelled ${date(item.cancelledAt)}`}</td>
                     <td>{item.status === 'active' && <button className="EditorCommand" type="button" disabled={Boolean(busy)}
-                      onClick={() => ask(subscription, [item], `items/${encodeURIComponent(item.lineId)}/cancel`, `${item.name} removed from subscription ${subscription.id}.`)}>Cancel item</button>}</td>
+                      onClick={() => ask(subscription, [item], `items/${encodeURIComponent(item.lineId)}/cancel`, `${item.name} removed from subscription ${subscription.id}.`)}>Cancel item</button>}
+                      {membershipId && volunteerCancellable.includes(item.lineId) && !item.cancelScheduledAt && <button className="EditorCommand" type="button" disabled={Boolean(busy)}
+                        onClick={() => setConfirming({ subscription, path: `items/${encodeURIComponent(item.lineId)}/volunteer-cancel`,
+                          text: `Schedule ${item.name} to stop at the end of its paid period, only if every holder qualifies for it as a free volunteer benefit? No refund. Other items and payments are preserved.` })}>Schedule cancellation of free volunteer benefit</button>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
