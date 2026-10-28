@@ -12,6 +12,13 @@ test('first saved product preserves starter catalogue; overrides and deletions s
   assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', deleted: true }, { id: 'other', deleted: true }]), []);
 });
 
+test('only event products retain event schedule metadata', () => {
+  const straySchedule = { mode: 'invalid' };
+  assert.equal(Object.hasOwn(normaliseProduct({ category: 'MEMBERSHIP', eventSchedule: straySchedule }), 'eventSchedule'), false);
+  assert.equal(Object.hasOwn(normaliseProduct({ category: 'SERVICES', eventSchedule: straySchedule }), 'eventSchedule'), false);
+  assert.deepEqual(normaliseProduct({ category: 'EVENTS', eventSchedule: straySchedule }).eventSchedule, straySchedule);
+});
+
 test('event tickets support a single session or consecutive course days across months', () => {
   const schedule = { mode: 'consecutive', startDate: '2027-02-27', startTime: '15:00', endTime: '17:00', days: 5, timeZone: 'Europe/London' };
   assert.deepEqual(eventSessions(schedule).map((session) => session.date), ['2027-02-27', '2027-02-28', '2027-03-01', '2027-03-02', '2027-03-03']);
