@@ -131,7 +131,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
           <li>{preview.subscriptionsToCancel.length} Stripe {preview.subscriptionsToCancel.length === 1 ? 'subscription' : 'subscriptions'} will be cancelled.</li>
           <li>{preview.related.discountCodes} voucher or discount {preview.related.discountCodes === 1 ? 'code' : 'codes'}, {preview.related.lists} form {preview.related.lists === 1 ? 'submission' : 'submissions'} and {preview.related.stripeRecords} Stripe mirror {preview.related.stripeRecords === 1 ? 'record' : 'records'} will be cleared.</li>
           <li>{preview.deletedRecords.length} earlier deleted {preview.deletedRecords.length === 1 ? 'record' : 'records'} will be permanently purged{preview.deletedRecords.length ? `: ${preview.deletedRecords.map((entry) => entry.summary?.label).join(', ')}` : ''}.</li>
-          {preview.people.some((person) => person.justgo) && <li>They are in JustGo; remove them there too or the nightly sync recreates the record.</li>}
+          {preview.people.some((person) => person.justgo) && <li>They are in JustGo; remove them there too or the weekly sync recreates the record.</li>}
           {preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
         </ul>
 

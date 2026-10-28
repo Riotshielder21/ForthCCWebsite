@@ -1329,6 +1329,9 @@
   .ReportsTable th { padding: 12px; background: #edf4f7; font-size: 12px; }
   .ReportsTable td { padding: 12px; border-bottom: 1px solid #e0e7ec; vertical-align: top; min-width: 100px; max-width: 240px; overflow-wrap: anywhere; }
   .ReportsTable tbody tr:nth-child(even) { background: #fff; }
+  .ReportsTable .ReportsActionsCell { position: sticky; right: 0; z-index: 1; min-width: 0; width: 1%; white-space: nowrap; background: #f8fafc; box-shadow: -8px 0 12px -10px #03234666; }
+  .ReportsTable th.ReportsActionsCell { background: #edf4f7; }
+  .ReportsTable tbody tr:nth-child(even) .ReportsActionsCell { background: #fff; }
   .ReportsRowActions { display: flex; gap: 6px; }
   .DiscountCodesTable td, .DiscountCodesTable th { padding: 10px 8px; vertical-align: middle; }
   .DiscountCodesTable tbody tr { border-top: 1px solid rgb(15 23 42 / 0.1); }
@@ -1356,6 +1359,7 @@
   @media (max-width: 600px) {
     .AdminReports { padding: 16px; }
     .ReportsDialog { padding: 16px; }
+    .ReportsRowActions .EditorIconButton { width: 44px; min-height: 44px; }
     .ReportsFilters label { flex-wrap: wrap; }
     .ReportsSearch { min-width: 100%; }
   }

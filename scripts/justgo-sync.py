@@ -241,6 +241,8 @@ async def sync_to_firestore(csv_path):
                 pending = 0
 
         batch.commit()
+        # Heartbeat: the website treats the sync as stopped (and unconfirmed members as Unavailable) when this goes stale.
+        db.collection("settings").document("justgoSync").set({"lastSuccessAt": firestore.SERVER_TIMESTAMP, "membersUpdated": writes})
         print(f"Sync complete. {writes} members updated ({created} new, {linked} matched to existing records).")
 
 if __name__ == "__main__":

@@ -67,8 +67,11 @@ with tempfile.NamedTemporaryFile("w", suffix=".csv", newline="", delete=False, e
     csv.writer(handle).writerows([header, *rows])
     path = handle.name
 
+heartbeat = sync.db.collection("settings").document("justgoSync")
+heartbeat.delete()
 for attempt in range(2):  # the second run proves the sync is repeatable
     asyncio.run(sync.sync_to_firestore(path))
+    assert heartbeat.get().to_dict()["lastSuccessAt"], "a completed run records its heartbeat"
     matches = list(memberships.where("email", "==", alex_email).stream())
     assert len(matches) == 1, f"run {attempt + 1}: expected one Alex record, found {len(matches)}"
 
@@ -100,6 +103,7 @@ def only_record(number):
 created = only_record(number_new).reference
 assert re.fullmatch(r"M\d{4,}", created.id), f"new members get a short permanent ID, not {created.id}"
 person = created.get().to_dict()
+assert re.fullmatch(r"H\d{5,}", person["householdId"]), "new JustGo households use the shared short-ID counter"
 assert person["affiliationNumber"] == number_new and person["membershipNumber"] == f"FCC-{number_new}", "new JustGo member created once"
 assert person["source"] == "justgo" and person["status"] == "expired" and person["searchName"] == "new person"
 assert person["dob"] == "1990-02-01" and "phone" not in person and "email" not in person

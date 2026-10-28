@@ -1,13 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { memberState, memberReport, membershipReport, orderReport, reportCsv, reportDate, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders } from './adminReports.js';
+import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders } from './adminReports.js';
 
-test('member status uses expiry, not an unverified Active flag', () => {
+test('membership status is one of No, Active, Awaiting renewal, Expired or Revoked, or a raw imported status', () => {
   const now = new Date('2026-10-10T12:00:00Z');
-  assert.equal(memberState({ status: 'Active', expiry: '01/03/2026' }, now), 'Expired');
-  assert.equal(memberState({ status: 'Active', expiry: '01/03/2027' }, now), 'Current');
-  assert.equal(memberState({ status: 'Active' }, now), 'Unverified expiry');
-  assert.equal(memberState({ status: 'Cancelled', expiry: '01/03/2027' }, now), 'Cancelled');
+  assert.equal(membershipStatus({ status: 'Active', expiry: '01/03/2026' }, now), 'Expired');
+  assert.equal(membershipStatus({ status: 'Active', expiry: '01/03/2027' }, now), 'Active');
+  assert.equal(membershipStatus({ status: 'Active' }, now), 'Active (no expiry)', 'lifetime members have no expiry');
+  assert.equal(membershipStatus({ status: 'Cancelled', expiry: '01/03/2027' }, now), 'Cancelled');
+  assert.equal(membershipStatus(null, now), 'No');
+  assert.equal(membershipStatus({ contactOnly: true, status: 'active' }, now), 'No');
+  assert.equal(membershipStatus({ status: 'active', validUntil: '2099-03-01', membershipAccessEndsAt: '2026-05-01T00:00:00Z' }, now), 'Revoked');
+  const invited = { status: 'active', validUntil: '2026-02-28T23:59:59Z', renewalInviteSentFor: [2026] };
+  assert.equal(membershipStatus({ ...invited, validUntil: '2027-02-28T23:59:59Z', renewalInviteSentFor: [2027] }, new Date('2027-02-10T12:00:00Z')), 'Active',
+    'a renewal email does not change an Active membership');
+  assert.equal(membershipStatus(invited, new Date('2026-03-10T12:00:00Z')), 'Awaiting renewal', 'cover ended but the renewal link is live');
+  assert.equal(membershipStatus(invited, new Date('2026-04-02T12:00:00Z')), 'Expired', 'the renewal link has expired');
+  assert.equal(membershipStatus({ ...invited, renewalInviteSentFor: [] }, new Date('2026-03-10T12:00:00Z')), 'Expired');
+  for (const status of ['Active', 'Active (no expiry)', 'Awaiting renewal', 'Expired', 'Revoked', 'No']) assert.ok(MEMBERSHIP_STATUSES.includes(status));
   assert.equal(reportDate('31/02/2027'), null);
   assert.equal(memberReport('member-1', {}).email, '');
 });
@@ -55,12 +65,21 @@ test('event export lists every attendee with the details a leader needs', () => 
 test('one membership report covers JustGo and website records', () => {
   const synced = membershipReport('sca-1', { affiliationNumber: '1', firstName: 'Jo', lastName: 'Sync', source: 'justgo', status: 'active', validUntil: '2099-03-01' });
   assert.equal(synced.name, 'Jo Sync');
-  assert.equal(synced.status, 'Current');
+  assert.equal(synced.status, 'Active');
   const awaitingRenewal = membershipReport('sca-2', {
     affiliationNumber: '2', firstName: 'Sam', lastName: 'Renewal', status: 'active', validUntil: '2099-03-01',
     renewalMethod: 'justgo', justgoSyncStatus: 'synced', lastJustgoSync: '2026-02-28T12:00:00.000Z'
-  }, new Date('2026-10-10T12:00:00Z'));
-  assert.equal(awaitingRenewal.status, 'Awaiting renewal');
+  }, new Date('2026-03-05T12:00:00Z'));
+  assert.equal(awaitingRenewal.status, 'Awaiting renewal', 'JustGo has not confirmed the renewal yet');
+  const unconfirmed = { status: 'active', validUntil: '2099-03-01', renewalMethod: 'justgo', lastJustgoSync: '2026-02-28T12:00:00.000Z' };
+  const october = new Date('2026-10-10T12:00:00Z');
+  assert.equal(membershipReport('sca-2', unconfirmed, october, {}, { healthy: true }).status, 'Expired', 'the sync is running and did not confirm a renewal');
+  assert.equal(membershipReport('sca-2', unconfirmed, october, {}, { healthy: false }).status, 'Unavailable', 'the sync has stopped, so we cannot tell');
+  assert.equal(membershipReport('sca-2', unconfirmed, october).status, 'Unavailable', 'unknown sync health is not treated as working');
+  assert.equal(membershipStatus({ ...unconfirmed, lastJustgoSync: undefined }, october, { healthy: true }), 'Pending', 'never synced');
+  assert.equal(membershipStatus({ ...unconfirmed, lastJustgoSync: '2026-10-09T02:00:00Z' }, october), 'Active', 'confirmed this club year');
+  assert.equal(membershipStatus({ ...unconfirmed, status: 'expired', validUntil: '2026-02-28', lastJustgoSync: '2026-10-09T02:00:00Z' }, october), 'Expired',
+    'the sync\'s own expired status reads as Expired');
   assert.equal(awaitingRenewal.lastJustgoSync, '2026-02-28T12:00:00.000Z');
   assert.equal(awaitingRenewal.renewalMethod, 'justgo');
   const legacy = membershipReport('L1', { affiliationNumber: 'L1', name: 'Legacy Name', expiry: '01/03/2020', status: 'Active' });

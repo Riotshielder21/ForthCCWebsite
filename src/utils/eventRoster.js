@@ -1,4 +1,4 @@
-import { personReport, memberState } from './adminReports.js';
+import { personReport, membershipStatus } from './adminReports.js';
 import { eventScheduleLabel } from './catalogue.js';
 import { currentPrivilegeIds } from './tripDiscount.js';
 
@@ -49,7 +49,7 @@ export const kitStatus = ({ ownKit = false, heldIds = [] }) => {
  * One row per paid ticket for the event. `orders` are `{ id, ...fields }`; `members` maps a membership id to its record
  * (with `household` merged in) so details existing members did not re-enter at checkout still appear.
  */
-export const buildRoster = (productId, orders, members = new Map(), now = new Date()) => orders
+export const buildRoster = (productId, orders, members = new Map(), now = new Date(), justgoSync) => orders
   .filter((order) => order.status === 'paid')
   .flatMap((order) => {
     const items = Array.isArray(order.items) ? order.items : [];
@@ -64,7 +64,7 @@ export const buildRoster = (productId, orders, members = new Map(), now = new Da
         name: report.name, kind: report.kind, dob: report.dob, phone: report.phone, email: report.email,
         emergencyContact: report.emergencyContact, medical: report.medical, swimming: report.swimming,
         kit: kitStatus({ ownKit: ticket.ownKit === true, heldIds }),
-        membership: member.contactOnly ? 'Not a member' : memberState({ status: member.status, expiry: member.validUntil || member.expiry }, now),
+        membership: membershipStatus(person.membershipId ? member : null, now, justgoSync),
         orderRef: order.id, bookedBy: order.email || ''
       };
     });

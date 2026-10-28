@@ -22,6 +22,7 @@ import { bookingsClosed } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
+import { readJustgoSync } from './src/server/justgoSync.js';
 import { buildRawEmail } from './src/utils/mail.js';
 import { buildReceiptSummary, buildLinkedReceipt, receiptEmailCopy, receiptEmailHtml } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
@@ -988,13 +989,15 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
         members = new Map([...members].map(([id, member]) => [id, { ...member, household: households.get(member.householdId) || {} }]));
       }
     }
+    const now = new Date();
+    const justgoSync = req.query.kind === 'members' ? await readJustgoSync(adminDb, now) : null;
     const records = documents.filter((document) => req.query.kind !== 'members' || document.data().contactOnly !== true).map((document) => (req.query.kind === 'members'
-      ? membershipReport(document.id, document.data(), new Date(), households.get(document.data().householdId) || {})
+      ? membershipReport(document.id, document.data(), now, households.get(document.data().householdId) || {}, justgoSync)
       : orderReport(document.id, document.data(), members)));
     res.json({ records: eventReport ? records.filter((record) => record.items.some((item) => item.category === 'EVENTS'))
       .map((record) => ({ ...record, orderTotal: record.total, items: record.items.filter((item) => item.category === 'EVENTS'),
         total: record.items.filter((item) => item.category === 'EVENTS').reduce((sum, item) => sum + (item.price || 0), 0) })) : records,
-      nextCursor: snapshot.size > 100 ? documents.at(-1).id : null });
+      nextCursor: snapshot.size > 100 ? documents.at(-1).id : null, ...(justgoSync ? { justgoSync } : {}) });
   } catch (error) {
     console.error('Admin report failed:', error.message);
     res.status(500).json({ error: 'Could not retrieve report.' });
@@ -1894,7 +1897,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
         || (coversNextYear && now >= clubYearDates(currentClubYear).membershipSaleEnds)));
       const covers = (part) => part === 'this' ? coversThisYear : coversNextYear;
       const neededParts = membershipPartsNeeded(lines, person, now).filter((part) => !covers(part));
-      // From 1 March every JustGo member is inactive until the nightly sync confirms their direct-debit renewal.
+      // From 1 March every JustGo member is inactive until the weekly sync confirms their direct-debit renewal.
       if (existing?.awaitingRenewal && renewalConfirmationOpen(now) && (buysMembership || neededParts.length || getsMembership.has(person.id))) {
         return res.status(409).json({
           code: 'renewal_unconfirmed', personIds: [person.id],

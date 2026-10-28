@@ -12,12 +12,15 @@ const millis = (value) => {
  * to anyone not yet emailed, and a reminder on 15 February to anyone who still has not renewed. This club year ends on
  * 1 March. Links work until the end of 31 March so late renewals still prefill the basket.
  */
+/** Renewal links for a club year stop working at the end of 31 March, a month after the old year ends. */
+export const renewalLinkExpiresAt = (renewalYear) => londonMidnight(renewalYear, 3, 1);
+
 export const renewalWindow = (now = new Date()) => {
   const clubYear = clubYearOf(now);
   const dates = clubYearDates(clubYear);
   return { clubYear, renewalYear: clubYear + 1, opens: dates.renewalOpens, scheduledFrom: londonMidnight(clubYear + 1, 1, 1),
     reminderFrom: londonMidnight(clubYear + 1, 1, 15),
-    closes: dates.end, expiresAt: londonMidnight(clubYear + 1, 3, 1) };
+    closes: dates.end, expiresAt: renewalLinkExpiresAt(clubYear + 1) };
 };
 
 /** The scheduled round due at `now`: 'first' from 1 February, 'reminder' from 15 February, otherwise none. */

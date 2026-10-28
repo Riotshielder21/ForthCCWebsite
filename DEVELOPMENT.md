@@ -150,6 +150,7 @@ Events, services and subscriptions also have a **Membership** rule (`membershipR
 
 - Each `memberships` document has a short, permanent ID (`M0001`, `M0002`, …) allocated from the `counters/memberships` counter by checkout, `scripts/justgo-sync.py` and `scripts/migrate-members.js`. It never changes.
 - `membershipNumber` is `FCC-<Paddle Scotland number>` (4–8 digits). JustGo sync sets it and updates it if the number changes. Until then, admins see "Awaiting Paddle Scotland sync".
+- Membership status is the same on the member register, event attendee lists and Check-ins (`membershipStatus` in `src/utils/adminReports.js`): **Active** (or **Active (no expiry)**), **Awaiting renewal** (cover has ended but a renewal link is live, or a JustGo member is not yet confirmed in the first 14 days of the club year), **Pending** (a JustGo member never synced), **Unavailable** (a JustGo member not confirmed this club year while the sync has stopped), **Expired**, **Revoked** or **No**. Imported statuses such as Cancelled are shown as recorded. Run `scripts/justgo-sync.py` weekly; each completed run writes `settings/justgoSync.lastSuccessAt`, and with no completed run for 8 days the sync counts as stopped and the Members tab shows a warning, because a missing confirmation then cannot be read as a lapsed membership.
 - Admins see both in Reports & records. Members are shown neither.
 
 ### Other short record IDs

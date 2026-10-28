@@ -578,11 +578,17 @@ await test('JustGo members are inactive until the sync confirms their renewal in
   assert.equal(addOn.json.code, 'membership_required');
   assert.match(addOn.json.error, /renewal has not been confirmed/);
   const register = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records.find((record) => record.id === `sca-E2E-U-${run}`);
-  assert.equal(register.status, 'Awaiting renewal');
+  const inWindow = now - yearStart < 14 * 86400000;
+  assert.equal(register.status, inWindow ? 'Awaiting renewal' : 'Unavailable', 'with no completed sync run we cannot tell whether they renewed');
+  await db.collection('settings').doc('justgoSync').set({ lastSuccessAt: new Date() });
+  const synced = await call('GET', '/api/admin/reports?kind=members', { headers: admin });
+  await db.collection('settings').doc('justgoSync').delete();
+  assert.equal(synced.json.records.find((record) => record.id === `sca-E2E-U-${run}`).status, inWindow ? 'Awaiting renewal' : 'Expired', 'a running sync that did not confirm them');
+  assert.equal(synced.json.justgoSync.healthy, true);
   await db.collection('memberships').doc(`sca-E2E-U-${run}`).set({ lastJustgoSync: new Date() }, { merge: true });
   assert.equal((await checkout(lapsed, build(['boat-hire'], [details]))).status, 200, 'active once the sync confirms them');
   const after = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records.find((record) => record.id === `sca-E2E-U-${run}`);
-  assert.equal(after.status, 'Current');
+  assert.equal(after.status, 'Active');
 });
 
 await test('a person with a membership number we do not hold is invited through JustGo', async () => {
@@ -791,7 +797,7 @@ await test('reports: one member register holds website and JustGo members, compl
   const alex = mine.find((record) => record.id === shared.alexMembership);
   assert.equal(alex.name, 'Alex Adult');
   assert.equal(alex.tier, 'adult');
-  assert.equal(alex.status, 'Current');
+  assert.equal(alex.status, 'Active');
   assert.deepEqual(alex.privileges.sort(), ['ANNUAL BOAT & KIT HIRE', 'Boathouse Access', 'BLUE SUBSCRIPTION'].sort());
   assert.equal(alex.history.length, 5, 'membership, key hire, subscription, voucher-paid course and the event ticket');
   assert.ok(alex.history.every((entry) => entry.orderRef && entry.paidAt && entry.items.length));
@@ -814,7 +820,7 @@ await test('reports: one member register holds website and JustGo members, compl
   assert.equal(jam.justgo, 'In JustGo');
   assert.equal(jam.renewalMethod, 'justgo');
   const everyone = report.json.records;
-  assert.ok(everyone.some((record) => record.name === 'Test Current' && record.source === 'justgo' && record.status === 'Current'), 'JustGo-synced members are in the same register');
+  assert.ok(everyone.some((record) => record.name === 'Test Current' && record.source === 'justgo' && record.status === 'Active'), 'JustGo-synced members are in the same register');
   assert.ok(everyone.some((record) => record.name === 'Test Expired' && record.status === 'Expired'));
 });
 
@@ -1395,7 +1401,7 @@ await test('events open to non-members keep them as contacts, close on time and 
   assert.match(mail[0].body, /Vic Visitor \(Adult, born .*\n {3}Phone: 07700 900111 .*\n {3}Emergency contact: Pat Friend, Friend, 07700 900222\n {3}Medical: Nut allergy/);
   assert.match(mail[0].body, /Kit: Bringing own kit/);
   assert.match(mail[0].body, /Kit: Needs boat hire \(not paid\)/);
-  assert.match(mail[0].body, /Membership: Not a member/);
+  assert.match(mail[0].body, /Membership: No\n/);
   const status = (await call('GET', path, { headers: admin })).json;
   assert.deepEqual([status.sentTo, status.attendees, status.trigger], [leader, 2, 'admin']);
   assert.equal((await call('POST', `/api/admin/events/${memberOnlyId}/roster`, { headers: admin })).status, 400, 'no leader email to send to');

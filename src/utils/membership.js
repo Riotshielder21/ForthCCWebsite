@@ -1,4 +1,4 @@
-// Whether a membership record counts as active. JustGo direct-debit renewals are only trusted once the nightly sync
+// Whether a membership record counts as active. JustGo direct-debit renewals are only trusted once the weekly sync
 // has confirmed them in the current club year, so every JustGo-managed member is inactive from 1 March until then.
 export const CONFIRMATION_DAYS = 14;
 
@@ -15,6 +15,14 @@ export const clubYearStart = (now = new Date()) => new Date(now.getMonth() >= 2 
 
 // True while a missing JustGo confirmation is still expected, rather than a renewal that never happened.
 export const renewalConfirmationOpen = (now = new Date()) => now.getTime() - clubYearStart(now).getTime() < CONFIRMATION_DAYS * 24 * 60 * 60 * 1000;
+
+// The weekly JustGo sync records `settings/justgoSync.lastSuccessAt` after each complete run. If no run has finished
+// in this many days (a week plus a day's grace), the sync is treated as stopped and unconfirmed JustGo members are shown as Unavailable.
+export const JUSTGO_SYNC_STALE_DAYS = 8;
+export const justgoSyncHealth = (settings, now = new Date()) => {
+  const lastSuccessAt = millis(settings?.lastSuccessAt) || null;
+  return { lastSuccessAt, healthy: Boolean(lastSuccessAt) && now.getTime() - lastSuccessAt < JUSTGO_SYNC_STALE_DAYS * 24 * 60 * 60 * 1000 };
+};
 
 // 'active' | 'expired' | 'awaiting-renewal' | 'inactive'
 export const membershipActivity = (fields, now = new Date()) => {

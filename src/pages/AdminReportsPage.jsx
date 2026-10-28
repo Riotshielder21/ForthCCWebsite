@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl } from '../utils/api';
-import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent } from '../utils/adminReports';
+import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, MEMBERSHIP_STATUSES } from '../utils/adminReports';
 import { eventScheduleLabel } from '../utils/catalogue';
 import CustomerVouchers from '../components/CustomerVouchers';
 import MonthlyPayments from '../components/MonthlyPayments';
@@ -42,16 +42,19 @@ const download = (name, text) => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
+const justgoSyncWarning = (sync) => `JustGo sync ${sync.lastSuccessAt ? `last completed on ${new Date(sync.lastSuccessAt).toLocaleString('en-GB')}` : 'has not reported a completed run'}, so it may have stopped working. JustGo members it has not confirmed this club year show as Unavailable rather than Expired, because their renewal cannot be checked. Check the JustGo sync job and API.`;
+
 export default function AdminReportsPage({ onNavigate }) {
   const { adminUser, authReady } = usePageEditor();
   const [kind, setKind] = useState('members');
   const [records, setRecords] = useState([]);
+  const [justgoSync, setJustgoSync] = useState(null);
   const [cursor, setCursor] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('Current');
+  const [status, setStatus] = useState('Active');
   const [checkedAt, setCheckedAt] = useState(null);
   const [stripeMode, setStripeMode] = useState('');
   const [clubYearEnd, setClubYearEnd] = useState(null);
@@ -107,6 +110,7 @@ export default function AdminReportsPage({ onNavigate }) {
       setCheckedAt(result.checkedAt || null);
       setStripeMode(result.mode || '');
       setClubYearEnd(result.clubYearEnd || null);
+      setJustgoSync(result.justgoSync || null);
     } catch (loadError) {
       if (generation.current === revision) setError(loadError.message);
     } finally {
@@ -116,6 +120,7 @@ export default function AdminReportsPage({ onNavigate }) {
 
   useEffect(() => {
     setRecords([]);
+    setJustgoSync(null);
     setCursor(null);
     setCheckedAt(null);
     setStripeMode('');
@@ -274,13 +279,13 @@ export default function AdminReportsPage({ onNavigate }) {
         setCursor(null);
         setLoading(true);
         setCheckedAt(null); setStripeMode(''); setClubYearEnd(null);
-        setKind(id); setSourceFilter('all'); setTierFilter('all'); setIncludesFilter('all'); setRenewalFilter('all'); setEventFilter('all'); setPlanFilter('all'); setPurchaseType('all'); setStatus(id === 'members' ? 'Current' : id === 'subscribers' ? 'Active' : 'all'); setPurchaseType('all'); setSearch(''); setMessage('');
+        setKind(id); setSourceFilter('all'); setTierFilter('all'); setIncludesFilter('all'); setRenewalFilter('all'); setEventFilter('all'); setPlanFilter('all'); setPurchaseType('all'); setStatus(id === 'members' ? 'Active' : id === 'subscribers' ? 'Active' : 'all'); setPurchaseType('all'); setSearch(''); setMessage('');
       }}><Icon size={18} /> {label}</button>)}
     </div>
     {SettingsPanel ? <SettingsPanel adminUser={adminUser} /> : <>
     <div className="ReportsFilters">
       <label className="ReportsSearch"><Search size={18} /><input aria-label="Search report" placeholder={purchaseReport ? 'Email, order, or product' : 'Name, email, or member ID'} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-      <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{(kind === 'subscribers' ? ['Active', 'Inactive'] : purchaseReport ? ['paid', 'pending', 'failed', 'cancelled'] : ['Current', 'Expired', 'Unverified expiry', ...new Set(records.map((record) => record.status).filter((value) => !['Current', 'Expired', 'Unverified expiry'].includes(value)))]).map((value) => <option key={value}>{value}</option>)}</select></label>
+      <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{(kind === 'subscribers' ? ['Active', 'Inactive'] : purchaseReport ? ['paid', 'pending', 'failed', 'cancelled'] : [...MEMBERSHIP_STATUSES, ...new Set(records.map((record) => record.status).filter((value) => value && !MEMBERSHIP_STATUSES.includes(value)))]).map((value) => <option key={value}>{value}</option>)}</select></label>
       {kind === 'members' && <><label>JustGo<select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">All members</option>{['Awaiting upload', 'Invitation sent', 'Needs staff upload', 'Added by staff, awaiting sync', 'In JustGo', 'Not in JustGo'].map((value) => <option key={value}>{value}</option>)}</select></label><label>Tier<select value={tierFilter} onChange={(event) => setTierFilter(event.target.value)}><option value="all">All tiers</option>{['adult', 'junior', 'family'].map((tier) => <option key={tier}>{tier}</option>)}</select></label></>}
       {kind === 'members' && <><label>Includes<select value={includesFilter} onChange={(event) => setIncludesFilter(event.target.value)}><option value="all">Anything</option><option value="none">Membership only</option>{reportOptions(records, (record) => record.privileges).map((value) => <option key={value}>{value}</option>)}</select></label>
         <label>Renews via<select value={renewalFilter} onChange={(event) => setRenewalFilter(event.target.value)}><option value="all">Any</option><option value="website">Website</option><option value="justgo">JustGo</option><option value="none">Not set</option></select></label></>}
@@ -297,13 +302,14 @@ export default function AdminReportsPage({ onNavigate }) {
     </div>
     {checkedAt && <p className="ReportNotice" role="status">Stripe {stripeMode} data checked and imported at {new Date(checkedAt).toLocaleString('en-GB')}. Stable club IDs retained. Snapshot only; no automatic refresh.</p>}
     {kind === 'subscribers' && clubYearEnd && <p className="ReportNotice">Club-year end: {dateLabel(clubYearEnd)} at midnight Europe/London. Opening this report imports subscribers, but does not change their billing. Use an individual record to confirm scheduling its end.</p>}
+    {kind === 'members' && justgoSync && !justgoSync.healthy && <div className="ReportDeleteWarning" role="alert"><AlertTriangle size={22} /><div><strong>JustGo sync may have stopped</strong><p>{justgoSyncWarning(justgoSync)}</p></div></div>}
     {cursor && <p className="ReportNotice">Downloads include only loaded records matching the filters. Load all pages for a complete report.</p>}
     {kind === 'events' && <p className="ReportNotice">Event tickets are listed separately with the schedule saved at purchase. Totals cover event items only; each course ticket covers every listed session. Check payment status before treating a booking as paid. Load further pages even if a page has no events. Delete entire orders from Purchases, not this event-only view.</p>}
     <p className="ReportNotice">{kind === 'subscribers' ? 'Active means Stripe reports active and payments are not paused or reversed on the latest invoice. Scheduled cancellation remains active until Stripe changes the status. Older refunds and disputes are not checked here. These are recurring Stripe subscriptions, not annual one-off purchases.' : kind === 'members' ? 'One register for every member. JustGo is the authority on whether a member is current and becomes their renewal method once they are linked. New website members are sent to JustGo automatically; an invitation JustGo emails to them can expire, so it is retried. Anyone the automatic upload could not complete shows Needs staff upload with the number of failed attempts, and appears on the staff upload list. Each member has a permanent club ID (M0001) that never changes; their membership number (FCC- and their Paddle Scotland number) appears once JustGo syncs them and updates if that number changes. Members are not shown either. Search covers names, IDs, membership and JustGo numbers, emergency contacts and what a membership includes.' : 'Purchases are not a verified member register. Use Stripe subscribers for current recurring subscription status.'} Email export does not establish permission to send marketing.</p>
     {error && !deleting && <p className="StatusTextError" role="alert">{error}</p>}
     {message && <p role="status">{message}</p>}
-    <div className="ReportsTableWrap"><table className="ReportsTable"><thead><tr>
-      {(kind === 'subscribers' ? ['Customer', 'Email', 'Subscription', 'Status', 'Plans', 'Period end', ''] : purchaseReport ? ['Order', 'Customer email', kind === 'events' ? 'Event / course schedule' : 'Purchased', 'Status', kind === 'events' ? 'Tickets total' : 'Total', 'Created', ''] : ['Member', 'Email', 'Membership number', 'Tier', 'Status', 'Valid until', 'Includes', 'JustGo', '']).map((label, index) => <th key={index} scope="col">{label || 'Actions'}</th>)}
+    <div className="ReportsTableWrap" tabIndex={0} role="region" aria-label="Records, scroll horizontally for more columns"><table className="ReportsTable"><thead><tr>
+      {(kind === 'subscribers' ? ['Customer', 'Email', 'Subscription', 'Status', 'Plans', 'Period end', ''] : purchaseReport ? ['Order', 'Customer email', kind === 'events' ? 'Event / course schedule' : 'Purchased', 'Status', kind === 'events' ? 'Tickets total' : 'Total', 'Created', ''] : ['Member', 'Email', 'Membership number', 'Tier', 'Status', 'Valid until', 'Includes', 'JustGo', '']).map((label, index) => <th key={index} scope="col" className={!label ? 'ReportsActionsCell' : undefined}>{label || 'Actions'}</th>)}
     </tr></thead><tbody>
       {filtered.map((record) => <tr key={record.id}>{purchaseReport ? <>
         <td><button className="ContentLink" onClick={() => setSelected(record)}>{record.id}</button></td><td>{record.email || 'Not recorded'}</td>
@@ -316,7 +322,7 @@ export default function AdminReportsPage({ onNavigate }) {
         <td>{record.items.map((item, index) => <div key={index}>{item.name}<br />{item.amount ?? 'Variable'} {item.currency.toUpperCase()} / {item.interval} {item.quantity > 1 ? `× ${item.quantity}` : ''}</div>)}</td>
         <td>{dateLabel(record.currentPeriodEnd)}{(record.cancelAt || record.cancelAtPeriodEnd) && <div>Ends: {dateLabel(record.cancelAt || record.currentPeriodEnd)}</div>}</td>
       </> : <><td><button className="ContentLink" onClick={() => setSelected(record)}>{record.name || record.id}</button><br /><span className="text_container_note">{record.id}</span></td><td>{record.email || 'Not recorded'}</td><td>{record.membershipNumber || 'Awaiting Paddle Scotland sync'}</td><td>{record.tier || 'Not set'}{record.includedWith && <><br /><span className="text_container_note">Included with {record.includedWith}</span></>}</td><td>{record.status}</td><td>{dateLabel(record.expiry)}</td><td>{record.privileges.join(', ') || 'Membership only'}</td><td>{record.justgo}{record.renewalMethod === 'justgo' ? ' (renews via JustGo)' : ''}</td></>}
-        <td><div className="ReportsRowActions"><button className="EditorIconButton" title="Record details" aria-label={`Details for ${record.id}`} onClick={() => setSelected(record)}><FileText size={16} /></button>{kind === 'subscribers' && record.status === 'Active' && record.clubCustomerId && <button className="EditorIconButton" title="Schedule club-year cancellation" aria-label={`Schedule club-year end for ${record.id}`} onClick={() => { setSelected(record); setError(''); }}><CalendarClock size={16} /></button>}{!['subscribers', 'events'].includes(kind) && <button className="EditorIconButton TileRemove" title="Delete record" aria-label={`Delete ${record.id}`} onClick={() => beginDelete(record)}><Trash2 size={16} /></button>}</div></td>
+        <td className="ReportsActionsCell"><div className="ReportsRowActions"><button className="EditorIconButton" title="Record details" aria-label={`Details for ${record.id}`} onClick={() => setSelected(record)}><FileText size={16} /></button>{kind === 'subscribers' && record.status === 'Active' && record.clubCustomerId && <button className="EditorIconButton" title="Schedule club-year cancellation" aria-label={`Schedule club-year end for ${record.id}`} onClick={() => { setSelected(record); setError(''); }}><CalendarClock size={16} /></button>}{!['subscribers', 'events'].includes(kind) && <button className="EditorIconButton TileRemove" title="Delete record" aria-label={`Delete ${record.id}`} onClick={() => beginDelete(record)}><Trash2 size={16} /></button>}</div></td>
       </tr>)}
       {!filtered.length && <tr><td colSpan="7">{loading ? 'Loading records…' : 'No matching records.'}</td></tr>}
     </tbody></table></div>
@@ -333,9 +339,10 @@ export default function AdminReportsPage({ onNavigate }) {
           {[['Name', person.name], ['Date of birth', person.dob], ['Type', person.returningMember ? `${person.kind} (existing member)` : person.kind], ['Items', person.items.join(', ')], ['Email', person.email], ['Phone', person.phone], ['Address', person.address], ['Emergency contact', person.emergencyContact], ['Swimming', person.swimming], ['Medical', person.medical], ['Photo consent', person.photoConsent ? 'Yes' : 'No'], ['Membership ID', person.membershipId]].filter(([, value]) => value).map(([label, value]) => <React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}
         </dl>)}</div>}
         {selected.history?.length > 0 && <div className="ReportPeople"><h4 className="CartItemTitle">Purchase history</h4><ul className="ReportItems">{selected.history.map((entry, index) => <li key={index}>{entry.orderRef}, {dateLabel(entry.paidAt)}: {entry.items.join(', ')}</li>)}</ul></div>}
+        {kind === 'members' && selected.status === 'Unavailable' && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>Membership status unavailable</strong><p>{justgoSync && !justgoSync.healthy ? justgoSyncWarning(justgoSync) : 'JustGo sync has not confirmed this member this club year.'} Check their membership in JustGo.</p></div></div>}
         {kind === 'members' && selected.justgoSync === 'pending' && <div className="ReportsRowActions">
-          <button className="EditorCommand" type="button" onClick={() => justgoAction(selected.id, 'retry')}>Retry automatic JustGo upload</button>
-          <button className="EditorCommand" type="button" onClick={() => justgoAction(selected.id, 'manual')}>Staff added them in JustGo</button>
+          <button className="EditorCommand" type="button" onClick={() => justgoAction(selected.id, 'retry')}>Retry JustGo upload</button>
+          <button className="EditorCommand" type="button" onClick={() => justgoAction(selected.id, 'manual')}>Manually added in JustGo</button>
         </div>}
         {kind === 'members' && <div className="ReportsRowActions"><button className="EditorCommand" type="button" onClick={() => sendRenewal(selected.id)}><Mail size={18} /> Send renewal email</button></div>}
         {(kind === 'orders' || kind === 'members') && <MonthlyPayments key={selected.id} adminUser={adminUser}

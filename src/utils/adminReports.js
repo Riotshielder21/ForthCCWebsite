@@ -1,4 +1,6 @@
-import { membershipActivity } from './membership.js';
+import { clubYearStart, renewalConfirmationOpen } from './membership.js';
+import { clubYearOf } from './clubYear.js';
+import { renewalLinkExpiresAt } from './renewals.js';
 import { itemLabel } from './inventory.js';
 import { memberIsJunior } from './households.js';
 import { checkLabel, checksManagedByJustgo } from './safeguarding.js';
@@ -24,11 +26,44 @@ export const reportDate = (value) => {
   return null;
 };
 
-export const memberState = (fields, now = new Date()) => {
-  const expiry = reportDate(fields.expiry);
-  if (expiry && new Date(expiry) < now) return 'Expired';
-  if (fields.status && !/^active$/i.test(fields.status)) return fields.status;
-  return expiry ? 'Current' : 'Unverified expiry';
+const statusDate = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value.toDate === 'function') return value.toDate();
+  if (value instanceof Date) return value;
+  if (typeof value === 'number') return new Date(value);
+  const iso = reportDate(value);
+  return iso ? new Date(iso) : null;
+};
+
+export const MEMBERSHIP_STATUSES = ['Active', 'Active (no expiry)', 'Awaiting renewal', 'Pending', 'Unavailable', 'Expired', 'Revoked', 'No'];
+
+/**
+ * The one membership status shown to admins, on event rosters and at check-ins. Active stays Active even after a renewal
+ * email is sent. Once cover ends, a member whose renewal link is still live is Awaiting renewal, then Expired when the
+ * link expires. JustGo members the sync has not confirmed this club year are Pending if never synced, Awaiting renewal
+ * during the confirmation window, then Expired if the sync is running, or Unavailable if it has stopped (`justgoSync`
+ * comes from `justgoSyncHealth`), because then we cannot tell. Imported non-active statuses are shown as recorded.
+ */
+export const membershipStatus = (fields, now = new Date(), justgoSync = { healthy: false }) => {
+  if (!fields || fields.contactOnly) return 'No';
+  const accessEnds = statusDate(fields.membershipAccessEndsAt);
+  if (accessEnds && accessEnds <= now) return 'Revoked';
+  const recorded = String(fields.status || '');
+  if (recorded && !/^(active|expired)$/i.test(recorded)) return recorded;
+  const expiry = statusDate(fields.validUntil || fields.expiry);
+  if (!recorded && !expiry) return 'No';
+  const managedByJustgo = fields.renewalMethod === 'justgo' || fields.justgoSyncStatus === 'synced';
+  const lastSync = statusDate(fields.lastJustgoSync);
+  if (managedByJustgo && !(lastSync >= clubYearStart(now))) {
+    if (!lastSync) return 'Pending';
+    if (renewalConfirmationOpen(now)) return 'Awaiting renewal';
+    if (!justgoSync?.healthy) return 'Unavailable';
+    if (!expiry || expiry > now) return 'Expired';
+  }
+  if (!/^expired$/i.test(recorded) && (!expiry || expiry > now)) return expiry ? 'Active' : 'Active (no expiry)';
+  const clubYear = clubYearOf(now);
+  const linkLive = (fields.renewalInviteSentFor || []).map(Number).includes(clubYear) && now < renewalLinkExpiresAt(clubYear);
+  return linkLive ? 'Awaiting renewal' : 'Expired';
 };
 
 export const subscriptionWarning = (fields) => Boolean(fields.stripeSubscriptionId
@@ -100,7 +135,7 @@ const justgoState = (fields) => {
   return fields.justgoSyncStatus === 'synced' || fields.affiliationNumber ? 'In JustGo' : 'Not in JustGo';
 };
 
-export const membershipReport = (id, fields, now = new Date(), household = fields.household || {}) => {
+export const membershipReport = (id, fields, now = new Date(), household = fields.household || {}, justgoSync) => {
   const upload = fields.justgoUpload || {};
   const emergency = fields.emergencyContact || {};
   const guardian = fields.guardian || {};
@@ -118,10 +153,7 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     keyAccessReason: fields.keyAccess?.reason || '',
     affiliationNumber: fields.affiliationNumber || '', membershipNumber: fields.membershipNumber || '', tier: fields.membershipTier || '',
     includedWith: fields.membershipIncludedWith?.name || '',
-    status: fields.membershipAccessEndsAt && new Date(reportDate(fields.membershipAccessEndsAt)) <= now ? 'Revoked'
-      : membershipActivity({ status: fields.status, validUntil: expiry, renewalMethod: fields.renewalMethod, justgoSyncStatus: fields.justgoSyncStatus, lastJustgoSync: reportDate(fields.lastJustgoSync) }, now) === 'awaiting-renewal'
-      ? 'Awaiting renewal'
-      : memberState({ status: fields.status, expiry: fields.validUntil || fields.expiry }, now),
+    status: membershipStatus(fields, now, justgoSync),
     expiry, lastUpdated: reportDate(fields.updatedAt || fields.lastUpdated), lastJustgoSync: reportDate(fields.lastJustgoSync), source: fields.source || (fields.affiliationNumber ? 'justgo' : ''),
     justgoSync: fields.justgoSyncStatus || '', renewalMethod: fields.renewalMethod || '',
     justgo: justgoState(fields),
