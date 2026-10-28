@@ -332,7 +332,9 @@ Before switching to live:
 
 ## API Outage Alerts
 
-`GET /health` returns 200 only when the API is running **and** can read Firestore (5-second limit); otherwise 503. Every deploy (including the daily run) runs `scripts/setup-api-monitoring.mjs`, which creates or updates in Google Cloud Monitoring: the uptime check **FCC API health** (the Cloud Run URL's `/health`, every 5 minutes from several regions), one email channel per address, and the alert policy **FCC API outage** (fires when more than one region fails; a resolved email follows when it passes again). Re-running is safe: nothing is duplicated, a new API URL replaces the check, and addresses removed from the workflow stop being alerted.
+The deployment workflow runs on the first of each month at 18:00 UTC, on pushes/merges to `main` (except changes only under `public/content/pages/`), and manually through GitHub Actions. The monthly schedule avoids paying for daily Cloud builds when nothing has changed.
+
+`GET /health` returns 200 only when the API is running **and** can read Firestore (5-second limit); otherwise 503. Every deploy (including the monthly run) runs `scripts/setup-api-monitoring.mjs`, which creates or updates in Google Cloud Monitoring: the uptime check **FCC API health** (the Cloud Run URL's `/health`, every 5 minutes from several regions), one email channel per address, and the alert policy **FCC API outage** (fires when more than one region fails; a resolved email follows when it passes again). Re-running is safe: nothing is duplicated, a new API URL replaces the check, and addresses removed from the workflow stop being alerted.
 
 - **Who is emailed:** `API_ALERT_EMAILS` at the top of `.github/workflows/firebase-hosting.yml` (comma separated). Change it and push to `main` (or run the workflow manually).
 - **One-off setup:** enable the Cloud Monitoring API for `fccwebsite-23cfc` and give the deploy service account (`FIREBASE_SERVICE_ACCOUNT`) the **Monitoring Editor** role:
