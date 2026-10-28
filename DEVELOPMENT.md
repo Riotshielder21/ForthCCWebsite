@@ -76,6 +76,12 @@ The domain in Google's "to continue to" prompt comes from Firebase's `authDomain
 
 Do not switch the build before the handler and OAuth configuration are ready: it would break admin sign-in. See [Firebase's custom redirect domain instructions](https://firebase.google.com/docs/auth/web/google-signin#customizing-the-redirect-domain-for-google-sign-in).
 
+## Volunteer sign-ups
+
+The public form sends the selected level as `tier`; it is stored with the sign-up and returned to the admin hours selector. Older sign-ups without a level remain unselected: staff must choose their agreed hours rather than inferring a commitment. Repeat submissions for the same name and email in the same club year report a conflict instead of claiming success while discarding the new hours or answers; changes to an existing commitment need staff follow-up. Duplicate handling is the same for members and non-members, without revealing whether a membership matched.
+
+The volunteer table shows the name and membership status. Its row-end details button opens the email address, sign-up answers (including availability), and additional notes in the same popup layout as the reports. **Email all — copy addresses** copies unique, comma-separated email addresses from the loaded volunteer rows for Gmail; paste into **Bcc** to avoid disclosing recipients. This button does not send mail.
+
 ## Crawlers and scraping
 
 - `public/robots.txt` allows normal search engines on public pages, excludes private/admin routes, and asks named AI and bulk-data crawlers not to crawl any pages. Vite copies it into the build; Firebase Hosting serves it at `/robots.txt`.
