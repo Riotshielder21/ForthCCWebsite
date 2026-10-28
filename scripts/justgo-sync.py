@@ -80,10 +80,6 @@ def pick(row, *names):
 def match_key(email, dob, first, last):
     return f"{email.lower()}|{dob}|{first.lower()} {last.lower()}".strip()
 
-def household_id_for(number):
-    import hashlib
-    return "HH-JG-" + hashlib.sha256(number.encode("utf-8")).hexdigest()[:32].upper()
-
 class WrittenRecord:
     """A record written earlier in this sync, matched like a Firestore snapshot by later rows."""
     def __init__(self, reference, data):
@@ -97,21 +93,26 @@ def membership_number_for(number):
     number = str(number or "").strip()
     return f"FCC-{number}" if number.isdigit() and 4 <= len(number) <= 8 else ""
 
-def allocate_member_id():
-    """The next short permanent record ID (M0001), shared with website checkout through counters/memberships."""
-    counter = db.collection("counters").document("memberships")
-    memberships = db.collection("memberships")
+def allocate_record_id(collection, prefix, digits):
+    """Reserve a permanent short ID using the same counter as website checkout."""
+    counter = db.collection("counters").document(collection)
+    records = db.collection(collection)
 
     @firestore.transactional
     def take(transaction):
         snapshot = counter.get(transaction=transaction)
         number = (snapshot.to_dict() or {}).get("next", 1) if snapshot.exists else 1
-        while memberships.document(f"M{number:04d}").get(transaction=transaction).exists:
+        if type(number) is not int or number < 1:
+            raise ValueError(f"Invalid {collection} ID counter.")
+        while records.document(f"{prefix}{number:0{digits}d}").get(transaction=transaction).exists:
             number += 1
         transaction.set(counter, {"next": number + 1}, merge=True)
-        return f"M{number:04d}"
+        return f"{prefix}{number:0{digits}d}"
 
     return take(db.transaction())
+
+def allocate_member_id():
+    return allocate_record_id("memberships", "M", 4)
 
 async def sync_to_firestore(csv_path):
     print("Starting Firestore sync...")
@@ -210,7 +211,7 @@ async def sync_to_firestore(csv_path):
                 if not is_junior and any(emergency.values()):
                     contact["emergencyContact"] = emergency
                 household_id = household_by_email.get(contact["email"].lower()) if is_junior else None
-                household_id = household_id or household_id_for(number)
+                household_id = household_id or allocate_record_id("households", "H", 5)
                 fields["householdId"] = household_id
                 if household_id not in household_by_id:
                     household_fields = {**contact, "updatedAt": firestore.SERVER_TIMESTAMP, "createdAt": firestore.SERVER_TIMESTAMP}

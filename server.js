@@ -39,6 +39,7 @@ import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
 import { applyVolunteerBenefits, volunteerPrivileges } from './src/utils/volunteering.js';
 import { allocateMemberIds } from './src/utils/memberIds.js';
+import { allocateRecordIds, reserveRecordIds } from './src/utils/recordIds.js';
 import { volunteerCancellationPhases } from './src/utils/volunteerCancellation.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
 import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
@@ -520,18 +521,22 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       group.push(person);
       groups.set(key, group);
     }
+    const unlinkedGroups = [];
     for (const group of groups.values()) {
       const householdIds = [...new Set(group.map((person) => person.householdId || memberHouseholds.get(person.membershipId)).filter(Boolean))];
       if (householdIds.length > 1) throw new Error('Checkout people reference different households.');
-      const householdId = householdIds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
-      group.forEach((person) => { person.householdId = householdId; });
+      if (householdIds.length) group.forEach((person) => { person.householdId = householdIds[0]; });
+      else unlinkedGroups.push(group);
     }
+    const householdReservation = await reserveRecordIds(adminDb, transaction, 'households', unlinkedGroups.length);
+    unlinkedGroups.forEach((group, index) => group.forEach((person) => { person.householdId = householdReservation.ids[index]; }));
     const householdIds = [...new Set((order.people || []).map((person) => person.householdId).filter(Boolean))];
     const householdDocuments = householdIds.length
       ? await transaction.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id)))
       : [];
     const householdSnapshots = new Map(householdDocuments.map((household) => [household.id, household]));
     if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
+    householdReservation.save();
     const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
       code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
       name: item.name,
@@ -1444,6 +1449,19 @@ const ensureGitHubBranch = async (github, branch) => {
   }
 };
 
+app.post('/api/admin/products/reserve-id', rateLimit(20, 60 * 1000), async (req, res) => {
+  if (!await requireAdmin(req, res)) return;
+  try {
+    if (!adminDb) return res.status(503).json({ error: 'Product storage is not configured.' });
+    const [id] = await allocateRecordIds(adminDb, 'products');
+    res.set('Cache-Control', 'no-store');
+    res.json({ id });
+  } catch (error) {
+    console.error('Could not reserve product ID:', error.message);
+    res.status(500).json({ error: 'Could not create a product ID. Please try again.' });
+  }
+});
+
 app.post('/api/admin/forms', rateLimit(20, 60 * 1000), async (req, res) => {
   try {
     if (!await requireAdmin(req, res)) return;
@@ -1491,7 +1509,9 @@ app.post('/api/admin/forms', rateLimit(20, 60 * 1000), async (req, res) => {
       requestBody: { values: [['Timestamp', 'Email', ...fields.map((field) => typeof field === 'string' ? field : field.label || 'Response')]] }
     });
     const form = { name, description, fields, spreadsheetId, folderId: folder.id, clubYear: currentClubYear(), createdAt: new Date().toISOString() };
-    const formDocument = await adminDb.collection('forms').add(form);
+    const [formId] = await allocateRecordIds(adminDb, 'forms');
+    const formDocument = adminDb.collection('forms').doc(formId);
+    await formDocument.create(form);
     res.json({ success: true, form: { id: formDocument.id, ...form } });
   } catch (error) {
     console.error('Error creating form:', error);
@@ -1929,7 +1949,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       if (existingHouseholds.length > 1) {
         return res.status(409).json({ error: 'The family members are linked to different households. Contact the club before continuing.' });
       }
-      const householdId = existingHouseholds[0] || `HH-${crypto.randomUUID().toUpperCase()}`;
+      const householdId = existingHouseholds[0] || (await allocateRecordIds(adminDb, 'households'))[0];
       group.forEach((person) => { person.householdId = householdId; });
     }
     // Club-year items cannot be bought twice for the same person and club year.

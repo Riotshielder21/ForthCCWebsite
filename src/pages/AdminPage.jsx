@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import VolunteerBenefitsPanel from '../components/VolunteerBenefitsPanel';
 import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
-import { removeProduct, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
+import { removeProduct, reserveProductId, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
 import { isLockedProduct } from '../utils/tripDiscount';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
@@ -49,6 +49,8 @@ export default function AdminPage({ products, onNavigate }) {
   const [error, setError] = useState('');
   const [imageFile, setImageFile] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [reservingId, setReservingId] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [formDraft, setFormDraft] = useState({ name: '', description: '', fields: 'Name\nEmail\nResponse' });
 
@@ -112,16 +114,27 @@ export default function AdminPage({ products, onNavigate }) {
     resetImageInput();
   };
 
-  const startNewProduct = () => {
-    setSelectedProduct(null);
-    setDraft({ ...EMPTY_PRODUCT, id: `product-${Date.now()}` });
-    setMessage('');
-    resetImageInput();
+  const startNewProduct = async () => {
+    setError('');
+    setReservingId(true);
+    try {
+      const id = await reserveProductId(await adminUser.getIdToken());
+      setSelectedProduct(null);
+      setDraft({ ...EMPTY_PRODUCT, id });
+      setMessage('');
+      resetImageInput();
+    } catch (idError) {
+      setError(idError.message);
+    } finally {
+      setReservingId(false);
+    }
   };
 
   const handleSave = async (event) => {
     event.preventDefault();
+    if (saving || reservingId) return;
     setError('');
+    setSaving(true);
     try {
       const product = {
         ...draft,
@@ -137,12 +150,18 @@ export default function AdminPage({ products, onNavigate }) {
         Object.assign(product, cleanEventDetails(product));
         Object.assign(product, cleanStockFields(product));
       }
+      if (!product.id) {
+        product.id = await reserveProductId(await adminUser.getIdToken());
+        setDraft(product);
+      }
       await saveProduct(product);
       setSelectedProduct(product.id);
       setDraft(product);
       setMessage(`${product.name || 'Product'} saved.`);
     } catch (saveError) {
       setError(saveError.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -220,7 +239,7 @@ export default function AdminPage({ products, onNavigate }) {
       <div className="SectionBottom">
         <div className="AdminLayout">
           <aside className="main_tile AdminProductList">
-            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">Catalogue ({products.length})</h3><button type="button" className="PrimaryActionButtonCompact" onClick={startNewProduct}>New</button></div>
+            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">Catalogue ({products.length})</h3><button type="button" className="PrimaryActionButtonCompact" onClick={startNewProduct} disabled={reservingId || saving}>{reservingId ? 'Creating...' : 'New'}</button></div>
             <button className="ContentLink AdminSeedButton" onClick={handleSeed}>Copy starter catalog</button>
             <div className="AdminProducts">
               <PagedAdminList items={products} label="catalogue items" renderItem={(product) => <button key={product.id} className={`AdminProduct ${selectedProduct === product.id ? 'is-selected' : ''}`} onClick={() => editProduct(product)}><strong>{product.name}</strong><span>{product.category}</span></button>} />
@@ -286,7 +305,7 @@ export default function AdminPage({ products, onNavigate }) {
             {imageFile && !uploading && <p className="StatusText" role="status">Not uploaded yet: {imageFile.name}</p>}
             {draft.imageUrl && <img className="AdminImagePreview" src={draft.imageUrl} alt="Product preview" />}
             {message && <p className="StatusText StatusTextSuccess">{message}</p>}{error && <p className="StatusText StatusTextError">{error}</p>}
-            <button className="FormSubmitButton" type="submit" disabled={uploading}><Save className="IconMd" /> Save product</button>
+            <button className="FormSubmitButton" type="submit" disabled={uploading || reservingId || saving}><Save className="IconMd" /> {saving ? 'Saving...' : 'Save product'}</button>
             <p className="text_container text_container_note"><ImagePlus className="IconSm" /> PNG, JPG, or WebP up to 5 MB.</p>
           </form>
         </div>

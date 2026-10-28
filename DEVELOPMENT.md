@@ -152,6 +152,14 @@ Events, services and subscriptions also have a **Membership** rule (`membershipR
 - `membershipNumber` is `FCC-<Paddle Scotland number>` (4–8 digits). JustGo sync sets it and updates it if the number changes. Until then, admins see "Awaiting Paddle Scotland sync".
 - Admins see both in Reports & records. Members are shown neither.
 
+### Other short record IDs
+
+New records use sequential IDs: households `H00001`, catalogue items (including events) `P00001`, volunteer sign-ups `V00001`, other list entries `L00001`, forms `F00001`, and form responses `R00001`. Existing IDs are preserved, including named starter-product IDs. Event bookings remain part of their purchase and keep the purchase ID.
+
+The server reserves numbers transactionally through `counters/<type>`, skips IDs already present, and never reuses a reserved number. Padding is a minimum, so numbers can grow past five digits. Checkout, club-night guests, JustGo sync and schema migration all use the household counter; migration dry runs do not reserve numbers. New catalogue IDs are reserved through the admin-only `/api/admin/products/reserve-id` endpoint before saving.
+
+Purchase IDs, Stripe IDs, voucher/redemption codes, private tokens, audit/idempotency keys, and internal deterministic document keys are unchanged. IDs identify records; they are not access credentials.
+
 ## Club Years
 
 The club year runs from 1 March and is named by the year it starts (1 March 2027 – 28/29 February 2028 is **2027**). Dates and sale windows are in `src/utils/clubYear.js` and use London time.

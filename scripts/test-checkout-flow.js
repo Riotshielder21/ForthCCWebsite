@@ -121,6 +121,18 @@ await test('admin endpoints reject anonymous requests', async () => {
   for (const path of ['/api/admin/reports?kind=orders', '/api/admin/customer?q=a@b.co', '/api/admin/discount-codes']) assert.equal((await call('GET', path)).status, 401);
 });
 
+await test('new catalogue IDs are short, unique and admin-only', async () => {
+  const path = '/api/admin/products/reserve-id';
+  assert.equal((await call('POST', path)).status, 401);
+  const first = await call('POST', path, { headers: admin });
+  const second = await call('POST', path, { headers: admin });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.match(first.json.id, /^P\d{5,}$/);
+  assert.match(second.json.id, /^P\d{5,}$/);
+  assert.notEqual(first.json.id, second.json.id);
+});
+
 await test('Stripe returns to an approved checkout origin and rejects unapproved origins', async () => {
   const basket = build(['vouchers'], []);
   const approvedEmail = email('origin-approved');
@@ -251,6 +263,7 @@ await test('adult membership plus boat hire is recorded on the membership, custo
   assert.equal(membership.status, 'active');
   assert.equal(membership.membershipTier, 'adult');
   assert.equal(membership.household.address, '1 River Road');
+  assert.match(membership.householdId, /^H\d{5,}$/);
   assert.equal(membership.household.emergencyContact.name, 'Pat Friend');
   assert.equal(Object.hasOwn(membership, 'email'), false);
   assert.equal(membership.medical, 'Asthma');
@@ -264,6 +277,7 @@ await test('adult membership plus boat hire is recorded on the membership, custo
   assert.equal(membership.consents.photoVideo.accepted, true);
   shared.alexMembership = membership.id;
   const order = (await db.collection('orders').doc(shared.adultOrder).get()).data();
+  assert.equal(order.people[0].householdId, membership.householdId);
   assert.equal(order.status, 'paid');
   assert.equal(order.emailSent, true);
   assert.equal(order.people[0].membershipId, membership.id);

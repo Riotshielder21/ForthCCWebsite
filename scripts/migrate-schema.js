@@ -5,7 +5,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { CURRENT_MEMBERSHIP_VERSION, planUpgrade } from '../src/utils/schema.js';
 import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, memberIsJunior, householdGroupKey } from '../src/utils/households.js';
-import crypto from 'node:crypto';
+import { allocateRecordIds } from '../src/utils/recordIds.js';
 
 const apply = process.argv.includes('--apply');
 initializeApp(process.env.GCLOUD_PROJECT ? { projectId: process.env.GCLOUD_PROJECT } : undefined);
@@ -38,7 +38,7 @@ for (const [groupKey, group] of groups) {
   const preferred = group.find((document) => document.data().junior !== true && document.data().householdId)
     || group.find((document) => document.data().junior !== true) || group[0];
   const fields = preferred.data();
-  const householdId = existingIds[0] || `HH-${crypto.createHash('sha256').update(groupKey).digest('hex').slice(0, 32)}`;
+  const householdId = existingIds[0] || (apply ? (await allocateRecordIds(db, 'households'))[0] : `dry-run-${preferred.id}`);
   const householdRef = db.collection('households').doc(householdId);
   const householdExists = (await householdRef.get()).exists;
   if (!householdExists) {

@@ -59,6 +59,16 @@ export const savePageContent = async (pageId, content, idToken) => {
   return result;
 };
 
+export const reserveProductId = async (idToken) => {
+  const response = await fetch(apiUrl('/api/admin/products/reserve-id'), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${idToken}` }
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Could not create a product ID.');
+  return result.id;
+};
+
 export const saveProduct = async (product) => {
   if (!db) throw new Error('Content database is unavailable.');
 
