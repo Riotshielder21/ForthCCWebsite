@@ -52,7 +52,7 @@ export default function ReceiptEmailPanel({ adminUser }) {
   return (
     <form className="main_tile SpaceT6" onSubmit={save}>
       <div className="AdminListHeader"><div><span className="tile_eyebrow">Shop</span><h3 className="tile_heading_bold_2">Receipt email details</h3></div></div>
-      <p className="text_container SpaceB4">Choose which submitted details are repeated under each person in the purchase confirmation email, so buyers can check what they entered. Names, email addresses and purchases are always included. These details are only sent to the buyer's email address; the secure receipt link on the website never shows them.</p>
+      <p className="text_container SpaceB4">Choose which submitted details are repeated under each person in the purchase confirmation email, so buyers can check what they entered. For existing members who confirmed themselves by date of birth, missing details are taken from their membership record, but only when the receipt goes to that member's own contact email. Names, email addresses and purchases are always included. These details are only sent to the buyer's email address; the secure receipt link on the website never shows them.</p>
       <div className="SpaceB4">
         {RECEIPT_PERSON_FIELDS.map((field) => (
           <label className="CheckoutCheck" key={field.key}>

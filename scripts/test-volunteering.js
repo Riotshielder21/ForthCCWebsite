@@ -45,6 +45,7 @@ const run = Date.now().toString(36);
 const memberId = `volunteer-${run}`;
 const email = `${run}@example.test`;
 const member = db.collection('memberships').doc(memberId);
+const unlinkedSignup = db.collection('lists').doc(`unlinked-${run}`);
 const form = db.collection('forms').doc(`form-${run}`);
 const settings = db.collection('settings').doc('volunteerBenefits');
 const originalSettings = await settings.get();
@@ -88,10 +89,26 @@ try {
   await coordinatorSettings.set({ email: `coordinator-${run}@example.test` });
   await member.set({ firstName: 'Volunteer', lastName: 'Tester', email, dob: '1989-04-03', status: 'active', renewalMethod: 'website',
     validUntil: Timestamp.fromDate(clubYearDates(year).end), clubYears: [year], privileges: [{ productId: 'boat-hire', clubYear: year }] });
-  assert.equal((await call('/api/lists', 'POST', { name: 'Volunteer Tester', email, listType: 'Volunteer Sign-ups', tier: '40', items: ['Coaching', 'Weekends'] })).status, 200);
+  await db.collection('lists').doc(`equipment-${run}`).set({ memberId, listType: 'Equipment Needed', clubYear: year });
+  const signup = { name: 'Volunteer Tester', email, listType: 'Volunteer Sign-ups', tier: '40',
+    items: ['Activities: Coaching', 'Availability: Weekends'], notes: 'Please email before calling.\nAvailable after 6pm.' };
+  assert.equal((await call('/api/lists', 'POST', signup)).status, 200, 'a different list type must not discard a volunteer sign-up');
   assert.equal(sent.find((message) => message.record.kind === 'volunteer-induction')?.to, `coordinator-${run}@example.test`);
   signupId = (await db.collection('lists').where('email', '==', email).get()).docs[0].id;
   assert.match(signupId, /^V\d{5,}$/);
+  const storedSignup = (await db.collection('lists').doc(signupId).get()).data();
+  assert.equal(storedSignup.tier, '40', 'the selected hours are stored on the sign-up');
+  const listedSignup = (await call('/api/admin/volunteers')).data.volunteers.find((volunteer) => volunteer.id === signupId);
+  assert.equal(listedSignup.tier, '40', 'the admin hours selector receives the selected level');
+  assert.deepEqual(listedSignup.items, signup.items, 'all answers reach the admin details popup');
+  assert.equal(listedSignup.notes, signup.notes, 'additional notes reach the admin details popup');
+  const duplicate = await call('/api/lists', 'POST', { ...signup, tier: '60', notes: 'Different notes' });
+  assert.equal(duplicate.status, 409, 'never claim success while ignoring newly selected hours');
+  assert.match(duplicate.data.error, /check or change your hours and notes/);
+  assert.deepEqual((await db.collection('lists').doc(signupId).get()).data(), storedSignup, 'public repeat submissions cannot overwrite an existing commitment');
+  const visitor = { ...signup, name: 'Unlinked Volunteer', email: `unlinked-${email}` };
+  await unlinkedSignup.set({ ...visitor, memberId: null, clubYear: year });
+  assert.equal((await call('/api/lists', 'POST', visitor)).status, 409, 'duplicate handling must not reveal whether a membership matched');
   const path = `/api/admin/volunteers/${signupId}`;
   assert.equal((await call(path, 'PATCH', { active: true }, null, false)).status, 401);
   assert.equal((await call(path, 'PATCH', { active: true })).status, 200);
@@ -239,6 +256,7 @@ try {
   const submissions = await db.collection('formSubmissions').where('formId', '==', form.id).get();
   await Promise.all([...lists.docs, ...links.docs, ...invites.docs, ...submissions.docs].map((document) => document.ref.delete()));
   await form.delete();
+  await unlinkedSignup.delete();
   if (originalSettings.exists) await settings.set(originalSettings.data());
   else await settings.delete();
   if (originalCoordinatorSettings.exists) await coordinatorSettings.set(originalCoordinatorSettings.data());

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canSendCode, checkCode, codeEmail, generateCode, hashCode, nextCodeRecord, MAX_CODE_ATTEMPTS, CODE_TTL_MS, RESEND_AFTER_MS, MAX_CODES_PER_HOUR } from './emailCodes.js';
+import { buildRawEmail } from './mail.js';
 
 test('codes are six digits and only the salted hash is stored', () => {
   for (let index = 0; index < 50; index += 1) assert.match(generateCode(), /^\d{6}$/);
@@ -37,4 +38,37 @@ test('codes are throttled per minute and per hour', () => {
 test('code emails state the purpose and expiry', () => {
   assert.match(codeEmail('111111', 'volunteer').body, /club-night check-in.*111111[\s\S]*10 minutes/);
   assert.match(codeEmail('222222', 'details').subject, /222222/);
+});
+
+test('all code purposes send equivalent plain-text and HTML alternatives without a club footer', () => {
+  for (const [purpose, reason] of [
+    ['details', 'view or update your Forth Canoe Club details'],
+    ['volunteer', 'sign in to club-night check-in'],
+    ['email-change', 'confirm this new contact email address']
+  ]) {
+    const email = codeEmail('012345', purpose);
+    const intro = `Your code to ${reason} is 012345.`;
+    const expiry = 'It expires in 10 minutes. If you did not ask for it, you can ignore this email.';
+    assert.equal(email.body, `${intro}\n\n${expiry}`);
+    assert.ok(email.html.includes(`<p>${intro}</p><p>${expiry}</p>`));
+    assert.doesNotMatch(email.html, /Access Project|supporters|<footer/i);
+
+    const message = Buffer.from(buildRawEmail({
+      fromName: 'FCC', from: 'sender@example.test', to: 'recipient@example.test', ...email
+    }), 'base64url').toString('utf8');
+    const boundary = message.match(/Content-Type: multipart\/alternative; boundary="([^"]+)"/)[1];
+    const parts = message.split(`--${boundary}`);
+    assert.equal(parts.length, 4);
+    for (const [index, type, content] of [[1, 'plain', email.body], [2, 'html', email.html]]) {
+      assert.ok(parts[index].includes(`Content-Type: text/${type}; charset=UTF-8`));
+      const decoded = Buffer.from(parts[index].split('\r\n\r\n')[1].trim(), 'base64').toString('utf8');
+      assert.equal(decoded, content.replace(/\n/g, '\r\n'));
+    }
+  }
+});
+
+test('code email HTML escapes interpolated text', () => {
+  const email = codeEmail('<script>&"\'', 'details');
+  assert.ok(email.html.includes('&lt;script&gt;&amp;&quot;&#39;'));
+  assert.doesNotMatch(email.html, /<script>/i);
 });

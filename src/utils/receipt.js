@@ -40,6 +40,47 @@ export const RECEIPT_PERSON_FIELDS = [
 
 const FIELD_KEYS = new Set(RECEIPT_PERSON_FIELDS.map((field) => field.key));
 
+const sameEmail = (a, b) => Boolean(a) && String(a).trim().toLowerCase() === String(b || '').trim().toLowerCase();
+const blank = (value) => value === undefined || value === null || (typeof value === 'string' && !value.trim())
+  || (typeof value === 'object' && !Object.values(value).some((part) => typeof part === 'string' && part.trim()));
+
+/**
+ * Existing members confirm themselves by date of birth instead of re-entering their details, so the order holds few of
+ * them. Missing details are filled from their membership and household records, but only when the receipt goes to the
+ * record's own contact email: matching an email and date of birth is not enough to send someone's details elsewhere.
+ */
+export const receiptPersonWithRecord = (person, receiptEmail, member, household = {}) => {
+  if (!person?.existingMember || !member) return person;
+  const ownerEmail = household.email || member.email || member.guardian?.email;
+  if (!sameEmail(ownerEmail, receiptEmail)) return person;
+  const junior = Boolean(person.junior ?? member.junior);
+  const contact = (field) => household[field] ?? member[field];
+  const photo = member.consents?.photoVideo?.accepted;
+  const fromRecord = {
+    dob: member.dob,
+    phone: junior ? '' : contact('phone'),
+    address: junior ? '' : contact('address'),
+    postcode: junior ? '' : contact('postcode'),
+    affiliationNumber: member.affiliationNumber,
+    swimming: member.swimming,
+    medical: member.medical,
+    emergencyContact: junior ? null : contact('emergencyContact'),
+    guardian: junior ? (member.guardian || { name: household.contactName, relationship: household.contactRelationship, phone: household.phone }) : null,
+    photoConsent: typeof photo === 'boolean' ? photo : member.photoConsent
+  };
+  const merged = (key) => {
+    const entered = person[key];
+    const recorded = fromRecord[key];
+    if (blank(recorded)) return entered;
+    if (blank(entered)) return recorded;
+    if (typeof entered === 'object' && typeof recorded === 'object') {
+      return { ...recorded, ...Object.fromEntries(Object.entries(entered).filter(([, value]) => !blank(value))) };
+    }
+    return entered;
+  };
+  return Object.fromEntries([...new Set([...Object.keys(person), ...Object.keys(fromRecord)])].map((key) => [key, merged(key)]));
+};
+
 /** Keeps known field keys in the allow-list order, so stored settings cannot inject arbitrary person properties. */
 export const normalizeReceiptPersonFields = (keys) => {
   const wanted = new Set(Array.isArray(keys) ? keys.filter((key) => typeof key === 'string' && FIELD_KEYS.has(key)) : []);
@@ -51,11 +92,12 @@ const personDetails = (person, keys) => RECEIPT_PERSON_FIELDS
   .map((field) => ({ label: field.label, value: String(field.value(person) ?? '').trim() }))
   .filter((detail) => detail.value);
 
-// Club-year items carry the label shown in the basket, e.g. "80% of this month now, then monthly from 1 Nov 2026".
+// Club-year items carry the label shown in the basket, e.g. "Rest of October now (20% of a month), then £25.00 a month: 4 payments, Nov 2026 – Feb 2027".
 const receiptBilling = (item, order) => {
   const monthly = typeof item.monthly === 'boolean' ? item.monthly : order.billingMode === 'monthly' && item.type === 'subscription';
   if (item.label && item.clubYear) {
-    return monthly && item.debits > 0 ? `${item.label} at £${Number(item.monthlyAmount || 0).toFixed(2)} a month` : item.label;
+    // Older orders' labels did not state the monthly amount.
+    return monthly && item.debits > 0 && !item.label.includes(' a month') ? `${item.label} at £${Number(item.monthlyAmount || 0).toFixed(2)} a month` : item.label;
   }
   return monthly ? 'per month' : '';
 };

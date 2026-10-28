@@ -2,7 +2,7 @@ import React, { useEffect, useId, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { adminListPageSize, listPage } from '../utils/listPaging';
 
-export default function PagedAdminList({ items, label, renderItem }) {
+export default function PagedAdminList({ items, label, renderItem, renderPage }) {
   const [pageSize, setPageSize] = useState(() => adminListPageSize(window.innerHeight));
   const [requestedStart, setRequestedStart] = useState(0);
   const [direction, setDirection] = useState('down');
@@ -33,7 +33,7 @@ export default function PagedAdminList({ items, label, renderItem }) {
       </div>}
       <div id={listId} className="AdminPagedListItems">
         <div className="AdminPagedListBatch" key={start}>
-          {items.slice(start, end).map(renderItem)}
+          {renderPage ? renderPage(items.slice(start, end)) : items.slice(start, end).map(renderItem)}
         </div>
       </div>
       {paged && <button type="button" className="AdminPageButton AdminPageMore" disabled={!hasMore} onClick={() => move(1)}

@@ -37,8 +37,8 @@ export const registerEmailCodeRoutes = (app, { db, sendEmail }) => {
       return true;
     });
     if (!allowed) return false;
-    const { subject, body } = codeEmail(code, purpose);
-    const sent = await sendEmail({ to: email, subject, body, record: { kind: 'email-code', purpose } }).catch((error) => {
+    const { subject, body, html } = codeEmail(code, purpose);
+    const sent = await sendEmail({ to: email, subject, body, html, record: { kind: 'email-code', purpose } }).catch((error) => {
       console.error('Could not email a code:', error.message);
       return false;
     });

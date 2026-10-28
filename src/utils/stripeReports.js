@@ -69,28 +69,22 @@ export const importStripeSubscribers = async (db, records, mode, checkedAt) => {
   return imported;
 };
 
-export const scheduleClubYearCancellation = async (request, id, clubCustomerId, mode, now = new Date()) => {
+export const cancelStripeSubscription = async (request, id, clubCustomerId, mode) => {
   if (!/^sub_[a-zA-Z0-9]+$/.test(id)) throw new Error('Invalid Stripe subscription ID.');
   const subscription = await request(`subscriptions/${id}?expand[]=customer&expand[]=latest_invoice.payment_intent.latest_charge`);
   const record = importedSubscriber(stripeSubscriberReport(subscription), mode);
+  if (record.id !== id) throw new Error('Stripe subscription does not match the requested subscription.');
   if (record.clubCustomerId !== clubCustomerId) throw new Error('Stripe customer does not match the imported customer. Refresh and check the record.');
-  if (record.status !== 'Active') throw new Error('Only an active, unsuspended subscription can be scheduled.');
-  const boundary = nextClubYearEnd(now);
-  const existingEnd = record.cancelAt || (record.cancelAtPeriodEnd ? record.currentPeriodEnd : null);
-  if (existingEnd && new Date(existingEnd) <= new Date(boundary)) {
-    return { record, clubYearEnd: boundary, cancellationAt: existingEnd, changed: false };
+  if (subscription.status === 'canceled') {
+    return { record, changed: false };
   }
-  const params = new URLSearchParams({
-    cancel_at: String(Math.floor(new Date(boundary).getTime() / 1000)), proration_behavior: 'none',
-    'metadata[fcc_customer_id]': record.clubCustomerId,
-    'metadata[fcc_subscription_id]': record.clubSubscriptionId,
-    'metadata[fcc_club_year_end]': boundary
-  });
-  const updated = await request(`subscriptions/${id}`, { method: 'POST', body: params,
-    idempotencyKey: `fcc-club-year-${mode}-${id}-${boundary.slice(0, 10)}` });
-  const cancellationAt = updated.cancel_at ? new Date(updated.cancel_at * 1000).toISOString() : null;
-  if (cancellationAt !== boundary) throw new Error('Stripe did not confirm the requested cancellation date. Refresh the report before retrying.');
+  if (record.status !== 'Active') throw new Error('Only an active, unsuspended subscription can be cancelled here.');
+  const updated = await request(`subscriptions/${id}`, { method: 'DELETE',
+    body: new URLSearchParams({ invoice_now: 'false', prorate: 'false' }) });
+  if (updated.id !== id || updated.status !== 'canceled') {
+    throw new Error('Stripe did not confirm immediate cancellation. Refresh the report before retrying.');
+  }
   return { record: importedSubscriber(stripeSubscriberReport({ ...subscription, ...updated,
     customer: subscription.customer, latest_invoice: subscription.latest_invoice }), mode),
-    clubYearEnd: boundary, cancellationAt, changed: true };
+    changed: true };
 };

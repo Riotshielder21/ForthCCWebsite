@@ -37,7 +37,7 @@
           },
           {
             "key": "Content-Security-Policy-Report-Only",
-            "value": "default-src 'self'; script-src 'self' https://www.googletagmanager.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.googleapis.com https://*.google-analytics.com https://*.analytics.google.com https://*.run.app; frame-src https://*.firebaseapp.com https://*.web.app; form-action 'self' https://checkout.stripe.com"
+            "value": "default-src 'self'; script-src 'self' https://www.googletagmanager.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.googleapis.com https://*.google-analytics.com https://*.analytics.google.com https://*.run.app; frame-src 'self' https://new.forthcanoeclub.co.uk https://*.firebaseapp.com https://*.web.app; form-action 'self' https://checkout.stripe.com"
           }
         ]
       },

@@ -314,6 +314,27 @@ await test('a returning member can add an add-on with only name and date of birt
   assert.equal(order.people[0].existingMember, true);
 });
 
+await test("receipt emails show an existing member's recorded details only at their own email", async () => {
+  assert.equal((await call('POST', '/api/admin/receipt-email', { headers: admin, body: { personFields: ['phone', 'address', 'emergencyContact'] } })).status, 200);
+  try {
+    const mailFor = async (orderRef) => (await db.collection('testMail').where('orderRef', '==', orderRef).get()).docs[0].data();
+    const own = await newMember('receipt-own');
+    const ownMail = await mailFor(await buy(own.email, build(['keyhire'], [own.person])));
+    for (const content of [ownMail.body, ownMail.html]) {
+      assert.ok(content.includes('07700 900111') && content.includes('1 River Road') && content.includes('Pat Friend (Friend), 07700 900222'),
+        'details held on the record are filled in for the member\'s own email');
+    }
+    const other = await newMember('receipt-other');
+    const otherMail = await mailFor(await buy(email('receipt-someone-else'), build(['keyhire'], [{ ...other.person, email: other.email }])));
+    for (const content of [otherMail.body, otherMail.html]) {
+      assert.ok(!content.includes('07700 900111') && !content.includes('1 River Road') && !content.includes('Pat Friend'),
+        'recorded details are not sent to a different receipt address');
+    }
+  } finally {
+    assert.equal((await call('POST', '/api/admin/receipt-email', { headers: admin, body: { personFields: [] } })).status, 200);
+  }
+});
+
 await test('full details for an existing member are matched, not duplicated', async () => {
   await buy(shared.alex, build(['blue-sub'], [adultDetails({ email: shared.alex })]));
   assert.equal((await membershipsFor(shared.alex)).length, 1);

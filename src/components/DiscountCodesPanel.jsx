@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiUrl } from '../utils/api';
 import { saveProduct } from '../utils/content';
 import { scopeLabel, VOUCHER_CATEGORIES, voucherRows, voucherScope } from '../utils/vouchers';
@@ -21,8 +21,11 @@ export default function DiscountCodesPanel({ adminUser, products }) {
   const [draft, setDraft] = useState(EMPTY);
   const [editing, setEditing] = useState(null);
   const [scopeDraft, setScopeDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const formRef = useRef(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [showDisabled, setShowDisabled] = useState(false);
   const sellable = products.filter((product) => product.type !== 'external');
   const nameFor = (id) => products.find((product) => product.id === id)?.name || id;
   const voucherSpendable = sellable.filter((product) => product.category !== 'MEMBERSHIP');
@@ -60,6 +63,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
 
   const handleSave = async (event) => {
     event.preventDefault();
+    setSaving(true);
     setError('');
     setMessage('');
     try {
@@ -82,10 +86,18 @@ export default function DiscountCodesPanel({ adminUser, products }) {
       load();
     } catch (saveError) {
       setError(saveError.message);
+    } finally {
+      setSaving(false);
     }
   };
 
+  const focusForm = () => {
+    formRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+    formRef.current?.focus({ preventScroll: true });
+  };
+
   const startEdit = (code) => {
+    setScopeDraft(null);
     setEditing(code.code);
     setMessage('');
     setError('');
@@ -95,9 +107,14 @@ export default function DiscountCodesPanel({ adminUser, products }) {
       productIds: code.productIds, singleUse: code.singleUse,
       expiresAt: code.expiresAt ? new Date(code.expiresAt).toISOString().slice(0, 10) : ''
     });
+    focusForm();
   };
 
   const vouchers = voucherRows(products, voucherSummaries);
+  const currentRows = [
+    ...vouchers.map((row) => ({ kind: 'voucher', ...row })),
+    ...codes.filter((code) => showDisabled || code.active).map((code) => ({ kind: 'code', ...code }))
+  ];
   const voucherStatus = (row) => row.issued
     ? `${row.issued} issued: ${row.active} active${row.active ? ` (£${row.unspent.toFixed(2)} unspent)` : ''}, ${row.used} used, ${row.expired} expired`
     : 'None issued yet';
@@ -108,6 +125,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
 
   const saveScope = async (event) => {
     event.preventDefault();
+    setSaving(true);
     setError('');
     setMessage('');
     try {
@@ -117,10 +135,24 @@ export default function DiscountCodesPanel({ adminUser, products }) {
       setScopeDraft(null);
     } catch (saveError) {
       setError(saveError.message);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const cancelEdit = () => { setEditing(null); setDraft(EMPTY); };
+  const clearForm = () => {
+    setEditing(null);
+    setScopeDraft(null);
+    setDraft(EMPTY);
+    setMessage('');
+    setError('');
+  };
+
+  const startScopeEdit = (product) => {
+    clearForm();
+    setScopeDraft({ productId: product.id, ...voucherScope(product) });
+    focusForm();
+  };
 
   const toggleActive = async (code) => {
     setError('');
@@ -136,7 +168,24 @@ export default function DiscountCodesPanel({ adminUser, products }) {
     <section className="main_tile SpaceT6">
       <div className="AdminListHeader"><div><span className="tile_eyebrow">Shop</span><h3 className="tile_heading_bold_2">Discount codes</h3></div></div>
       <p className="text_container SpaceB4">Choose products to limit a code to them. With none selected a code covers everything except membership. Each voucher shop item is listed once below; Individual voucher codes are shown on the buyer's record in Reports.</p>
-      <form className="CheckoutDetails" onSubmit={handleSave}>
+      <form ref={formRef} tabIndex={-1} aria-label="Discount and voucher configuration" className="CheckoutDetails" onSubmit={scopeDraft ? saveScope : handleSave}>
+        <fieldset disabled={saving} className="DiscountCodeFields">
+        {scopeDraft ? <>
+          <h4 className="CartItemTitle">What {nameFor(scopeDraft.productId)} codes can be spent on</h4>
+          <p className="text_container">Tick categories, products or both. With nothing ticked, the credit covers everything except membership. Changes apply to vouchers bought from now on; codes already issued keep their rules.</p>
+          <fieldset className="CheckoutFieldset">
+            <legend>Categories</legend>
+            {VOUCHER_CATEGORIES.map((category) => (
+              <label key={category} className="CheckoutCheck"><input type="checkbox" checked={scopeDraft.categories.includes(category)} onChange={() => toggleScope('categories', category)} /> All {category.toLowerCase()}</label>
+            ))}
+          </fieldset>
+          <fieldset className="CheckoutFieldset">
+            <legend>Products</legend>
+            <PagedAdminList key={scopeDraft.productId} items={voucherSpendable} label="voucher products" renderItem={(product) => (
+              <label key={product.id} className="CheckoutCheck"><input type="checkbox" checked={scopeDraft.productIds.includes(product.id)} onChange={() => toggleScope('productIds', product.id)} /> {product.name}</label>
+            )} />
+          </fieldset>
+        </> : <>
         <div className="CheckoutGrid">
           <label className="FormLabel">Code<input className="FormInput" required disabled={Boolean(editing)} pattern="[A-Za-z0-9-]{3,64}" maxLength={64} value={draft.code} onChange={(event) => update('code', event.target.value.toUpperCase())} /></label>
           <label className="FormLabel">Label shown to customers<input className="FormInput" required maxLength={120} value={draft.label} onChange={(event) => update('label', event.target.value)} /></label>
@@ -157,39 +206,25 @@ export default function DiscountCodesPanel({ adminUser, products }) {
           )} />
         </fieldset>
         <label className="CheckoutCheck"><input type="checkbox" checked={draft.singleUse || draft.discountType === 'credit'} disabled={draft.discountType === 'credit'} onChange={(event) => update('singleUse', event.target.checked)} /> Single use (disabled after one order){draft.discountType === 'credit' ? ' - always on for this type' : ''}</label>
+        </>}
         {message && <p className="StatusText StatusTextSuccess">{message}</p>}
         {error && <p className="StatusText StatusTextError">{error}</p>}
-        <button className="FormSubmitButton" type="submit">{editing ? `Save changes to ${editing}` : 'Create discount code'}</button>
-        {editing && <button type="button" className="PrimaryActionButtonCompact" onClick={cancelEdit}>Cancel editing</button>}
+        <button className="FormSubmitButton" type="submit">{saving ? 'Saving…' : scopeDraft ? 'Save voucher rules' : editing ? `Save changes to ${editing}` : 'Create discount code'}</button>
+        <button type="button" className="PrimaryActionButtonCompact" onClick={clearForm}>Clear form — discard unsaved changes</button>
+        <p className="text_container_note">Clearing the form does not change any saved codes or voucher rules.</p>
+        </fieldset>
       </form>
 
-      {scopeDraft && (
-        <form className="CheckoutDetails SpaceT4" onSubmit={saveScope}>
-          <h4 className="CartItemTitle">What {nameFor(scopeDraft.productId)} codes can be spent on</h4>
-          <p className="text_container">Tick categories, products or both. With nothing ticked, the credit covers everything except membership. Changes apply to vouchers bought from now on; codes already issued keep their rules.</p>
-          <fieldset className="CheckoutFieldset">
-            <legend>Categories</legend>
-            {VOUCHER_CATEGORIES.map((category) => (
-              <label key={category} className="CheckoutCheck"><input type="checkbox" checked={scopeDraft.categories.includes(category)} onChange={() => toggleScope('categories', category)} /> All {category.toLowerCase()}</label>
-            ))}
-          </fieldset>
-          <fieldset className="CheckoutFieldset">
-            <legend>Products</legend>
-            <PagedAdminList items={voucherSpendable} label="voucher products" renderItem={(product) => (
-              <label key={product.id} className="CheckoutCheck"><input type="checkbox" checked={scopeDraft.productIds.includes(product.id)} onChange={() => toggleScope('productIds', product.id)} /> {product.name}</label>
-            )} />
-          </fieldset>
-          <button className="FormSubmitButton" type="submit">Save voucher rules</button>
-          <button type="button" className="PrimaryActionButtonCompact" onClick={() => setScopeDraft(null)}>Cancel</button>
-        </form>
-      )}
-
       {(codes.length > 0 || vouchers.length > 0) && (
-        <div style={{ overflowX: 'auto' }}>
-          <table className="text_container SpaceT4 DiscountCodesTable" style={{ width: '100%', textAlign: 'left' }}>
+        <div className="SpaceT4">
+          <label className="CheckoutCheck SpaceB4"><input type="checkbox" checked={showDisabled} onChange={(event) => setShowDisabled(event.target.checked)} /> Show disabled codes</label>
+          {currentRows.length === 0 ? <p className="text_container">No codes to show. Select Show disabled codes to view disabled entries.</p> : (
+          <PagedAdminList key={String(showDisabled)} items={currentRows} label="current codes" renderPage={(rows) => (
+          <div style={{ overflowX: 'auto' }}>
+          <table className="text_container DiscountCodesTable" style={{ width: '100%', textAlign: 'left' }}>
             <thead><tr><th>Code</th><th>Description</th><th>Discount</th><th>Applies to</th><th>Status</th><th>Expires</th><th className="DiscountCodeActionCell"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
-              {vouchers.map((row) => (
+              {rows.map((row) => row.kind === 'voucher' ? (
                 <tr key={`voucher-${row.key}`}>
                   <td>Shop voucher{row.product ? '' : ' (no longer in the shop)'}</td>
                   <td>{row.name}</td>
@@ -197,25 +232,27 @@ export default function DiscountCodesPanel({ adminUser, products }) {
                   <td>{row.product ? scopeLabel(voucherScope(row.product), nameFor) : ''}</td>
                   <td>{voucherStatus(row)}</td>
                   <td>1 year after purchase</td>
-                  <td className="DiscountCodeActionCell">{row.product && <button type="button" className="PrimaryActionButtonCompact" onClick={() => setScopeDraft({ productId: row.product.id, ...voucherScope(row.product) })}>Edit</button>}</td>
+                  <td className="DiscountCodeActionCell">{row.product && <button type="button" disabled={saving} className="PrimaryActionButtonCompact" onClick={() => startScopeEdit(row.product)}>Edit</button>}</td>
                 </tr>
-              ))}
-              {codes.map((code) => (
-                <tr key={code.code}>
-                  <td><code>{code.code}</code></td>
-                  <td>{code.label}</td>
-                  <td>{describe(code)}</td>
-                  <td>{code.productIds.length ? code.productIds.map(nameFor).join(', ') : 'Everything except membership'}</td>
-                  <td>{code.used ? 'used' : code.expired ? 'expired' : code.active ? 'active' : 'disabled'}{code.singleUse ? ' (single use)' : ''}</td>
-                  <td>{code.expiresAt ? new Date(code.expiresAt).toLocaleDateString('en-GB') : ''}</td>
+              ) : (
+                <tr key={`code-${row.code}`}>
+                  <td><code>{row.code}</code></td>
+                  <td>{row.label}</td>
+                  <td>{describe(row)}</td>
+                  <td>{row.productIds.length ? row.productIds.map(nameFor).join(', ') : 'Everything except membership'}</td>
+                  <td>{row.used ? 'used' : row.expired ? 'expired' : row.active ? 'active' : 'disabled'}{row.singleUse ? ' (single use)' : ''}</td>
+                  <td>{row.expiresAt ? new Date(row.expiresAt).toLocaleDateString('en-GB') : ''}</td>
                   <td className="DiscountCodeActionCell"><div className="DiscountCodeActions">
-                    <button type="button" className="PrimaryActionButtonCompact" onClick={() => startEdit(code)}>Edit</button>
-                    <button type="button" className="PrimaryActionButtonCompact" onClick={() => toggleActive(code)}>{code.active ? 'Disable' : 'Enable'}</button>
+                    <button type="button" disabled={saving} className="PrimaryActionButtonCompact" onClick={() => startEdit(row)}>Edit</button>
+                    <button type="button" className="PrimaryActionButtonCompact" onClick={() => toggleActive(row)}>{row.active ? 'Disable' : 'Enable'}</button>
                   </div></td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
+          )} />
+          )}
         </div>
       )}
     </section>

@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { FileText, Mail, X } from 'lucide-react';
 import { apiUrl } from '../utils/api';
 import { CHECK_TYPES } from '../utils/safeguarding';
 import { WEEKDAYS, MAX_CHECKIN_SESSIONS } from '../utils/clubNight';
+import { uniqueReportEmails } from '../utils/adminReports';
 
 const blankSession = () => ({ key: Math.random().toString(36).slice(2), id: '', name: '', weekday: '', start: '', end: '', boatHire: false, subscriptions: [] });
 const withKeys = (sessions) => sessions.map((session) => ({ ...session, key: session.id, weekday: String(session.weekday), subscriptions: session.subscriptions.map((entry) => entry.id) }));
@@ -67,6 +69,36 @@ export default function VolunteersPanel({ adminUser }) {
   const [coordinatorEmail, setCoordinatorEmail] = useState('');
   const [coordinatorSaving, setCoordinatorSaving] = useState(false);
   const [levels, setLevels] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const closeButton = useRef(null);
+  const emails = uniqueReportEmails(volunteers);
+  const selectedLevel = levels.find((level) => level.id === selected?.tier);
+  useEffect(() => {
+    if (!selected) return undefined;
+    const returnFocus = document.activeElement;
+    closeButton.current?.focus();
+    const handleKey = (event) => {
+      if (event.key === 'Escape') setSelected(null);
+      if (event.key === 'Tab') {
+        const controls = [...(closeButton.current?.closest('[role="dialog"]')?.querySelectorAll('button, a[href]') || [])];
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => { document.removeEventListener('keydown', handleKey); returnFocus?.focus(); };
+  }, [selected]);
+  const copyEmails = async () => {
+    setError(''); setMessage('');
+    try {
+      await navigator.clipboard.writeText(emails.join(', '));
+      setMessage(`Copied ${emails.length} email address${emails.length === 1 ? '' : 'es'}. Paste into Gmail's Bcc field to keep recipients private.`);
+    } catch (error) {
+      setError(`Could not copy email addresses: ${error.message}`);
+    }
+  };
   const request = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
     const response = await fetch(apiUrl(path), { ...options,
@@ -134,11 +166,13 @@ export default function VolunteersPanel({ adminUser }) {
     <CheckinSessions request={request} />
     {error && <p className="StatusTextError" role="alert">{error}</p>}
     {message && <p role="status">{message}</p>}
+    <button type="button" className="EditorCommand SpaceB4" disabled={!emails.length} onClick={copyEmails}>
+      <Mail size={18} /> Email all — copy addresses
+    </button>
     <div className="ReportsTableWrap"><table className="ReportsTable">
-      <thead><tr><th>Volunteer</th><th>Club year</th><th>Hours</th><th>Inducted / active</th><th>Induction email</th><th>PVG</th><th>Safeguarding</th></tr></thead>
+      <thead><tr><th>Volunteer</th><th>Club year</th><th>Hours</th><th>Inducted / active</th><th>Induction email</th><th>PVG</th><th>Safeguarding</th><th>Details</th></tr></thead>
       <tbody>{volunteers.map((volunteer) => <tr key={volunteer.id}>
-        <td><strong>{volunteer.name}</strong><br />{volunteer.email}<br />{volunteer.memberStatus}
-          {volunteer.items.length > 0 && <details><summary>Sign-up details</summary>{volunteer.items.join(' · ')}</details>}
+        <td><strong>{volunteer.name}</strong><br />{volunteer.memberStatus}
           {!volunteer.memberId && <p>Not yet linked to a membership.</p>}
         </td>
         <td>{volunteer.clubYear}/{volunteer.clubYear + 1}</td>
@@ -167,8 +201,27 @@ export default function VolunteersPanel({ adminUser }) {
                 if (event.target.value !== (volunteer.checks?.[type]?.expiresOn || '')) save(volunteer, `/api/admin/memberships/${volunteer.memberId}/checks`, { [type]: event.target.value });
               }} />}
         </td>)}
+        <td className="ReportsActionsCell"><button type="button" className="EditorIconButton" title="Sign-up details"
+          aria-label={`Sign-up details for ${volunteer.name}`} onClick={() => setSelected(volunteer)}><FileText size={16} /></button></td>
       </tr>)}</tbody>
     </table></div>
     {!volunteers.length && !error && <p>No volunteer sign-ups yet.</p>}
+    {selected && <div className="ReportsModalBackdrop"><section className="ReportsDialog" role="dialog" aria-modal="true" aria-labelledby="volunteer-dialog-title">
+      <div className="ReportsHeader">
+        <h3 id="volunteer-dialog-title" className="tile_heading_bold_1">Volunteer sign-up details</h3>
+        <button ref={closeButton} type="button" className="EditorIconButton" aria-label="Close volunteer details" onClick={() => setSelected(null)}><X size={18} /></button>
+      </div>
+      <dl className="ReportDetails">
+        <dt>Name</dt><dd>{selected.name}</dd>
+        <dt>Email</dt><dd><a className="ContentLink" href={`mailto:${selected.email}`}>{selected.email}</a></dd>
+        <dt>Club year</dt><dd>{selected.clubYear}/{selected.clubYear + 1}</dd>
+        <dt>Hours</dt><dd>{selectedLevel
+          ? `${selectedLevel.hours}+ hours` : selected.tier ? 'Deleted level' : 'Not selected'}</dd>
+        <dt>Additional notes</dt><dd className="whitespace-pre-line">{selected.notes || 'Not recorded'}</dd>
+      </dl>
+      <h4 className="FormLabel">Sign-up answers</h4>
+      {selected.items.length ? <ul className="ReportItems">{selected.items.map((item, index) => <li className="whitespace-pre-line" key={index}>{item}</li>)}</ul>
+        : <p className="text_container">No answers recorded.</p>}
+    </section></div>}
   </section>;
 }

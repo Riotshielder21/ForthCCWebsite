@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stripeSubscriberReport, loadStripeSubscribers, importedSubscriber, nextClubYearEnd, scheduleClubYearCancellation } from './stripeReports.js';
+import { stripeSubscriberReport, loadStripeSubscribers, importedSubscriber, nextClubYearEnd, cancelStripeSubscription } from './stripeReports.js';
 
 const subscription = { id: 'sub_example', status: 'active', customer: { id: 'cus_example', name: 'Example Member', email: 'member@example.com' },
   latest_invoice: { payment_intent: { latest_charge: { refunded: false, amount_refunded: 0, disputed: false } } },
@@ -21,30 +21,71 @@ test('club year ends at London midnight on the next 1 March', () => {
   assert.equal(nextClubYearEnd(new Date('2027-03-01T00:00:00Z')), '2028-03-01T00:00:00.000Z');
 });
 
-test('scheduling verifies the customer, writes the cutoff without proration, and adds club metadata', async () => {
+test('immediate cancellation deletes the entire subscription without invoicing or proration', async () => {
   const calls = [];
   const request = async (path, options) => {
     calls.push({ path, options });
-    return options?.method === 'POST' ? { ...subscription, cancel_at: Number(options.body.get('cancel_at')) } : subscription;
+    return options?.method === 'DELETE' ? { ...subscription, status: 'canceled' } : subscription;
   };
-  const result = await scheduleClubYearCancellation(request, 'sub_example', 'FCC-test-cus_example', 'test', new Date('2026-10-11'));
-  assert.equal(result.cancellationAt, '2027-03-01T00:00:00.000Z');
-  assert.equal(calls[1].options.body.get('proration_behavior'), 'none');
-  assert.equal(calls[1].options.body.get('metadata[fcc_customer_id]'), 'FCC-test-cus_example');
-  assert.ok(calls[1].options.idempotencyKey);
-  await assert.rejects(scheduleClubYearCancellation(request, 'sub_example', 'FCC-test-cus_wrong', 'test'), /does not match/);
-  await assert.rejects(scheduleClubYearCancellation(async () => ({ ...subscription, status: 'canceled' }), 'sub_example', 'FCC-test-cus_example', 'test'), /Only an active/);
+  const result = await cancelStripeSubscription(request, 'sub_example', 'FCC-test-cus_example', 'test');
+  assert.equal(result.changed, true);
+  assert.equal(result.record.stripeStatus, 'canceled');
+  assert.equal(result.record.status, 'Inactive');
+  assert.equal(result.record.email, subscription.customer.email);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].path, 'subscriptions/sub_example');
+  assert.equal(calls[1].options.method, 'DELETE');
+  assert.deepEqual(Object.fromEntries(calls[1].options.body), { invoice_now: 'false', prorate: 'false' });
 });
 
-test('an existing earlier cancellation is never extended', async () => {
+test('an existing future cancellation does not prevent immediate cancellation', async () => {
+  const calls = [];
+  const result = await cancelStripeSubscription(async (path, options) => {
+    calls.push(options?.method || 'GET');
+    return { ...subscription, cancel_at: new Date('2027-03-01').getTime() / 1000,
+      status: options?.method === 'DELETE' ? 'canceled' : 'active' };
+  }, 'sub_example', 'FCC-test-cus_example', 'test');
+  assert.equal(result.changed, true);
+  assert.deepEqual(calls, ['GET', 'DELETE']);
+});
+
+test('retries confirm already cancelled subscriptions without a second write', async () => {
   let writes = 0;
-  const result = await scheduleClubYearCancellation(async (path, options) => {
+  const result = await cancelStripeSubscription(async (path, options) => {
     if (options) writes += 1;
-    return { ...subscription, cancel_at: new Date('2026-12-01').getTime() / 1000 };
-  }, 'sub_example', 'FCC-test-cus_example', 'test', new Date('2026-10-11'));
+    return { ...subscription, status: 'canceled' };
+  }, 'sub_example', 'FCC-test-cus_example', 'test');
   assert.equal(result.changed, false);
   assert.equal(writes, 0);
-  assert.equal(result.cancellationAt, '2026-12-01T00:00:00.000Z');
+});
+
+test('cancellation rejects wrong identities and non-eligible subscriptions before writing', async () => {
+  let writes = 0;
+  const request = async (path, options) => { if (options) writes += 1; return subscription; };
+  await assert.rejects(cancelStripeSubscription(request, 'sub_example', 'FCC-test-cus_wrong', 'test'), /does not match/);
+  await assert.rejects(cancelStripeSubscription(request, '../invalid', 'FCC-test-cus_example', 'test'), /Invalid Stripe/);
+  await assert.rejects(cancelStripeSubscription(request, 'sub_example', 'FCC-test-cus_example', 'live'), /does not match/);
+  await assert.rejects(cancelStripeSubscription(async () => ({ ...subscription, id: 'sub_other' }),
+    'sub_example', 'FCC-test-cus_example', 'test'), /does not match/);
+  for (const fields of [{ status: 'past_due' }, { pause_collection: {} },
+    { latest_invoice: { charge: { refunded: true } } }]) {
+    await assert.rejects(cancelStripeSubscription(async (path, options) => {
+      if (options) writes += 1;
+      return { ...subscription, ...fields };
+    }, 'sub_example', 'FCC-test-cus_example', 'test'), /Only an active/);
+  }
+  assert.equal(writes, 0);
+});
+
+test('Stripe failures and unconfirmed cancellation are reported, not treated as success', async () => {
+  for (const updated of [subscription, { ...subscription, id: 'sub_other', status: 'canceled' }]) {
+    await assert.rejects(cancelStripeSubscription(async (path, options) => options ? updated : subscription,
+      'sub_example', 'FCC-test-cus_example', 'test'), /did not confirm immediate cancellation/);
+  }
+  await assert.rejects(cancelStripeSubscription(async (path, options) => {
+    if (options) throw new Error('Stripe unavailable');
+    return subscription;
+  }, 'sub_example', 'FCC-test-cus_example', 'test'), /Stripe unavailable/);
 });
 
 test('only active Stripe subscriptions qualify, including scheduled cancellation until it takes effect', () => {

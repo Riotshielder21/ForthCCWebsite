@@ -3,18 +3,12 @@
 ## Club years, monthly payments and renewals
 
 - **Stripe test mode:** card-based Test Clocks verify twelve full monthly payments when subscriptions end on 1 March, no extra March invoice, no cancellation credit, stopping automatic failed-payment retries at cancellation, and one delayed December catch-up charge. Still test actual Bacs mandate/settlement delays and webhook-driven voiding and membership updates through real checkout. Turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st).
-- **Existing monthly subscriptions:** review active club-year subscriptions already scheduled to end on 15 February and move them to 1 March where appropriate; the code change does not bulk-update existing Stripe records.
-- **Webhook:** add `customer.subscription.deleted` to the Dashboard webhook endpoints (test and live).
 - **Renewal job deployment:** create a `renewal-job-token` secret, pass it to Cloud Run as `RENEWAL_JOB_TOKEN` in `.github/workflows/firebase-hosting.yml`, and install `config/fcc-renewals.{service,timer}` on the server with `RENEWAL_JOB_TOKEN` and `RENEWAL_JOB_URL` in its `.env`. Until then staff can send renewal emails from the admin page.
 - **Renewal email wording:** the email uses template text for now; agree the final wording with the club (`renewalEmail` in `src/utils/renewals.js`).
 - GDPR erasure cancels the person's subscriptions but does not blank the payer email and names on `subscriptions/{id}` records.
 
 ## Email and receipts
 
-- Verify a real purchase on the live project: receipt delivery from the configured no-reply address, voucher codes and secure receipt links. Confirm domain-wide delegation for the Gmail scope if delivery fails.
-- Verify the organisation footer on a real delivered email. The website mail sender does not append an organisation footer; check Google Workspace **Append footer** rules (including inherited/overlapping rules) for duplicate insertion and HTML/plain-text formatting. Keep one owner for the footer rather than also adding it to the receipt template.
-- Add an admin editor for the confirmation-email layout of an individual purchased item: per-product choice of which purchase, membership and booking fields appear, their order and presentation (including the event image), with a preview and matching HTML/plain-text output. A club-wide choice of extra person details (Admin → **Receipt email details**) already exists; per-item fields must stay email-only, like it.
-- Agree with the club which person details (DOB, address, emergency contact, medical) should be switched on in **Receipt email details** in production, particularly for children. All are off by default.
 - Add inline/CID event-image attachments, calendar invitations and downloadable/PDF receipts. Hosted HTTPS event images are already supported, but email clients may block them; historical orders without saved images remain text-only.
 
 ## Retention and long-term statistics (needs its own design)

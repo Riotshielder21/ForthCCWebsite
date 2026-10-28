@@ -47,6 +47,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Cache
+__pycache__/
 .cache/
 .parcel-cache/
 .vite/

@@ -10,6 +10,7 @@ import { normaliseVolunteerLevels, validateVolunteerBenefits, volunteerBenefitTe
 import { needsRenewal } from '../utils/renewals.js';
 import { allocateRecordIds, reserveRecordIds } from '../utils/recordIds.js';
 import { validateVolunteerPage, volunteerPageFromLegacy } from '../utils/volunteerPage.js';
+import { normaliseName } from '../utils/checkout.js';
 
 
 /** Public forms, yearly volunteer membership entitlements and privately emailed boathouse access codes. */
@@ -511,13 +512,15 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       if (volunteer && value.tier && !(await loadVolunteerBenefits()).some((level) => level.id === value.tier)) {
         return res.status(400).json({ error: 'Choose a volunteer level.' });
       }
-      const member = volunteer ? await findVolunteerMember(value) : null;
-      if (member) {
-        const previous = await lists().where('memberId', '==', member.id).get();
-        if (previous.docs.some((document) => signupYear(document.data()) === clubYearOf(requestNow(req)))) {
-          return res.json({ success: true });
+      if (volunteer) {
+        const previous = await lists().where('email', '==', value.email).get();
+        if (previous.docs.some((document) => document.data().listType === VOLUNTEER_LIST
+          && normaliseName(document.data().name) === normaliseName(value.name)
+          && signupYear(document.data()) === clubYearOf(requestNow(req)))) {
+          return res.status(409).json({ error: 'A volunteer sign-up already exists for these details this club year. If you have signed up before, contact the club to check or change your hours and notes.' });
         }
       }
+      const member = volunteer ? await findVolunteerMember(value) : null;
       const [signupId] = await allocateRecordIds(db(), volunteer ? 'volunteers' : 'lists');
       const reference = lists().doc(signupId);
       await reference.create({

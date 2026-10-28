@@ -4,7 +4,7 @@ import {
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
-import { calculateCart, expandClubYearLines, expandPeopleLines } from './utils/pricing';
+import { calculateCart, debitRange, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson } from './utils/checkout';
 import CheckoutPage from './pages/CheckoutPage';
@@ -31,6 +31,7 @@ import { apiUrl } from './utils/api';
 import { PRODUCTS } from './constants/products';
 import { PAGE_CONTENT } from './constants/pageContent';
 import './index.css';
+import fccCrest from './assets/fcc-crest.png';
 import { applyVolunteerBenefits } from './utils/volunteering';
 
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -48,7 +49,6 @@ const choiceLabel = (choice) => {
     : choice === 'next' ? `Next club year (${clubYearLabel(year + 1)})`
     : `Both (${clubYearLabel(year)} and ${clubYearLabel(year + 1)})`;
 };
-const dayLabel = (date) => date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/London' });
 
 export default function App() {
   const [initialDraft] = useState(loadDraft);
@@ -436,10 +436,13 @@ export default function App() {
 
       <footer className="FooterBar">
         <div className="FooterInner">
-          <div>
+          <div className="FooterBrand">
+            <img src={fccCrest} alt="" className="FooterCrest" />
+            <div>
             <p className="FooterCopyright">© {new Date().getFullYear()} Forth Canoe Club. All Rights Reserved.</p>
             <p className="FooterMeta">Forth Canoe Club is a Registered Scottish Charity (SC050275)</p>
             <p className="FooterMeta SpaceT1">Harrison Park, Polwarth, Edinburgh EH11 1ED</p>
+            </div>
           </div>
           <div className="FooterLinks">
             <a href="https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC050275" target="_blank" rel="noreferrer" className="FooterLink">Charity Register</a>
@@ -610,7 +613,7 @@ export default function App() {
                       </div>
                       {calculations.monthlySchedule.map((debit) => (
                         <div key={debit.firstDebit.getTime()} className="CartSummaryLine">
-                          Then £{debit.monthly.toFixed(2)} a month on the 1st from {dayLabel(debit.firstDebit)} through February ({clubYearLabel(debit.clubYear)})
+                          Then £{debit.monthly.toFixed(2)} a month on the next {debitRange(debit).replace(/^1 payment/, 'payment')} (club year {clubYearLabel(debit.clubYear)})
                         </div>
                       ))}
                     </div>

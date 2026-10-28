@@ -39,7 +39,8 @@ export const productMembershipRule = (product) => {
 
 export const normaliseProduct = (product) => {
   const rule = productMembershipRule(product);
-  const { membershipRule: _rule, membershipRequired: _required, ...rest } = product;
+  const { membershipRule: _rule, membershipRequired: _required, eventSchedule, ...rest } = product;
+  if (product.category === 'EVENTS' && eventSchedule) rest.eventSchedule = eventSchedule;
   return { ...rest, ...productTerms(product), ...(rule ? { membershipRule: rule, membershipRequired: rule !== 'none' } : {}) };
 };
 

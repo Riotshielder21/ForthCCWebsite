@@ -252,7 +252,15 @@ test('this year\'s monthly items bought in February are only charged for the res
   const february = calculateCart([subscription], false, null, new Date(2027, 1, 10));
   assert.deepEqual([february.total, february.recurringMonthlyTotal, february.items[0].debits], [20, 0, 0]);
   assert.deepEqual(february.monthlySchedule, []);
-  assert.match(february.items[0].label, /80% of this month now \(ends 1 Mar 2027\)/);
+  assert.match(february.items[0].label, /Rest of February now \(80% of a month\); ends 1 Mar 2027/);
+});
+
+test('monthly labels state the joining share, monthly amount and number of payments', () => {
+  const label = (date, part = 'this') => calculateCart([{ ...subscription, clubYearPart: part }], false, null, date).items[0].label;
+  assert.equal(label(new Date('2026-10-28T12:00:00Z')), 'Rest of October now (20% of a month), then £25.00 a month: 4 payments, Nov 2026 – Feb 2027');
+  assert.equal(label(new Date('2027-01-15T12:00:00Z')), 'Rest of January now (60% of a month), then £25.00 a month: 1 payment, Feb 2027');
+  assert.equal(label(new Date('2027-01-15T12:00:00Z'), 'next'), '£25.00 a month: 12 payments, Mar 2027 – Feb 2028');
+  assert.deepEqual(calculateCart([subscription], false, null, new Date('2026-10-28T12:00:00Z')).monthlySchedule.map((debit) => debit.debits), [4]);
 });
 
 test('next year: membership and up-front items are charged now; monthly items start on 1 March', () => {
