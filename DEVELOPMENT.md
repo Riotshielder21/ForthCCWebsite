@@ -54,7 +54,7 @@ The emulator seed also creates paid example orders for each purchasable starter 
 
 For mobile layout checks, use portrait viewports of 390x844, 360x640 and 320x568, plus landscape at 667x375 and 844x390. A short page (such as an unavailable receipt) should leave no gap below the footer. In a long basket, only the item list should scroll: the heading, billing controls, discount entry, errors, totals and Checkout button stay visible. Check both billing modes with a discount error and a checkout rejection, and confirm closing the basket restores page scrolling. Short landscape screens place the summary beside the item list.
 
-The admin catalogue, discount product choices and voucher product choices use Up/More paging, showing 7-10 items according to browser height. Check that paging replaces rather than appends items, selections survive paging and resizing, and deleting products on the last page does not leave an empty page. The short vertical transitions respect reduced-motion preferences.
+The admin catalogue, discount product choices, voucher product choices and combined current-code/voucher table use Up/More paging, showing 7-10 items according to browser height. Disabled discount codes are hidden by default; **Show disabled codes** includes them and resets the table to its first page. Check that paging replaces rather than appends items, selections survive paging and resizing, and deleting products or disabling codes on the last page does not leave an empty page. The short vertical transitions respect reduced-motion preferences. Shared checkout and contact-form grids bottom-align their fields within each row so wrapped labels have room above the inputs.
 
 ## Build And Test
 
