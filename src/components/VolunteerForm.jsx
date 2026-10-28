@@ -48,7 +48,7 @@ export default function VolunteerForm({ tiers, products = [], renewal = null, to
         <label className="FormLabel">Hours per club year *</label>
         <select required value={tier} onChange={(event) => setTier(event.target.value)} className="FormInput">
           <option value="">Select...</option>
-          {tiers.map((option) => <option key={option.id} value={option.id}>{option.hours}+ hours</option>)}
+          {tiers.map((option) => <option key={option.id} value={option.id}>{option.hours}+ hours{option.title ? ` — ${option.title}` : ''}</option>)}
         </select>
         {chosen && <p className="FormDescription SpaceT2">{volunteerBenefitText(chosen, products)}</p>}
       </div>

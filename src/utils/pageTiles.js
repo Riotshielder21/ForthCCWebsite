@@ -22,7 +22,6 @@ export const PAGE_TILE_GROUPS = {
   home: { intro: ['welcome', 'start'], mission: ['mission'], quick: ['quick1', 'quick2', 'quick3'], supporters: ['supporters'], location: ['location'] },
   beginners: { hero: ['hero'], tiles: ['open', 'club', 'courses', 'essentials'] },
   disciplines: { hero: ['hero'], tiles: ['slalom', 'polo', 'sprint', 'whitewater', 'touring', 'surf', 'canoe', 'paddleboarding'] },
-  volunteering: { hero: ['hero'], tiers: ['tier1', 'tier2', 'tier3'], ways: ['ways'] },
   about: { hero: ['hero'], tiles: ['tile1', 'tile2', 'tile3', 'tile4'] },
   'access-project': { hero: ['hero'], tiles: ['tile1', 'tile2', 'tile3', 'tile4'] },
   contact: { hero: ['hero'], tiles: ['address', 'email', 'social'], support: ['support'] }
@@ -30,6 +29,8 @@ export const PAGE_TILE_GROUPS = {
 
 export const defaultTileLayout = (pageId) => Object.entries(PAGE_TILE_GROUPS[pageId] || {})
   .flatMap(([group, ids]) => ids.map((id) => ({ id, group, type: 'existing' })));
+
+export const currentTileLayout = (pageId, saved) => Array.isArray(saved) ? saved : defaultTileLayout(pageId);
 
 export const safeTileUrl = (value, image = false) => {
   if (!value) return '';
@@ -68,10 +69,11 @@ export const validateSupporterTiles = (tiles) => {
   });
 };
 
-export const validateTileLayout = (pageId, tiles) => {
-  if (!Array.isArray(tiles) || tiles.length > 100 || !PAGE_TILE_GROUPS[pageId]) {
+export const validateTileLayout = (pageId, input) => {
+  if (!Array.isArray(input) || input.length > 100 || !PAGE_TILE_GROUPS[pageId]) {
     throw new Error('Invalid tile layout. Pages can contain up to 100 tiles.');
   }
+  const tiles = currentTileLayout(pageId, input);
   const existingIds = new Set(defaultTileLayout(pageId).map((tile) => tile.id));
   const seen = new Set();
   return tiles.map((tile) => {

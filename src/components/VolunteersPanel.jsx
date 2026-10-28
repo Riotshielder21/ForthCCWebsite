@@ -10,6 +10,7 @@ export default function VolunteersPanel({ adminUser }) {
   const [saving, setSaving] = useState('');
   const [coordinatorEmail, setCoordinatorEmail] = useState('');
   const [coordinatorSaving, setCoordinatorSaving] = useState(false);
+  const [levels, setLevels] = useState([]);
   const request = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
     const response = await fetch(apiUrl(path), { ...options,
@@ -19,11 +20,13 @@ export default function VolunteersPanel({ adminUser }) {
     return result;
   }, [adminUser]);
   const load = useCallback(async () => {
-    const [result, coordinator] = await Promise.all([
+    const [result, coordinator, benefits] = await Promise.all([
       request('/api/admin/volunteers'),
-      request('/api/admin/volunteer-coordinator')
+      request('/api/admin/volunteer-coordinator'),
+      request('/api/volunteer-benefits')
     ]);
     setVolunteers(result.volunteers);
+    setLevels(benefits.tiers);
     setCoordinatorEmail(coordinator.email);
   }, [request]);
   useEffect(() => { load().catch((error) => setError(error.message)); }, [load]);
@@ -84,7 +87,8 @@ export default function VolunteersPanel({ adminUser }) {
         <td>{volunteer.clubYear}/{volunteer.clubYear + 1}</td>
         <td><select aria-label={`Hours for ${volunteer.name}`} value={volunteer.tier} disabled={saving === volunteer.id}
           onChange={(event) => save(volunteer, `/api/admin/volunteers/${volunteer.id}`, { tier: event.target.value })}>
-          <option value="">Choose bracket</option>{['20', '40', '60'].map((tier) => <option key={tier} value={tier}>{tier}+</option>)}
+          <option value="">Choose level</option>{levels.map((level) => <option key={level.id} value={level.id}>{level.hours}+ {level.title}</option>)}
+          {volunteer.tier && !levels.some((level) => level.id === volunteer.tier) && <option value={volunteer.tier} disabled>Deleted level</option>}
         </select></td>
         <td><button type="button" className="EditorCommand" disabled={saving === volunteer.id || !volunteer.tier}
           onClick={() => save(volunteer, `/api/admin/volunteers/${volunteer.id}`, { active: !volunteer.active })}>

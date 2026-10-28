@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyVolunteerBenefits, DEFAULT_VOLUNTEER_BENEFITS as tiers, needsVolunteerRenewal, validateVolunteerBenefits, volunteerProfileLabels, volunteerBenefitText, volunteerPrivileges } from './volunteering.js';
+import { applyVolunteerBenefits, DEFAULT_VOLUNTEER_BENEFITS as tiers, needsVolunteerRenewal, normaliseVolunteerLevels, validateVolunteerBenefits, volunteerLevelLabel, volunteerProfileLabels, volunteerBenefitText, volunteerPrivileges } from './volunteering.js';
+import { clubYearOf } from './clubYear.js';
 import { calculateCart } from './pricing.js';
 import { volunteerCancellationPhases } from './volunteerCancellation.js';
 
@@ -49,14 +50,32 @@ test('yearly volunteer renewal is independent of next-year membership and paid b
   assert.match(volunteerProfileLabels(current, now).join(' '), /Inducted volunteer.*Active volunteer.*Free key hire/);
 });
 
-test('brackets are validated and 60+ describes manual CVC or Tully, not an automatic course discount', () => {
+test('levels are validated and other benefits describe manual CVC or Tully, not an automatic course discount', () => {
   assert.equal(validateVolunteerBenefits({ tiers }).error, undefined);
-  assert.ok(validateVolunteerBenefits({ tiers: tiers.slice(1) }).error);
+  assert.equal(validateVolunteerBenefits({ tiers: tiers.slice(1) }).error, undefined, 'levels can be deleted');
+  const added = { id: 'level-abc123', hours: 10, title: 'Taster', description: '', extra: '', monthlyDiscount: 2, monthlyCap: null, freeProductIds: [] };
+  assert.deepEqual(validateVolunteerBenefits({ tiers: [...tiers, added] }).value.map((tier) => tier.id), ['level-abc123', '20', '40', '60']);
+  assert.ok(validateVolunteerBenefits({ tiers: [] }).error);
   assert.ok(validateVolunteerBenefits({ tiers: [null, tiers[1], tiers[2]] }).error);
   assert.ok(validateVolunteerBenefits({ tiers: tiers.map((tier) => ({ ...tier, monthlyCap: -1 })) }).error);
+  assert.ok(validateVolunteerBenefits({ tiers: [tiers[0], { ...tiers[1], hours: 20 }] }).error, 'hours must differ');
+  assert.ok(validateVolunteerBenefits({ tiers: [tiers[0], { ...tiers[1], id: '20' }] }).error, 'ids must differ');
+  assert.ok(validateVolunteerBenefits({ tiers: [{ ...tiers[0], title: ' ' }] }).error, 'title required');
+  assert.ok(validateVolunteerBenefits({ tiers: [{ ...tiers[0], id: 'Bad id' }] }).error);
   const text = volunteerBenefitText(tiers[2]);
   assert.match(text, /25% off CVC or camping paid for at our Tully/);
   assert.doesNotMatch(text, /coaching/);
+});
+
+test('levels saved before titles existed keep their defaults, and labels use stored hours', () => {
+  const [legacy] = normaliseVolunteerLevels([{ id: '60', hours: 60, monthlyDiscount: 0, monthlyCap: 0, freeProductIds: [] }]);
+  assert.equal(legacy.title, 'Core Team');
+  assert.match(legacy.extra, /Tully/);
+  assert.equal(normaliseVolunteerLevels(undefined).length, 3);
+  assert.equal(volunteerLevelLabel([{ id: 'level-x', hours: 80 }], 'level-x'), '80+ hours');
+  assert.equal(volunteerLevelLabel([], '40'), '40+ hours');
+  const member = { volunteer: { inducted: true, years: { [clubYearOf(now)]: { active: true, tier: 'level-x', hours: 80 } } } };
+  assert.match(volunteerProfileLabels(member, now).join(' '), /Active volunteer \(80\+ hours\)/);
 });
 
 test('scheduled cancellation preserves all items in the paid phase and the unrelated item afterwards', () => {

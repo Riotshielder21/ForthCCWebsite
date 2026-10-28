@@ -1333,6 +1333,15 @@
   .DiscountCodesTable td, .DiscountCodesTable th { padding: 10px 8px; vertical-align: middle; }
   .DiscountCodesTable tbody tr { border-top: 1px solid rgb(15 23 42 / 0.1); }
   .DiscountCodeActions { display: flex; gap: 6px; flex-wrap: nowrap; }
+  .VolunteerConfigBar { margin-bottom: 24px; padding: 16px; border: 2px dashed #38bdf8; border-radius: 12px; background: #f0f9ff; }
+  .VolunteerConfigBarHeader { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .VolunteerConfigBarHeader .FormLabel { display: inline-flex; align-items: center; gap: 6px; margin: 0 8px 0 0; }
+  .VolunteerConfigPanel { margin-top: 16px; padding: 16px; border-radius: 10px; background: #fff; display: grid; gap: 12px; }
+  .VolunteerVersionList { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 420px; overflow-y: auto; }
+  .VolunteerVersionItem { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid #d8dee4; border-radius: 8px; overflow-wrap: anywhere; }
+  .VolunteerLevelPicker { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+  .VolunteerLevelPicker .FormLabel { flex: 1 1 220px; }
+  .VolunteerServiceChoices { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 4px 12px; }
   .ReportWarning { display: inline-block; color: #a24614; background: #fff3e6; padding: 3px 6px; font-size: 11px; margin-top: 6px; }
   .ReportsModalBackdrop { position: fixed; inset: 0; z-index: 90; background: #0007; display: grid; place-items: center; padding: 16px; }
   .ReportsDialog { background: #fff; border-radius: 8px; padding: 24px; width: min(640px, 100%); max-height: 90dvh; overflow-y: auto; }

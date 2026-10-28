@@ -1,12 +1,15 @@
 import crypto from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { Timestamp } from 'firebase-admin/firestore';
 import { validateListSubmission, sheetCell, matchesVolunteer, VOLUNTEER_LIST } from '../utils/lists.js';
 import { membershipActivity } from '../utils/membership.js';
 import { checkSummary, checksManagedByJustgo } from '../utils/safeguarding.js';
 import { rateLimit } from './rateLimit.js';
 import { clubYearOf, clubYearDates } from '../utils/clubYear.js';
-import { DEFAULT_VOLUNTEER_BENEFITS, VOLUNTEER_TIERS, validateVolunteerBenefits, volunteerBenefitText, volunteerYear, needsVolunteerRenewal } from '../utils/volunteering.js';
+import { normaliseVolunteerLevels, validateVolunteerBenefits, volunteerBenefitText, volunteerLevelLabel, volunteerYear, needsVolunteerRenewal } from '../utils/volunteering.js';
 import { needsRenewal } from '../utils/renewals.js';
+import { allocateRecordIds, reserveRecordIds } from '../utils/recordIds.js';
+import { validateVolunteerPage, volunteerPageFromLegacy } from '../utils/volunteerPage.js';
 
 
 /** Public forms, yearly volunteer membership entitlements and privately emailed boathouse access codes. */
@@ -15,7 +18,45 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
   const signupYear = (signup) => Number.isInteger(signup.clubYear) ? signup.clubYear : clubYearOf(signup.createdAt?.toDate() || new Date());
   const benefitsReference = () => db().collection('settings').doc('volunteerBenefits');
   const coordinatorReference = () => db().collection('settings').doc('volunteerCoordinator');
-  const loadVolunteerBenefits = async () => (await benefitsReference().get()).data()?.tiers || DEFAULT_VOLUNTEER_BENEFITS;
+  const pageReference = () => db().collection('settings').doc('volunteerPage');
+  const loadVolunteerBenefits = async () => normaliseVolunteerLevels((await benefitsReference().get()).data()?.tiers);
+  const legacyVolunteerPage = async () => {
+    try {
+      return volunteerPageFromLegacy(JSON.parse(await readFile(new URL('../../public/content/pages/volunteering.json', import.meta.url), 'utf8')));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      return volunteerPageFromLegacy();
+    }
+  };
+  const loadVolunteerPage = async () => {
+    const saved = await pageReference().get();
+    return saved.exists ? saved.data().content : legacyVolunteerPage();
+  };
+  // Every live volunteering save is snapshotted (page content and levels together) so any earlier state can be restored.
+  const versionCounter = () => db().collection('settings').doc('volunteerVersions');
+  const versions = () => db().collection('volunteerVersions');
+  const versionReference = (version) => versions().doc(`v${String(version).padStart(6, '0')}`);
+  const ensureBaselineVersion = async () => {
+    if ((await versionCounter().get()).exists) return;
+    const legacy = await legacyVolunteerPage();
+    await db().runTransaction(async (transaction) => {
+      const [counter, page, benefits] = await Promise.all([versionCounter(), pageReference(), benefitsReference()].map((reference) => transaction.get(reference)));
+      if (counter.exists) return;
+      transaction.create(versionReference(1), { version: 1, content: page.exists ? page.data().content : legacy,
+        tiers: normaliseVolunteerLevels(benefits.data()?.tiers), change: 'initial', editor: 'Server (initial version)', createdAt: Timestamp.now() });
+      transaction.set(versionCounter(), { latest: 1 });
+    });
+  };
+  const recordVersion = async (admin, change, restoredFrom = null) => {
+    const [content, tiers] = await Promise.all([loadVolunteerPage(), loadVolunteerBenefits()]);
+    return db().runTransaction(async (transaction) => {
+      const version = ((await transaction.get(versionCounter())).data()?.latest || 0) + 1;
+      transaction.create(versionReference(version), { version, content, tiers, change, editor: admin.email || admin.uid,
+        createdAt: Timestamp.now(), ...(restoredFrom ? { restoredFrom } : {}) });
+      transaction.set(versionCounter(), { latest: version });
+      return version;
+    });
+  };
   const hash = (token) => crypto.createHash('sha256').update(token).digest('hex');
   const escape = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const sendInductionNotification = async (reference, signup) => {
@@ -28,7 +69,7 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       const emailSent = await sendEmail({
         to: coordinator,
         subject: 'New Forth Canoe Club volunteer sign-up',
-        body: `A new volunteer sign-up needs follow-up.\n\nName: ${signup.name}\nEmail: ${signup.email}\nHours: ${signup.tier || 'Not selected'}\nClub year: ${signup.clubYear}/${signup.clubYear + 1}\nSign-up: ${reference.id}\n\nPlease contact them to arrange an induction.`,
+        body: `A new volunteer sign-up needs follow-up.\n\nName: ${signup.name}\nEmail: ${signup.email}\nHours: ${signup.tier ? volunteerLevelLabel(await loadVolunteerBenefits(), signup.tier) : 'Not selected'}\nClub year: ${signup.clubYear}/${signup.clubYear + 1}\nSign-up: ${reference.id}\n\nPlease contact them to arrange an induction.`,
         record: { kind: 'volunteer-induction', signupId: reference.id }
       });
       if (!emailSent) throw new Error('The induction notification email could not be sent.');
@@ -43,13 +84,14 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
   const volunteerRenewalContent = async (members, year, siteUrl) => {
     const lines = [];
     const html = [];
+    const levels = await loadVolunteerBenefits();
     for (const member of members.filter((member) => needsVolunteerRenewal(member, year))) {
       const token = crypto.randomBytes(32).toString('hex');
       await db().collection('volunteerRenewals').doc(hash(token)).set({ memberId: member.id, year,
         expiresAt: Timestamp.fromDate(new Date(clubYearDates(year).start.getTime() + 31 * 86400000)) });
       const link = `${siteUrl}/volunteering?volunteerRenew=${token}`;
       const name = `${member.firstName || ''} ${member.lastName || ''}`.trim();
-      lines.push(`${name}: you have not signed up to volunteer next club year. Keep your ${volunteerYear(member, year - 1).tier}+ hour commitment: ${link}\nChoose different hours: ${link}&change=1`);
+      lines.push(`${name}: you have not signed up to volunteer next club year. Keep your ${volunteerLevelLabel(levels, volunteerYear(member, year - 1).tier).replace(/ hours$/, ' hour')} commitment: ${link}\nChoose different hours: ${link}&change=1`);
       html.push(`<p>${escape(name)}: <a href="${escape(link)}">Keep my volunteer hours next year</a> or <a href="${escape(link)}&amp;change=1">Choose a different commitment</a>. Confirm on the form to renew your volunteering.</p>`);
     }
     return { body: lines.join('\n\n'), html: html.join('') };
@@ -87,21 +129,23 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       if (!tier) return res.status(400).json({ error: 'Choose your volunteer hours bracket.' });
       const { invite, member } = loaded;
       const benefits = [volunteerBenefitText(tier, await loadCatalogue())];
-      const previous = await lists().where('memberId', '==', member.id).get();
-      const existingSignup = previous.docs.find((document) => document.data().listType === VOLUNTEER_LIST && signupYear(document.data()) === invite.year);
-      const signupId = existingSignup?.id || `vol-${member.id}-${invite.year}`;
       const household = member.data().householdId ? (await db().collection('households').doc(member.data().householdId).get()).data() : null;
       const email = household?.email || member.data().email || member.data().guardian?.email || '';
       await db().runTransaction(async (transaction) => {
         const current = (await transaction.get(member.ref)).data();
         if (!current?.volunteer?.inducted) throw new Error('The volunteer membership no longer exists or is no longer inducted.');
+        const signups = await transaction.get(lists().where('memberId', '==', member.id));
+        const signup = signups.docs.find((document) => document.data().listType === VOLUNTEER_LIST && signupYear(document.data()) === invite.year);
+        const reservation = await reserveRecordIds(db(), transaction, 'volunteers', signup ? 0 : 1);
+        const signupId = signup?.id || reservation.ids[0];
+        reservation.save();
         const years = current.volunteer.years || {};
         transaction.update(member.ref, { volunteer: { ...current.volunteer, years: { ...years,
-          [invite.year]: { active: true, tier: tier.id, benefits, freeProductIds: tier.freeProductIds, signupId } } } });
+          [invite.year]: { active: true, tier: tier.id, hours: tier.hours, benefits, freeProductIds: tier.freeProductIds, signupId } } } });
         transaction.set(lists().doc(signupId), { name: `${current.firstName || ''} ${current.lastName || ''}`.trim(),
           email, memberId: member.id, listType: VOLUNTEER_LIST, clubYear: invite.year, tier: tier.id,
           inducted: true, active: true,
-          ...(!existingSignup ? { items: [], notes: '', createdAt: Timestamp.now() } : {}) }, { merge: true });
+          ...(!signup ? { items: [], notes: '', createdAt: Timestamp.now() } : {}) }, { merge: true });
       });
       res.json({ success: true });
     } catch (error) {
@@ -181,7 +225,8 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
         const prefix = `${typeof field === 'string' ? field : field.label}: `;
         return !value.items[index].startsWith(prefix) || !value.items[index].slice(prefix.length).trim();
       })) return res.status(400).json({ error: 'Answer each question on the current form.' });
-      await db().collection('formSubmissions').add({ ...value, formId: form.id, createdAt: Timestamp.now() });
+      const [submissionId] = await allocateRecordIds(db(), 'formSubmissions');
+      await db().collection('formSubmissions').doc(submissionId).create({ ...value, formId: form.id, createdAt: Timestamp.now() });
       if (sheets() && form.data().spreadsheetId) {
         await sheets().spreadsheets.values.append({ spreadsheetId: form.data().spreadsheetId, range: 'A:Z',
           valueInputOption: 'RAW', requestBody: { values: [[new Date().toISOString(), value.email, ...value.items].map(sheetCell)] } });
@@ -190,6 +235,31 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
     } catch (error) {
       console.error('Could not save contact form:', error.message);
       res.status(500).json({ error: 'Could not complete the form submission. Contact the club before submitting again.' });
+    }
+  });
+
+  app.get('/api/volunteering', rateLimit(60, 60 * 1000), async (req, res) => {
+    try {
+      if (!db()) return res.status(503).json({ error: 'Volunteering is not configured.' });
+      const [content, tiers] = await Promise.all([loadVolunteerPage(), loadVolunteerBenefits()]);
+      res.set('Cache-Control', 'no-store').json({ content, tiers });
+    } catch (error) {
+      console.error('Could not load volunteering:', error.message);
+      res.status(500).json({ error: 'Could not load volunteering.' });
+    }
+  });
+  app.post('/api/admin/volunteering', rateLimit(10, 60 * 1000), async (req, res) => {
+    try {
+      const admin = await requireAdmin(req, res);
+      if (!admin) return;
+      const { error, value } = validateVolunteerPage(req.body);
+      if (error) return res.status(400).json({ error });
+      await ensureBaselineVersion();
+      await pageReference().set({ content: value, updatedBy: admin.uid, updatedAt: Timestamp.now() });
+      res.json({ content: value, version: await recordVersion(admin, 'content') });
+    } catch (error) {
+      console.error('Could not save volunteering:', error.message);
+      res.status(500).json({ error: 'Could not save volunteering.' });
     }
   });
 
@@ -208,32 +278,87 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       if (!admin) return;
       const { error, value } = validateVolunteerBenefits(req.body);
       if (error) return res.status(400).json({ error });
-      const catalog = await loadCatalogue();
-      if (value.some((tier) => tier.freeProductIds.some((id) => !catalog.some((product) => product.id === id && product.category === 'SERVICES')))) {
-        return res.status(400).json({ error: 'Free benefits must be existing shop services, not memberships or event tickets.' });
-      }
-      await benefitsReference().set({ tiers: value, updatedBy: admin.uid, updatedAt: Timestamp.now() });
-      const members = await db().collection('memberships').where('volunteer.inducted', '==', true).get();
-      for (let index = 0; index < members.docs.length; index += 200) {
-        const batch = db().batch();
-        for (const document of members.docs.slice(index, index + 200)) {
-          const years = document.data().volunteer?.years || {};
-          const updates = {};
-          for (const [year, held] of Object.entries(years)) {
-            const tier = value.find((candidate) => candidate.id === held.tier);
-            if (tier) {
-              updates[`volunteer.years.${year}.benefits`] = [volunteerBenefitText(tier, catalog)];
-              updates[`volunteer.years.${year}.freeProductIds`] = tier.freeProductIds;
-            }
-          }
-          if (Object.keys(updates).length) batch.update(document.ref, updates);
-        }
-        await batch.commit();
-      }
-      res.json({ tiers: value });
+      await ensureBaselineVersion();
+      const result = await applyLevels(value, admin, req);
+      if (result.error) return res.status(result.status).json({ error: result.error });
+      res.json({ tiers: value, version: await recordVersion(admin, 'levels') });
     } catch (error) {
       console.error('Could not save volunteer benefits:', error.message);
       res.status(500).json({ error: 'Could not save volunteer benefits.' });
+    }
+  });
+  const applyLevels = async (value, admin, req) => {
+    const removed = (await loadVolunteerBenefits()).filter((level) => !value.some((kept) => kept.id === level.id));
+    if (removed.length) {
+      const inUse = await lists().where('tier', 'in', removed.map((level) => level.id)).get();
+      const thisYear = clubYearOf(requestNow(req));
+      const held = removed.filter((level) => inUse.docs.some((document) => document.data().listType === VOLUNTEER_LIST
+        && document.data().tier === level.id && signupYear(document.data()) >= thisYear));
+      if (held.length) {
+        return { status: 409, error: `${held.map((level) => `${level.hours}+ hours (${level.title})`).join(', ')} still has volunteers this or next club year. Move them to another level in Reports & records → Volunteers before deleting it.` };
+      }
+    }
+    const catalog = await loadCatalogue();
+    if (value.some((tier) => tier.freeProductIds.some((id) => !catalog.some((product) => product.id === id && product.category === 'SERVICES')))) {
+      return { status: 400, error: 'Free benefits must be existing shop services, not memberships or event tickets.' };
+    }
+    await benefitsReference().set({ tiers: value, updatedBy: admin.uid, updatedAt: Timestamp.now() });
+    const members = await db().collection('memberships').where('volunteer.inducted', '==', true).get();
+    for (let index = 0; index < members.docs.length; index += 200) {
+      const batch = db().batch();
+      for (const document of members.docs.slice(index, index + 200)) {
+        const years = document.data().volunteer?.years || {};
+        const updates = {};
+        for (const [year, held] of Object.entries(years)) {
+          const tier = value.find((candidate) => candidate.id === held.tier);
+          if (tier) {
+            updates[`volunteer.years.${year}.hours`] = tier.hours;
+            updates[`volunteer.years.${year}.benefits`] = [volunteerBenefitText(tier, catalog)];
+            updates[`volunteer.years.${year}.freeProductIds`] = tier.freeProductIds;
+          }
+        }
+        if (Object.keys(updates).length) batch.update(document.ref, updates);
+      }
+      await batch.commit();
+    }
+    return {};
+  };
+
+  app.get('/api/admin/volunteering/versions', rateLimit(30, 60 * 1000), async (req, res) => {
+    try {
+      if (!await requireAdmin(req, res)) return;
+      await ensureBaselineVersion();
+      const snapshot = await versions().orderBy('version', 'desc').limit(100).get();
+      res.set('Cache-Control', 'no-store').json({ versions: snapshot.docs.map((document) => {
+        const { version, change, editor, createdAt, restoredFrom = null } = document.data();
+        return { version, change, editor, createdAt: createdAt.toDate().toISOString(), restoredFrom };
+      }) });
+    } catch (error) {
+      console.error('Could not list volunteering versions:', error.message);
+      res.status(500).json({ error: 'Could not load the version history.' });
+    }
+  });
+  app.post('/api/admin/volunteering/versions/:version/restore', rateLimit(10, 60 * 1000), async (req, res) => {
+    try {
+      const admin = await requireAdmin(req, res);
+      if (!admin) return;
+      const number = Number(req.params.version);
+      if (!Number.isInteger(number) || number < 1) return res.status(400).json({ error: 'Choose a version to restore.' });
+      await ensureBaselineVersion();
+      const saved = await versionReference(number).get();
+      if (!saved.exists) return res.status(404).json({ error: `Version ${number} does not exist.` });
+      // Old snapshots are re-validated so a restore can never bypass the current rules.
+      const content = validateVolunteerPage(saved.data().content);
+      const levels = validateVolunteerBenefits({ tiers: saved.data().tiers });
+      if (content.error || levels.error) return res.status(400).json({ error: `Version ${number} cannot be restored: ${content.error || levels.error}` });
+      const applied = await applyLevels(levels.value, admin, req);
+      if (applied.error) return res.status(applied.status).json({ error: `Version ${number} cannot be restored: ${applied.error}` });
+      await pageReference().set({ content: content.value, updatedBy: admin.uid, updatedAt: Timestamp.now() });
+      const version = await recordVersion(admin, 'restore', number);
+      res.json({ content: content.value, tiers: levels.value, version });
+    } catch (error) {
+      console.error('Could not restore volunteering version:', error.message);
+      res.status(500).json({ error: 'Could not restore that version.' });
     }
   });
 
@@ -342,7 +467,7 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       const volunteer = current.volunteer || {};
       const next = { ...volunteer, signupId: signupReference.id,
         inducted: volunteer.inducted === true || signup.inducted === true,
-        years: { ...volunteer.years, [year]: { tier: signup.tier || '', active: signup.active === true && signup.inducted === true,
+        years: { ...volunteer.years, [year]: { tier: signup.tier || '', ...(tier ? { hours: tier.hours } : {}), active: signup.active === true && signup.inducted === true,
           benefits, freeProductIds: tier?.freeProductIds || [], signupId: signupReference.id } } };
       if (JSON.stringify(next) !== JSON.stringify(volunteer) || (next.inducted && !current.keyAccess?.grantedAt)) {
         transaction.update(memberDocument.ref, { volunteer: next,
@@ -383,6 +508,9 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
     if (!db()) return res.status(503).json({ error: 'Submissions are not available right now.' });
     try {
       const volunteer = value.listType === VOLUNTEER_LIST;
+      if (volunteer && value.tier && !(await loadVolunteerBenefits()).some((level) => level.id === value.tier)) {
+        return res.status(400).json({ error: 'Choose a volunteer level.' });
+      }
       const member = volunteer ? await findVolunteerMember(value) : null;
       if (member) {
         const previous = await lists().where('memberId', '==', member.id).get();
@@ -390,7 +518,9 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
           return res.json({ success: true });
         }
       }
-      const reference = await lists().add({
+      const [signupId] = await allocateRecordIds(db(), volunteer ? 'volunteers' : 'lists');
+      const reference = lists().doc(signupId);
+      await reference.create({
         ...value, status: 'pending', createdAt: Timestamp.now(),
         ...(volunteer ? { memberId: member?.id || null, inducted: member?.data().volunteer?.inducted === true,
           clubYear: clubYearOf(requestNow(req)), active: false, discountCode: null,
@@ -479,13 +609,15 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       const changes = Object.keys(req.body);
       if (!changes.length || changes.some((key) => !['inducted', 'active', 'tier'].includes(key))
         || (inducted !== undefined && typeof inducted !== 'boolean') || (active !== undefined && typeof active !== 'boolean')
-        || (tier !== undefined && !VOLUNTEER_TIERS.includes(tier)) || !/^[A-Za-z0-9_-]{1,128}$/.test(req.params.id)) {
+        || (tier !== undefined && typeof tier !== 'string') || !/^[A-Za-z0-9_-]{1,128}$/.test(req.params.id)) {
         return res.status(400).json({ error: 'Choose whether the volunteer is inducted or active.' });
       }
       const reference = lists().doc(req.params.id);
       const document = await reference.get();
       if (!document.exists || document.data().listType !== VOLUNTEER_LIST) return res.status(404).json({ error: 'Volunteer not found.' });
-      if (active === true && !VOLUNTEER_TIERS.includes(tier || document.data().tier)) return res.status(400).json({ error: 'Choose the volunteer hours bracket before activation.' });
+      const levels = await loadVolunteerBenefits();
+      if (tier !== undefined && !levels.some((level) => level.id === tier)) return res.status(400).json({ error: 'Choose a current volunteer level.' });
+      if (active === true && !levels.some((level) => level.id === (tier || document.data().tier))) return res.status(400).json({ error: 'Choose the volunteer level before activation.' });
       await reference.update({ ...(tier ? { tier } : {}), ...(typeof active === 'boolean' ? { active } : {}),
         ...((active === true || inducted === true) ? { inducted: true, inductedBy: admin.uid, inductedAt: document.data().inductedAt || Timestamp.now() } : {}),
         activeChangedBy: admin.uid, activeChangedAt: Timestamp.now() });

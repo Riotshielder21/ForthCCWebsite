@@ -62,10 +62,10 @@ test('reordering can move tiles between groups', () => {
 });
 
 test('adjacent tiles reorder both forward and backward', () => {
-  const tiles = defaultTileLayout('volunteering');
-  const forward = moveTile(tiles, 'tier1', 'tier2');
-  assert.deepEqual(forward.filter((tile) => tile.group === 'tiers').map((tile) => tile.id), ['tier2', 'tier1', 'tier3']);
-  assert.deepEqual(moveTile(forward, 'tier1', 'tier2'), tiles);
+  const tiles = defaultTileLayout('about');
+  const forward = moveTile(tiles, 'tile1', 'tile2');
+  assert.deepEqual(forward.filter((tile) => tile.group === 'tiles').map((tile) => tile.id), ['tile2', 'tile1', 'tile3', 'tile4']);
+  assert.deepEqual(moveTile(forward, 'tile1', 'tile2'), tiles);
 });
 
 test('malformed layouts and executable URLs are rejected', () => {
@@ -90,4 +90,9 @@ test('page content keeps saved layouts, defaults old content, and leaves the sho
     assert.equal(typeof getPageCopy('disciplines')[`${id}Title`], 'string');
     assert.equal(typeof getPageCopy('disciplines')[`${id}Body`], 'string');
   }
+});
+test('volunteering has no generic page content or configurable tiles', () => {
+  assert.equal(Object.hasOwn(PAGE_CONTENT, 'volunteering'), false);
+  assert.deepEqual(defaultTileLayout('volunteering'), []);
+  assert.throws(() => validateTileLayout('volunteering', [{ id: 'custom', group: 'ways', type: 'text' }]));
 });

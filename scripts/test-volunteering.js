@@ -10,6 +10,7 @@ import { clubYearOf, clubYearDates } from '../src/utils/clubYear.js';
 import { PRODUCTS } from '../src/constants/products.js';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { DEFAULT_VOLUNTEER_BENEFITS } from '../src/utils/volunteering.js';
+import { DEFAULT_VOLUNTEER_PAGE } from '../src/utils/volunteerPage.js';
 
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: 'demo-fcc-volunteer-tests' });
 const db = getFirestore(initializeApp({ projectId: 'demo-fcc-volunteer-tests' }, 'volunteer-tests'));
@@ -49,14 +50,48 @@ const settings = db.collection('settings').doc('volunteerBenefits');
 const originalSettings = await settings.get();
 const coordinatorSettings = db.collection('settings').doc('volunteerCoordinator');
 const originalCoordinatorSettings = await coordinatorSettings.get();
+const pageSettings = db.collection('settings').doc('volunteerPage');
+const originalPageSettings = await pageSettings.get();
+const versionCounter = db.collection('settings').doc('volunteerVersions');
+const originalVersionCounter = await versionCounter.get();
+const originalVersions = await db.collection('volunteerVersions').get();
+const clearVersions = async () => {
+  await Promise.all((await db.collection('volunteerVersions').get()).docs.map((document) => document.ref.delete()));
+  await versionCounter.delete();
+};
 let signupId;
 try {
+  await pageSettings.delete();
+  await clearVersions();
+  const defaultPage = await call('/api/volunteering', 'GET', null, null, false);
+  assert.equal(defaultPage.status, 200);
+  assert.deepEqual(defaultPage.data.content, DEFAULT_VOLUNTEER_PAGE);
+  assert.equal(defaultPage.data.tiers.length, 3);
+  const liveContent = { ...DEFAULT_VOLUNTEER_PAGE, title: 'Live volunteer page', formTitle: 'Join our volunteers',
+    opportunities: [{ title: 'Test opportunity', description: 'Help run a session' }] };
+  assert.equal((await call('/api/admin/volunteering', 'POST', liveContent, null, false)).status, 401);
+  assert.equal((await call('/api/admin/volunteering', 'POST', { ...liveContent, tileLayout: [] })).status, 400);
+  assert.equal((await call('/api/admin/volunteering', 'POST', { ...liveContent, fields: ['Custom question'] })).status, 400);
+  assert.equal((await call('/api/admin/volunteering', 'POST', liveContent)).status, 200);
+  assert.deepEqual((await call('/api/volunteering', 'GET', null, null, false)).data.content, liveContent, 'fresh public reads see saved content without a build');
+  assert.equal((await pageSettings.get()).data().updatedBy, 'test-admin');
+  assert.ok((await pageSettings.get()).data().updatedAt instanceof Timestamp);
+  assert.deepEqual((await call('/api/volunteer-benefits')).data.tiers, defaultPage.data.tiers, 'wording saves do not change benefits');
+  assert.equal((await call('/api/admin/volunteering', 'POST', { ...liveContent, opportunities: [] })).status, 200);
+  assert.deepEqual((await call('/api/volunteering')).data.content.opportunities, [], 'all list items can be removed without deleting its fixed tile');
+  await form.set({ name: 'Test form', fields: ['Activity'], clubYear: year });
+  const submitted = await call(`/api/forms/${form.id}`, 'POST', { name: 'Volunteer Tester', email, items: ['Activity: Canoeing'] }, null, false);
+  assert.equal(submitted.status, 200);
+  const responses = await db.collection('formSubmissions').where('formId', '==', form.id).get();
+  assert.equal(responses.size, 1);
+  assert.match(responses.docs[0].id, /^R\d{5,}$/);
   await coordinatorSettings.set({ email: `coordinator-${run}@example.test` });
   await member.set({ firstName: 'Volunteer', lastName: 'Tester', email, dob: '1989-04-03', status: 'active', renewalMethod: 'website',
     validUntil: Timestamp.fromDate(clubYearDates(year).end), clubYears: [year], privileges: [{ productId: 'boat-hire', clubYear: year }] });
   assert.equal((await call('/api/lists', 'POST', { name: 'Volunteer Tester', email, listType: 'Volunteer Sign-ups', tier: '40', items: ['Coaching', 'Weekends'] })).status, 200);
   assert.equal(sent.find((message) => message.record.kind === 'volunteer-induction')?.to, `coordinator-${run}@example.test`);
   signupId = (await db.collection('lists').where('email', '==', email).get()).docs[0].id;
+  assert.match(signupId, /^V\d{5,}$/);
   const path = `/api/admin/volunteers/${signupId}`;
   assert.equal((await call(path, 'PATCH', { active: true }, null, false)).status, 401);
   assert.equal((await call(path, 'PATCH', { active: true })).status, 200);
@@ -90,6 +125,45 @@ try {
   assert.equal((await call('/api/admin/volunteer-benefits', 'POST', { tiers: DEFAULT_VOLUNTEER_BENEFITS }, null, false)).status, 401);
   assert.equal((await call('/api/admin/volunteer-benefits', 'POST', { tiers: DEFAULT_VOLUNTEER_BENEFITS })).status, 200);
   assert.equal((await call('/api/volunteer-benefits')).data.tiers.length, 3);
+  const extraLevel = { id: `level-${run}`.toLowerCase().slice(0, 40), hours: 80, title: 'Committee', description: 'Run the club', extra: '', monthlyDiscount: 0, monthlyCap: 0, freeProductIds: [] };
+  const withExtra = await call('/api/admin/volunteer-benefits', 'POST', { tiers: [...DEFAULT_VOLUNTEER_BENEFITS, extraLevel] });
+  assert.equal(withExtra.status, 200, JSON.stringify(withExtra.data));
+  assert.equal((await call('/api/volunteer-benefits')).data.tiers.at(-1).title, 'Committee');
+  const inUse = await call('/api/admin/volunteer-benefits', 'POST', { tiers: DEFAULT_VOLUNTEER_BENEFITS.filter((level) => level.id !== '40') });
+  assert.equal(inUse.status, 409, 'a level with volunteers this year cannot be deleted');
+  assert.match(inUse.data.error, /40\+ hours/);
+  assert.equal((await call('/api/admin/volunteer-benefits', 'POST', { tiers: DEFAULT_VOLUNTEER_BENEFITS })).status, 200, 'an unused level can be deleted');
+
+  assert.equal((await call('/api/admin/volunteering/versions', 'GET', null, null, false)).status, 401);
+  const history = (await call('/api/admin/volunteering/versions')).data.versions;
+  assert.deepEqual(history.map((item) => item.version), [6, 5, 4, 3, 2, 1], 'version 1 is created on the server and every save adds a version; rejected saves do not');
+  assert.deepEqual([history.at(-1).change, history.at(-1).editor], ['initial', 'Server (initial version)']);
+  assert.deepEqual([history[4].change, history[4].editor], ['content', 'admin@forthcanoeclub.co.uk']);
+  assert.equal(history[1].change, 'levels');
+  assert.ok(!Number.isNaN(Date.parse(history[0].createdAt)));
+  assert.equal((await call('/api/admin/volunteering/versions/2/restore', 'POST', null, null, false)).status, 401);
+  assert.equal((await call('/api/admin/volunteering/versions/999/restore', 'POST')).status, 404);
+  assert.equal((await call('/api/admin/volunteering/versions/abc/restore', 'POST')).status, 400);
+  const restoredContent = await call('/api/admin/volunteering/versions/2/restore', 'POST');
+  assert.equal(restoredContent.status, 200, JSON.stringify(restoredContent.data));
+  assert.equal(restoredContent.data.version, 7);
+  assert.deepEqual((await call('/api/volunteering', 'GET', null, null, false)).data.content, liveContent, 'restoring version 2 brings back its content');
+  const restoredLevels = await call('/api/admin/volunteering/versions/5/restore', 'POST');
+  assert.equal(restoredLevels.status, 200, JSON.stringify(restoredLevels.data));
+  assert.equal((await call('/api/volunteer-benefits')).data.tiers.at(-1).title, 'Committee', 'restoring version 5 brings back its levels');
+  assert.deepEqual((await call('/api/volunteering')).data.content.opportunities, [], 'and the content saved at that time');
+  const latest = (await call('/api/admin/volunteering/versions')).data.versions;
+  assert.deepEqual(latest.slice(0, 2).map((item) => [item.version, item.change, item.restoredFrom]), [[8, 'restore', 5], [7, 'restore', 2]]);
+  await db.collection('volunteerVersions').doc('v009999').set({ version: 9999, change: 'levels', editor: 'test', createdAt: Timestamp.now(),
+    content: liveContent, tiers: DEFAULT_VOLUNTEER_BENEFITS.filter((level) => level.id !== '40') });
+  const blocked = await call('/api/admin/volunteering/versions/9999/restore', 'POST');
+  assert.equal(blocked.status, 409, 'a restore cannot delete a level still in use');
+  assert.deepEqual((await call('/api/volunteering')).data.content.opportunities, [], 'a blocked restore changes nothing');
+  await db.collection('volunteerVersions').doc('v009999').delete();
+  assert.equal((await call('/api/admin/volunteering/versions/6/restore', 'POST')).status, 200);
+  assert.equal((await call('/api/volunteer-benefits')).data.tiers.length, 3);
+  assert.equal((await call('/api/lists', 'POST', { name: 'Unknown Level', email: `unknown-${email}`, listType: 'Volunteer Sign-ups', tier: extraLevel.id, items: ['Coaching'] })).status, 400);
+  assert.equal((await member.get()).data().volunteer.years[year].hours, 40, 'member records keep the level hours for labels');
   await form.set({ name: 'Enquiry', description: 'Test form', clubYear: year, fields: ['Reason'] });
   assert.ok((await call('/api/forms')).data.forms.some((candidate) => candidate.id === form.id));
   const formBody = { name: 'Form Tester', email, items: ['Reason: Test enquiry'] };
@@ -133,6 +207,15 @@ try {
   assert.deepEqual((await pendingSignup.get()).data().items, ['Activities: Canoeing']);
   assert.equal((await pendingSignup.get()).data().notes, 'Keep this note');
   assert.equal((await pendingSignup.get()).data().email, email);
+  await pendingSignup.delete();
+  const repeatedRenewals = await Promise.all([
+    call(`/api/volunteers/renew/${token}`, 'POST', { tier: '60' }),
+    call(`/api/volunteers/renew/${token}`, 'POST', { tier: '60' })
+  ]);
+  assert.ok(repeatedRenewals.every((result) => result.status === 200));
+  const renewedSignups = await db.collection('lists').where('memberId', '==', memberId).where('clubYear', '==', year + 1).get();
+  assert.equal(renewedSignups.size, 1, 'concurrent renewals create only one signup');
+  assert.match(renewedSignups.docs[0].id, /^V\d{5,}$/);
   await call('/api/admin/volunteers');
   assert.equal((await member.get()).data().volunteer.years[year + 1].tier, '60', 'opening the table cannot replace renewed status with an older pending signup');
 
@@ -148,7 +231,7 @@ try {
   const combined = await call('/api/admin/renewals/send', 'POST', { membershipId: memberId }, `${year + 1}-01-15T09:00:00Z`);
   assert.equal(combined.data.emails, 1);
   assert.match(sent.find((message) => message.record.kind === 'renewal').body, /Keep your 40\+ hour commitment/);
-  console.log('PASS: induction coordinator notification, membership benefits, deactivation, JustGo statuses and renewal links.');
+  console.log('PASS: live volunteering content, version history and restore, fixed layout/form, induction coordinator notification, membership benefits, deactivation, JustGo statuses and renewal links.');
 } finally {
   const lists = await db.collection('lists').where('memberId', '==', memberId).get();
   const links = await db.collection('volunteerRenewals').where('memberId', '==', memberId).get();
@@ -160,6 +243,11 @@ try {
   else await settings.delete();
   if (originalCoordinatorSettings.exists) await coordinatorSettings.set(originalCoordinatorSettings.data());
   else await coordinatorSettings.delete();
+  if (originalPageSettings.exists) await pageSettings.set(originalPageSettings.data());
+  else await pageSettings.delete();
+  await clearVersions();
+  await Promise.all(originalVersions.docs.map((document) => document.ref.set(document.data())));
+  if (originalVersionCounter.exists) await versionCounter.set(originalVersionCounter.data());
   await member.delete();
   await new Promise((resolve) => server.close(resolve));
   await db.terminate();
