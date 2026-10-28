@@ -43,6 +43,7 @@ import { allocateMemberIds } from './src/utils/memberIds.js';
 import { allocateRecordIds, reserveRecordIds } from './src/utils/recordIds.js';
 import { registerEmailCodeRoutes } from './src/server/emailCodes.js';
 import { registerMyDetailsRoutes } from './src/server/myDetails.js';
+import { registerClubNightRoutes } from './src/server/clubNight.js';
 import { volunteerCancellationPhases } from './src/utils/volunteerCancellation.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
 import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
@@ -1240,6 +1241,8 @@ const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sen
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
 registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes });
+registerClubNightRoutes(app, { requireAdmin, db: () => adminDb, emailCodes, requestNow, live: () => isLive(),
+  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
   stopMonthlyItem: async (orderRef, item, admin, reason) => {
     const subscriptions = await orderSubscriptions(adminDb, orderRef);

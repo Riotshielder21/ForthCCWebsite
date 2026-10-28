@@ -186,5 +186,9 @@ listEntry('TEST-VOLUNTEER-MEMBER', { name: 'Test Current', email: 'member@exampl
   inducted: false, discountCode: null, items: ['Which activities would you like to help with?: coaching', 'When are you available?: Thursday evenings'] });
 listEntry('TEST-VOLUNTEER-NONMEMBER', { name: 'Vic Visitor', email: 'vic-visitor@example.test', listType: 'Volunteer Sign-ups', memberId: null,
   inducted: true, discountCode: null, items: ['Which activities would you like to help with?: events', 'When are you available?: weekends'] });
+// Club night on today's London weekday so the Check-ins page (and admin volunteer view) can be tried on any day.
+const londonWeekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  .indexOf(new Date().toLocaleDateString('en-GB', { timeZone: 'Europe/London', weekday: 'long' }));
+batch.set(db.collection('settings').doc('clubNight'), { weekday: londonWeekday, start: '18:30', end: '21:00' });
 await batch.commit();
-console.log('Seeded local demo products, households, members, mixed baskets, course attendees, list submissions and test admin. No production services contacted.');
+console.log('Seeded local demo products, households, members, mixed baskets, course attendees, list submissions, today\'s club night and test admin. No production services contacted.');

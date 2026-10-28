@@ -35,11 +35,13 @@
 2. Switch the full Content-Security-Policy from report-only to enforced (Firebase Hosting and the API) once the browser console shows no violations on every page, including admin sign-in, image upload and Stripe checkout.
 3. HTTPS certificate
 
-## Volunteering
+## Check-ins and My details (follow-ups)
 
-- Choose who tells new volunteers about inductions; the form only records the sign-up.
-- a check-in page that has authorization for all the confirmed volunteers. That's for club night each week. 
-  And each week at club night, people will sign up using the same QR code and that they just put their email address and date of birth in to check in because obviously that would make them a member. And the person who's a volunteer on club night would have access to the check-in page, which is like the admin page. And that means they'll be able to see if they need to purchase boat hire or not, or if they're a member or not, which is simple because they won't be able to check in. And that simplifies that process. CHeck in is email and dob for members, volunteer checks paid for membership and a flag of having been at clubnight befores.
+- **Wishlist:** extend Check-ins beyond club night. When events overlap, offer an event selector showing only sessions the signed-in volunteer or leader is authorised to access. Event leaders can retrieve booked attendee details on the event day until midnight Europe/London; club-night volunteers can see that day's check-ins. Keep the attendee list and event selector mobile-first.
+- Print the `/check-ins` QR code (`/club-night` still works) for the boathouse and set the weekly sessions in **Reports & records → Volunteers → Check-in sessions**.
+- Add Firestore TTL policies on `expiresAt` for `emailCodes` and `emailSessions`; expired ones are already rejected, but the documents stay until removed.
+- Decide retention for `clubNightCheckins`, `clubNightAccessLog` and `selfServiceChanges` with the retention work above (GDPR erasure already removes them per person).
+- When a member changes their contact email in My details, the Stripe customer email is not updated; update it there if monthly-payment emails should follow.
 
 ## Flow test failures (pre-existing)
 
@@ -56,12 +58,6 @@
 
 On an emulator that has run the flow test many times, the report-based scenarios (junior household, JustGo sync and uploads, event tickets, merchandise, reports) also fail: the admin reports return the first 100 records ordered by document id, so this run's records can fall onto a later page. Restart the emulators without imported data before relying on them.
 
-
-Feature WishList
-- An authentication code to virify email address so users can amend membership details, emergency contact, address, phone number email etc.. this is hard.
-- 20+ hour volunteer category gets key access added to record
-- 40+ hour gets boathire added to record and taking out a subscript automatically applies discount no need for a code, same way boathire and keyhire works on events (statistic tracking)
-- 60+ gets boathire and keyhire added and an email to ask them if they want to use their volunteering to come to coached (subscription) (which adds a gold if they click the link?) (tracking statistics) 
 
 ## PRe Flight checks
 - Committee Content Review

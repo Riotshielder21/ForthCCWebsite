@@ -171,8 +171,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
 
             {!person.returning && !person.firstName && emailKnown && (
               <div className="CheckoutSection">
-                <h4 className="CartItemTitle">We already hold a membership under this email</h4>
-                <p className="text_container">If that is you, enter your date of birth and we will show your name so you do not have to type everything again. This may not be you, for example someone else could share this email. If so, just fill in the form below as a new entry.</p>
+                <h4 className="CartItemTitle">We already hold details under this email</h4>
+                <p className="text_container">If that is you (including if you have checked in at club night or booked an event before), enter your date of birth and we will show your name so you do not have to type everything again. This may not be you, for example someone else could share this email. If so, just fill in the form below as a new entry.</p>
                 <label className="FormLabel">Date of birth
                   <input className="FormInput" type="date" value={dobCheck.dob || ''} onChange={(event) => setDobChecks((current) => ({ ...current, [person.id]: { dob: event.target.value, names: [], checked: false } }))} />
                 </label>

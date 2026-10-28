@@ -16,6 +16,7 @@ import MembershipPage from './pages/MembershipPage';
 import BeginnersPage from './pages/BeginnersPage';
 import DisciplinesPage from './pages/DisciplinesPage';
 import VolunteeringPage from './pages/VolunteeringPage';
+import ClubNightPage from './pages/ClubNightPage';
 import MyDetailsPage from './pages/MyDetailsPage';
 import AboutPage from './pages/AboutPage';
 import ContactUsPage from './pages/ContactUsPage';
@@ -55,6 +56,7 @@ export default function App() {
     if (window.location.pathname === '/admin/reports') return 'admin-reports';
     if (window.location.pathname === '/admin') return 'admin';
     if (window.location.pathname === '/volunteering') return 'volunteering';
+    if (['/check-ins', '/club-night'].includes(window.location.pathname)) return 'club-night';
     if (window.location.pathname === '/my-details') return 'my-details';
     if (window.location.pathname.startsWith('/order/')) return 'order-lookup';
     if (window.location.pathname === '/payment-success') return 'payment-success';
@@ -403,6 +405,8 @@ export default function App() {
         return <DisciplinesPage />;
       case 'volunteering':
         return <VolunteeringPage products={products} />;
+      case 'club-night':
+        return <ClubNightPage />;
       case 'my-details':
         return <MyDetailsPage />;
       case 'about':
@@ -441,6 +445,18 @@ export default function App() {
             <a href="https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC050275" target="_blank" rel="noreferrer" className="FooterLink">Charity Register</a>
             <button onClick={() => setCurrentPage('contact-us')} className="FooterLink">Contact</button>
             <button className="FooterLink">Safeguarding</button>
+            <a href="/my-details" onClick={(event) => {
+              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              setCurrentPage('my-details');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }} className="FooterLink">My details</a>
+            <a href="/check-ins" onClick={(event) => {
+              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              setCurrentPage('club-night');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }} className="FooterLink">Check-ins</a>
             <a href="/admin" onClick={(event) => {
               if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
               event.preventDefault();

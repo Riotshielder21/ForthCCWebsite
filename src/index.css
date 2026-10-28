@@ -1324,6 +1324,29 @@
   .ReportsSearch input { width: 100%; }
   .ReportsExports { border-top: 1px solid #e0e7ec; }
   .ReportNotice { color: #52636d; font-size: 13px; line-height: 1.6; margin: 8px 0 16px; }
+  .CheckinsPage { width: 100%; max-width: 760px; min-width: 0; }
+  .CheckinsTabs, .CheckinsActions { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+  .CheckinsTabs > button { flex: 1 1 120px; justify-content: center; }
+  .CheckinsTabs > button[aria-pressed="true"], .CheckinsSessions > button[aria-pressed="true"] { background: #032346; color: #fff; }
+  .CheckinsSessions { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; border: 0; min-width: 0; }
+  .CheckinsSessions > button { width: 100%; justify-content: space-between; gap: 12px; text-align: left; }
+  .CheckinsSessionTime { font-weight: 400; white-space: nowrap; }
+  .CheckinsPage .FormContainer { width: 100%; max-width: none; min-width: 0; }
+  .CheckinsPage .FormInput { width: 100%; min-width: 0; font-size: 16px; }
+  .CheckinsPage button, .CheckinsContact a { min-height: 48px; }
+  .CheckinsPage .FormSubmitButton { width: 100%; height: auto; white-space: normal; }
+  .CheckinsPage .EditorCommand { white-space: normal; }
+  .CheckinsPage .FormLabel, .CheckinsIdentity, .CheckinsContact { overflow-wrap: anywhere; }
+  .CheckinsList { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; margin: 16px 0; }
+  .CheckinsCard { min-width: 0; padding: 16px; border: 1px solid #ccd5dc; border-radius: 12px; background: #fff; }
+  .CheckinsName { font-size: 18px; font-weight: 800; overflow-wrap: anywhere; }
+  .CheckinsFacts { display: grid; gap: 12px; margin: 16px 0; }
+  .CheckinsFacts > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 12px; }
+  .CheckinsFacts dt { color: #52657b; }
+  .CheckinsFacts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .CheckinsContactButton { width: 100%; justify-content: center; }
+  .CheckinsAdminSignIn { width: 100%; justify-content: center; margin-top: 0.75rem; }
+  .CheckinsContact a { display: inline-flex; align-items: center; text-decoration: underline; }
   .ReportsTableWrap { overflow-x: auto; width: 100%; border-top: 1px solid #ccd5dc; }
   .ReportsTable { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
   .ReportsTable th { padding: 12px; background: #edf4f7; font-size: 12px; }
