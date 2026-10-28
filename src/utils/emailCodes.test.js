@@ -70,5 +70,5 @@ test('all code purposes send equivalent plain-text and HTML alternatives without
 test('code email HTML escapes interpolated text', () => {
   const email = codeEmail('<script>&"\'', 'details');
   assert.ok(email.html.includes('&lt;script&gt;&amp;&quot;&#39;'));
-  assert.doesNotMatch(email.html, /<script>/);
+  assert.doesNotMatch(email.html, /<script>/i);
 });
