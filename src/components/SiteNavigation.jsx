@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { ShoppingCart, Menu, X, UserRound } from 'lucide-react';
-import fccLogoMark from '../assets/fcc-logo-mark.svg';
+import fccCrest from '../assets/fcc-crest.png';
 
 const NAV_ITEMS = [
-  { id: 'home', label: 'HOME' },
+  { id: 'home', label: 'Home' },
   { id: 'membership', label: 'Membership & Events' },
   { id: 'beginners', label: 'Beginners' },
   { id: 'disciplines', label: 'Disciplines' },
@@ -25,9 +25,7 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
     <nav className="SiteHeader">
       <div className="SiteHeaderInner">
         <button className="BrandLockup" onClick={() => handleNav('home')} aria-label="Go to home page">
-          <div className="BrandMarkWrap">
-            <img src={fccLogoMark} alt="FCC" className="BrandMark" />
-          </div>
+          <img src={fccCrest} alt="Forth Canoe Club crest" className="BrandMark" />
           <div>
             <h1 className="BrandTitle">Forth Canoe<br />Club SCIO</h1>
           </div>

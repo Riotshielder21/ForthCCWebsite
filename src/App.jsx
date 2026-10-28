@@ -31,6 +31,7 @@ import { apiUrl } from './utils/api';
 import { PRODUCTS } from './constants/products';
 import { PAGE_CONTENT } from './constants/pageContent';
 import './index.css';
+import fccCrest from './assets/fcc-crest.png';
 import { applyVolunteerBenefits } from './utils/volunteering';
 
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -435,10 +436,13 @@ export default function App() {
 
       <footer className="FooterBar">
         <div className="FooterInner">
-          <div>
+          <div className="FooterBrand">
+            <img src={fccCrest} alt="" className="FooterCrest" />
+            <div>
             <p className="FooterCopyright">© {new Date().getFullYear()} Forth Canoe Club. All Rights Reserved.</p>
             <p className="FooterMeta">Forth Canoe Club is a Registered Scottish Charity (SC050275)</p>
             <p className="FooterMeta SpaceT1">Harrison Park, Polwarth, Edinburgh EH11 1ED</p>
+            </div>
           </div>
           <div className="FooterLinks">
             <a href="https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC050275" target="_blank" rel="noreferrer" className="FooterLink">Charity Register</a>

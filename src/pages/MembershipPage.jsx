@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ShoppingCart, Plus, Minus, ExternalLink, ChevronDown, Pencil } from 'lucide-react';
 import { DISCOUNTS, CATEGORIES } from '../constants/products';
 import { usePageContent, usePageEditor } from '../utils/PageContentContext';
@@ -7,6 +7,23 @@ import { isTripEvent } from '../utils/tripDiscount';
 import { bookingsClosed, formatDate } from '../utils/eventRoster';
 import { productLimits } from '../utils/inventory';
 import { scopeLabel, voucherScope } from '../utils/vouchers';
+import fccBurgee from '../assets/fcc-burgee.png';
+
+// Matches .shop_catalogue_grid: one column, two from md (768px), three from lg (1024px).
+function useGridColumns() {
+  const read = () => (typeof window === 'undefined' || !window.matchMedia ? 3
+    : window.matchMedia('(min-width: 1024px)').matches ? 3
+      : window.matchMedia('(min-width: 768px)').matches ? 2 : 1);
+  const [columns, setColumns] = useState(read);
+  useEffect(() => {
+    if (!window.matchMedia) return undefined;
+    const queries = ['(min-width: 768px)', '(min-width: 1024px)'].map((query) => window.matchMedia(query));
+    const update = () => setColumns(read());
+    queries.forEach((query) => query.addEventListener('change', update));
+    return () => queries.forEach((query) => query.removeEventListener('change', update));
+  }, []);
+  return columns;
+}
 
 export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, onNavigate }) {
   const copy = usePageContent('membership');
@@ -14,6 +31,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
   const [selectedTier, setSelectedTier] = useState('adult');
   const [tierDropdownOpen, setTierDropdownOpen] = useState(false);
   const [sizeChoice, setSizeChoice] = useState({});
+  const columns = useGridColumns();
 
   const membershipTiers = products.filter((product) => product.category === 'MEMBERSHIP' && product.membershipTier);
   const nonMembershipProducts = products.filter((product) => product.category !== 'MEMBERSHIP' || !product.membershipTier);
@@ -47,6 +65,16 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
   const displayProducts = nonMembershipProducts.filter(
     (p) => (activeCategory === 'ALL' || p.category === activeCategory) && !availability[p.id]?.soldOut
   );
+  // A card without a picture gets a placeholder only when another card in its grid row has one, so that row lines up.
+  const showMembershipTile = Boolean(selectedMembership) && (activeCategory === 'ALL' || activeCategory === 'MEMBERSHIP');
+  const tileImages = [...(showMembershipTile ? [false] : []), ...displayProducts.map((product) => Boolean(product.imageUrl))];
+  const rowHasImage = (index) => {
+    const start = index - (index % columns);
+    return tileImages.slice(start, start + columns).some(Boolean);
+  };
+  const productImage = (product, index) => product?.imageUrl
+    ? <img className="shop_product_image" src={product.imageUrl} alt="" />
+    : rowHasImage(index) && <div className="shop_product_image shop_product_image_placeholder" aria-hidden="true"><img src={fccBurgee} alt="" /></div>;
 
   return (
     <div className="PageFadeIn">
@@ -78,8 +106,9 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
       <div className="SectionBottom">
         <div className="shop_catalogue_grid">
           {/* Membership tier card */}
-          {selectedMembership && (activeCategory === 'ALL' || activeCategory === 'MEMBERSHIP') && (
+          {showMembershipTile && (
             <div className="shop_product_tile">
+              {productImage(null, 0)}
               <div className="shop_product_header">
                 <span className="tile_eyebrow">{copy.memberEyebrow}</span>
                 <h3 className="product_heading_bold">{copy.memberTitle}</h3>
@@ -141,7 +170,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
           )}
 
           {/* All other products */}
-          {displayProducts.map((product) => {
+          {displayProducts.map((product, productIndex) => {
             const merchandise = product.category === 'MERCHANDISE';
             const remaining = availability[product.id]?.remaining;
             const sizes = merchandise ? Object.keys(productLimits(product) || {}) : [];
@@ -151,7 +180,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
             const closed = product.category === 'EVENTS' && bookingsClosed(product);
             return (
             <div key={product.id} className="shop_product_tile">
-              {product.imageUrl && <img className="shop_product_image" src={product.imageUrl} alt="" />}
+              {productImage(product, productIndex + (showMembershipTile ? 1 : 0))}
               {product.hasAnnualDiscount && (
                 <div className="shop_product_badge">
                   Save {(DISCOUNTS.ANNUAL * 100).toFixed(0)}% Annually

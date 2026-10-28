@@ -58,10 +58,6 @@
     @apply flex shrink-0 items-center gap-2 sm:gap-3 cursor-pointer text-left;
   }
 
-  .BrandMarkWrap {
-    @apply shrink-0 bg-white p-1 rounded-lg;
-  }
-
   .BrandTitle {
     @apply text-base sm:text-lg leading-tight uppercase whitespace-nowrap;
     font-family: var(--fcc-font-display);
@@ -232,6 +228,18 @@
 
   .shop_product_image {
     @apply w-full aspect-[16/9] object-cover rounded-xl mb-6;
+  }
+
+  .shop_product_image_placeholder {
+    @apply flex items-center justify-center;
+    background: var(--fcc-color-surface-subtle, #f8fafc);
+  }
+
+  .shop_product_image_placeholder img {
+    width: 45%;
+    max-height: 60%;
+    object-fit: contain;
+    opacity: 0.35;
   }
 
   .tile_eyebrow {
@@ -1308,7 +1316,16 @@
 
   /* ─── Brand ─────────────────────────────────────── */
 
-  .BrandMark { @apply w-10 h-10; }
+  .BrandMark { @apply h-11 w-auto shrink-0; }
+
+  .FooterBrand {
+    @apply flex items-start gap-4;
+  }
+
+  .FooterCrest {
+    @apply h-16 w-auto shrink-0;
+    opacity: 0.85;
+  }
 
   /* ─── Mobile Menu ───────────────────────────────── */
 
