@@ -65,6 +65,17 @@ node --check server.js
 git diff --check
 ```
 
+## Google sign-in domain
+
+The domain in Google's "to continue to" prompt comes from Firebase's `authDomain`, not the Workspace `hd` account hint. Use `new.forthcanoeclub.co.uk`: it is served by this project's Firebase Hosting, so `https://new.forthcanoeclub.co.uk/__/auth/handler` already serves Firebase's auth helper (checked 28 October 2026). The bare `forthcanoeclub.co.uk` is hosted elsewhere and returns 404 for that path, so it cannot be used unless it moves to Firebase Hosting or proxies `/__/auth/**`.
+
+1. Confirm `new.forthcanoeclub.co.uk` is in Firebase Authentication's authorised domains.
+2. In Google Cloud's OAuth web client used by Firebase's Google provider, add `https://new.forthcanoeclub.co.uk/__/auth/handler` as an authorised redirect URI. Keep the existing `firebaseapp.com` redirect URI.
+3. Set the GitHub Actions repository **variable** `VITE_FIREBASE_AUTH_DOMAIN` to `new.forthcanoeclub.co.uk`, then rebuild/deploy. The workflow prefers this variable over the existing secret. For local builds, set the same value in your environment; leave emulator configuration unchanged.
+4. Test Google popup sign-in, confirm the prompt says `new.forthcanoeclub.co.uk`, then sign out and back in. Removing the repository variable restores the secret's domain on the next deployment.
+
+Do not switch the build before the handler and OAuth configuration are ready: it would break admin sign-in. See [Firebase's custom redirect domain instructions](https://firebase.google.com/docs/auth/web/google-signin#customizing-the-redirect-domain-for-google-sign-in).
+
 ## Crawlers and scraping
 
 - `public/robots.txt` allows normal search engines on public pages, excludes private/admin routes, and asks named AI and bulk-data crawlers not to crawl any pages. Vite copies it into the build; Firebase Hosting serves it at `/robots.txt`.
