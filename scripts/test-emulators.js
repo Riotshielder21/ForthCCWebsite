@@ -8,7 +8,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword } from 'firebase/auth';
 import { getStorage, connectStorageEmulator, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
-import { importStripeSubscribers, nextClubYearEnd } from '../src/utils/stripeReports.js';
+import { importStripeSubscribers } from '../src/utils/stripeReports.js';
 import { resolveCatalogue } from '../src/utils/catalogue.js';
 import { PRODUCTS } from '../src/constants/products.js';
 
@@ -40,10 +40,10 @@ globalThis.fetch = async (url, options) => {
   }
   if (parsed.pathname === '/v1/subscriptions') return Response.json({ data: [subscription], has_more: false });
   if (parsed.pathname === '/v1/subscriptions/sub_legacy') {
-    if (options?.method === 'POST') {
+    if (options?.method === 'DELETE') {
       const body = new URLSearchParams(options.body);
-      if (body.get('proration_behavior') !== 'none') throw new Error('Unexpected proration');
-      subscription = { ...subscription, cancel_at: Number(body.get('cancel_at')), cancel_at_period_end: false };
+      if (body.get('invoice_now') !== 'false' || body.get('prorate') !== 'false') throw new Error('Unexpected invoicing or proration');
+      subscription = { ...subscription, status: 'canceled', cancel_at_period_end: false };
     }
     return Response.json(subscription);
   }
@@ -111,25 +111,31 @@ try {
   assert.equal(imported.lastCheckedAt, '2026-10-12T00:00:00Z');
   assert.equal((await db.collection('stripeCustomers').get()).size, 1);
   assert.equal((await db.collection('stripeSubscriptions').get()).size, 1);
-  assert.equal((await request('/api/admin/subscribers/sub_legacy/club-year-cancellation', {
+  assert.equal((await request('/api/admin/subscribers/sub_legacy/cancel', {
     method: 'POST', headers, body: JSON.stringify({ mode: 'test', confirmId: 'wrong' })
   })).status, 400);
   const subscribers = await request('/api/admin/reports?kind=subscribers', { headers });
   assert.equal(subscribers.status, 200);
   assert.equal(subscribers.result.records[0].clubCustomerId, firstImport.clubCustomerId);
   assert.equal(subscribers.result.records[0].status, 'Active');
-  const schedule = () => request('/api/admin/subscribers/sub_legacy/club-year-cancellation', {
+  const cancel = (overrides = {}) => request('/api/admin/subscribers/sub_legacy/cancel', {
     method: 'POST', headers, body: JSON.stringify({ mode: 'test', clubCustomerId: firstImport.clubCustomerId,
-      confirmId: 'sub_legacy', acknowledgeBillingChange: true, clubYearEnd: nextClubYearEnd() })
+      confirmId: 'sub_legacy', acknowledgeImmediateCancellation: true, ...overrides })
   });
-  const scheduled = await schedule();
-  assert.equal(scheduled.status, 200);
-  assert.equal(scheduled.result.cancellationAt, nextClubYearEnd());
-  assert.equal(scheduled.result.changed, true);
-  const repeated = await schedule();
+  assert.equal((await cancel({ acknowledgeImmediateCancellation: false })).status, 400);
+  assert.equal((await cancel({ mode: 'live' })).status, 400);
+  assert.equal((await cancel({ clubCustomerId: 'FCC-test-cus_wrong' })).status, 409);
+  const cancelled = await cancel();
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.result.record.stripeStatus, 'canceled');
+  assert.equal(cancelled.result.record.status, 'Inactive');
+  assert.equal(cancelled.result.changed, true);
+  const repeated = await cancel();
   assert.equal(repeated.status, 200);
   assert.equal(repeated.result.changed, false);
-  assert.equal((await db.collection('stripeSubscriptions').doc(firstImport.clubSubscriptionId).get()).data().scheduledCancellationAt, nextClubYearEnd());
+  const cancelledRecord = (await db.collection('stripeSubscriptions').doc(firstImport.clubSubscriptionId).get()).data();
+  assert.equal(cancelledRecord.stripeStatus, 'canceled');
+  assert.ok(cancelledRecord.immediateCancellationConfirmedBy);
   assert.equal((await db.collection('adminSubscriptionAudit').get()).size, 1);
   const members = await request('/api/admin/reports?kind=members', { headers });
   assert.equal(members.result.records.find((record) => record.id === 'test-current').status, 'Active');
@@ -173,7 +179,7 @@ try {
   assert.ok(second.result.records.length > 0);
   assert.equal(second.result.nextCursor, null);
   assert.equal(new Set([...first.result.records, ...second.result.records].map((record) => record.id)).size, first.result.records.length + second.result.records.length);
-  console.log('Emulator smoke checks passed: catalogue preservation, event checkout/schedule snapshots/reports/deletion, subscriber imports, mocked Stripe scheduling/audit, admin access, member expiry, pagination, deletion warnings, receipts, webhook and Storage rules.');
+  console.log('Emulator smoke checks passed: catalogue preservation, event checkout/schedule snapshots/reports/deletion, subscriber imports, mocked Stripe immediate cancellation/audit, admin access, member expiry, pagination, deletion warnings, receipts, webhook and Storage rules.');
 } finally {
   const exited = once(server, 'exit');
   server.kill('SIGTERM');

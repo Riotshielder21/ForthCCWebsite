@@ -26,7 +26,7 @@ import { readJustgoSync } from './src/server/justgoSync.js';
 import { buildRawEmail } from './src/utils/mail.js';
 import { buildReceiptSummary, buildLinkedReceipt, receiptEmailCopy, receiptEmailHtml } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
-import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, scheduleClubYearCancellation, stripeSubscriberReport } from './src/utils/stripeReports.js';
+import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, cancelStripeSubscription, stripeSubscriberReport } from './src/utils/stripeReports.js';
 import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
 import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProblem, withHold, itemLabel, isMerchandise } from './src/utils/inventory.js';
 import { deletionAuditEntry } from './src/utils/privacy.js';
@@ -1155,42 +1155,41 @@ app.post('/api/admin/subscriptions/:id/members/:membershipId/cancel', rateLimit(
 app.post('/api/admin/subscriptions/:id/cancel', rateLimit(20, 60 * 1000),
   cancelRoute((active) => active, 'cancel-subscription', 'Cancelling a subscription failed'));
 
-app.post('/api/admin/subscribers/:id/club-year-cancellation', rateLimit(10, 60 * 1000), async (req, res) => {
+app.post('/api/admin/subscribers/:id/cancel', rateLimit(10, 60 * 1000), async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   res.set('Cache-Control', 'no-store');
   try {
-    const { mode, clubCustomerId, confirmId, clubYearEnd, acknowledgeBillingChange } = req.body;
+    const { mode, clubCustomerId, confirmId, acknowledgeImmediateCancellation } = req.body;
     const id = req.params.id;
     if (!adminDb) return res.status(503).json({ error: 'Subscriber registry is not configured.' });
     if (!/^sub_[a-zA-Z0-9]+$/.test(id) || !['test', 'live'].includes(mode) || typeof clubCustomerId !== 'string'
-      || confirmId !== id || acknowledgeBillingChange !== true || clubYearEnd !== nextClubYearEnd()) {
-      return res.status(400).json({ error: 'Confirm the exact subscription ID, billing change and current club-year end date.' });
+      || confirmId !== id || acknowledgeImmediateCancellation !== true) {
+      return res.status(400).json({ error: 'Confirm the exact subscription ID and approve immediate cancellation.' });
     }
     if (localFirebase && mode === 'live') return res.status(400).json({ error: 'Live billing changes are disabled with local emulators.' });
     const secret = process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY || '';
-    if (!/^(sk|rk)_(test|live)_/.test(secret)) return res.status(503).json({ error: 'Subscription scheduling is not configured. Set STRIPE_SUBSCRIPTION_ADMIN_KEY on the server.' });
+    if (!/^(sk|rk)_(test|live)_/.test(secret)) return res.status(503).json({ error: 'Subscription cancellation is not configured. Set STRIPE_SUBSCRIPTION_ADMIN_KEY on the server.' });
     if ((secret.includes('_live_') ? 'live' : 'test') !== mode) return res.status(400).json({ error: 'Stripe write key and report mode do not match.' });
     const registry = adminDb.collection('stripeSubscriptions').doc(`FCC-${mode}-${id}`);
     const existing = await registry.get();
     if (!existing.exists || existing.data().clubCustomerId !== clubCustomerId) {
-      return res.status(409).json({ error: 'Import and verify this subscriber before scheduling cancellation.' });
+      return res.status(409).json({ error: 'Import and verify this subscriber before cancellation.' });
     }
-    const result = await scheduleClubYearCancellation(stripeReportRequest(secret), id, clubCustomerId, mode);
+    const result = await cancelStripeSubscription(stripeReportRequest(secret), id, clubCustomerId, mode);
     const checkedAt = new Date().toISOString();
     const [record] = await importStripeSubscribers(adminDb, [result.record], mode, checkedAt);
     const batch = adminDb.batch();
-    batch.set(registry, { clubYearCancellationRequestedAt: checkedAt, clubYearCancellationRequestedBy: admin.uid,
-      clubYearEnd: result.clubYearEnd, scheduledCancellationAt: result.cancellationAt }, { merge: true });
-    batch.set(adminDb.collection('adminSubscriptionAudit').doc(`club-year-${mode}-${id}-${result.clubYearEnd.slice(0, 10)}`), {
-      adminUid: admin.uid, stripeSubscriptionId: id, clubCustomerId, mode, cancellationAt: result.cancellationAt,
-      clubYearEnd: result.clubYearEnd, changed: result.changed, checkedAt
+    batch.set(registry, { immediateCancellationConfirmedAt: checkedAt, immediateCancellationConfirmedBy: admin.uid }, { merge: true });
+    batch.set(adminDb.collection('adminSubscriptionAudit').doc(`immediate-${mode}-${id}`), {
+      adminUid: admin.uid, stripeSubscriptionId: id, clubCustomerId, mode, action: 'cancel-immediately',
+      changed: result.changed, checkedAt
     }, { merge: true });
     await batch.commit();
     res.json({ ...result, record, checkedAt });
   } catch (error) {
-    console.error('Club-year cancellation failed:', error.message);
-    res.status(502).json({ error: 'Could not finish confirming and recording club-year cancellation. Check Stripe and refresh the report before retrying; Stripe may already have accepted the change.' });
+    console.error('Immediate subscription cancellation failed:', error.message);
+    res.status(502).json({ error: 'Could not finish confirming and recording immediate cancellation. Check Stripe and refresh the report before retrying; Stripe may already have accepted the change.' });
   }
 });
 
