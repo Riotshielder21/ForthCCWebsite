@@ -27,6 +27,24 @@ export const expandPeopleLines = (people, lines) => {
     lineIds: (person.lineIds || []).flatMap((id) => both.has(id) ? [id, `${id}${NEXT_YEAR_LINE_SUFFIX}`] : [id]) }));
 };
 
+const monthName = (date) => date.toLocaleDateString('en-GB', { month: 'long', timeZone: 'Europe/London' });
+const monthYear = (date) => date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'Europe/London' });
+
+/** "4 payments, Nov 2026 – Feb 2027" or "1 payment, Feb 2027", for the direct debits after checkout. */
+export const debitRange = ({ firstDebit, debits, subscriptionEnd }) => {
+  if (debits === 1) return `1 payment, ${monthYear(firstDebit)}`;
+  const lastDebit = new Date(subscriptionEnd.getTime() - 24 * 60 * 60 * 1000);
+  return `${debits} payments, ${monthYear(firstDebit)} – ${monthYear(lastDebit)}`;
+};
+
+// e.g. "Rest of October now (20% of a month), then £25.00 a month: 4 payments, Nov 2026 – Feb 2027".
+const monthlyLabel = ({ now, share, nextYear, schedule, monthlyRate, nextClubYearStart }) => {
+  const rate = `£${monthlyRate.toFixed(2)} a month`;
+  if (nextYear) return `${rate}: ${debitRange(schedule)}`;
+  const joining = `Rest of ${monthName(now)} now (${Math.round(share * 100)}% of a month)`;
+  return schedule.debits ? `${joining}, then ${rate}: ${debitRange(schedule)}` : `${joining}; ends ${dayLabel(nextClubYearStart)}`;
+};
+
 export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) => {
   const currentYear = clubYearOf(now);
   const nextClubYearStart = clubYearDates(currentYear).end;
@@ -65,11 +83,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
       displayPrice = money(monthly * months * (monthlyBilling ? 1 : annualRate));
       annualSaving = monthlyBilling ? 0 : money(item.basePrice * months - subtotalPrice);
       promoSaving = money(subtotalPrice - displayPrice);
-      const percent = `${Math.round(share * 100)}% of this month`;
-      label = !monthlyBilling ? (nextYear ? yearLabel : `Until ${dayLabel(nextClubYearStart)}`)
-        : nextYear ? `Monthly from ${dayLabel(schedule.firstDebit)}`
-        : schedule.debits ? `${percent} now, then monthly from ${dayLabel(schedule.firstDebit)}`
-        : `${percent} now (ends ${dayLabel(nextClubYearStart)})`;
+      if (!monthlyBilling) label = nextYear ? yearLabel : `Until ${dayLabel(nextClubYearStart)}`;
     } else if (pricingMode === 'prorated') {
       displayPrice = money(item.basePrice * (!nextYear && monthsRemaining <= PRORATED_MONTHS ? 0.6 : 1));
       subtotalPrice = displayPrice;
@@ -87,6 +101,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
       promoSaving += saving;
       monthlyRate = money(monthlyRate * (1 - promo.discountValue));
     }
+    if (monthlyBilling) label = monthlyLabel({ now, share, nextYear, schedule, monthlyRate, nextClubYearStart });
     const recurringMonthlyCost = schedule.debits ? monthlyRate : 0;
     return { ...item, label, subtotalPrice, displayPrice, annualSaving, promoSaving, tripSaving, promoEligible, recurringMonthlyCost, monthlyBilling,
       clubYearInfo, ...(kind ? { clubYear, clubYearPart: nextYear ? 'next' : 'this' } : {}),
@@ -106,7 +121,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
   const debitsByStart = new Map();
   for (const item of items.filter((line) => line.recurringMonthlyCost > 0)) {
     const key = item.firstDebit.getTime();
-    const entry = debitsByStart.get(key) || { firstDebit: item.firstDebit, subscriptionEnd: item.subscriptionEnd, clubYear: item.clubYear, monthly: 0 };
+    const entry = debitsByStart.get(key) || { firstDebit: item.firstDebit, subscriptionEnd: item.subscriptionEnd, debits: item.debits, clubYear: item.clubYear, monthly: 0 };
     entry.monthly = money(entry.monthly + item.recurringMonthlyCost);
     debitsByStart.set(key, entry);
   }

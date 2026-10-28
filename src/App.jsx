@@ -4,7 +4,7 @@ import {
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
-import { calculateCart, expandClubYearLines, expandPeopleLines } from './utils/pricing';
+import { calculateCart, debitRange, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson } from './utils/checkout';
 import CheckoutPage from './pages/CheckoutPage';
@@ -48,7 +48,6 @@ const choiceLabel = (choice) => {
     : choice === 'next' ? `Next club year (${clubYearLabel(year + 1)})`
     : `Both (${clubYearLabel(year)} and ${clubYearLabel(year + 1)})`;
 };
-const dayLabel = (date) => date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/London' });
 
 export default function App() {
   const [initialDraft] = useState(loadDraft);
@@ -610,7 +609,7 @@ export default function App() {
                       </div>
                       {calculations.monthlySchedule.map((debit) => (
                         <div key={debit.firstDebit.getTime()} className="CartSummaryLine">
-                          Then £{debit.monthly.toFixed(2)} a month on the 1st from {dayLabel(debit.firstDebit)} through February ({clubYearLabel(debit.clubYear)})
+                          Then £{debit.monthly.toFixed(2)} a month on the next {debitRange(debit).replace(/^1 payment/, 'payment')} (club year {clubYearLabel(debit.clubYear)})
                         </div>
                       ))}
                     </div>

@@ -1162,7 +1162,7 @@
   }
 
   .FormFieldGrid {
-    @apply grid grid-cols-1 md:grid-cols-2 gap-4;
+    @apply grid grid-cols-1 md:grid-cols-2 gap-4 items-end;
   }
 
   .FormAddButton {
@@ -1524,7 +1524,11 @@
 .CheckoutSection, .CheckoutPerson { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 1rem; background: #fff; }
 .CheckoutPersonHeader, .CheckoutActions { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
 .CheckoutAssign { display: flex; flex-direction: column; gap: 0.35rem; }
-.CheckoutGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.75rem; }
+.CheckoutGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: 0.75rem; align-items: end; }
+.CheckoutGrid > .FormLabel { min-width: 0; }
+.CheckoutGrid .FormInput { min-width: 0; }
+.CheckoutGrid input.FormInput, .CheckoutGrid select.FormInput,
+.FormFieldGrid input.FormInput, .FormFieldGrid select.FormInput { min-height: 3rem; }
 .CheckoutFieldset { border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 0.75rem; padding: 0.75rem; }
 .CheckoutCheck { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.85rem; }
 .CheckoutErrors { margin: 0; padding-left: 1.25rem; }
