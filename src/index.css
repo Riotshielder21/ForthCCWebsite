@@ -1040,7 +1040,15 @@
     white-space: pre-line;
   }
 
-  .AdminPreviewActions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 16px 0; }
+  .AdminPreviewActions { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; max-width: 100%; margin: 16px 0; }
+  .AdminPreviewActions .StatusText { margin: 0; overflow-wrap: anywhere; }
+  .AdminHeaderButtons { display: flex; align-items: center; gap: 12px; max-width: 100%; }
+  .AdminHeaderButtons > button { justify-content: center; }
+  .AdminHeaderButtons .AdminSignOut { flex-shrink: 0; white-space: nowrap; }
+  .AdminHeaderButtons svg { flex-shrink: 0; }
+  @media (min-width: 768px) {
+    .AdminPreviewActions { align-items: flex-end; }
+  }
   .PageEditorToolbar {
     position: sticky; top: 0; z-index: 40; display: flex; flex-wrap: wrap;
     align-items: center; gap: 8px; padding: 12px 24px; background: #fff;
@@ -1358,7 +1366,9 @@
   .ReportsRowActions { display: flex; gap: 6px; }
   .DiscountCodesTable td, .DiscountCodesTable th { padding: 10px 8px; vertical-align: middle; }
   .DiscountCodesTable tbody tr { border-top: 1px solid rgb(15 23 42 / 0.1); }
-  .DiscountCodeActions { display: flex; gap: 6px; flex-wrap: nowrap; }
+  .DiscountCodeActions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: nowrap; }
+  /* Keeps Edit/Disable visible on the right while the wide table scrolls sideways on small screens. */
+  .DiscountCodesTable .DiscountCodeActionCell { position: sticky; right: 0; background: #fff; box-shadow: -10px 0 10px -10px rgb(15 23 42 / 0.35); width: 1%; white-space: nowrap; text-align: right; }
   .VolunteerConfigBar { margin-bottom: 24px; padding: 16px; border: 2px dashed #38bdf8; border-radius: 12px; background: #f0f9ff; }
   .VolunteerConfigBarHeader { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .VolunteerConfigBarHeader .FormLabel { display: inline-flex; align-items: center; gap: 6px; margin: 0 8px 0 0; }
