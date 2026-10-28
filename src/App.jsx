@@ -16,6 +16,7 @@ import MembershipPage from './pages/MembershipPage';
 import BeginnersPage from './pages/BeginnersPage';
 import DisciplinesPage from './pages/DisciplinesPage';
 import VolunteeringPage from './pages/VolunteeringPage';
+import MyDetailsPage from './pages/MyDetailsPage';
 import AboutPage from './pages/AboutPage';
 import ContactUsPage from './pages/ContactUsPage';
 import AccessProjectPage from './pages/AccessProjectPage';
@@ -54,6 +55,7 @@ export default function App() {
     if (window.location.pathname === '/admin/reports') return 'admin-reports';
     if (window.location.pathname === '/admin') return 'admin';
     if (window.location.pathname === '/volunteering') return 'volunteering';
+    if (window.location.pathname === '/my-details') return 'my-details';
     if (window.location.pathname.startsWith('/order/')) return 'order-lookup';
     if (window.location.pathname === '/payment-success') return 'payment-success';
     const previewPage = window.location.pathname.startsWith('/_preview/')
@@ -401,6 +403,8 @@ export default function App() {
         return <DisciplinesPage />;
       case 'volunteering':
         return <VolunteeringPage products={products} />;
+      case 'my-details':
+        return <MyDetailsPage />;
       case 'about':
         return <AboutPage />;
       case 'contact-us':

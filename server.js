@@ -41,6 +41,8 @@ import { registerVolunteerRoutes } from './src/server/volunteers.js';
 import { applyVolunteerBenefits, volunteerPrivileges } from './src/utils/volunteering.js';
 import { allocateMemberIds } from './src/utils/memberIds.js';
 import { allocateRecordIds, reserveRecordIds } from './src/utils/recordIds.js';
+import { registerEmailCodeRoutes } from './src/server/emailCodes.js';
+import { registerMyDetailsRoutes } from './src/server/myDetails.js';
 import { volunteerCancellationPhases } from './src/utils/volunteerCancellation.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
 import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
@@ -156,6 +158,7 @@ app.use(cors({
   origin: (origin, callback) => callback(null, isAllowedOrigin(origin, corsOrigins, { allowLocalhost: allowLocalhostOrigins })),
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Email-Session', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
   maxAge: 600
 }));
 app.use(express.static('dist'));
@@ -1235,6 +1238,8 @@ const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sen
   toMembershipRecord, stripeSubscriptionIsActive, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
+const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
+registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes });
 registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
   stopMonthlyItem: async (orderRef, item, admin, reason) => {
     const subscriptions = await orderSubscriptions(adminDb, orderRef);
