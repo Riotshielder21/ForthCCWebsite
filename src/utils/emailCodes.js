@@ -54,8 +54,14 @@ export const checkCode = (record, code, now) => {
 export const codeEmail = (code, purpose) => {
   const reason = purpose === 'volunteer' ? 'sign in to club-night check-in'
     : purpose === 'email-change' ? 'confirm this new contact email address' : 'view or update your Forth Canoe Club details';
+  const intro = `Your code to ${reason} is ${code}.`;
+  const expiry = 'It expires in 10 minutes. If you did not ask for it, you can ignore this email.';
+  const htmlIntro = intro.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
   return {
     subject: `Your Forth Canoe Club code: ${code}`,
-    body: `Your code to ${reason} is ${code}.\n\nIt expires in 10 minutes. If you did not ask for it, you can ignore this email.`
+    body: `${intro}\n\n${expiry}`,
+    html: `<!doctype html><html lang="en"><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;color:#002147"><p>${htmlIntro}</p><p>${expiry}</p></body></html>`
   };
 };
