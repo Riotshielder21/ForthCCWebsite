@@ -2174,9 +2174,19 @@ app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => 
   }
 });
 
-// Health check endpoint (for monitoring)
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+// Health check for the uptime alert: only healthy when Firestore can be read, so a broken database or credentials also alert.
+app.get('/health', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!adminDb) return res.status(503).json({ status: 'unavailable', error: 'Database not configured.' });
+  let timer;
+  try {
+    await Promise.race([adminDb.collection('settings').doc('health').get(),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Firestore read timed out.')), 5000); })]);
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('Health check failed:', error.message);
+    res.status(503).json({ status: 'unavailable', error: 'Database unavailable.' });
+  } finally { clearTimeout(timer); }
 });
 
 // Serve index.html for all routes (SPA routing)

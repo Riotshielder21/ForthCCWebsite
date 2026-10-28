@@ -312,6 +312,18 @@ Before switching to live:
   - `audit-lookup-secret` → `AUDIT_LOOKUP_SECRET`: a long random value (`openssl rand -hex 32`). Never change it without migrating existing audit lookups.
   - `stripe-subscription-admin-key` → `STRIPE_SUBSCRIPTION_ADMIN_KEY`: a Stripe restricted key (same mode as the report key) with subscription read/write and customer, invoice, payment-intent and charge read access.
 
+## API Outage Alerts
+
+`GET /health` returns 200 only when the API is running **and** can read Firestore (5-second limit); otherwise 503. Every deploy (including the daily run) runs `scripts/setup-api-monitoring.mjs`, which creates or updates in Google Cloud Monitoring: the uptime check **FCC API health** (the Cloud Run URL's `/health`, every 5 minutes from several regions), one email channel per address, and the alert policy **FCC API outage** (fires when more than one region fails; a resolved email follows when it passes again). Re-running is safe: nothing is duplicated, a new API URL replaces the check, and addresses removed from the workflow stop being alerted.
+
+- **Who is emailed:** `API_ALERT_EMAILS` at the top of `.github/workflows/firebase-hosting.yml` (comma separated). Change it and push to `main` (or run the workflow manually).
+- **One-off setup:** enable the Cloud Monitoring API for `fccwebsite-23cfc` and give the deploy service account (`FIREBASE_SERVICE_ACCOUNT`) the **Monitoring Editor** role:
+  `gcloud services enable monitoring.googleapis.com --project fccwebsite-23cfc` and
+  `gcloud projects add-iam-policy-binding fccwebsite-23cfc --member serviceAccount:<deploy-account-email> --role roles/monitoring.editor`.
+  Until then the **Configure API outage email alert** step fails with an annotation (the site itself is already deployed by then).
+- **When an alert arrives:** Cloud Run → `fcc-website-api` → Logs for the error. If a recent deploy caused it, Cloud Run → Revisions → route 100% of traffic to the previous working revision, then fix and redeploy. Otherwise check Secret Manager secrets, project billing and status.cloud.google.com. Members only see the problem; no saved data is lost.
+- **Not covered:** a single visitor blocked by their network or the rate limit, or a browser blocked by CORS because a new site address is missing from `PUBLIC_SITE_URLS` (the API is healthy in those cases).
+
 ## Basic Debugging
 
 - Orders fail: start the API and Firestore, not only Vite. Check `curl --fail http://localhost:3002/health`.

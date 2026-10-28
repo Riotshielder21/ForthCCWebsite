@@ -14,6 +14,10 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  # Who is emailed when the API fails its /health check (comma separated). Applied on every deploy.
+  API_ALERT_EMAILS: Riotshielder21@gmail.com
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -96,4 +100,11 @@ jobs:
       - name: Deploy Firebase services
         run: npx firebase-tools deploy --project fccwebsite-23cfc --only hosting,firestore:rules,storage
         env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.google-auth.outputs.credentials_file_path }}
+
+      - name: Configure API outage email alert
+        run: node scripts/setup-api-monitoring.mjs
+        env:
+          API_URL: ${{ steps.deploy-api.outputs.url }}
+          GOOGLE_CLOUD_PROJECT: fccwebsite-23cfc
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.google-auth.outputs.credentials_file_path }}
