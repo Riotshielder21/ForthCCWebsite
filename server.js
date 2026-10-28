@@ -143,6 +143,9 @@ app.use((req, res, next) => {
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()'
   });
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  if (/^\/(?:admin|api|order|my-details|check-ins|club-night|payment-success|_preview)(?:\/|$)/.test(req.path)) {
+    res.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+  }
   if (req.path.startsWith('/api/')) {
     res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
   } else {
@@ -158,10 +161,13 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: (origin, callback) => callback(null, isAllowedOrigin(origin, corsOrigins, { allowLocalhost: allowLocalhostOrigins })),
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Email-Session', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
   maxAge: 600
 }));
+// Cloud Run is the API origin; public page crawling belongs on Firebase Hosting.
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send('User-agent: *\nDisallow: /\n');
+});
 app.use(express.static('dist'));
 // Everything after static files (API and the SPA fallback) shares one per-visitor ceiling; routes add tighter limits.
 app.use(baselineRateLimit);

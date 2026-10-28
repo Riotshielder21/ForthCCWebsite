@@ -65,6 +65,14 @@ node --check server.js
 git diff --check
 ```
 
+## Crawlers and scraping
+
+- `public/robots.txt` allows normal search engines on public pages, excludes private/admin routes, and asks named AI and bulk-data crawlers not to crawl any pages. Vite copies it into the build; Firebase Hosting serves it at `/robots.txt`.
+- Firebase Hosting sends `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet` on private/admin routes. The API sends the same header on `/api` responses and serves its own disallow-all `/robots.txt` for the Cloud Run hostname.
+- These are voluntary instructions, not protection for personal data. Blocked URLs can still appear in search results without snippets; crawlers must fetch a page to see its `noindex` header. Keep authentication, private receipt links and database rules in place.
+- Existing API rate limits reduce repeated requests per IP, but are per server instance and do not protect Firebase's static pages. Enforced bot filtering/challenges need an edge service (for example Cloudflare); Cloud Armor needs a supported load balancer and restricted direct-origin access. Do not blanket-challenge API routes or Stripe webhooks. User-agent blocking alone is easily spoofed.
+- After deployment, check `/robots.txt` on both the public site and the API hostname, and check `X-Robots-Tag` on `/my-details`, `/admin/reports`, `/order/example` and an API response. Public `/` must not have `noindex`.
+
 ## Household Data Migration
 
 Member contact details are stored once in `households`; membership documents keep a `householdId` and personal membership/safety information. A family shares one household. For a junior, the parent or guardian is the household contact and no separate emergency contact is saved; adult-led households keep the external emergency contact there.
