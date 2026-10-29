@@ -15,7 +15,7 @@
   "startIntro": "Here are a few useful details:",
   "start1": "marks our clubhouse on Edinburgh's Union Canal, where many of our activities take place.",
   "start1Link": "This map",
-  "start1Url": "https://maps.app.goo.gl/forthcanoeclub",
+  "start1Url": "https://maps.app.goo.gl/sXk7kWQrv8EbgwY37",
   "start2Before": "Our",
   "start2Link": "contact details are here",
   "start2After": ".",
@@ -44,7 +44,7 @@
   "quick2Action": "Membership",
   "quick3Eyebrow": "Get Involved",
   "quick3Title": "Volunteer",
-  "quick3Body": "Our club runs on volunteers. Help with coaching, events, maintenance or administration and earn discount codes for your membership.",
+  "quick3Body": "Our club runs on volunteers. Help with coaching, events, maintenance or administration and receive benefits on your membership profile after induction.",
   "quick3Action": "Volunteering",
   "supportersEyebrow": "Thank You",
   "supportersTitle": "Massive Thank You to All Our Access Project & Club Supporters",
@@ -53,18 +53,6 @@
   "locationTitle": "Harrison Park, Polwarth",
   "locationBody": "Edinburgh EH11 1ED — On the Union Canal, just west of the city centre.",
   "tileLayout": [
-    {
-      "id": "welcome",
-      "group": "intro",
-      "type": "existing",
-      "width": "standard"
-    },
-    {
-      "id": "start",
-      "group": "intro",
-      "type": "existing",
-      "width": "standard"
-    },
     {
       "id": "mission",
       "group": "mission",
@@ -93,6 +81,18 @@
     {
       "id": "location",
       "group": "location",
+      "type": "existing"
+    },
+    {
+      "id": "welcome",
+      "group": "intro",
+      "type": "existing",
+      "appearance": "grey",
+      "width": "standard"
+    },
+    {
+      "id": "start",
+      "group": "intro",
       "type": "existing"
     }
   ],
