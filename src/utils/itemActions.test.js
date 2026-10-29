@@ -14,6 +14,11 @@ test('item actions require a bounded reason, a stable operation ID and integer m
   }
   assert.equal(minorUnits(12.34), 1234);
   assert.equal(orderLineId({}, 2), 'legacy-2');
+  assert.equal(validateItemAction({ ...body, purpose: 'volunteer-adjustment' }).value.purpose, 'volunteer-adjustment');
+  assert.equal(validateItemAction(body).value.purpose, undefined);
+  for (const change of [{ purpose: 'other' }, { purpose: 'volunteer-adjustment', revoke: true }, { purpose: 'volunteer-adjustment', action: 'revoke' }]) {
+    assert.ok(validateItemAction({ ...body, ...change }).error);
+  }
 });
 
 test('refund availability respects line allocation, external refunds and pending refunds', () => {

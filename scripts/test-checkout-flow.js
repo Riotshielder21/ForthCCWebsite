@@ -1159,6 +1159,42 @@ await test('a non-member volunteer activated first gets their benefits when a me
   assert.equal((await db.collection('testMail').where('signupId', '==', signupId).get()).size, 1);
 });
 
+await test('activating a volunteer lowers existing monthly payments and offers pro-rata refunds for items paid in full', async () => {
+  const address = email('volunteer-subscriber');
+  const details = adultDetails({ firstName: 'Vic', lastName: 'Subscriber', email: address });
+  const orderRef = await buy(address, build(['membership-adult', 'blue-sub', 'keyhire'], [details]), { billingMode: 'monthly' });
+  await call('POST', '/api/lists', { body: { name: 'Vic Subscriber', email: address, category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
+  const signupId = (await db.collection('lists').where('email', '==', address).get()).docs[0].id;
+  const before = (await call('GET', `/api/admin/volunteers/${signupId}/adjustments`, { headers: admin })).json;
+  assert.deepEqual([before.monthly, before.annual], [[], []], 'nothing changes before activation');
+  assert.equal((await call('GET', `/api/admin/volunteers/${signupId}/adjustments`)).status, 401);
+
+  const activated = await call('PATCH', `/api/admin/volunteers/${signupId}`, { headers: admin, body: { active: true, tier: '20' } });
+  assert.equal(activated.json.outcome, 'benefits-added', activated.text);
+  const [subscription] = (await db.collection('subscriptions').where('orderRefs', 'array-contains', orderRef).get()).docs.map((document) => document.data());
+  const blue = subscription?.items.find((item) => item.productId === 'blue-sub');
+  const result = (await call('GET', `/api/admin/volunteers/${signupId}/adjustments`, { headers: admin })).json;
+  if (!result.monthsLeft) {
+    assert.deepEqual(result.annual, [], 'no refund is offered in the last month');
+    return;
+  }
+  if (blue) {
+    assert.equal(blue.monthlyAmount, 20, 'Blue drops from £25 to £20 from the next debit');
+    assert.equal(blue.volunteerAdjustment.from, 25);
+    assert.deepEqual(result.monthly.map((entry) => [entry.name, entry.adjustedFrom, entry.monthlyAmount, entry.pending]), [[blue.name, 25, 20, null]]);
+    const member = (await db.collection('memberships').doc(blue.membershipIds[0]).get()).data();
+    assert.equal(member.subscriptionItems.find((item) => item.productId === 'blue-sub').monthlyAmount, 20);
+  }
+  const key = result.annual.find((entry) => entry.orderRef === orderRef);
+  assert.equal(key.adjusted, false);
+  assert.equal(key.amount, Math.round(5000 * result.monthsLeft / 12), 'Boathouse Access: £50 ÷ 12 × months left');
+  assert.equal(key.paymentIntent, `pi_${orderRef}`);
+  const retried = await call('POST', `/api/admin/volunteers/${signupId}/adjust-monthly`, { headers: admin });
+  assert.equal(retried.status, 200, retried.text);
+  assert.equal((await db.collection('subscriptions').where('orderRefs', 'array-contains', orderRef).get()).docs[0]?.data().items
+    .find((item) => item.productId === 'blue-sub')?.monthlyAmount ?? 20, 20, 'repeating changes nothing');
+});
+
 await test('admins save the three boathouse codes privately; only a changed code bumps their version', async () => {
   assert.equal((await call('GET', '/api/admin/boathouse-code')).status, 401);
   const access = { gateCode: `G${run}`, alarmCode: `A${run}`, lockboxCode: `L${run}`, gateNote: 'Front gate', alarmNote: '', lockboxNote: 'Key box' };
@@ -1267,7 +1303,7 @@ await test('an active volunteer gets the boathouse code when checked in, or when
   assert.equal(awaiting.boathouseCode, 'not-active');
   await buy(joinerEmail, build(['membership-adult'], [adultDetails({ firstName: 'Jo', lastName: 'Joiner', email: joinerEmail })]));
   assert.equal((await codeMail(joinerSignup)).length, 1, 'joining sends the boathouse code to a checked-in active volunteer');
-  assert.match((await db.collection('lists').doc(joinerSignup).get()).data().discountCode || '', /^VOL-/);
+  assert.equal((await db.collection('lists').doc(joinerSignup).get()).data().discountCode, null, 'volunteers get automatic prices, not codes');
 });
 
 await test('admins record PVG and safeguarding expiry dates on a volunteer member and see their status', async () => {

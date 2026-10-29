@@ -136,6 +136,19 @@ globalThis.fetch = async (url, options) => {
     owner.items.data.push(item);
     return remember(item);
   }
+  if (parsed.pathname.startsWith('/v1/subscription_items/') && method === 'POST') {
+    const id = parsed.pathname.split('/').at(-1);
+    const params = new URLSearchParams(options.body);
+    const item = [...subscriptions.values()].flatMap((subscription) => subscription.items.data).find((entry) => entry.id === id);
+    if (!item) return fail('No such subscription item.', 404);
+    // Volunteer prices apply from the next debit: the same product, monthly, with no proration.
+    if (params.get('proration_behavior') !== 'none' || params.get('price_data[product]') !== item.price.product
+      || params.get('price_data[recurring][interval]') !== 'month' || !(Number(params.get('price_data[unit_amount]')) > 0)) {
+      return fail('A price change keeps the product and monthly interval, without prorations.');
+    }
+    item.price = { ...item.price, unit_amount: Number(params.get('price_data[unit_amount]')) };
+    return remember(item);
+  }
   if (parsed.pathname.startsWith('/v1/subscription_items/') && method === 'DELETE') {
     const id = parsed.pathname.split('/').at(-1);
     const owner = [...subscriptions.values()].find((subscription) => subscription.items.data.some((item) => item.id === id));

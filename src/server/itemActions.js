@@ -203,6 +203,9 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       const wantsRevoke = value.action === 'revoke' || value.revoke;
       if (!loaded.order.itemActionPending) {
         if (wantsRevoke && loaded.item.revokedAt) throw fail(409, 'This item is already revoked. A refund without another revocation is still available.');
+        if (value.purpose && (loaded.item.refunds || []).some((refund) => refund.purpose === value.purpose && !['failed', 'canceled'].includes(refund.status))) {
+          throw fail(409, 'The volunteer adjustment for this item has already been refunded.');
+        }
         if (value.action === 'refund') {
           const payments = await paymentsFor({ ...loaded, order: { ...loaded.order, id: reference.id } });
           const payment = payments.find((payment) => payment.paymentIntent === value.paymentIntent);
@@ -288,7 +291,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
         let items = wantsRevoke ? await revokeEntitlements(transaction, reference, current, index, by, value.reason, at) : current.items;
         items = items.map((item, itemIndex) => index !== itemIndex || !refund ? item : { ...item,
           refunds: [...(item.refunds || []), { id: refund.id, status: refund.status, amount: value.amount,
-            paymentIntent: value.paymentIntent, by, reason: value.reason, at }] });
+            paymentIntent: value.paymentIntent, by, reason: value.reason, at, ...(value.purpose ? { purpose: value.purpose } : {}) }] });
         transaction.update(reference, { items, itemActionPending: null });
         transaction.update(operation, { status: 'complete', completedAt: at, ...(refund ? { refundId: refund.id, refundStatus: refund.status } : {}) });
       });

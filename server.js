@@ -45,6 +45,7 @@ import { registerEmailCodeRoutes } from './src/server/emailCodes.js';
 import { registerMyDetailsRoutes } from './src/server/myDetails.js';
 import { registerClubNightRoutes } from './src/server/clubNight.js';
 import { volunteerCancellationPhases } from './src/utils/volunteerCancellation.js';
+import { monthlyAdjustment, volunteerPriceFor } from './src/utils/volunteerAdjustments.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
 import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
 import { registerEventRosterRoutes } from './src/server/eventRosters.js';
@@ -77,46 +78,126 @@ const isValidEmail = (value) => {
   return labels.length > 1 && labels.every((label) => label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
 };
 
+const failWith = (status, message) => Object.assign(new Error(message), { status });
+
+/** The volunteer price for a monthly item's holders, from the catalogue price, or null without a shared benefit. */
+const monthlyVolunteerPrice = async (item, tiers, catalogue, now = new Date()) => {
+  const product = catalogue.find((entry) => entry.id === item.productId);
+  if (!product || !item.membershipIds?.length) return null;
+  const members = new Map((await adminDb.getAll(...item.membershipIds.map((id) => adminDb.collection('memberships').doc(id))))
+    .filter((member) => member.exists).map((member) => [member.id, member.data()]));
+  return volunteerPriceFor({ productId: item.productId, basePrice: Number(product.basePrice), membershipIds: item.membershipIds,
+    clubYear: item.clubYear, members, tiers, now });
+};
+
+/** Removes a monthly item that is now a free volunteer benefit at the end of its paid period, keeping the other items. */
+const scheduleVolunteerRemoval = async (reference, lineId, actor) => {
+  const document = await reference.get();
+  const item = document.data()?.items?.find((entry) => entry.lineId === lineId && entry.status === 'active');
+  if (!item || !item.membershipIds?.length) throw failWith(404, 'Active monthly item not found.');
+  if (item.cancelScheduledAt) throw failWith(409, 'Cancellation is already scheduled for this item.');
+  if (![clubYearOf(), clubYearOf() + 1].includes(item.clubYear)) throw failWith(409, 'Only current or next-club-year benefits can be scheduled here.');
+  const people = item.membershipIds.map((id) => ({ membershipId: id, lineIds: [item.lineId] }));
+  const members = new Map((await adminDb.getAll(...item.membershipIds.map((id) => adminDb.collection('memberships').doc(id))))
+    .filter((member) => member.exists).map((member) => [member.id, member.data()]));
+  const priced = applyVolunteerBenefits([{ id: item.productId, lineId: item.lineId, basePrice: item.monthlyAmount,
+    clubYearPart: item.clubYear > clubYearOf() ? 'next' : 'this' }], people, members, await loadVolunteerBenefits());
+  if (!priced[0].volunteerBenefit || priced[0].basePrice !== 0) throw failWith(409, 'Every holder must have this item as a free volunteer benefit for its club year.');
+  const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
+  if (subscription.schedule) throw failWith(409, 'Stripe already has a schedule for this subscription. Manage that schedule in Stripe to preserve its other changes.');
+  // Validate before creating a Stripe schedule, which replaces the subscription's cancel_at.
+  volunteerCancellationPhases(subscription, { current_phase: { start_date: subscription.current_period_start || subscription.items?.data?.[0]?.current_period_start } }, item.stripeItemId);
+  const schedule = await stripeRequest('subscription_schedules', [['from_subscription', document.id]], 'POST',
+    { idempotencyKey: `volunteer-cancel-${crypto.randomUUID()}` });
+  const { params, endsAt } = volunteerCancellationPhases(subscription, schedule, item.stripeItemId);
+  try {
+    await stripeRequest(`subscription_schedules/${encodeURIComponent(schedule.id)}`, params, 'POST');
+  } catch (error) {
+    await stripeRequest(`subscription_schedules/${encodeURIComponent(schedule.id)}/release`, [['preserve_cancel_date', 'true']], 'POST');
+    await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, [['cancel_at', String(subscription.cancel_at)], ['proration_behavior', 'none']], 'POST');
+    throw error;
+  }
+  const cancelScheduledAt = Timestamp.fromMillis(endsAt * 1000);
+  await reference.update({ items: document.data().items.map((entry) => entry.lineId === item.lineId
+    ? { ...entry, cancelScheduledAt, cancellationScheduleId: schedule.id } : entry) });
+  await adminDb.collection('adminSubscriptionAudit').add({ action: 'schedule-volunteer-benefit-cancellation',
+    adminUid: actor.uid, stripeSubscriptionId: document.id, lineIds: [item.lineId], checkedAt: Timestamp.now(), cancelScheduledAt });
+  return cancelScheduledAt;
+};
+
+/** Charges a monthly item at the volunteer price from its next debit, without prorating the current period. */
+const repriceVolunteerItem = async (reference, lineId, to, actor) => {
+  const document = await reference.get();
+  const record = document.data();
+  const item = record?.items?.find((entry) => entry.lineId === lineId && entry.status === 'active');
+  if (!item?.stripeItemId) throw failWith(404, 'Active monthly item not found in Stripe.');
+  const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
+  // A schedule would restore the old price at its next phase, so leave those to staff.
+  if (subscription.schedule) throw failWith(409, 'Stripe has a schedule for this subscription. Change the price in Stripe.');
+  const stripeItem = (subscription.items?.data || []).find((entry) => entry.id === item.stripeItemId);
+  if (!stripeItem) throw failWith(409, 'The item is no longer on the Stripe subscription.');
+  await stripeRequest(`subscription_items/${encodeURIComponent(item.stripeItemId)}`, [['proration_behavior', 'none'],
+    ...monthlyPriceParams('', { monthlyAmount: to }, stripeId(stripeItem.price?.product))], 'POST',
+  { idempotencyKey: `volunteer-price-${item.stripeItemId}-${Math.round(to * 100)}` });
+  const at = Timestamp.now();
+  const adjustment = { from: item.monthlyAmount, to, at };
+  await reference.update({ items: record.items.map((entry) => entry.lineId === lineId && (entry.orderRef || record.orderRef) === (item.orderRef || record.orderRef)
+    ? { ...entry, monthlyAmount: to, volunteerAdjustment: adjustment } : entry), updatedAt: at });
+  const members = await adminDb.getAll(...item.membershipIds.map((id) => adminDb.collection('memberships').doc(id)));
+  for (const member of members.filter((entry) => entry.exists)) {
+    await member.ref.update({ subscriptionItems: (member.data().subscriptionItems || []).map((entry) => entry.subscriptionId === document.id
+      && entry.lineId === lineId && entry.status === 'active' ? { ...entry, monthlyAmount: to } : entry) });
+  }
+  await adminDb.collection('adminSubscriptionAudit').add({ action: 'volunteer-price-change', adminUid: actor.uid,
+    stripeSubscriptionId: document.id, lineIds: [lineId], from: item.monthlyAmount, to, checkedAt: at });
+};
+
+/**
+ * Applies a volunteer's benefit to monthly payments they already have: lower prices from the next debit, and free
+ * items removed at the end of the paid period. Safe to repeat; each item reports what happened.
+ */
+const adjustVolunteerSubscriptions = async (membershipId, now = new Date()) => {
+  if (!adminDb || !membershipId) return [];
+  const snapshot = await adminDb.collection('subscriptions').where('membershipIds', 'array-contains', membershipId).limit(20).get();
+  if (snapshot.empty) return [];
+  const [tiers, catalogue] = await Promise.all([loadVolunteerBenefits(),
+    resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id })))]);
+  const results = [];
+  for (const document of snapshot.docs.filter((entry) => entry.data().status === 'active')) {
+    const items = (document.data().items || []).filter((item) => item.membershipIds?.includes(membershipId));
+    // Price changes first: a removal creates a Stripe schedule, after which prices must be changed in Stripe.
+    const plans = [];
+    for (const item of items) {
+      const plan = monthlyAdjustment({ item, volunteerPrice: await monthlyVolunteerPrice(item, tiers, catalogue, now), now });
+      if (plan) plans.push({ item, plan });
+    }
+    plans.sort((a, b) => (a.plan.action === 'remove') - (b.plan.action === 'remove'));
+    for (const { item, plan } of plans) {
+      const result = { subscriptionId: document.id, lineId: item.lineId, name: item.name, ...plan };
+      try {
+        if (plan.action === 'remove') result.endsAt = (await scheduleVolunteerRemoval(document.ref, item.lineId, { uid: 'volunteer-benefits' })).toDate().toISOString();
+        else await repriceVolunteerItem(document.ref, item.lineId, plan.to, { uid: 'volunteer-benefits' });
+        results.push({ ...result, status: 'done' });
+      } catch (error) {
+        console.error('Could not adjust volunteer monthly payment %s/%s: %s', document.id, item.lineId, error.message);
+        results.push({ ...result, status: 'failed', error: error.message.slice(0, 300) });
+      }
+    }
+  }
+  return results;
+};
+
 const scheduleVolunteerCancellation = async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
     if (!adminDb) return res.status(503).json({ error: 'Subscription storage is not configured.' });
     const reference = adminDb.collection('subscriptions').doc(req.params.id);
-    const document = await reference.get();
-    const item = document.data()?.items?.find((entry) => entry.lineId === req.params.lineId && entry.status === 'active');
-    if (!item || !item.membershipIds?.length) return res.status(404).json({ error: 'Active monthly item not found.' });
-    if (item.cancelScheduledAt) return res.status(409).json({ error: 'Cancellation is already scheduled for this item.' });
-    if (![clubYearOf(), clubYearOf() + 1].includes(item.clubYear)) return res.status(409).json({ error: 'Only current or next-club-year benefits can be scheduled here.' });
-    const members = new Map((await adminDb.getAll(...item.membershipIds.map((id) => adminDb.collection('memberships').doc(id))))
-      .filter((member) => member.exists).map((member) => [member.id, member.data()]));
-    const people = item.membershipIds.map((id) => ({ membershipId: id, lineIds: [item.lineId] }));
-    const priced = applyVolunteerBenefits([{ id: item.productId, lineId: item.lineId, basePrice: item.monthlyAmount,
-      clubYearPart: item.clubYear > clubYearOf() ? 'next' : 'this' }], people, members, await loadVolunteerBenefits());
-    if (!priced[0].volunteerBenefit || priced[0].basePrice !== 0) return res.status(409).json({ error: 'Every holder must have this item as a free volunteer benefit for its club year.' });
-    const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
-    if (subscription.schedule) return res.status(409).json({ error: 'Stripe already has a schedule for this subscription. Manage that schedule in Stripe to preserve its other changes.' });
-    // Validate before creating a Stripe schedule, which replaces the subscription's cancel_at.
-    volunteerCancellationPhases(subscription, { current_phase: { start_date: subscription.current_period_start || subscription.items?.data?.[0]?.current_period_start } }, item.stripeItemId);
-    const schedule = await stripeRequest('subscription_schedules', [['from_subscription', document.id]], 'POST',
-      { idempotencyKey: `volunteer-cancel-${crypto.randomUUID()}` });
-    const { params, endsAt } = volunteerCancellationPhases(subscription, schedule, item.stripeItemId);
-    try {
-      await stripeRequest(`subscription_schedules/${encodeURIComponent(schedule.id)}`, params, 'POST');
-    } catch (error) {
-      await stripeRequest(`subscription_schedules/${encodeURIComponent(schedule.id)}/release`, [['preserve_cancel_date', 'true']], 'POST');
-      await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, [['cancel_at', String(subscription.cancel_at)], ['proration_behavior', 'none']], 'POST');
-      throw error;
-    }
-    const cancelScheduledAt = Timestamp.fromMillis(endsAt * 1000);
-    await reference.update({ items: document.data().items.map((entry) => entry.lineId === item.lineId
-      ? { ...entry, cancelScheduledAt, cancellationScheduleId: schedule.id } : entry) });
-    await adminDb.collection('adminSubscriptionAudit').add({ action: 'schedule-volunteer-benefit-cancellation',
-      adminUid: admin.uid, stripeSubscriptionId: document.id, lineIds: [item.lineId], checkedAt: Timestamp.now(), cancelScheduledAt });
+    const cancelScheduledAt = await scheduleVolunteerRemoval(reference, req.params.lineId, admin);
     res.json({ subscription: subscriptionView(await reference.get()), cancelScheduledAt: cancelScheduledAt.toDate().toISOString() });
   } catch (error) {
     console.error('Could not schedule volunteer benefit cancellation:', error.message);
-    res.status(502).json({ error: `Could not schedule cancellation: ${error.message}` });
+    res.status(error.status || 502).json({ error: error.status ? error.message : `Could not schedule cancellation: ${error.message}` });
   }
 };
 
@@ -160,7 +241,7 @@ app.use((req, res, next) => {
 });
 app.use(cors({
   origin: (origin, callback) => callback(null, isAllowedOrigin(origin, corsOrigins, { allowLocalhost: allowLocalhostOrigins })),
-  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Email-Session', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
   maxAge: 600
 }));
@@ -1242,6 +1323,7 @@ registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join
 const { settleKeyAccess, notifyKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message) });
 const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, stripeSubscriptionIsActive, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
+  adjustVolunteerSubscriptions: (membershipId) => adjustVolunteerSubscriptions(membershipId),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
