@@ -6,6 +6,7 @@ import { registerEmailCodeRoutes } from '../src/server/emailCodes.js';
 import { registerMyDetailsRoutes } from '../src/server/myDetails.js';
 import { registerClubNightRoutes } from '../src/server/clubNight.js';
 import { registerGdprRoutes } from '../src/server/gdpr.js';
+import { registerEventRosterRoutes } from '../src/server/eventRosters.js';
 import crypto from 'node:crypto';
 import { clubYearOf, clubYearDates } from '../src/utils/clubYear.js';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
@@ -15,7 +16,7 @@ import { allocateRecordIds } from '../src/utils/recordIds.js';
 const PROJECT = 'demo-fcc-club-night-tests';
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: PROJECT });
 const db = getFirestore(initializeApp({ projectId: PROJECT }, 'club-night-tests'));
-const COLLECTIONS = ['households', 'memberships', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'auditLog', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals', 'membershipTerms'];
+const COLLECTIONS = ['households', 'memberships', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'auditLog', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals', 'membershipTerms', 'selfAssessmentLog', 'eventRosterAccess', 'eventRosterAccessLog', 'eventRosters'];
 const clear = async () => {
   for (const name of COLLECTIONS) {
     const snapshot = await db.collection(name).get();
@@ -36,8 +37,9 @@ const requestNow = (req) => req.headers['x-test-now'] ? new Date(req.headers['x-
 const emailCodes = registerEmailCodeRoutes(app, { db: () => db, sendEmail });
 const eventProducts = [];
 registerMyDetailsRoutes(app, { db: () => db, sendEmail, emailCodes });
-registerClubNightRoutes(app, { requireAdmin, db: () => db, emailCodes, requestNow,
-  loadCatalogue: async () => [{ id: 'gold-sub', name: 'Gold subscription', category: 'SUBSCRIPTIONS' }, { id: 'boat-hire', name: 'Boat hire', category: 'ADDONS' }, ...eventProducts] });
+const loadCatalogue = async () => [{ id: 'gold-sub', name: 'Gold subscription', category: 'SUBSCRIPTIONS' }, { id: 'boat-hire', name: 'Boat hire', category: 'ADDONS' }, ...eventProducts];
+const { canViewEventRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => db, sendEmail, loadCatalogue, emailCodes, requestNow });
+registerClubNightRoutes(app, { requireAdmin, db: () => db, emailCodes, requestNow, loadCatalogue, canViewEventRosters });
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY = 'rk_test_club_night_fixture';
 registerGdprRoutes(app, { requireAdmin, db: () => db, localFirebase: true, normalizeEmail, isValidEmail: (value) => /^[^@\s]+@[^@\s]+$/.test(value),
@@ -62,11 +64,11 @@ const lastCode = (to) => {
   const message = sent.filter((candidate) => candidate.to === to && candidate.record.kind === 'email-code').at(-1);
   return message && /(\d{6})/.exec(message.subject)[1];
 };
-const signIn = async (email, purpose, dob) => {
+const signIn = async (email, purpose, dob, at) => {
   const before = sent.length;
-  assert.equal((await call('/api/email-codes', { method: 'POST', body: { email, purpose, dob } })).status, 200);
+  assert.equal((await call('/api/email-codes', { method: 'POST', body: { email, purpose, dob }, at })).status, 200);
   assert.equal(sent.length, before + 1, `${purpose} code emailed to ${email}`);
-  const verified = await call('/api/email-codes/verify', { method: 'POST', body: { email, purpose, dob, code: lastCode(email) } });
+  const verified = await call('/api/email-codes/verify', { method: 'POST', body: { email, purpose, dob, code: lastCode(email) }, at });
   assert.equal(verified.status, 200);
   return verified.data.token;
 };
@@ -98,8 +100,6 @@ try {
   assert.equal((await call('/api/admin/club-night', { method: 'PUT', admin: true, body: { sessions: [{ name: 'Club night', weekday: 1, start: '21:00', end: '18:00' }] } })).status, 400);
   const weekday = clubNight.getUTCDay();
   const clubNightOnly = { sessions: [{ name: 'Club night', weekday, start: '18:00', end: '21:00', boatHire: true }] };
-  assert.equal((await call('/api/admin/club-night', { method: 'PUT', admin: true, body: { sessions: [{ ...clubNightOnly.sessions[0], subscriptions: ['boat-hire'] }] } })).status, 400,
-    'only shop subscriptions can be checked');
   assert.equal((await call('/api/admin/club-night', { method: 'PUT', admin: true, body: clubNightOnly })).status, 200);
   assert.equal((await call('/api/club-night', { at: tonight })).data.open, true);
   assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: member, at: `${year}-03-12T00:00:00Z` })).status, 200, 'public check-in opens at midnight before the session');
@@ -162,6 +162,9 @@ try {
   assert.deepEqual([casey.membershipActive, casey.hasBoatHire, casey.previouslyAttended], [true, true, false]);
   const gale = list.data.checkins.find((entry) => entry.name === 'Gale Guest');
   assert.deepEqual([gale.membershipActive, gale.memberStatus, gale.needsBoatHire], [false, 'No', false]);
+  assert.equal(gale.nonMemberVisits.label, '1 of 3 this club year', 'non-members see their visits this club year');
+  assert.equal(casey.nonMemberVisits, undefined, 'members have no visit count');
+  assert.equal(casey.selfAssessment, undefined, 'self-assessment is only shown on sessions that use it');
   assert.equal(JSON.stringify(list.data).includes('Robin'), false, 'emergency contacts are not in the list');
   assert.equal((await call('/api/club-night/checkins', { at: afterHours, session: volunteerSession })).status, 200, 'volunteers retain access after the session');
   assert.equal((await call('/api/club-night/checkins', { at: `${year}-03-12T00:00:00Z`, session: volunteerSession })).status, 200, 'volunteers have access before the session');
@@ -206,15 +209,15 @@ try {
   const week2 = await call('/api/club-night/checkins', { at: nextWeek, session: volunteerSession });
   assert.equal(week2.data.checkins.length, 2);
   assert.ok(week2.data.checkins.every((entry) => entry.previouslyAttended));
+  assert.equal(week2.data.checkins.find((entry) => entry.name === 'Gale Guest').nonMemberVisits.label, '2 of 3 this club year');
   assert.equal((await db.collection('memberships').where('searchName', '==', 'gale guest').get()).size, 1, 'no duplicate guest record');
   assert.equal((await call('/api/my-details', { session: volunteerSession })).status, 401, 'sessions are purpose-bound');
 
   // Several sessions on one day, each with its own checks
   const week3 = new Date(clubNight.getTime() + 14 * 86400000).toISOString();
-  const twoSessions = { sessions: [...clubNightOnly.sessions, { name: 'Gold sub session', weekday, start: '19:00', end: '20:00', subscriptions: ['gold-sub'] }] };
+  const twoSessions = { sessions: [...clubNightOnly.sessions, { name: 'Gold sub session', weekday, start: '19:00', end: '20:00', subscriptions: true, selfAssessment: true }] };
   const savedSessions = await call('/api/admin/club-night', { method: 'PUT', admin: true, body: twoSessions });
-  assert.deepEqual(savedSessions.data.sessions[1].subscriptions, [{ id: 'gold-sub', name: 'Gold subscription' }], 'subscription names come from the shop');
-  assert.deepEqual((await call('/api/admin/club-night', { admin: true })).data.subscriptionProducts, [{ id: 'gold-sub', name: 'Gold subscription' }]);
+  assert.deepEqual([savedSessions.data.sessions[1].subscriptions, savedSessions.data.sessions[1].selfAssessment], [true, true]);
   assert.deepEqual((await call('/api/club-night', { at: week3 })).data.sessions.map((entry) => entry.id), ['club-night', 'gold-sub-session']);
   assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: member, at: week3 })).status, 400, 'attendees choose a session when there are several');
   const noSub = await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: 'gold-sub-session' }, at: week3 });
@@ -223,10 +226,34 @@ try {
   const withSub = await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: 'gold-sub-session' }, at: week3 });
   assert.match(withSub.data.message, /Enjoy Gold sub session/);
   const goldList = await call('/api/club-night/checkins?sessionId=gold-sub-session', { at: week3, session: volunteerSession });
-  assert.deepEqual(goldList.data.session, { id: 'gold-sub-session', name: 'Gold sub session', boatHire: false, subscriptions: ['Gold subscription'] });
+  assert.deepEqual(goldList.data.session, { id: 'gold-sub-session', name: 'Gold sub session', boatHire: false, subscriptions: true, selfAssessment: true });
   assert.deepEqual(goldList.data.checkins.map((entry) => [entry.name, entry.subscription, entry.memberStatus]), [['Casey Member', 'Gold subscription', 'Active']]);
   const firstList = await call('/api/club-night/checkins', { at: week3, session: volunteerSession });
   assert.deepEqual([firstList.data.session.id, firstList.data.checkins.length, firstList.data.sessions.length], ['club-night', 0, 2], 'sessions keep separate lists');
+
+  // Self-assessment: ticked by a volunteer, kept on the person, unticked only with a note
+  const caseyGold = goldList.data.checkins[0];
+  assert.deepEqual(caseyGold.selfAssessment, { passed: false, updatedAt: 0, note: '' });
+  const assess = (id, body, options = {}) => call(`/api/club-night/checkins/${id}/self-assessment`, { method: 'POST', at: week3, session: volunteerSession, body, ...options });
+  assert.equal((await assess(caseyGold.id, { passed: true }, { session: null })).status, 401);
+  assert.equal((await assess(caseyGold.id, { passed: 'yes' })).status, 400);
+  assert.equal((await assess(caseyGold.id, { passed: true })).status, 200);
+  assert.equal((await db.collection('memberships').doc('M0001').get()).data().selfAssessment.passed, true);
+  assert.equal((await assess(caseyGold.id, { passed: false })).status, 400, 'unticking needs a note');
+  const unticked = await assess(caseyGold.id, { passed: false, note: 'Needs a capsize refresher' }, { admin: true, session: null });
+  assert.deepEqual([unticked.status, unticked.data.selfAssessment.passed, unticked.data.selfAssessment.note], [200, false, 'Needs a capsize refresher']);
+  assert.equal((await assess(caseyGold.id, { passed: true })).status, 200);
+  const assessmentLog = (await db.collection('selfAssessmentLog').orderBy('at').get()).docs.map((document) => document.data());
+  assert.deepEqual(assessmentLog.map((entry) => [entry.memberId, entry.passed, entry.updatedBy]),
+    [['M0001', true, volunteer], ['M0001', false, 'admin@forthcanoeclub.co.uk'], ['M0001', true, volunteer]]);
+  assert.equal((await assess(caseyGold.id, { passed: true }, { at: nextWeek })).status, 404, 'only today\'s check-ins');
+  const nextGold = new Date(clubNight.getTime() + 21 * 86400000).toISOString();
+  await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: 'gold-sub-session' }, at: nextGold });
+  assert.equal((await call('/api/club-night/checkins?sessionId=gold-sub-session', { at: nextGold, admin: true })).data.checkins[0].selfAssessment.passed, true,
+    'the tick carries forward to later sessions');
+  await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: 'club-night' }, at: nextGold });
+  const caseyClubNight = (await call('/api/club-night/checkins?sessionId=club-night', { at: nextGold, admin: true })).data.checkins[0];
+  assert.equal((await assess(caseyClubNight.id, { passed: true }, { at: nextGold })).status, 400, 'sessions without the checklist cannot change it');
   assert.equal((await call('/api/admin/club-night', { method: 'PUT', admin: true, body: clubNightOnly })).status, 200);
 
   const recurringSessions = { sessions: [{ name: 'Course practice', recurrence: {
@@ -240,27 +267,48 @@ try {
   assert.equal((await call('/api/club-night', { at: `${year}-03-27T12:00:00Z` })).data.open, false, 'recurrence stops after the inclusive end date');
   assert.equal((await call('/api/admin/club-night', { method: 'PUT', admin: true, body: clubNightOnly })).status, 200);
 
-  // Catalogue courses appear on each actual session date, not just their start date.
-  eventProducts.push({ id: 'P00001', name: 'Six-week course', category: 'EVENTS', capacity: 0, closeDate: `${year}-03-11`,
-    eventSchedule: { mode: 'weekly', startDate: `${year}-03-12`, weeks: 6, startTime: '15:00', endTime: '17:00', timeZone: 'Europe/London' } });
-  const courseId = 'event_P00001';
-  assert.deepEqual((await call('/api/club-night', { at: week3 })).data.sessions.map((entry) => entry.id), [courseId, 'club-night']);
-  assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: member, at: week3 })).status, 400, 'choose between club night and the course');
-  for (const [at, before] of [[week3, false], [new Date(clubNight.getTime() + 35 * 86400000).toISOString(), true]]) {
-    assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: courseId }, at })).status, 200);
-    const attendees = await call(`/api/club-night/checkins?sessionId=${courseId}`, { at, admin: true });
-    assert.equal(attendees.status, 200);
-    assert.deepEqual(attendees.data.checkins.map((entry) => [entry.name, entry.previouslyAttended]), [['Casey Member', before]]);
-    assert.equal((await call('/api/club-night/checkins?sessionId=club-night', { at, admin: true })).data.checkins.length, 0,
-      'course attendance does not mix with club night');
+  // Purchased events are not check-in sessions; leaders and named viewers see their attendee lists instead
+  const leader = 'leader@example.test';
+  const helper = 'helper@example.test';
+  eventProducts.push({ id: 'P00001', name: 'Taster day', category: 'EVENTS', active: true, membershipRequired: false, leaderEmail: leader,
+    eventSchedule: { mode: 'consecutive', startDate: `${year}-03-27`, days: 2, startTime: '10:00', endTime: '16:00', timeZone: 'Europe/London' } });
+  assert.equal((await call('/api/club-night', { at: `${year}-03-27T12:00:00Z` })).data.open, false, 'events do not open check-in');
+  await db.collection('orders').doc('FCC-TASTER').set({ schemaVersion: 2, email: guest.email, status: 'paid', totalPence: 2000,
+    items: [{ id: 'P00001', lineId: 'taster', name: 'Taster day', category: 'EVENTS', pricePence: 2000 }],
+    people: [{ membershipId: guestRecord.id, householdId: guestRecord.data().householdId, lineIds: ['taster'] }], membershipIds: [guestRecord.id],
+    createdAt: Timestamp.fromDate(new Date(`${year}-03-13T12:00Z`)) });
+  const beforeEvent = `${year}-03-20T12:00:00Z`;
+  const lastDay = `${year}-03-28T12:00:00Z`;
+  const afterEvent = `${year}-03-29T12:00:00Z`;
+  const unauthorised = sent.length;
+  assert.equal((await call('/api/email-codes', { method: 'POST', body: { email: helper, purpose: 'volunteer' }, at: beforeEvent })).status, 200);
+  assert.equal(sent.length, unauthorised, 'no code before an admin names them');
+  assert.equal((await call('/api/admin/events/P00001/roster-viewers', { method: 'PUT', admin: true, body: { viewers: ['bad'] } })).status, 400);
+  assert.equal((await call('/api/admin/events/P00001/roster-viewers', { method: 'PUT', body: { viewers: [helper] } })).status, 401);
+  assert.deepEqual((await call('/api/admin/events/P00001/roster-viewers', { method: 'PUT', admin: true, body: { viewers: [' Helper@Example.test '] } })).data.viewers, [helper]);
+  assert.deepEqual((await call('/api/admin/events/P00001/roster-viewers', { admin: true })).data.viewers, [helper]);
+  const leaderSession = await signIn(leader, 'volunteer', undefined, beforeEvent);
+  const helperSession = await signIn(helper, 'volunteer', undefined, beforeEvent);
+  assert.equal((await call('/api/club-night/checkins', { at: nextGold, session: leaderSession })).status, 403, 'event leaders do not see club-night check-ins');
+  assert.equal((await call('/api/event-rosters', { at: beforeEvent })).status, 401);
+  for (const session of [leaderSession, helperSession]) {
+    assert.deepEqual((await call('/api/event-rosters', { at: beforeEvent, session })).data.events.map((entry) => entry.id), ['P00001']);
+    const roster = await call('/api/event-rosters/P00001', { at: lastDay, session });
+    assert.equal(roster.status, 200);
+    assert.deepEqual(roster.data.attendees.map((row) => [row.name, row.membership, row.nonMemberVisits, row.emergencyContact]),
+      [['Gale Guest', 'No', '3 of 3 this club year', 'Sky Guest, Sibling, 0700 000004']], 'two check-ins plus the event');
+    assert.equal(roster.data.attendees[0].firstClubNight, false, 'Gale has checked in at club night before');
+    assert.equal(JSON.stringify(roster.data).includes(guest.email), false, 'the on-screen list leaves out contact details');
+    assert.deepEqual((await call('/api/event-rosters', { at: afterEvent, session })).data.events, [], 'closed after the last day');
+    assert.equal((await call('/api/event-rosters/P00001', { at: afterEvent, session })).status, 404);
   }
-  const betweenSessions = new Date(clubNight.getTime() + 15 * 86400000).toISOString();
-  const afterCourse = new Date(clubNight.getTime() + 42 * 86400000).toISOString();
-  for (const at of [betweenSessions, afterCourse]) {
-    assert.equal((await call('/api/club-night', { at })).data.sessions.some((entry) => entry.id === courseId), false);
-    assert.ok((await call(`/api/club-night/checkins?sessionId=${courseId}`, { at, admin: true })).status >= 400);
-    assert.ok((await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: courseId }, at })).status >= 400);
-  }
+  assert.equal((await call('/api/event-rosters/P00001', { at: beforeEvent, session: volunteerSession })).status, 404, 'other volunteers cannot see it');
+  assert.equal((await call('/api/event-rosters/P00001', { at: afterEvent, admin: true })).status, 200, 'admins can view at any time');
+  const views = (await db.collection('eventRosterAccessLog').get()).docs.map((document) => document.data());
+  assert.deepEqual([...new Set(views.map((entry) => entry.email))].sort(), ['admin@forthcanoeclub.co.uk', helper, leader]);
+  assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: { ...guest, sessionId: 'club-night' }, at: nextGold })).status, 200);
+  const overLimit = (await call('/api/club-night/checkins?sessionId=club-night', { at: nextGold, admin: true })).data.checkins.find((entry) => entry.name === 'Gale Guest');
+  assert.deepEqual(overLimit.nonMemberVisits, { count: 4, overLimit: true, label: '4 of 3 this club year – membership needed' }, 'volunteers are warned, check-in is not blocked');
   eventProducts.length = 0;
 
   // My details
@@ -318,13 +366,14 @@ try {
   const memberErased = await call('/api/admin/gdpr/erase', { method: 'POST', admin: true, body: { ...member, email: newEmail, scope: 'person', confirm: 'ERASE', reason: 'Member asked to be forgotten' } });
   assert.equal(memberErased.status, 200, JSON.stringify(memberErased.data));
   assert.equal((await db.collection('clubNightAccessLog').where('memberId', '==', memberId).get()).size, 0, 'emergency-contact access log erased');
+  assert.equal((await db.collection('selfAssessmentLog').where('memberId', '==', memberId).get()).size, 0, 'self-assessment log erased');
   assert.equal((await db.collection('selfServiceChanges').where('householdId', '==', 'HH-MEMBER').get()).size, 0, 'self-service log erased');
 
   const reservations = await Promise.all(Array.from({ length: 4 }, () => allocateRecordIds(db, 'households', 3)));
   const ids = reservations.flat();
   assert.equal(new Set(ids).size, 12, 'concurrent reservations never reuse household IDs');
   assert.ok(ids.every((id) => /^H\d{5,}$/.test(id)));
-  console.log('PASS: club-night full-day access and midnight cut-off, six-week course sessions and separate attendance, member and guest check-in, contact-only guest records, volunteer email codes, today-only attendance, audited emergency contacts, purpose-bound sessions, self-service details and current receipts with confirmed email change, GDPR erasure and concurrent short household IDs.');
+  console.log('PASS: club-night full-day access and midnight cut-off, event attendee lists for leaders and named viewers, non-member visit counts, self-assessment ticks, member and guest check-in, contact-only guest records, volunteer email codes, today-only attendance, audited emergency contacts, purpose-bound sessions, self-service details and current receipts with confirmed email change, GDPR erasure and concurrent short household IDs.');
 } finally {
   await clear();
   await new Promise((resolve) => server.close(resolve));

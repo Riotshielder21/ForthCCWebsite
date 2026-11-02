@@ -1,6 +1,5 @@
 import { londonMidnight } from './clubYear.js';
 import { sanitizePerson, personDetailErrors, ageOn, normaliseName } from './checkout.js';
-import { eventSessions, eventScheduleLabel } from './catalogue.js';
 
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -21,7 +20,6 @@ export const validateClubNight = (body) => {
 export const CLUB_NIGHT_ID = 'club-night';
 export const MAX_CHECKIN_SESSIONS = 12;
 const SESSION_ID = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
-const PRODUCT_ID = /^[A-Za-z0-9_-]{1,80}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const sessionSlug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
 const validDate = (value) => DATE.test(value || '') && Number.isFinite(Date.parse(`${value}T00:00:00Z`))
@@ -37,8 +35,8 @@ const checkinRecursOn = (recurrence, date) => {
 };
 
 /**
- * A named check-in session. `boatHire` shows whether attendees hold boat hire; `subscriptions` lists the
- * subscription products ({ id, name }) any one of which an attendee needs, so volunteers can see who holds one.
+ * A named check-in session. `boatHire` shows whether attendees hold boat hire, `subscriptions` whether they hold any shop
+ * subscription, and `selfAssessment` whether they have passed the self-assessment checklist (safe to go by themselves).
  */
 export const validateCheckinSession = (body) => {
   const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 60) : '';
@@ -60,16 +58,11 @@ export const validateCheckinSession = (body) => {
     if (times.error) return { error: `${name}: ${times.error.replace('the club-night weekday', 'a weekday').replace('Club night', 'The session')}` };
     schedule = times.value;
   }
-  const subscriptions = [];
-  for (const entry of Array.isArray(body.subscriptions) ? body.subscriptions : []) {
-    const productId = typeof entry === 'string' ? entry : entry?.id;
-    if (!PRODUCT_ID.test(productId || '') || subscriptions.some((existing) => existing.id === productId)) continue;
-    const productName = typeof entry?.name === 'string' ? entry.name.trim().slice(0, 80) : '';
-    subscriptions.push({ id: productId, name: productName || productId });
-  }
+  // Sessions saved before the single toggle listed specific subscription products; any listed product turns it on.
+  const subscriptions = body.subscriptions === true || (Array.isArray(body.subscriptions) && body.subscriptions.length > 0);
   return { value: { id, name, ...schedule,
     ...(body.recurrence === undefined ? { weekday: schedule.weekday } : {}),
-    boatHire: body.boatHire === true, subscriptions: subscriptions.slice(0, 10) } };
+    boatHire: body.boatHire === true, subscriptions, selfAssessment: body.selfAssessment === true } };
 };
 
 /** The full list of sessions an admin saves. Session ids stay unique so check-ins from different sessions never mix. */
@@ -91,43 +84,30 @@ export const validateCheckinSessions = (body) => {
 export const checkinSessionsFrom = (settings) => {
   if (Array.isArray(settings?.sessions)) return settings.sessions.map((session) => validateCheckinSession(session).value).filter(Boolean);
   const { value } = validateClubNight(settings);
-  return value ? [{ id: CLUB_NIGHT_ID, name: 'Club night', ...value, boatHire: true, subscriptions: [] }] : [];
+  return value ? [{ id: CLUB_NIGHT_ID, name: 'Club night', ...value, boatHire: true, subscriptions: false, selfAssessment: false }] : [];
 };
 
 const londonFormat = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'long', hourCycle: 'h23'
 });
 
-const eventCheckinSessions = (products) => products.filter((product) => product.category === 'EVENTS' && product.active !== false)
-  .flatMap((product) => {
-    try {
-      const dates = eventSessions(product.eventSchedule);
-      return [{ id: `event_${product.id}`, name: product.name || product.id,
-        start: dates[0].startTime, end: dates[0].endTime, dates: dates.map((session) => session.date),
-        eventSchedule: product.eventSchedule, boatHire: true, subscriptions: [] }];
-    } catch (error) {
-      console.error(`Could not schedule check-ins for event ${product.id}:`, error.message);
-      return [];
-    }
-  });
-
 /** Check-ins and volunteer access are open all day on scheduled London dates; `openSessions` are today's. */
-export const clubNightStatus = (settings, now = new Date(), products = []) => {
+export const clubNightStatus = (settings, now = new Date()) => {
   const parts = Object.fromEntries(londonFormat.formatToParts(now).map((part) => [part.type, part.value]));
   const date = `${parts.year}-${parts.month}-${parts.day}`;
-  const sessions = [...checkinSessionsFrom(settings), ...eventCheckinSessions(products)];
+  const sessions = checkinSessionsFrom(settings);
   if (!sessions.length) return { configured: false, open: false, date };
   const today = WEEKDAYS.indexOf(parts.weekday);
-  const openSessions = sessions.filter((session) => session.dates ? session.dates.includes(date)
-    : session.recurrence ? checkinRecursOn(session.recurrence, date) : session.weekday === today)
+  const openSessions = sessions.filter((session) => session.recurrence
+    ? checkinRecursOn(session.recurrence, date) : session.weekday === today)
     .sort((left, right) => left.start.localeCompare(right.start));
   const dayEndsAt = londonMidnight(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + 1).getTime();
   return { configured: true, open: openSessions.length > 0, date, dayEndsAt, sessions, openSessions };
 };
 
-export const sessionDescription = (session) => session.eventSchedule ? eventScheduleLabel(session.eventSchedule)
-  : session.recurrence ? `${session.recurrence.frequency}, ${session.recurrence.startDate} to ${session.recurrence.endDate}, ${session.start}–${session.end}`
-    : `${WEEKDAYS[session.weekday]}s, ${session.start}–${session.end}`;
+export const sessionDescription = (session) => session.recurrence
+  ? `${session.recurrence.frequency}, ${session.recurrence.startDate} to ${session.recurrence.endDate}, ${session.start}–${session.end}`
+  : `${WEEKDAYS[session.weekday]}s, ${session.start}–${session.end}`;
 export const clubNightDescription = (status) => status.configured
   ? status.sessions.map((session) => `${session.name}: ${sessionDescription(session)}`).join('; ') : 'not scheduled yet';
 

@@ -31,12 +31,13 @@ test('named check-in sessions: unique ids, per-session checks, and today\'s sess
   assert.match(validateCheckinSessions({ sessions: [{ name: 'Pool', weekday: 3, start: '21:00', end: '20:00' }] }).error, /^Pool: /);
   assert.match(validateCheckinSessions({}).error, /list/);
   const { value } = validateCheckinSessions({ sessions: [
-    { name: 'Gold sub session', weekday: 3, start: '19:00', end: '20:00', subscriptions: [{ id: 'gold-sub', name: 'Gold' }, 'gold-sub', 'bad id!'] },
-    { name: 'Club night', weekday: 3, start: '18:30', end: '21:00', boatHire: true },
+    { name: 'Gold sub session', weekday: 3, start: '19:00', end: '20:00', subscriptions: true, selfAssessment: true },
+    { name: 'Club night', weekday: 3, start: '18:30', end: '21:00', boatHire: true, subscriptions: [{ id: 'gold-sub', name: 'Gold' }] },
     { name: 'Club night', weekday: 6, start: '10:00', end: '12:00', boatHire: 'yes' }
   ] });
   assert.deepEqual(value.map((session) => session.id), ['gold-sub-session', 'club-night', 'club-night-2']);
-  assert.deepEqual(value[0].subscriptions, [{ id: 'gold-sub', name: 'Gold' }]);
+  assert.deepEqual(value.map((session) => [session.subscriptions, session.selfAssessment]), [[true, true], [true, false], [false, false]],
+    'subscriptions and the self-assessment checklist are per-session switches; an older list of subscriptions means on');
   assert.equal(value[2].boatHire, false, 'only true turns boat hire on');
   const status = clubNightStatus({ sessions: value }, new Date('2027-03-10T12:00:00Z'));
   assert.deepEqual(status.openSessions.map((session) => session.id), ['club-night', 'gold-sub-session']);
@@ -90,51 +91,11 @@ test('full-day access ends at London midnight on clock-change days', () => {
   assert.equal(clubNightStatus(sunday, new Date('2027-11-01T00:00:00Z')).open, false);
 });
 
-const course = {
-  id: 'P00001', name: '6 Week Course', category: 'EVENTS', capacity: 0, closeDate: '2026-10-18',
-  eventSchedule: { mode: 'weekly', startDate: '2026-10-19', weeks: 6, startTime: '15:00', endTime: '17:00', timeZone: 'Europe/London' }
-};
-
-test('a six-week course offers check-ins on all six session dates, even after bookings close or tickets sell out', () => {
-  for (const date of ['2026-10-19', '2026-10-26', '2026-11-02', '2026-11-09', '2026-11-16', '2026-11-23']) {
-    const status = clubNightStatus(undefined, new Date(`${date}T12:00:00Z`), [course]);
-    assert.equal(status.open, true, date);
-    assert.deepEqual(status.openSessions.map(({ id, name, start, end, boatHire, subscriptions }) => ({ id, name, start, end, boatHire, subscriptions })),
-      [{ id: 'event_P00001', name: '6 Week Course', start: '15:00', end: '17:00', boatHire: true, subscriptions: [] }]);
-    assert.match(clubNightDescription(status), /19 Oct 2026 to 23 Nov 2026 \(6 weeks\)/);
-  }
-  for (const date of ['2026-10-12', '2026-10-20', '2026-11-03', '2026-11-24', '2026-11-30']) {
-    assert.equal(clubNightStatus(undefined, new Date(`${date}T12:00:00Z`), [course]).open, false, date);
-  }
-  assert.equal(clubNightStatus(undefined, new Date('2026-10-18T23:00:00Z'), [course]).open, true, 'first session opens at midnight BST');
-  assert.equal(clubNightStatus(undefined, new Date('2026-10-19T23:00:00Z'), [course]).open, false, 'BST day ends at 23:00 UTC');
-  assert.equal(clubNightStatus(undefined, new Date('2026-11-23T23:59:59Z'), [course]).open, true, 'last session stays open all day GMT');
-  assert.equal(clubNightStatus(undefined, new Date('2026-11-24T00:00:00Z'), [course]).open, false);
-});
-
-test('dated events share the picker with recurring sessions and keep distinct stable ids', () => {
-  const products = [
-    course,
-    { ...course, id: 'single', eventSchedule: { ...course.eventSchedule, mode: 'single', startDate: '2026-11-02' } },
-    { ...course, id: 'daily', eventSchedule: { ...course.eventSchedule, mode: 'consecutive', days: 3, startDate: '2026-10-31' } },
-    { ...course, id: 'hidden', active: false },
-    { ...course, id: 'subscription', category: 'SUBSCRIPTIONS' }
-  ];
-  const status = clubNightStatus({ sessions: [{ id: 'club-night', name: 'Club night', weekday: 1, start: '18:00', end: '21:00' }] },
-    new Date('2026-11-02T18:00:00Z'), products);
-  assert.deepEqual(status.openSessions.map((session) => session.id), ['event_P00001', 'event_single', 'event_daily', 'club-night']);
-  assert.equal(status.openSessions.find((session) => session.id === 'event_P00001').id,
-    clubNightStatus(undefined, new Date('2026-11-09T12:00:00Z'), products).openSessions[0].id);
-});
-
-test('invalid event schedules are logged without hiding valid check-in sessions', (t) => {
-  const logged = t.mock.method(console, 'error', () => {});
-  const status = clubNightStatus(undefined, new Date('2026-11-02T12:00:00Z'), [
-    course, { ...course, id: 'invalid', eventSchedule: { ...course.eventSchedule, weeks: 0 } }
-  ]);
-  assert.deepEqual(status.openSessions.map((session) => session.id), ['event_P00001']);
-  assert.equal(logged.mock.callCount(), 1);
-  assert.match(logged.mock.calls[0].arguments[0], /invalid/);
+test('purchased catalogue events are not added as check-in sessions', () => {
+  const settings = { sessions: [{ name: 'Club night', weekday: 1, start: '18:00', end: '21:00' }] };
+  const status = clubNightStatus(settings, new Date('2026-11-02T12:00:00Z'));
+  assert.deepEqual(status.openSessions.map((session) => session.name), ['Club night']);
+  assert.equal(status.sessions.some((session) => session.id.startsWith('event_')), false);
 });
 
 test('identity needs name, valid email and date of birth', () => {

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { apiUrl } from '../utils/api';
 import { WEEKDAYS, MAX_CHECKIN_SESSIONS } from '../utils/clubNight';
 
-const blankSession = () => ({ key: Math.random().toString(36).slice(2), id: '', name: '', frequency: 'weekly', startDate: '', endDate: '', start: '', end: '', boatHire: false, subscriptions: [] });
+const blankSession = () => ({ key: Math.random().toString(36).slice(2), id: '', name: '', frequency: 'weekly', startDate: '', endDate: '', start: '', end: '', boatHire: false, subscriptions: false, selfAssessment: false });
 const withKeys = (sessions) => sessions.map((session) => ({
   ...session,
   key: session.id,
@@ -10,12 +10,13 @@ const withKeys = (sessions) => sessions.map((session) => ({
   startDate: session.recurrence?.startDate || '',
   endDate: session.recurrence?.endDate || '',
   weekday: String(session.weekday ?? ''),
-  subscriptions: session.subscriptions.map((entry) => entry.id)
+  // Older sessions listed individual subscription products; any of them now means "show subscriptions".
+  subscriptions: Array.isArray(session.subscriptions) ? session.subscriptions.length > 0 : session.subscriptions === true,
+  selfAssessment: session.selfAssessment === true
 }));
 
 export default function CheckinSessionsPanel({ adminUser }) {
   const [sessions, setSessions] = useState([]);
-  const [products, setProducts] = useState([]);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const request = useCallback(async (path, options = {}) => {
@@ -28,10 +29,7 @@ export default function CheckinSessionsPanel({ adminUser }) {
   }, [adminUser]);
 
   useEffect(() => {
-    request('/api/admin/club-night').then((result) => {
-      setSessions(withKeys(result.sessions || []));
-      setProducts(result.subscriptionProducts || []);
-    }).catch((error) => setStatus(error.message));
+    request('/api/admin/club-night').then((result) => setSessions(withKeys(result.sessions || []))).catch((error) => setStatus(error.message));
   }, [request]);
 
   const save = async (event) => {
@@ -53,10 +51,6 @@ export default function CheckinSessionsPanel({ adminUser }) {
   };
   const update = (index, changes) => setSessions(sessions.map((session, position) => position === index ? { ...session, ...changes } : session));
   const set = (index, field) => (event) => update(index, { [field]: event.target.type === 'checkbox' ? event.target.checked : event.target.value });
-  const toggleSubscription = (index, id) => (event) => {
-    const current = sessions[index].subscriptions;
-    update(index, { subscriptions: event.target.checked ? [...current, id] : current.filter((entry) => entry !== id) });
-  };
 
   return <section className="main_tile">
     <h3 className="tile_heading_bold_2">Check-in sessions</h3>
@@ -84,9 +78,8 @@ export default function CheckinSessionsPanel({ adminUser }) {
         <input className="FormInput" type="time" aria-label={(session.name || 'Session') + ' starts'} required value={session.start} onChange={set(index, 'start')} />
         <input className="FormInput" type="time" aria-label={(session.name || 'Session') + ' ends'} required value={session.end} onChange={set(index, 'end')} />
         <label><input type="checkbox" checked={session.boatHire} onChange={set(index, 'boatHire')} /> Show boat hire</label>
-        {products.map((product) => <label key={product.id}>
-          <input type="checkbox" checked={session.subscriptions.includes(product.id)} onChange={toggleSubscription(index, product.id)} /> Show {product.name} subscription
-        </label>)}
+        <label><input type="checkbox" checked={session.subscriptions} onChange={set(index, 'subscriptions')} /> Subscriptions</label>
+        <label><input type="checkbox" checked={session.selfAssessment} onChange={set(index, 'selfAssessment')} /> Self-assessment checklist</label>
         <button type="button" className="EditorCommand" onClick={() => setSessions(sessions.filter((_, position) => position !== index))}>Remove session</button>
       </fieldset>)}
       {!sessions.length && <p className="text_container">No check-in sessions yet.</p>}

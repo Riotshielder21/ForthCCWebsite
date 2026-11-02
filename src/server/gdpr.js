@@ -294,10 +294,12 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
         linkedRecords.push(...(await adminDb.collection('membershipTerms').where('membershipId', 'in', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('clubNightCheckins').where('memberId', 'in', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('clubNightAccessLog').where('memberId', 'in', ids).get()).docs);
+        linkedRecords.push(...(await adminDb.collection('selfAssessmentLog').where('memberId', 'in', ids).get()).docs);
       }
       for (const id of scope.erasedHouseholdIds) linkedRecords.push(...(await adminDb.collection('selfServiceChanges').where('householdId', '==', id).get()).docs);
       for (const email of scope.erasedEmails) {
         linkedRecords.push(...(await adminDb.collection('emailSessions').where('email', '==', email).get()).docs);
+        linkedRecords.push(...(await adminDb.collection('eventRosterAccessLog').where('email', '==', email).get()).docs);
         const codes = await adminDb.getAll(...Object.keys(EMAIL_CODE_PURPOSES).map((purpose) => adminDb.collection('emailCodes').doc(codeDocumentId(purpose, email))));
         linkedRecords.push(...codes.filter((document) => document.exists));
       }
