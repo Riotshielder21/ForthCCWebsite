@@ -205,6 +205,7 @@ await test('paid checkout returns a private itemized receipt shared with the ema
   assert.match(response.json.copy, /Membership:/);
   assert.match(response.json.copy, /Add-ons:/);
   const mail = (await db.collection('testMail').where('orderRef', '==', orderRef).get()).docs[0].data();
+  assert.equal(mail.replyTo, 'treasurer@forthcanoeclub.co.uk');
   assert.ok(mail.body.startsWith(response.json.copy), 'email and website use the same receipt copy');
   assert.ok(mail.subject.includes(orderRef), 'receipt reference is searchable in the email subject');
   assert.ok(mail.html.includes(orderRef) && mail.html.includes('Receipt Member'), 'formatted email includes the reference and member');
@@ -1185,6 +1186,8 @@ await test('a volunteer is linked to a member only when the name and email both 
 });
 
 await test('activation records yearly volunteer benefits and emails them without issuing a discount code', async () => {
+  const coordinatorEmail = email('volunteer-coordinator');
+  await db.collection('settings').doc('volunteerCoordinator').set({ email: coordinatorEmail });
   assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { body: { inducted: true } })).status, 401);
   const listed = await call('GET', '/api/admin/volunteers', { headers: admin });
   assert.equal(listed.status, 200);
@@ -1198,6 +1201,7 @@ await test('activation records yearly volunteer benefits and emails them without
   const mail = (await db.collection('testMail').where('signupId', '==', shared.volunteerSignup).get()).docs.map((document) => document.data()).filter((mail) => mail.kind === 'volunteer-benefits');
   assert.equal(mail.length, 1);
   assert.equal(mail[0].email, shared.volunteerEmail);
+  assert.equal(mail[0].replyTo, coordinatorEmail);
   assert.match(mail[0].body, /automatically at checkout/);
   assert.equal((await db.collection('memberships').doc(shared.volunteerMemberId).get()).data().volunteer.inducted, true);
   const again = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: true } });
@@ -1224,7 +1228,9 @@ await test('a non-member volunteer activated first gets their benefits when a me
   const signup = (await db.collection('lists').doc(signupId).get()).data();
   assert.match(signup.benefitsEmailedFor || '', /:20$/);
   assert.ok(signup.memberId);
-  assert.equal((await db.collection('testMail').where('signupId', '==', signupId).get()).size, 1);
+  const volunteerEmails = (await db.collection('testMail').where('signupId', '==', signupId).get()).docs.map((document) => document.data());
+  assert.equal(volunteerEmails.filter((message) => message.kind === 'volunteer-benefits').length, 1);
+  assert.equal(volunteerEmails.find((message) => message.kind === 'volunteer-benefits').replyTo, email('volunteer-coordinator'));
 });
 
 await test('activating a volunteer lowers existing monthly payments and offers pro-rata refunds for items paid in full', async () => {
@@ -1288,7 +1294,7 @@ await test('admins save the three boathouse codes privately; only a changed code
 
 await test('inducted key holders keep boathouse access across volunteer activation, once per code version', async () => {
   const codeMail = async (signupId) => (await db.collection('testMail').where('signupId', '==', signupId).get()).docs
-    .map((document) => document.data()).filter((mail) => mail.kind === 'boathouse-code');
+    .map((document) => document.data()).filter((mail) => ['boathouse-code', 'volunteer-boathouse-code'].includes(mail.kind));
   const before = await codeMail(shared.volunteerSignup);
   const current = (await db.collection('settings').doc('boathouseCode').get()).data();
   assert.equal(before.filter((mail) => mail.version === current.version).length, 1, 'saving the codes already notified this inducted key holder, even while inactive');
@@ -1300,6 +1306,7 @@ await test('inducted key holders keep boathouse access across volunteer activati
   assert.equal(ticked.status, 200, ticked.text);
   assert.equal(ticked.json.boathouseCode, 'up-to-date');
   const first = (await codeMail(shared.volunteerSignup)).find((mail) => mail.version === current.version);
+  assert.equal(first.replyTo, email('volunteer-coordinator'));
   for (const field of ['gateCode', 'alarmCode', 'lockboxCode']) assert.ok(first.body.includes(current[field]), `email includes ${field}`);
   assert.match(first.body, /Gate code: /);
   assert.match(first.body, /Alarm code: /);
@@ -1347,7 +1354,7 @@ await test('inducted key holders keep boathouse access across volunteer activati
 
 await test('induction grants key access independently of yearly benefits, and an unlinked volunteer gets codes after joining', async () => {
   const codeMail = async (signupId) => (await db.collection('testMail').where('signupId', '==', signupId).get()).docs
-    .map((document) => document.data()).filter((mail) => mail.kind === 'boathouse-code');
+    .map((document) => document.data()).filter((mail) => ['boathouse-code', 'volunteer-boathouse-code'].includes(mail.kind));
   const signUp = async (name, address) => {
     await call('POST', '/api/lists', { body: { name, email: address, tier: '20', category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
     return (await db.collection('lists').where('email', '==', address).get()).docs[0].id;

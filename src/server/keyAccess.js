@@ -46,8 +46,8 @@ export const registerKeyAccessRoutes = (app, { requireAdmin, db, sendEmail }) =>
             ...(access[`${key}Note`] ? [access[`${key}Note`]] : []), ''
           ]),
           'Please keep these codes private.',
-          'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n'),
-        record: { kind: 'boathouse-code', membershipId: reference.id,
+          `For help, contact ${member.volunteer?.signupId ? 'the volunteer coordinator' : 'secretary@forthcanoeclub.co.uk'}.`].join('\n'),
+        record: { kind: member.volunteer?.signupId ? 'volunteer-boathouse-code' : 'boathouse-code', membershipId: reference.id,
           ...(member.volunteer?.signupId ? { signupId: member.volunteer.signupId } : {}), version: settings.version }
       });
       await finish(sent);

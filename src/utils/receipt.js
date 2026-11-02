@@ -1,6 +1,7 @@
 import { eventScheduleLabel } from './catalogue.js';
 import { itemLabel } from './inventory.js';
 import { toPounds } from './orders.js';
+import { TREASURER_REPLY_TO } from './emailReplyTo.js';
 
 const money = (value) => `£${Number(value || 0).toFixed(2)}`;
 
@@ -257,7 +258,7 @@ export const receiptEmailHtml = (receipt, retrievalUrl) => `<!doctype html>
       </td></tr>
       <tr><td style="padding:20px 12px 0;text-align:center;font-size:12px;color:#64748b">
         <p>Keep this email. Its secure link lets you retrieve your receipt and subscription information without creating an account. Anyone with the link can see the purchased items and their assigned names.</p>
-        <p>For help, contact <a href="mailto:secretary@forthcanoeclub.co.uk" style="color:#002147">secretary@forthcanoeclub.co.uk</a>.</p>
+        <p>For help, contact <a href="mailto:${TREASURER_REPLY_TO}" style="color:#002147">${TREASURER_REPLY_TO}</a>.</p>
       </td></tr>
     </table>
   </td></tr></table>
