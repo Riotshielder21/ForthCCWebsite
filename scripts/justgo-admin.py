@@ -6,6 +6,7 @@ Writes (also need JUSTGO_API_WRITES_ENABLED=true and --confirm-write):
   update-club-role --member-id --role | remove-from-club --member-id --is-additional-club true|false
   add-membership --member-id --tier adult|junior --club-year YYYY | update-membership --membership-id --payload
 There is deliberately no command that deletes or suspends a JustGo account. remove-from-club only unlinks FCC.
+Printed results redact personal fields; record IDs and operational status remain available for reconciliation.
 """
 import argparse
 import json
@@ -16,6 +17,25 @@ from justgo_api import JustGoClient, JustGoError, club_snapshot, club_year_perio
 
 READS = ("discover", "find-member", "member", "snapshot")
 WRITES = ("create-member", "update-member", "add-to-club", "update-club-role", "remove-from-club", "add-membership", "update-membership")
+
+SENSITIVE_KEYS = frozenset({
+    "phone", "phonenumber", "contactnumber", "mobilenumber", "postcode",
+    "email", "emailaddress", "parentemailaddress",
+    "address", "address1", "address2", "town", "county", "country",
+    "guardian", "firstname", "lastname", "parentfirstname", "parentlastname",
+    "dob", "dateofbirth",
+})
+
+
+def redact_sensitive(value):
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if str(key).lower() in SENSITIVE_KEYS else redact_sensitive(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive(item) for item in value]
+    return value
 
 
 def payload(path):
@@ -100,7 +120,7 @@ def main():
             if args.is_additional_club is None:
                 raise JustGoError("Supply --is-additional-club true or false after checking the JustGo record.")
             result = client.remove_from_club(member_id, organisation, is_additional_club=args.is_additional_club == "true")
-    print(json.dumps(result, indent=2, default=str))
+    print(json.dumps(redact_sensitive(result), indent=2, default=str))
 
 
 if __name__ == "__main__":

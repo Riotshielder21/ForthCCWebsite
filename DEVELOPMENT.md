@@ -299,7 +299,7 @@ JustGo sends its own account and club emails. The club-link reference and member
 - a 5xx/timeout on a write
 - an upload that stopped part-way
 
-**Operator commands** (`scripts/justgo-admin.py`). The reads are `discover`, `find-member`, `member` and `snapshot`. The writes need `JUSTGO_API_WRITES_ENABLED=true` and `--confirm-write`:
+**Operator commands** (`scripts/justgo-admin.py`). The reads are `discover`, `find-member`, `member` and `snapshot`. Printed JSON recursively replaces known personal fields (names, dates of birth, contact and guardian details) with `[REDACTED]`; record IDs, membership definitions and operational statuses remain available for reconciliation. This is field-based redaction, not anonymisation: treat IDs and any free-text API fields as private and do not publish command output. The writes need `JUSTGO_API_WRITES_ENABLED=true` and `--confirm-write`:
 
 - `create-member` refuses if an email/surname match exists.
 - `update-member`, `add-to-club` and `update-club-role`.

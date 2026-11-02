@@ -3,11 +3,16 @@
 Run:  bin/python scripts/test-justgo-api.py
 """
 import asyncio
+import contextlib
+import copy
 import datetime as dt
+import importlib.util
+import io
 import json
 import os
 import sys
 import urllib.error
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 import justgo_api as jg  # noqa: E402
@@ -238,4 +243,38 @@ fake = Fake()
 raises(jg.JustGoError, upload, fake, website_member(), JUSTGO_API_WRITES_ENABLED="false")
 assert fake.calls == [], "the uploader checks the write guard before any request"
 
-print("JustGo API checks passed: guards, auth reuse, paging, write review, parsing, suspensions, credentials, uploader.")
+# --- Operator output redacts personal fields at every nesting level without changing the API result.
+spec = importlib.util.spec_from_file_location("justgo_admin", os.path.join(os.path.dirname(__file__), "justgo-admin.py"))
+operator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(operator)
+private = {
+    "id": M1,
+    "EMAILAddress": "private@example.test", "phoneNumber": "07123456789", "postCode": "EH1 1AA",
+    "contactNumber": "07987654321", "address": {"line": "Private address"},
+    "guardian": {"name": "Private guardian"},
+    "members": [detail(parentFirstName="Private parent", parentLastName="Private surname",
+                       parentEmailAddress="parent@example.test")],
+    "status": "Active", "count": 1, "optional": None,
+}
+original = copy.deepcopy(private)
+redacted = operator.redact_sensitive(private)
+for key in ("EMAILAddress", "phoneNumber", "postCode", "contactNumber", "address", "guardian"):
+    assert redacted[key] == "[REDACTED]", key
+for key in ("firstName", "lastName", "dob", "parentFirstName", "parentLastName", "parentEmailAddress"):
+    assert redacted["members"][0][key] == "[REDACTED]", key
+assert redacted["members"][0]["id"] == M1
+assert redacted["members"][0]["memberships"][0]["name"] == "FCC Adult"
+assert (redacted["status"], redacted["count"], redacted["optional"]) == ("Active", 1, None)
+assert private == original, "redaction must not modify data used for API operations"
+
+fake = Fake({("GET", "Members/" + M1): lambda body, query: ok(private)})
+output = io.StringIO()
+with mock.patch.object(jg.JustGoClient, "from_env", return_value=client(fake)), \
+        mock.patch.dict(os.environ, ENV), \
+        mock.patch.object(sys, "argv", ["justgo-admin.py", "member", "--member-id", M1]), \
+        contextlib.redirect_stdout(output):
+    operator.main()
+assert json.loads(output.getvalue()) == redacted, "the CLI must print only the redacted JSON, not the raw result"
+assert "private@example.test" not in output.getvalue() and "07123456789" not in output.getvalue()
+
+print("JustGo API checks passed: guards, auth reuse, paging, write review, parsing, suspensions, credentials, uploader, redacted operator output.")
