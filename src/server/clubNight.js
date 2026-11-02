@@ -18,14 +18,17 @@ const sha = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const ID = /^[A-Za-z0-9_-]{1,160}$/;
 
 /**
- * Weekly check-in sessions (club night, subscriber sessions…). Attendees give name, date of birth and email; non-members give membership-style details once
+ * Weekly check-in sessions and dated catalogue events/courses. Attendees give name, date of birth and email; non-members give membership-style details once
  * and are kept as contact-only records. Active volunteers sign in with an email code and only see that day's check-ins
  * on the scheduled day (London time). Emergency contacts are shown one person at a time, on request, and each view is logged.
  */
 export const registerClubNightRoutes = (app, { requireAdmin, db, emailCodes, requestNow = () => new Date(), live = () => false, loadCatalogue = async () => [] }) => {
   const settingsReference = () => db().collection('settings').doc('clubNight');
   const checkins = () => db().collection('clubNightCheckins');
-  const status = async (req) => clubNightStatus((await settingsReference().get()).data(), requestNow(req));
+  const status = async (req) => {
+    const [settings, products] = await Promise.all([settingsReference().get(), loadCatalogue()]);
+    return clubNightStatus(settings.data(), requestNow(req), products);
+  };
   const closedMessage = (current) => current.configured
     ? `There is no check-in session today. Check-in is open all day on session days (UK time): ${current.sessions.map((session) => `${session.name}, ${sessionDescription(session)}`).join('; ')}.`
     : 'Check-in has not been scheduled yet.';

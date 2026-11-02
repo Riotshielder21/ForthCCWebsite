@@ -11,6 +11,7 @@ import GdprErasurePanel from '../components/GdprErasurePanel';
 import ReceiptEmailPanel from '../components/ReceiptEmailPanel';
 import RenewalsPanel from '../components/RenewalsPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
+import CheckinSessionsPanel from '../components/CheckinSessionsPanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
 import AdminAccessPanel from '../components/AdminAccessPanel';
 import PurchasedItemActions from '../components/PurchasedItemActions';
@@ -21,7 +22,8 @@ import NeedsAttentionPanel from '../components/NeedsAttentionPanel';
 const RECORD_TABS = [[Users, 'members', 'Member register'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Repeat, 'subscribers', 'Stripe subscribers']];
 // Settings tabs show a single panel instead of a records table.
 const SETTINGS_TABS = [[Mail, 'receipt-emails', 'Receipt emails', ReceiptEmailPanel], [Repeat, 'renewals', 'Renewal emails', RenewalsPanel],
-  [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [KeyRound, 'boathouse', 'Boathouse code', BoathouseCodePanel], [ShieldCheck, 'admins', 'Website admins', AdminAccessPanel]];
+  [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [CalendarClock, 'checkin-sessions', 'Check-in sessions', CheckinSessionsPanel],
+  [KeyRound, 'boathouse', 'Boathouse code', BoathouseCodePanel], [ShieldCheck, 'admins', 'Website admins', AdminAccessPanel]];
 
 const detailValue = (value) => {
   if (value === true) return 'Yes';
