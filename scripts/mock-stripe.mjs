@@ -69,6 +69,7 @@ globalThis.fetch = async (url, options) => {
       saved: mode === 'setup' || params.get('payment_intent_data[setup_future_usage]') === 'off_session' });
     const returnUrl = encodeURIComponent(params.get('success_url') || '');
     const session = { id: `cs_e2e_${Date.now()}_${counter}`, url: `https://checkout.stripe.com/e2e?return_url=${returnUrl}`, mode, status: 'open',
+      success_url: params.get('success_url') || '',
       payment_status: 'unpaid', metadata: { order_ref: orderRef }, ...(mode === 'setup' ? { setup_intent: `seti_${orderRef}` } : {}) };
     if (emailOf(params.get('customer')).startsWith('paid-late.')) {
       const amount = [...params.keys()].map((name) => /^line_items\[(\d+)\]\[price_data\]\[unit_amount\]$/.exec(name)?.[1]).filter(Boolean)

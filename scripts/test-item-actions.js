@@ -84,7 +84,7 @@ const action = (reason = 'Test reason') => {
 const refund = (amount, paymentIntent, revoke = false) => ({ ...action(), action: 'refund', amount, paymentIntent, revoke });
 const order = async (suffix, items, people = [], extra = {}) => {
   const id = `TEST-${run}-${suffix}`;
-  return put(`orders/${id}`, { status: 'paid', total: String(items.reduce((sum, item) => sum + item.price, 0)),
+  return put(`orders/${id}`, { schemaVersion: 2, status: 'paid', totalPence: items.reduce((sum, item) => sum + item.pricePence, 0),
     items, people, membershipIds: [...new Set(people.map((person) => person.membershipId).filter(Boolean))], paidAt: Timestamp.now(), ...extra });
 };
 const path = (reference, line = 'line') => `/api/admin/orders/${reference.id}/items/${line}`;
@@ -122,7 +122,7 @@ const checkMainServer = async () => {
     await auth.verifyIdToken(session.idToken, true);
     const headers = { Authorization: `Bearer ${session.idToken}`, 'Content-Type': 'application/json' };
     const holder = await put(`memberships/MONTHLY-${run}`, { source: 'website' });
-    const purchase = await order('main-monthly', [{ id: 'boat-hire', lineId: 'line', category: 'SERVICES', monthly: true, price: 0 }],
+    const purchase = await order('main-monthly', [{ id: 'boat-hire', lineId: 'line', category: 'SERVICES', monthly: true, pricePence: 0 }],
       [{ membershipId: holder.id, lineIds: ['line'] }], { subscriptionPlan: { recordedAt: Timestamp.now() } });
     const subscription = await put(`subscriptions/sub_main_${run}`, { orderRef: 'another-order', orderRefs: [purchase.id],
       status: 'active', items: [{ lineId: 'line', orderRef: purchase.id, membershipIds: [holder.id], status: 'active' }] });
@@ -159,8 +159,8 @@ try {
     keyAccess: { grantedAt: Timestamp.now(), source: 'purchase' } });
   const keyTerm = await put(`membershipTerms/${member.id}_2026`, { membershipId: member.id, clubYear: 2026,
     items: [{ productId: 'keyhire', orderRef: `TEST-${run}-key`, lineId: 'line' }] });
-  const keyOrder = await order('key', [{ id: 'keyhire', lineId: 'line', category: 'SERVICES', price: 10 }],
-    [{ membershipId: member.id, lineIds: ['line'] }], { stripePaymentIntentId: 'pi_key' });
+  const keyOrder = await order('key', [{ id: 'keyhire', lineId: 'line', category: 'SERVICES', pricePence: 1000 }],
+    [{ membershipId: member.id, lineIds: ['line'] }], { stripe: { paymentIntentId: 'pi_key' } });
   charge('pi_key', 1000);
   assert.equal((await call(`${path(keyOrder)}/actions`, 'POST', action(), false)).status, 401);
   const settings = { gateCode: 'test-gate', alarmCode: 'test-alarm', lockboxCode: 'test-lockbox' };
@@ -187,14 +187,14 @@ try {
   assert.ok(revoked.keyAccess.revokedAt);
   assert.ok((await keyTerm.get()).data().items[0].endedAt);
   assert.equal((await keyTerm.get()).data().items[0].revokeReason, 'Test reason');
-  assert.equal((await keyOrder.get()).data().total, '10', 'financial history is retained');
-  assert.equal((await keyOrder.get()).data().items[0].refunds.length, 2);
+  assert.equal((await keyOrder.get()).data().totalPence, 1000, 'financial history is retained');
+  assert.deepEqual((await keyOrder.get()).data().items[0].refunds.map((entry) => entry.amountPence), [300, 700], 'item refunds are recorded in pence');
   await call('/api/admin/boathouse-code', 'POST', { ...settings, alarmCode: 'changed' });
   assert.equal(emails.length, 1, 'revoked key holders do not receive changed codes');
   await member.update({ volunteer: { inducted: true } });
   assert.equal(await keyAccess.settleKeyAccess(member), 'not-active', 'induction cannot bypass admin revocation');
 
-  const ambiguousOrder = await order('ambiguous', [{ id: 'shirt', lineId: 'line', category: 'MERCHANDISE', price: 15 }], [], { stripePaymentIntentId: 'pi_ambiguous' });
+  const ambiguousOrder = await order('ambiguous', [{ id: 'shirt', lineId: 'line', category: 'MERCHANDISE', pricePence: 1500 }], [], { stripe: { paymentIntentId: 'pi_ambiguous' } });
   charge('pi_ambiguous', 1500);
   ambiguous = true;
   const uncertain = refund(500, 'pi_ambiguous');
@@ -210,7 +210,7 @@ try {
   assert.equal((await ambiguousOrder.get()).data().items[0].refunds.length, 1);
   assert.equal((await ambiguousOrder.get()).data().itemActionPending, null);
 
-  const rejectedOrder = await order('rejected', [{ id: 'shirt', lineId: 'line', price: 10 }], [], { stripePaymentIntentId: 'pi_rejected' });
+  const rejectedOrder = await order('rejected', [{ id: 'shirt', lineId: 'line', pricePence: 1000 }], [], { stripe: { paymentIntentId: 'pi_rejected' } });
   charge('pi_rejected', 1000);
   rejectRefund = true;
   const rejectedAction = refund(500, 'pi_rejected');
@@ -222,16 +222,16 @@ try {
   assert.equal((await call(`${path(rejectedOrder)}/actions`, 'POST', refund(500, 'pi_rejected'))).status, 200);
 
   const eventOrder = await order('event', [
-    { id: `event-${run}`, lineId: 'line', category: 'EVENTS', price: 20 },
-    { id: `event-${run}`, lineId: 'other', category: 'EVENTS', price: 20 }
+    { id: `event-${run}`, lineId: 'line', category: 'EVENTS', pricePence: 2000 },
+    { id: `event-${run}`, lineId: 'other', category: 'EVENTS', pricePence: 2000 }
   ]);
   const stock = await put(`stock/event-${run}`, { holds: { [eventOrder.id]: { until: null, lines: { all: 2 } } } });
   assert.equal((await call(`${path(eventOrder)}/actions`, 'POST', action('Cannot attend'))).status, 200);
   assert.equal((await stock.get()).data().holds[eventOrder.id].lines.all, 1, 'only revoked ticket capacity is released');
   assert.equal((await eventOrder.get()).data().items[1].revokedAt, undefined);
 
-  const voucherOrder = await order('voucher', [{ id: 'voucher', lineId: 'line', type: 'voucher', price: 60 }], [],
-    { vouchers: [{ code: `V-${run}` }], stripePaymentIntentId: 'pi_voucher' });
+  const voucherOrder = await order('voucher', [{ id: 'voucher', lineId: 'line', type: 'voucher', pricePence: 6000 }], [],
+    { vouchers: [{ code: `V-${run}` }], stripe: { paymentIntentId: 'pi_voucher' } });
   const voucher = await put(`discountCodes/V-${run}`, { used: true });
   charge('pi_voucher', 6000);
   assert.equal((await call(`${path(voucherOrder)}/actions`, 'POST', refund(6000, 'pi_voucher', true))).status, 409, 'used voucher cannot be revoked');
@@ -239,7 +239,7 @@ try {
   assert.equal((await call(`${path(voucherOrder)}/actions`, 'POST', action())).status, 200);
   assert.equal((await voucher.get()).data().active, false);
 
-  const monthly = await order('monthly', [{ id: 'coaching', lineId: 'line', category: 'SERVICES', price: 0, monthly: true }]);
+  const monthly = await order('monthly', [{ id: 'coaching', lineId: 'line', category: 'SERVICES', pricePence: 0, monthly: true }]);
   await monthly.update({ subscriptionPlan: { status: 'failed' } });
   assert.equal((await call(`${path(monthly)}/actions`, 'POST', action())).status, 409, 'unfinished subscription setup must not restart billing after revocation');
   await monthly.update({ subscriptionPlan: { status: 'active', recordedAt: Timestamp.now() } });
@@ -256,7 +256,7 @@ try {
   const membership = await put(`memberships/FAMILY-${run}`, { source: 'website', status: 'active', validUntil: Timestamp.fromDate(new Date('2099-03-01')) });
   const membershipTerm = await put(`membershipTerms/FAMILY-${run}_2026`, { membershipId: membership.id, clubYear: 2026, source: 'website', tier: 'family',
     orderRef: `TEST-${run}-membership`, start: Timestamp.fromDate(new Date('2026-03-01')), end: Timestamp.fromDate(new Date('2027-03-01')), items: [] });
-  const membershipOrder = await order('membership', [{ id: 'membership', category: 'MEMBERSHIP', lineId: 'line', clubYear: 2026, price: 30 }],
+  const membershipOrder = await order('membership', [{ id: 'membership', category: 'MEMBERSHIP', lineId: 'line', clubYear: 2026, pricePence: 3000 }],
     [{ membershipId: membership.id, lineIds: ['line'] }]);
   assert.equal((await call(`${path(membershipOrder)}/actions`, 'POST', action())).status, 200);
   assert.equal((await membership.get()).data().status, 'revoked');
@@ -265,7 +265,7 @@ try {
   assert.ok(stopped.length >= 4, 'revocations call the shared monthly cancellation service');
 
   const imported = await put(`memberships/IMPORTED-${run}`, { source: 'justgo', status: 'active', validUntil: Timestamp.fromDate(new Date('2099-03-01')) });
-  const importedOrder = await order('imported', [{ id: 'membership', category: 'MEMBERSHIP', lineId: 'line', clubYear: 2026, price: 30 }],
+  const importedOrder = await order('imported', [{ id: 'membership', category: 'MEMBERSHIP', lineId: 'line', clubYear: 2026, pricePence: 3000 }],
     [{ membershipId: imported.id, lineIds: ['line'] }]);
   assert.equal((await call(`${path(importedOrder)}/actions`, 'POST', action())).status, 409, 'unreconstructable imported cover must be reconciled explicitly');
   await imported.update({ membershipBeforeWebsite: { validUntil: Timestamp.fromDate(new Date('2099-03-01')) } });

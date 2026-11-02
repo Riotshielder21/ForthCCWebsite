@@ -149,7 +149,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
             .filter((record) => record.stripeMembershipSubscriptionId === id).map((record) => record.id);
       const payer = normalizeEmail(stored.exists ? stored.data().email : order?.email || '');
       const everyoneErased = covered.length ? covered.every((membershipId) => targetIds.has(membershipId)) : erasedEmails.has(payer);
-      const mode = (stored.exists ? stored.data().stripeMode : order?.stripeMode) || modes.get(id) || 'test';
+      const mode = (stored.exists ? stored.data().stripeMode : order?.stripe?.mode) || modes.get(id) || 'test';
       if (everyoneErased) { subscriptions.set(id, mode); continue; }
       const active = stored.exists && stored.data().status === 'active'
         ? (stored.data().items || []).filter((item) => item.status === 'active' && (item.membershipIds || []).some((membershipId) => targetIds.has(membershipId))) : [];

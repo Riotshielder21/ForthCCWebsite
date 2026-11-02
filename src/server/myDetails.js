@@ -7,6 +7,7 @@ import { validateDetailsUpdate, changedFields, managedByJustgo } from '../utils/
 import { buildLinkedReceipt } from '../utils/receipt.js';
 import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
 import { activeSubscriptionItems } from '../utils/subscriptions.js';
+import { resolveOrderPeople } from './orderPeople.js';
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -30,7 +31,8 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, raiseA
     const orders = (await db().collection('orders').where('email', '==', email).limit(100).get()).docs
       .filter((order) => order.data().status === 'paid' && order.data().createdAt?.toDate?.() >= start)
       .sort((a, b) => b.data().createdAt.toMillis() - a.data().createdAt.toMillis());
-    return orders.map((order) => ({ ...buildLinkedReceipt(order.id, order.data()), createdAt: order.data().createdAt.toDate() }));
+    const resolved = await resolveOrderPeople(db(), orders.map((order) => order.data()));
+    return orders.map((order, index) => ({ ...buildLinkedReceipt(order.id, resolved[index]), createdAt: order.data().createdAt.toDate() }));
   };
   /**
    * Active monthly payments this email pays for, and any that pay for people in its households. Another payer's

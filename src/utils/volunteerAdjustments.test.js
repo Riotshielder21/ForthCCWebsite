@@ -41,7 +41,7 @@ test('existing monthly items are lowered from the next debit or removed when fre
 });
 
 test('annual Blue and Gold: monthly saving × months left, less the 20% annual discount', () => {
-  const item = { id: 'blue-sub', price: 240, clubYear: 2026 };
+  const item = { id: 'blue-sub', pricePence: 24000, clubYear: 2026 };
   // August: Sep–Feb is six months; £5 × 6 × 0.8 = £24.
   assert.deepEqual(annualAdjustment({ item, product: blue, volunteerPrice: 20, now: august }),
     { adjusted: false, amount: 2400, months: 6, basis: '£5.00 a month saving × 6 months left, less the 20% annual discount' });
@@ -53,18 +53,18 @@ test('annual Blue and Gold: monthly saving × months left, less the 20% annual d
 
 test('annual items that become free: paid ÷ months covered × months left', () => {
   // Bought in October at the 60% late-year price (£51 for five months); two months left in December.
-  const lateHire = { id: 'boat-hire', price: 51, clubYear: 2026, pricingMode: 'prorated' };
+  const lateHire = { id: 'boat-hire', pricePence: 5100, clubYear: 2026, pricingMode: 'prorated' };
   assert.equal(annualAdjustment({ item: lateHire, product: boatHire, volunteerPrice: 0, paidAt: new Date('2026-10-05T12:00:00Z'), now: december }).amount, 2040);
-  const fullHire = { ...lateHire, price: 85 };
+  const fullHire = { ...lateHire, pricePence: 8500 };
   assert.equal(annualAdjustment({ item: fullHire, product: boatHire, volunteerPrice: 0, paidAt: new Date('2026-04-05T12:00:00Z'), now: december }).amount, 1417);
-  const key = { id: 'keyhire', price: 50, clubYear: 2026 };
+  const key = { id: 'keyhire', pricePence: 5000, clubYear: 2026 };
   assert.equal(annualAdjustment({ item: key, product: keyHire, volunteerPrice: 0, paidAt: new Date('2026-04-05T12:00:00Z'), now: august }).amount, 2500);
   assert.equal(annualAdjustment({ item: key, product: keyHire, volunteerPrice: 10, paidAt: august, now: august }), null, 'only free items are refunded pro rata');
 });
 
 test('annual refunds are capped by earlier refunds and offered once', () => {
-  const item = { id: 'keyhire', price: 50, clubYear: 2026, refunds: [{ amount: 4000, status: 'succeeded' }, { amount: 900, status: 'failed' }] };
+  const item = { id: 'keyhire', pricePence: 5000, clubYear: 2026, refunds: [{ amountPence: 4000, status: 'succeeded' }, { amountPence: 900, status: 'failed' }] };
   assert.equal(annualAdjustment({ item, product: keyHire, volunteerPrice: 0, paidAt: august, now: august }).amount, 1000);
-  const adjusted = { ...item, refunds: [{ amount: 2500, status: 'pending', purpose: VOLUNTEER_ADJUSTMENT }] };
+  const adjusted = { ...item, refunds: [{ amountPence: 2500, status: 'pending', purpose: VOLUNTEER_ADJUSTMENT }] };
   assert.deepEqual(annualAdjustment({ item: adjusted, product: keyHire, volunteerPrice: 0, now: august }), { adjusted: true, amount: 2500 });
 });

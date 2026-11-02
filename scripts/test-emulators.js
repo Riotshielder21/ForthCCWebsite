@@ -48,7 +48,7 @@ globalThis.fetch = async (url, options) => {
     const body = new URLSearchParams(options.body);
     if (body.get('mode') !== 'payment' || body.has('line_items[0][price_data][recurring][interval]')) throw new Error('These purchases must be one-off payments');
     if (body.has('customer_email') || ![...customers.values()].some((customer) => customer.id === body.get('customer'))) throw new Error('Checkout must use the customer looked up or created for the payer');
-    return Response.json({ id: 'cs_event_fixture_' + ++sessionNumber, url: 'https://checkout.stripe.com/test-fixture' });
+    return Response.json({ id: 'cs_event_fixture_' + ++sessionNumber, url: 'https://checkout.stripe.com/test-fixture?success_url=' + encodeURIComponent(body.get('success_url')) });
   }
   if (parsed.pathname === '/v1/subscriptions') return Response.json({ data: [subscription], has_more: false });
   if (parsed.pathname === '/v1/subscriptions/sub_legacy') {
@@ -104,9 +104,9 @@ try {
   assert.equal(eventCheckout.status, 200, `Event checkout failed: ${JSON.stringify(eventCheckout.result)}\nAPI output:\n${output}`);
   const eventOrder = (await db.collection('orders').doc(eventCheckout.result.orderRef).get()).data();
   assert.deepEqual(eventOrder.items[0].eventSchedule, eventSchedule);
-  assert.equal(eventOrder.items[0].price, 50);
-  await db.collection('orders').doc(eventCheckout.result.orderRef).update({ status: 'paid', total: '80',
-    items: [...eventOrder.items, { id: 'membership-adult', name: 'Membership', category: 'MEMBERSHIP', type: 'annual-oneoff', price: 30 }] });
+  assert.equal(eventOrder.items[0].pricePence, 5000);
+  await db.collection('orders').doc(eventCheckout.result.orderRef).update({ status: 'paid', totalPence: 8000,
+    items: [...eventOrder.items, { id: 'membership-adult', name: 'Membership', category: 'MEMBERSHIP', type: 'annual-oneoff', pricePence: 3000 }] });
   const events = await request(`/api/admin/reports?kind=events&recordId=${encodeURIComponent(eventCheckout.result.orderRef)}`, { headers });
   assert.equal(events.status, 200);
   const ticket = events.result.records.find((record) => record.id === eventCheckout.result.orderRef);
@@ -180,24 +180,31 @@ try {
       people: [{ id: 'receipt-person', lineIds: ['receipt-key'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }] }) });
   assert.equal(purchase.status, 200, `Receipt checkout failed: ${JSON.stringify(purchase.result)}\nAPI output:\n${output}`);
   const purchaseOrder = (await db.collection('orders').doc(purchase.result.orderRef).get()).data();
+  const successUrl = new URL(purchase.result.checkoutUrl).searchParams.get('success_url');
+  const receiptToken = new URL(successUrl).searchParams.get('receipt_token');
+  assert.ok(receiptToken && purchaseOrder.receiptTokenHash && !('accessTokenHash' in purchaseOrder) && !('receiptViewTokenHash' in purchaseOrder), 'one receipt token is stored as a hash');
   const paidPayload = JSON.stringify({ type: 'checkout.session.completed', data: { object: {
-    id: purchaseOrder.stripeSessionId, mode: 'payment', payment_status: 'paid', amount_total: Math.round(Number(purchaseOrder.total) * 100),
+    id: purchaseOrder.stripe.sessionId, mode: 'payment', payment_status: 'paid', amount_total: purchaseOrder.totalPence, success_url: successUrl,
     payment_intent: 'pi_receipt_fixture', metadata: { order_ref: purchase.result.orderRef }
   } } });
   const paidAt = Math.floor(Date.now() / 1000);
   const paidSignature = createHmac('sha256', 'whsec_local_only').update(`${paidAt}.${paidPayload}`).digest('hex');
   const paid = await request('/api/stripe/webhook', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${paidAt},v1=${paidSignature}` }, body: paidPayload });
   assert.equal(paid.status, 200, JSON.stringify(paid.result));
-  assert.equal((await db.collection('orders').doc(purchase.result.orderRef).get()).data().emailSent, true);
+  const paidOrder = (await db.collection('orders').doc(purchase.result.orderRef).get()).data();
+  assert.equal(paidOrder.fulfilment.emailSent, true);
+  assert.equal(paidOrder.receiptTokenHash, purchaseOrder.receiptTokenHash, 'the emailed receipt uses the payment-page token');
+  assert.equal(paidOrder.people[0].firstName, undefined, 'the paid order keeps references, not personal details');
   const mail = (await db.collection('testMail').where('orderRef', '==', purchase.result.orderRef).get()).docs[0].data();
+  assert.equal(new URL(mail.retrievalUrl).pathname.split('/order/')[1].split('.')[1], receiptToken);
   const receipt = await request(`/api/orders/${new URL(mail.retrievalUrl).pathname.split('/order/')[1]}`);
   assert.equal(receipt.status, 200);
-  assert.equal(Number(receipt.result.total), Number(purchaseOrder.total));
+  assert.equal(Number(receipt.result.total) * 100, purchaseOrder.totalPence);
   assert.equal(receipt.result.items[0].name, 'Boathouse Access');
   assert.deepEqual(receipt.result.items[0].personNames, ['Eve Event']);
   assert.equal('people' in receipt.result, false, 'public receipt does not expose contact records');
-  await db.collection('orders').doc('TEST-WEBHOOK').set({ email: 'webhook@example.com', status: 'pending', total: '25',
-    stripeSessionId: 'cs_local_test', createdAt: Timestamp.now(), items: [{ name: 'Monthly test', price: 25, type: 'subscription' }] });
+  await db.collection('orders').doc('TEST-WEBHOOK').set({ schemaVersion: 2, email: 'webhook@example.com', status: 'pending', totalPence: 2500,
+    stripe: { sessionId: 'cs_local_test' }, fulfilment: {}, createdAt: Timestamp.now(), items: [{ name: 'Monthly test', pricePence: 2500, type: 'subscription' }] });
   const payload = JSON.stringify({ type: 'checkout.session.completed', data: { object: {
     id: 'cs_local_test', payment_status: 'paid', amount_total: 2500, subscription: 'sub_local_webhook', metadata: { order_ref: 'TEST-WEBHOOK' }
   } } });
@@ -211,7 +218,7 @@ try {
   assert.equal((await fetch(await getDownloadURL(image))).status, 200);
   await assert.rejects(uploadBytes(ref(storage, 'pages/home/test-upload/unsafe.txt'), Buffer.from('test'), { contentType: 'text/plain' }));
   const batch = db.batch();
-  for (let index = 0; index < 105; index += 1) batch.set(db.collection('orders').doc(`PAGING-${String(index).padStart(3, '0')}`), { email: 'paging@example.com', status: 'paid', total: '0', items: [] });
+  for (let index = 0; index < 105; index += 1) batch.set(db.collection('orders').doc(`PAGING-${String(index).padStart(3, '0')}`), { schemaVersion: 2, email: 'paging@example.com', status: 'paid', totalPence: 0, items: [] });
   await batch.commit();
   const records = [];
   const cursors = new Set();

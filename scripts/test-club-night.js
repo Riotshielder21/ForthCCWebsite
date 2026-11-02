@@ -236,16 +236,19 @@ try {
   assert.equal((await call('/api/email-codes', { method: 'POST', body: { email: 'nobody@example.test', purpose: 'details', dob: member.dob } })).status, 404);
   assert.equal(sent.length, sentBefore, 'a date of birth outside the household sends no code');
   const lastYear = Timestamp.fromDate(new Date(clubYearDates(year - 1).start.getTime() + 86400000));
-  await db.collection('orders').doc('FCC-OLD').set({ email: member.email, status: 'paid', total: '10', items: [{ name: 'Old item', price: 10 }], people: [], createdAt: lastYear });
-  await db.collection('orders').doc('FCC-NOW').set({ email: member.email, status: 'paid', total: '45', items: [{ name: 'Adult membership', category: 'MEMBERSHIP', price: 45 }],
-    people: [{ firstName: 'Casey', lastName: 'Member', phone: 'secret' }], createdAt: Timestamp.fromDate(new Date(`${year}-03-05T12:00Z`)) });
-  await db.collection('orders').doc('FCC-OPEN').set({ email: member.email, status: 'pending', total: '5', items: [], people: [], createdAt: Timestamp.fromDate(new Date(`${year}-03-06T12:00Z`)) });
+  await db.collection('orders').doc('FCC-OLD').set({ schemaVersion: 2, email: member.email, status: 'paid', totalPence: 1000, items: [{ name: 'Old item', pricePence: 1000 }], people: [], createdAt: lastYear });
+  await db.collection('orders').doc('FCC-NOW').set({ schemaVersion: 2, email: member.email, status: 'paid', totalPence: 4500,
+    items: [{ lineId: 'now', name: 'Adult membership', category: 'MEMBERSHIP', pricePence: 4500 }],
+    people: [{ membershipId: 'M0001', householdId: 'HH-MEMBER', lineIds: ['now'] }], membershipIds: ['M0001'], createdAt: Timestamp.fromDate(new Date(`${year}-03-05T12:00Z`)) });
+  await db.collection('orders').doc('FCC-OPEN').set({ schemaVersion: 2, email: member.email, status: 'pending', totalPence: 500, items: [], people: [], createdAt: Timestamp.fromDate(new Date(`${year}-03-06T12:00Z`)) });
   const detailsSession = await signIn(member.email, 'details', member.dob);
   const mine = await call('/api/my-details', { session: detailsSession });
   assert.equal(mine.data.households.length, 1);
   assert.equal(mine.data.households[0].people[0].membership, 'Active member');
   assert.deepEqual(mine.data.purchases.map((order) => order.orderRef), ['FCC-NOW'], 'only paid orders since renewals opened');
-  assert.equal(JSON.stringify(mine.data.purchases).includes('secret'), false, 'receipts hold no personal details');
+  assert.deepEqual(mine.data.purchases[0].items[0].personNames, ['Casey Member'], 'order people resolve from the member record');
+  assert.equal(mine.data.purchases[0].items[0].price, 45);
+  for (const detail of ['0700 000001', member.dob]) assert.equal(JSON.stringify(mine.data.purchases).includes(detail), false, 'receipts hold no personal details');
   const update = { phone: '0700 999999', address: '9 New Street', postcode: 'EH9 9ZZ', emergencyContact: { name: 'Robin Member', relationship: 'Partner', phone: '0700 888888' } };
   const saved = await call('/api/my-details/HH-MEMBER', { method: 'PATCH', session: detailsSession, body: update });
   assert.deepEqual(saved.data.changed.sort(), ['address', 'emergencyContact', 'phone', 'postcode']);

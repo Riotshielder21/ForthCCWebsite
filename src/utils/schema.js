@@ -1,3 +1,5 @@
+import { orderVersion2 } from './orders.js';
+
 /**
  * Versioned upgrades for stored records. Each step moves a document from the version before `to` to `to`; a document without
  * `schemaVersion` is version 1. Steps return only what changes, so the same code serves the dry run and the real run.
@@ -36,7 +38,17 @@ export const MEMBERSHIP_MIGRATIONS = [
 
 export const CURRENT_MEMBERSHIP_VERSION = MEMBERSHIP_MIGRATIONS.at(-1).to;
 
-/** What bringing one member record up to the current version would change, or null when it already is. */
+export const ORDER_MIGRATIONS = [
+  {
+    to: 2,
+    description: 'Store money in pence, one receipt token, grouped Stripe/fulfilment/failure fields and recorded people as references',
+    upgrade: orderVersion2
+  }
+];
+
+export const CURRENT_ORDER_VERSION = ORDER_MIGRATIONS.at(-1).to;
+
+/** What bringing one record up to the current version would change, or null when it already is. */
 export const planUpgrade = (fields, migrations = MEMBERSHIP_MIGRATIONS) => {
   const from = Number(fields.schemaVersion) || 1;
   const steps = migrations.filter((migration) => migration.to > from);

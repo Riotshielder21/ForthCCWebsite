@@ -5,6 +5,8 @@ import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { PRODUCTS } from '../src/constants/products.js';
 import { clubYearDates, clubYearOf } from '../src/utils/clubYear.js';
 import { termId } from '../src/utils/membershipTerms.js';
+import { CURRENT_ORDER_VERSION } from '../src/utils/schema.js';
+import { newOrderGroups, orderPersonReference, toPence } from '../src/utils/orders.js';
 
 const projectId = assertLocalFirebase(process.env);
 initializeApp({ projectId });
@@ -104,27 +106,41 @@ batch.set(db.collection('products').doc('test-shirt'), {
   name: 'Test club shirt', category: 'MERCHANDISE', type: 'merchandise', basePrice: 20,
   variants: [{ size: 'S', stock: 4 }, { size: 'M', stock: 3 }, { size: 'L', stock: 2 }]
 });
+// Paid orders are stored as fulfilled: people become references, and anyone without a member record keeps only their name.
+const seededOrder = ({ people, ...fields }) => {
+  const paid = fields.status === 'paid';
+  const groups = newOrderGroups();
+  return {
+    schemaVersion: CURRENT_ORDER_VERSION, subtotalPence: fields.totalPence, discountPence: 0, discountCode: '', receiptTokenHash: '', ...groups,
+    fulfilment: { ...groups.fulfilment, recordsWritten: paid, emailSent: paid },
+    ...fields,
+    people: paid ? people.map((person) => ({ ...orderPersonReference(person),
+      ...(person.membershipId ? {} : { firstName: person.firstName, lastName: person.lastName }) })) : people,
+    membershipIds: [...new Set(people.map((person) => person.membershipId).filter(Boolean))],
+    createdAt: Timestamp.now()
+  };
+};
 for (const [id, fields] of Object.entries({
   'TEST-MEMBERSHIP': {
-    email: 'member@example.com', status: 'paid', total: '30',
-    items: [{ lineId: 'adult-membership', id: 'membership-adult', name: 'Adult membership', category: 'MEMBERSHIP', type: 'annual-oneoff', price: 30 }],
+    email: 'member@example.com', status: 'paid', totalPence: 3000,
+    items: [{ lineId: 'adult-membership', id: 'membership-adult', name: 'Adult membership', category: 'MEMBERSHIP', type: 'annual-oneoff', pricePence: 3000 }],
     people: [{ firstName: 'Test', lastName: 'Current', dob: '1991-03-14', lineIds: ['adult-membership'], membershipId: 'test-current', existingMember: true }]
   },
   'TEST-SUBSCRIPTION': {
-    email: 'subscriber@example.test', status: 'paid', total: '25', stripeSubscriptionId: 'sub_local_test',
-    items: [{ lineId: 'blue-sub', id: 'blue-sub', name: 'Blue subscription', category: 'SUBSCRIPTIONS', type: 'subscription', price: 25 }],
+    email: 'subscriber@example.test', status: 'paid', totalPence: 2500, stripeSubscriptionId: 'sub_local_test',
+    items: [{ lineId: 'blue-sub', id: 'blue-sub', name: 'Blue subscription', category: 'SUBSCRIPTIONS', type: 'subscription', pricePence: 2500 }],
     people: [{ firstName: 'Robin', lastName: 'Subscriber', dob: '1993-10-04', lineIds: ['blue-sub'], phone: '07700 900777', email: 'subscriber@example.test' }]
   },
   'TEST-PENDING': {
-    email: 'pending@example.test', status: 'pending', total: '85',
-    items: [{ lineId: 'boat-hire', id: 'boat-hire', name: 'Kit hire', category: 'SERVICES', type: 'yearly-service', price: 85 }],
+    email: 'pending@example.test', status: 'pending', totalPence: 8500,
+    items: [{ lineId: 'boat-hire', id: 'boat-hire', name: 'Kit hire', category: 'SERVICES', type: 'yearly-service', pricePence: 8500 }],
     people: [{ firstName: 'Avery', lastName: 'Pending', dob: '1989-01-24', lineIds: ['boat-hire'] }]
   },
   'TEST-FAMILY-COURSE': {
-    email: 'family@example.test', status: 'paid', total: '240',
+    email: 'family@example.test', status: 'paid', totalPence: 24000,
     items: [
-      { lineId: 'course-one', id: 'test-week-course', name: course.name, category: 'EVENTS', type: course.type, price: 120, eventSchedule: course.eventSchedule },
-      { lineId: 'course-two', id: 'test-week-course', name: course.name, category: 'EVENTS', type: course.type, price: 120, eventSchedule: course.eventSchedule }
+      { lineId: 'course-one', id: 'test-week-course', name: course.name, category: 'EVENTS', type: course.type, pricePence: 12000, eventSchedule: course.eventSchedule },
+      { lineId: 'course-two', id: 'test-week-course', name: course.name, category: 'EVENTS', type: course.type, pricePence: 12000, eventSchedule: course.eventSchedule }
     ],
     people: [
       { firstName: 'Morgan', lastName: 'Example', dob: '1987-04-12', lineIds: ['course-one'], membershipId: 'test-family-parent', medical: 'None', swimming: 'confident', photoConsent: true },
@@ -132,25 +148,25 @@ for (const [id, fields] of Object.entries({
     ]
   },
   'TEST-MIXED-CART': {
-    email: 'mix@example.test', status: 'paid', total: '50',
+    email: 'mix@example.test', status: 'paid', totalPence: 5000,
     items: [
-      { lineId: 'tee-s', id: 'test-shirt', name: 'Test club shirt', category: 'MERCHANDISE', type: 'merchandise', price: 20, size: 'S' },
-      { lineId: 'tee-m', id: 'test-shirt', name: 'Test club shirt', category: 'MERCHANDISE', type: 'merchandise', price: 20, size: 'M' },
-      { lineId: 'course', id: 'test-week-course', name: course.name, category: 'EVENTS', type: course.type, price: 10, eventSchedule: course.eventSchedule }
+      { lineId: 'tee-s', id: 'test-shirt', name: 'Test club shirt', category: 'MERCHANDISE', type: 'merchandise', pricePence: 2000, size: 'S' },
+      { lineId: 'tee-m', id: 'test-shirt', name: 'Test club shirt', category: 'MERCHANDISE', type: 'merchandise', pricePence: 2000, size: 'M' },
+      { lineId: 'course', id: 'test-week-course', name: course.name, category: 'EVENTS', type: course.type, pricePence: 1000, eventSchedule: course.eventSchedule }
     ],
     people: [{ firstName: 'Quinn', lastName: 'Mixed', dob: '1995-12-02', lineIds: ['course'], phone: '07700 900888', email: 'mix@example.test', swimming: 'basic', medical: 'None', photoConsent: true }]
   },
   'TEST-VOUCHER': {
-    email: 'gift@example.test', status: 'paid', total: '60',
-    items: [{ lineId: 'voucher', id: 'vouchers', name: 'Course place voucher', category: 'VOUCHERS', type: 'voucher', price: 60 }],
+    email: 'gift@example.test', status: 'paid', totalPence: 6000,
+    items: [{ lineId: 'voucher', id: 'vouchers', name: 'Course place voucher', category: 'VOUCHERS', type: 'voucher', pricePence: 6000 }],
     people: []
   }
-})) batch.set(db.collection('orders').doc(id), { ...fields, createdAt: Timestamp.now() });
+})) batch.set(db.collection('orders').doc(id), seededOrder(fields));
 for (const product of PRODUCTS.filter((item) => item.type !== 'external')) {
   const lineId = `${product.id}-individual`;
   const item = {
     lineId, id: product.id, name: product.name, category: product.category, type: product.type,
-    price: product.basePrice
+    pricePence: toPence(product.basePrice)
   };
   let people = [];
   if (product.membershipTier === 'junior') {
@@ -173,10 +189,9 @@ for (const product of PRODUCTS.filter((item) => item.type !== 'external')) {
       swimming: 'confident', medical: 'None', disclaimerAccepted: true, photoConsent: true
     }];
   }
-  batch.set(db.collection('orders').doc(`TEST-ITEM-${product.id.toUpperCase()}`), {
-    email: people[0]?.email || 'shop-test@example.test', status: 'paid', total: String(product.basePrice),
-    items: [item], people, createdAt: Timestamp.now()
-  });
+  batch.set(db.collection('orders').doc(`TEST-ITEM-${product.id.toUpperCase()}`), seededOrder({
+    email: people[0]?.email || 'shop-test@example.test', status: 'paid', totalPence: toPence(product.basePrice), items: [item], people
+  }));
 }
 // One example of every volunteering-page list, plus volunteer sign-ups in each induction state for the admin panel.
 const listEntry = (id, fields) => batch.set(db.collection('lists').doc(id), { status: 'pending', notes: '', createdAt: Timestamp.now(), ...fields });

@@ -30,7 +30,9 @@ import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, cancel
 import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
 import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProblem, withHold, itemLabel, isMerchandise } from './src/utils/inventory.js';
 import { deletionAuditEntry } from './src/utils/privacy.js';
-import { CURRENT_MEMBERSHIP_VERSION } from './src/utils/schema.js';
+import { CURRENT_MEMBERSHIP_VERSION, CURRENT_ORDER_VERSION } from './src/utils/schema.js';
+import { toPence, toPounds, newOrderGroups, paymentFailureRecord, orderPersonReference } from './src/utils/orders.js';
+import { resolveOrderPeople } from './src/server/orderPeople.js';
 import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from './src/utils/households.js';
 import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive, endedAtCutoff, clubYearEndUpdate } from './src/utils/subscriptions.js';
 import { registerGdprRoutes } from './src/server/gdpr.js';
@@ -142,7 +144,7 @@ const repriceVolunteerItem = async (reference, lineId, to, actor) => {
   const stripeItem = (subscription.items?.data || []).find((entry) => entry.id === item.stripeItemId);
   if (!stripeItem) throw failWith(409, 'The item is no longer on the Stripe subscription.');
   await stripeRequest(`subscription_items/${encodeURIComponent(item.stripeItemId)}`, [['proration_behavior', 'none'],
-    ...monthlyPriceParams('', { monthlyAmount: to }, stripeId(stripeItem.price?.product))], 'POST',
+    ...monthlyPriceParams('', { monthlyPence: toPence(to) }, stripeId(stripeItem.price?.product))], 'POST',
   { idempotencyKey: `volunteer-price-${item.stripeItemId}-${Math.round(to * 100)}` });
   const at = Timestamp.now();
   const adjustment = { from: item.monthlyAmount, to, at };
@@ -474,21 +476,24 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, househ
   }, { merge: true });
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, total, status, stripeSessionId = '', discountCodeId = null, people = [], siteUrl = '', billingMode = 'annual', receiptViewTokenHash = '', stockProductIds = [], policyVersions = null, subscriptionPlan = null }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, subscriptionPlan = null }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
+    schemaVersion: CURRENT_ORDER_VERSION,
     email: email.toLowerCase(),
     items,
     people,
     stockProductIds,
     policyVersions,
-    total: String(total),
+    totalPence,
+    subtotalPence: totalPence + discountPence,
+    discountPence,
+    discountCode,
     status,
-    stripeSessionId,
     siteUrl,
     billingMode,
-    receiptViewTokenHash,
-    discountCodeId,
+    receiptTokenHash,
+    ...newOrderGroups(stripeSessionId),
     ...(subscriptionPlan ? { subscriptionPlan } : {}),
     createdAt: Timestamp.now(),
     expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
@@ -544,14 +549,15 @@ const recordUnsuccessfulCheckout = async (session, status) => {
     const document = await transaction.get(orderDocument);
     if (!document.exists) throw new Error('Order not found for unsuccessful Checkout Session.');
     const order = document.data();
-    if (order.stripeSessionId !== session.id) throw new Error('Checkout Session does not match the order.');
+    if (order.stripe?.sessionId !== session.id) throw new Error('Checkout Session does not match the order.');
     if (order.status !== 'pending') return null;
-    const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
+    const discountDocument = order.discountCode ? adminDb.collection('discountCodes').doc(order.discountCode) : null;
     const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
     const stock = await readStock(transaction, order.stockProductIds || []);
     stock.forEach((snapshot) => dropHold(transaction, snapshot, orderRef));
     const timestamp = Timestamp.now();
-    transaction.update(orderDocument, { status, paymentProcessing: false, ...(status === 'expired' ? { expiredAt: timestamp } : { paymentFailedAt: timestamp }) });
+    transaction.update(orderDocument, { status, 'stripe.processing': false, ...(status === 'expired' ? { expiredAt: timestamp }
+      : { paymentFailure: paymentFailureRecord(order.paymentFailure, { at: timestamp }) }) });
     if (discountDocument && discount?.reservedByOrder === orderRef && !discount.used) {
       transaction.update(discountDocument, { reservedByOrder: null, reservedUntil: null });
     }
@@ -566,33 +572,36 @@ const recordPaymentFailureAttempt = async (intent) => {
   const orderDocument = adminDb.collection('orders').doc(orderRef);
   await adminDb.runTransaction(async (transaction) => {
     const document = await transaction.get(orderDocument);
-    if (!document.exists || document.data().stripePaymentIntentId === intent.id && document.data().status === 'paid') return;
-    transaction.update(orderDocument, {
-      lastPaymentFailureAt: Timestamp.now(),
-      lastPaymentFailureCode: intent.last_payment_error?.code || '',
-      lastPaymentFailureDeclineCode: intent.last_payment_error?.decline_code || ''
-    });
+    if (!document.exists || document.data().stripe?.paymentIntentId === intent.id && document.data().status === 'paid') return;
+    transaction.update(orderDocument, { paymentFailure: paymentFailureRecord(document.data().paymentFailure, {
+      at: Timestamp.now(),
+      code: intent.last_payment_error?.code || '',
+      declineCode: intent.last_payment_error?.decline_code || '',
+      message: intent.last_payment_error?.message || ''
+    }) });
   });
 };
 
 /**
  * Marks a pending order paid and writes its membership records, vouchers and stock holds.
- * Returns the order with its receipt access token, or null when it was already fulfilled.
+ * Returns the order with its receipt token, or null when it was already fulfilled. `receiptToken` is the one checkout
+ * created; when it is missing or does not match the order, a new one replaces it so the emailed link works.
  */
-const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '', setupIntent = '' }) => {
-  const accessToken = createAccessToken();
+const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '', setupIntent = '', receiptToken: givenToken = '' }) => {
+  let receiptToken = '';
   const fields = await adminDb.runTransaction(async (transaction) => {
     const orderDocument = adminDb.collection('orders').doc(orderRef);
     const document = await transaction.get(orderDocument);
     if (!document.exists) throw new Error('Order not found.');
     const order = document.data();
-    if (order.stripeSessionId !== sessionId || Math.round(Number(order.total) * 100) !== amountTotal) {
+    if (order.stripe?.sessionId !== sessionId || order.totalPence !== amountTotal) {
       throw new Error('Payment does not match the order.');
     }
-    if (order.emailSent === true) return null;
-    if (order.emailSendingUntil?.toMillis() > Date.now()) throw Object.assign(new Error('Receipt delivery is already in progress.'), { busy: true });
+    if (order.fulfilment?.emailSent === true) return null;
+    if (order.fulfilment?.emailSendingUntil?.toMillis() > Date.now()) throw Object.assign(new Error('Receipt delivery is already in progress.'), { busy: true });
+    receiptToken = givenToken && tokenMatches(givenToken, order.receiptTokenHash) ? givenToken : createAccessToken();
     const stock = await readStock(transaction, order.stockProductIds || []);
-    const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
+    const discountDocument = order.discountCode ? adminDb.collection('discountCodes').doc(order.discountCode) : null;
     const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
     const memberIds = [...new Set((order.people || []).map((person) => person.membershipId).filter(Boolean))];
     const memberDocuments = memberIds.length
@@ -649,28 +658,30 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
     }));
     const paidAt = order.paidAt || Timestamp.now();
-    if (!order.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt, householdSnapshots,
+    if (!order.fulfilment?.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt, householdSnapshots,
       memberSnapshots: new Map(memberDocuments.map((document) => [document.id, document])) });
+    // The member and household records now hold everyone's details, so the order keeps only references to them.
     transaction.update(orderDocument, {
-      people: order.people || [],
+      people: (order.people || []).map(orderPersonReference),
       membershipIds: [...new Set((order.people || []).map((person) => person.membershipId).filter(Boolean))],
-      status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
-      stripePaymentIntentId: paymentIntent, ...(setupIntent ? { stripeSetupIntentId: setupIntent } : {}),
-      paidAt, paymentProcessing: false,
+      status: 'paid', vouchers, receiptTokenHash: hashAccessToken(receiptToken), 'fulfilment.recordsWritten': true,
+      'stripe.paymentIntentId': paymentIntent, ...(setupIntent ? { 'stripe.setupIntentId': setupIntent } : {}),
+      paidAt, 'stripe.processing': false,
       ...(discountReused ? { discountReused: true } : {}),
-      emailSendingUntil: Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000))
+      'fulfilment.emailSendingUntil': Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000))
     });
     return { ...order, vouchers, discountReused, discountUsedBy: discountReused ? discount.usedByOrder : '' };
   });
   if (fields?.discountReused) {
     await attention.raise('discount-reused', orderRef, { orderRef, email: fields.email,
-      detail: `Single-use code ${fields.discountCodeId} was already used by ${fields.discountUsedBy}, but ${orderRef} has been paid with it, so the order went through. Decide whether to accept it or ask for the difference.` });
+      detail: `Single-use code ${fields.discountCode} was already used by ${fields.discountUsedBy}, but ${orderRef} has been paid with it, so the order went through. Decide whether to accept it or ask for the difference.` });
   }
-  return fields && { ...fields, accessToken };
+  return fields && { ...fields, receiptToken };
 };
 
 /** Lets newly-qualified volunteers know the boathouse code, then emails the receipt. */
-const deliverOrder = async (orderRef, fields) => {
+const deliverOrder = async (orderRef, given) => {
+  const fields = await resolveOrderPeople(adminDb, given);
   // A volunteer who was inducted before joining gets their code once this purchase makes them a member.
   try {
     await settleVolunteersFor([fields.email, ...(fields.people || []).map(contactEmail)].map(normalizeEmail));
@@ -680,12 +691,12 @@ const deliverOrder = async (orderRef, fields) => {
   }
   catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
   try {
-    const emailSent = await sendOrderEmail({ email: fields.email, orderRef, accessToken: fields.accessToken, items: fields.items, people: fields.people, total: fields.total,
+    const emailSent = await sendOrderEmail({ email: fields.email, orderRef, receiptToken: fields.receiptToken, items: fields.items, people: fields.people, totalPence: fields.totalPence,
       vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode });
-    await updateFirestoreOrder(orderRef, { emailSent, emailSendingUntil: null, ...(emailSent ? { emailSentAt: Timestamp.now() } : {}) });
+    await updateFirestoreOrder(orderRef, { 'fulfilment.emailSent': emailSent, 'fulfilment.emailSendingUntil': null, ...(emailSent ? { 'fulfilment.emailSentAt': Timestamp.now() } : {}) });
     if (!emailSent) throw new Error('Receipt email is not configured.');
   } catch (error) {
-    await updateFirestoreOrder(orderRef, { emailSendingUntil: null });
+    await updateFirestoreOrder(orderRef, { 'fulfilment.emailSendingUntil': null });
     throw error;
   }
 };
@@ -705,7 +716,7 @@ const paymentFingerprint = async (id) => {
 const monthlyPriceParams = (prefix, item, product) => {
   const key = (name) => prefix ? `${prefix}[price_data]${name}` : `price_data${name}`;
   return [[key('[currency]'), 'gbp'], [key('[product]'), product],
-    [key('[unit_amount]'), String(Math.round(Number(item.monthlyAmount ?? item.price) * 100))], [key('[recurring][interval]'), 'month']];
+    [key('[unit_amount]'), String(item.monthlyPence ?? item.pricePence)], [key('[recurring][interval]'), 'month']];
 };
 
 /**
@@ -784,13 +795,13 @@ const recordSubscriptionGroup = async ({ order, orderRef, plan, group, subscript
   const itemIds = stripeItemLines(subscription, group.lineIds);
   const items = group.lineIds.map((lineId) => {
     const line = lineById.get(lineId);
-    return { lineId, orderRef, productId: line?.id || '', name: line?.name || '', monthlyAmount: Number(line?.monthlyAmount ?? line?.price ?? 0),
+    return { lineId, orderRef, productId: line?.id || '', name: line?.name || '', monthlyAmount: toPounds(line?.monthlyPence ?? line?.pricePence),
       clubYear: group.clubYear, stripeItemId: itemIds.get(lineId) || '', ...lineHolders(lineId, order.people), status: 'active' };
   });
   const membershipIds = [...new Set(items.flatMap((item) => item.membershipIds))];
   const names = [...new Set(items.flatMap((item) => item.names))];
   batch.set(adminDb.collection('subscriptions').doc(subscription.id), {
-    email: order.email, stripeMode: order.stripeMode || 'test', status: 'active', updatedAt: now, clubYear: group.clubYear,
+    email: order.email, stripeMode: order.stripe?.mode || 'test', status: 'active', updatedAt: now, clubYear: group.clubYear,
     firstDebitAt: group.firstDebitAt, cancelAt: group.cutoffAt,
     orderRefs: FieldValue.arrayUnion(orderRef), items: FieldValue.arrayUnion(...items),
     ...(membershipIds.length ? { membershipIds: FieldValue.arrayUnion(...membershipIds) } : {}),
@@ -809,7 +820,7 @@ const recordSubscriptionGroup = async ({ order, orderRef, plan, group, subscript
     const ownsMembership = received.some((item) => isMembershipLine(item.lineId)) && group.clubYear === latestMembershipYear;
     batch.set(adminDb.collection('memberships').doc(membershipId), {
       subscriptionIds: FieldValue.arrayUnion(subscription.id), subscriptionItems: FieldValue.arrayUnion(...received),
-      ...(ownsMembership ? { stripeMembershipSubscriptionId: subscription.id, stripeMembershipMode: order.stripeMode || 'test' } : {}) }, { merge: true });
+      ...(ownsMembership ? { stripeMembershipSubscriptionId: subscription.id, stripeMembershipMode: order.stripe?.mode || 'test' } : {}) }, { merge: true });
   }
   await batch.commit();
   return itemIds;
@@ -840,7 +851,7 @@ const setUpSubscriptions = async (orderRef, { force = false } = {}) => {
   });
   if (!claimed) return { done: true };
   if (claimed.busy) return { retryLater: true };
-  const { order } = claimed;
+  const order = await resolveOrderPeople(adminDb, claimed.order);
   let plan = order.subscriptionPlan;
   const revoked = new Set(order.items.filter((item) => item.revokedAt).map((item) => item.lineId));
   const lineById = new Map(order.items.map((item) => [item.lineId, item]));
@@ -859,9 +870,9 @@ const setUpSubscriptions = async (orderRef, { force = false } = {}) => {
   const setGroup = (index, fields) => { plan = { ...plan, groups: plan.groups.map((group, position) => position === index ? { ...group, ...fields } : group) }; };
   let failure = null;
   try {
-    const intent = order.stripePaymentIntentId
-      ? await stripeRequest(`payment_intents/${encodeURIComponent(order.stripePaymentIntentId)}`, null, 'GET')
-      : order.stripeSetupIntentId ? await stripeRequest(`setup_intents/${encodeURIComponent(order.stripeSetupIntentId)}`, null, 'GET') : null;
+    const intent = order.stripe?.paymentIntentId
+      ? await stripeRequest(`payment_intents/${encodeURIComponent(order.stripe.paymentIntentId)}`, null, 'GET')
+      : order.stripe?.setupIntentId ? await stripeRequest(`setup_intents/${encodeURIComponent(order.stripe.setupIntentId)}`, null, 'GET') : null;
     const paymentMethod = stripeId(intent?.payment_method);
     if (!paymentMethod) throw new Error('Stripe did not save a payment method at checkout.');
     const customer = stripeId(intent.customer) || await stripeCustomerFor(order.email);
@@ -970,8 +981,8 @@ const recordPaymentProcessing = async (session) => {
   await adminDb.runTransaction(async (transaction) => {
     const orderDocument = adminDb.collection('orders').doc(orderRef);
     const order = (await transaction.get(orderDocument)).data();
-    if (!order || order.stripeSessionId !== session.id || order.status !== 'pending' || order.paymentProcessing) return;
-    const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
+    if (!order || order.stripe?.sessionId !== session.id || order.status !== 'pending' || order.stripe?.processing) return;
+    const discountDocument = order.discountCode ? adminDb.collection('discountCodes').doc(order.discountCode) : null;
     const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
     const stock = await readStock(transaction, order.stockProductIds || []);
     stock.forEach((snapshot) => transaction.set(snapshot.ref, {
@@ -980,7 +991,7 @@ const recordPaymentProcessing = async (session) => {
     if (discount?.singleUse && discount.reservedByOrder === orderRef && !discount.used) {
       transaction.update(discountDocument, { reservedUntil: Timestamp.fromMillis(Date.now() + PROCESSING_HOLD_DAYS * 24 * 60 * 60 * 1000) });
     }
-    transaction.update(orderDocument, { paymentProcessing: true, processingSince: Timestamp.now(), stripePaymentIntentId: stripeId(session.payment_intent) });
+    transaction.update(orderDocument, { 'stripe.processing': true, 'stripe.processingSince': Timestamp.now(), 'stripe.paymentIntentId': stripeId(session.payment_intent) });
   });
 };
 
@@ -1004,7 +1015,7 @@ const basketOverlap = (orderRef, order, people, selected) => {
 const clearingOrderFor = async (email, people, selected) => {
   const pending = await adminDb.collection('orders').where('email', '==', email).where('status', '==', 'pending').limit(20).get();
   for (const document of pending.docs) {
-    const clearing = document.data().paymentProcessing && basketOverlap(document.id, document.data(), people, selected);
+    const clearing = document.data().stripe?.processing && basketOverlap(document.id, document.data(), people, selected);
     if (clearing) return clearing;
   }
   return null;
@@ -1019,8 +1030,8 @@ const expireEarlierCheckouts = async (email) => {
   const unexpired = [];
   for (const document of pending.docs) {
     const order = document.data();
-    const sessionId = order.stripeSessionId || '';
-    if (order.paymentProcessing || !/^cs_(?!free_)/.test(sessionId) || order.createdAt?.toMillis() < Date.now() - 25 * 60 * 60 * 1000) continue;
+    const sessionId = order.stripe?.sessionId || '';
+    if (order.stripe?.processing || !/^cs_(?!free_)/.test(sessionId) || order.createdAt?.toMillis() < Date.now() - 25 * 60 * 60 * 1000) continue;
     try {
       const expired = await stripeRequest(`checkout/sessions/${encodeURIComponent(sessionId)}/expire`, [], 'POST');
       await recordUnsuccessfulCheckout(expired, 'expired');
@@ -1065,7 +1076,7 @@ const completeCheckout = async (session) => {
   let fields;
   try {
     fields = await fulfilOrder({ orderRef, sessionId: session.id, amountTotal: session.amount_total ?? 0, paymentIntent: stripeId(session.payment_intent),
-      setupIntent: stripeId(session.setup_intent) });
+      setupIntent: stripeId(session.setup_intent), receiptToken: successUrlReceiptToken(session) });
   } catch (error) {
     if (!error.busy) {
       await attention.raise('order-unrecorded', orderRef, { orderRef, email: session.customer_details?.email || session.customer_email || '', data: { sessionId: session.id },
@@ -1107,10 +1118,11 @@ const attentionRetry = {
     const reference = adminDb.collection('orders').doc(entry.orderRef);
     const order = (await reference.get()).data();
     if (!order || order.status !== 'paid') throw failWith(409, 'The order is not paid.');
-    if (order.emailSent) return 'The receipt had already been sent.';
-    const accessToken = createAccessToken();
-    await reference.update({ accessTokenHash: hashAccessToken(accessToken) });
-    await deliverOrder(entry.orderRef, { ...order, accessToken });
+    if (order.fulfilment?.emailSent) return 'The receipt had already been sent.';
+    // The plaintext token is not kept, so the resent receipt links with a new one.
+    const receiptToken = createAccessToken();
+    await reference.update({ receiptTokenHash: hashAccessToken(receiptToken) });
+    await deliverOrder(entry.orderRef, { ...order, receiptToken });
     return 'Receipt sent.';
   }
 };
@@ -1233,6 +1245,16 @@ try {
 
 const createAccessToken = () => crypto.randomBytes(32).toString('hex');
 const hashAccessToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+const tokenMatches = (token, expectedHash) => {
+  if (typeof token !== 'string' || !token || typeof expectedHash !== 'string' || !expectedHash) return false;
+  const actualHash = hashAccessToken(token);
+  return actualHash.length === expectedHash.length && crypto.timingSafeEqual(Buffer.from(actualHash), Buffer.from(expectedHash));
+};
+/** The receipt token checkout put in the Stripe success URL, so the receipt email can link with the same one. */
+const successUrlReceiptToken = (session) => {
+  try { return new URL(session?.success_url || '').searchParams.get('receipt_token') || ''; }
+  catch { return ''; }
+};
 const generateOrderRef = () => {
   const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   const randomValue = crypto.randomInt(0, alphabet.length ** 8);
@@ -1340,10 +1362,12 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
     const now = new Date();
     const justgoSync = req.query.kind === 'members' ? await readJustgoSync(adminDb, now) : null;
     const listed = req.query.kind === 'members' ? documents.map((document) => document.id) : [];
+    const orders = req.query.kind === 'members' ? new Map()
+      : new Map((await resolveOrderPeople(adminDb, documents.map((document) => ({ id: document.id, ...document.data() })))).map((order) => [order.id, order]));
     const [entitlements, purchases] = listed.length ? await Promise.all([loadEntitlements(adminDb, listed), loadPurchases(adminDb, listed)]) : [new Map(), new Map()];
     const records = documents.filter((document) => req.query.kind !== 'members' || document.data().contactOnly !== true).map((document) => (req.query.kind === 'members'
       ? membershipReport(document.id, { ...document.data(), entitlements: entitlements.get(document.id) || [], purchases: purchases.get(document.id) || [] }, now, households.get(document.data().householdId) || {}, justgoSync)
-      : orderReport(document.id, document.data(), members)));
+      : orderReport(document.id, orders.get(document.id), members)));
     res.json({ records: eventReport ? records.filter((record) => record.items.some((item) => item.category === 'EVENTS'))
       .map((record) => ({ ...record, orderTotal: record.total, items: record.items.filter((item) => item.category === 'EVENTS'),
         total: record.items.filter((item) => item.category === 'EVENTS').reduce((sum, item) => sum + (item.price || 0), 0) })) : records,
@@ -1384,7 +1408,8 @@ app.get('/api/admin/subscriptions', rateLimit(60, 60 * 1000), async (req, res) =
       item.membershipIds.map((id) => ({ membershipId: id, lineIds: [item.lineId] })), members, tiers)[0];
       return item.status === 'active' && !item.cancelScheduledAt && priced.volunteerBenefit && priced.basePrice === 0;
     }).map((item) => item.lineId);
-    const order = text('orderRef') ? (await adminDb.collection('orders').doc(text('orderRef')).get()).data() : null;
+    const stored = text('orderRef') ? (await adminDb.collection('orders').doc(text('orderRef')).get()).data() : null;
+    const order = stored ? await resolveOrderPeople(adminDb, stored) : null;
     const plan = order?.subscriptionPlan;
     // Lines that did reach Stripe are listed with their subscription above, so only the rest show as failed.
     const settled = new Set((plan?.groups || []).flatMap((group) => group.recorded ? group.lineIds : group.partialLineIds || []));
@@ -1606,6 +1631,7 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       if (!document.exists) return { status: 404, error: 'Record not found.' };
       const fields = document.data();
       if (fields.itemActionPending) return { status: 409, error: 'An item action is unfinished. Retry that exact action before deleting this order.' };
+      const orderPeople = req.params.kind === 'orders' ? (await resolveOrderPeople(adminDb, fields)).people : undefined;
       let warning = subscriptionWarning(fields);
       if (fields.email) {
         const related = await transaction.get(adminDb.collection('orders').where('email', '==', normalizeEmail(fields.email)).limit(101));
@@ -1619,7 +1645,7 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       stock.forEach((snapshot) => dropHold(transaction, snapshot, req.params.id));
       transaction.delete(reference);
       transaction.create(adminDb.collection('adminDeletionAudit').doc(), {
-        ...deletionAuditEntry({ kind: req.params.kind, id: req.params.id, fields, secret: auditSecret, adminUid: admin.uid, stripeAcknowledged: req.body.acknowledgeStripe === true }),
+        ...deletionAuditEntry({ kind: req.params.kind, id: req.params.id, fields, orderPeople, secret: auditSecret, adminUid: admin.uid, stripeAcknowledged: req.body.acknowledgeStripe === true }),
         createdAt: Timestamp.now()
       });
       return { status: 200, success: true };
@@ -2055,7 +2081,7 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
       }),
       orders: orderSnapshot.docs.map((document) => {
         const data = document.data();
-        return { orderRef: document.id, status: data.status, total: data.total, createdAt: data.createdAt?.toMillis() || 0, items: (data.items || []).map((item) => item.name) };
+        return { orderRef: document.id, status: data.status, total: toPounds(data.totalPence), createdAt: data.createdAt?.toMillis() || 0, items: (data.items || []).map((item) => item.name) };
       }).sort((a, b) => b.createdAt - a.createdAt)
     });
   } catch (error) {
@@ -2200,19 +2226,19 @@ app.get('/api/checkout-status', rateLimit(30, 60 * 1000), async (req, res) => {
   if (!/^cs_[a-zA-Z0-9_]+$/.test(sessionId)) return res.status(400).json({ error: 'Invalid Checkout Session.' });
   if (!adminDb) return res.status(503).json({ error: 'Checkout status is unavailable.' });
   try {
-    const find = () => adminDb.collection('orders').where('stripeSessionId', '==', sessionId).limit(1).get();
+    const find = () => adminDb.collection('orders').where('stripe.sessionId', '==', sessionId).limit(1).get();
     let snapshot = await find();
     if (snapshot.empty) return res.status(404).json({ error: 'Checkout order not found.' });
     const order = snapshot.docs[0].data();
     // If the webhook is late or missing, ask Stripe directly (at most every 15 seconds per order).
-    if (order.status === 'pending' && !order.paymentProcessing && !sessionId.startsWith('cs_free_')
-      && Date.now() - order.createdAt.toMillis() > 10 * 1000 && !(order.reconciledAt?.toMillis() > Date.now() - 15 * 1000)) {
-      await snapshot.docs[0].ref.update({ reconciledAt: Timestamp.now() });
+    if (order.status === 'pending' && !order.stripe?.processing && !sessionId.startsWith('cs_free_')
+      && Date.now() - order.createdAt.toMillis() > 10 * 1000 && !(order.stripe?.reconciledAt?.toMillis() > Date.now() - 15 * 1000)) {
+      await snapshot.docs[0].ref.update({ 'stripe.reconciledAt': Timestamp.now() });
       await reconcileCheckout(snapshot.docs[0].id, sessionId).catch((error) => console.error('Could not reconcile %s: %s', snapshot.docs[0].id, error.message));
       snapshot = await find();
     }
     const current = snapshot.docs[0].data();
-    return res.json({ status: current.status === 'pending' && current.paymentProcessing ? 'processing' : current.status || 'pending' });
+    return res.json({ status: current.status === 'pending' && current.stripe?.processing ? 'processing' : current.status || 'pending' });
   } catch (error) {
     console.error('Could not load checkout status:', error.message);
     return res.status(503).json({ error: 'Checkout status is unavailable.' });
@@ -2228,17 +2254,13 @@ app.get('/api/checkout-receipt', rateLimit(20, 60 * 1000), async (req, res) => {
   }
   if (!adminDb) return res.status(503).json({ error: 'Receipt service is unavailable.' });
   try {
-    const snapshot = await adminDb.collection('orders').where('stripeSessionId', '==', sessionId).limit(1).get();
+    const snapshot = await adminDb.collection('orders').where('stripe.sessionId', '==', sessionId).limit(1).get();
     if (snapshot.empty) return res.status(404).json({ error: 'Receipt not found.' });
     const document = snapshot.docs[0];
     const order = document.data();
-    const actualHash = hashAccessToken(token);
-    const expectedHash = order.receiptViewTokenHash || '';
-    if (actualHash.length !== expectedHash.length || !crypto.timingSafeEqual(Buffer.from(actualHash), Buffer.from(expectedHash))) {
-      return res.status(404).json({ error: 'Receipt not found.' });
-    }
+    if (!tokenMatches(token, order.receiptTokenHash)) return res.status(404).json({ error: 'Receipt not found.' });
     if (order.status !== 'paid') return res.status(409).json({ status: order.status || 'pending' });
-    const receipt = buildReceiptSummary(document.id, order);
+    const receipt = buildReceiptSummary(document.id, await resolveOrderPeople(adminDb, order));
     return res.json({ receipt, copy: receiptEmailCopy(receipt) });
   } catch (error) {
     console.error('Could not load checkout receipt:', error.message);
@@ -2395,7 +2417,8 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     // Only the newest checkout for an email can be paid, so going back and starting again cannot charge twice.
     // This runs before the overlap checks so an earlier checkout that turns out to be paid or clearing is seen by them.
     for (const earlierRef of await expireEarlierCheckouts(email)) {
-      const earlier = (await adminDb.collection('orders').doc(earlierRef).get()).data();
+      const stored = (await adminDb.collection('orders').doc(earlierRef).get()).data();
+      const earlier = stored && await resolveOrderPeople(adminDb, stored);
       const paid = earlier && ['paid', 'partially_refunded'].includes(earlier.status) && basketOverlap(earlierRef, earlier, people, selected);
       if (paid) {
         return res.status(409).json({ code: 'already_paid', personIds: paid.personIds,
@@ -2445,7 +2468,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     const pricing = calculateCart(applyTripDiscounts(volunteerLines, storedPeople, tripPrivileges, now), billingMode === 'annual', promo, now);
     if (promo && pricing.promoDiscountValue <= 0) return res.status(400).json({ error: 'This code does not apply to the items in your basket.' });
     const siteUrl = checkoutSiteOrigin(req);
-    const receiptViewToken = createAccessToken();
+    const receiptToken = createAccessToken();
     if (discountDocument?.data().singleUse) {
       await adminDb.runTransaction(async (transaction) => {
         const current = await transaction.get(discountDocument.ref);
@@ -2456,15 +2479,15 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       reservedDocument = discountDocument.ref;
     }
     const items = pricing.items.map((item) => ({
-      id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, pricingMode: item.pricingMode, price: item.displayPrice,
+      id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, pricingMode: item.pricingMode, pricePence: toPence(item.displayPrice),
       monthly: Boolean(item.monthlyBilling && item.monthlyAmount > 0),
       ...(item.volunteerBenefit ? { volunteerBenefit: true } : {}),
       ...(item.clubYear ? { clubYear: item.clubYear, clubYearPart: item.clubYearPart, label: item.label } : {}),
       ...(item.sourceLineId !== item.lineId ? { sourceLineId: item.sourceLineId } : {}),
-      ...(item.monthlyBilling ? { monthlyAmount: item.monthlyAmount, debits: item.debits,
+      ...(item.monthlyBilling ? { monthlyPence: toPence(item.monthlyAmount), debits: item.debits,
         ...(item.debits ? { firstDebitAt: Timestamp.fromDate(item.firstDebit), cutoffAt: Timestamp.fromDate(item.subscriptionEnd) } : {}) } : {}),
       ...(lineMembershipRule(item) && item.category !== 'MERCHANDISE' && item.category !== 'VOUCHERS' ? { membershipRule: lineMembershipRule(item) } : {}),
-      ...(item.tripSaving > 0 ? { tripDiscount: item.tripSaving, tripDiscountReasons: item.tripDiscountReasons } : {}),
+      ...(item.tripSaving > 0 ? { tripDiscountPence: toPence(item.tripSaving), tripDiscountReasons: item.tripDiscountReasons } : {}),
       ...(item.size ? { size: item.size } : {}),
       ...(item.membershipTier ? { membershipTier: item.membershipTier } : {}),
       ...(item.type === 'voucher' ? { voucherValue: item.basePrice, voucherScope: voucherScope(item) } : {}),
@@ -2474,7 +2497,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
         ...(typeof item.imageUrl === 'string' && item.imageUrl ? { imageUrl: item.imageUrl } : {})
       } : {})
     }));
-    const total = pricing.total;
+    const totalPence = toPence(pricing.total);
     reservedStockIds = await reserveStock(orderRef, selected, catalog);
     const policyVersions = await currentCheckoutPolicies(adminDb, isLive());
     const hasRecurringItem = items.some((item) => item.monthly);
@@ -2489,39 +2512,39 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       return { clubYear, lineIds: groupItems.map((item) => item.lineId), firstDebitAt: groupItems[0].firstDebitAt, cutoffAt: groupItems[0].cutoffAt };
     });
     const subscriptionPlan = groups.length ? { status: 'pending', lineIds: debited.map((item) => item.lineId), groups } : null;
-    const checkoutTotal = total;
     // Stripe will not take a £0 payment, so a fully discounted basket with no monthly payments is completed here instead.
-    const free = !subscriptionPlan && Math.round(checkoutTotal * 100) === 0;
+    const free = !subscriptionPlan && totalPence === 0;
     const freeSessionId = free ? `cs_free_${crypto.randomBytes(16).toString('hex')}` : '';
-    await createFirestoreOrder({ orderRef, email, items, total: checkoutTotal, status: 'pending', discountCodeId: discountDocument?.id || null, stripeSessionId: freeSessionId,
-      people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions,
+    await createFirestoreOrder({ orderRef, email, items, totalPence, discountPence: toPence(pricing.promoDiscountValue), status: 'pending',
+      discountCode: discountDocument?.id || '', stripeSessionId: freeSessionId,
+      people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptTokenHash: hashAccessToken(receiptToken), stockProductIds: reservedStockIds, policyVersions,
       subscriptionPlan });
     orderCreated = true;
     if (free) {
-      const fields = await fulfilOrder({ orderRef, sessionId: freeSessionId, amountTotal: 0 });
+      const fields = await fulfilOrder({ orderRef, sessionId: freeSessionId, amountTotal: 0, receiptToken });
       await updateFirestoreOrder(orderRef, { paymentMethod: 'free' });
       try { if (fields) await deliverOrder(orderRef, fields); }
       catch (error) {
         console.error('Free order completed but the receipt email failed:', error.message);
         await attention.raise('receipt-email', orderRef, { orderRef, email, detail: `The receipt for free order ${orderRef} could not be emailed: ${error.message}` });
       }
-      const params = new URLSearchParams({ session_id: freeSessionId, receipt_token: receiptViewToken });
+      const params = new URLSearchParams({ session_id: freeSessionId, receipt_token: receiptToken });
       return res.json({ success: true, free: true, orderRef, sessionId: freeSessionId, checkoutUrl: `${siteUrl}/payment-success?${params}` });
     }
     const dateLabel = (timestamp) => timestamp.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/London' });
     const money = (value) => `£${Number(value).toFixed(2)}`;
     const debitText = groups.map((group) => {
-      const monthly = debited.filter((item) => item.clubYear === group.clubYear).reduce((sum, item) => sum + Number(item.monthlyAmount), 0);
+      const monthly = debited.filter((item) => item.clubYear === group.clubYear).reduce((sum, item) => sum + toPounds(item.monthlyPence), 0);
       return `${money(monthly)} a month by direct debit on the 1st from ${dateLabel(group.firstDebitAt)} through February (club year ${clubYearLabel(group.clubYear)})`;
     }).join('; ');
     // Nothing due now but monthly payments to come: Checkout only saves the payment details.
-    const setupOnly = Math.round(checkoutTotal * 100) === 0;
-    const charged = items.filter((item) => Math.round(Number(item.price) * 100) > 0);
+    const setupOnly = totalPence === 0;
+    const charged = items.filter((item) => item.pricePence > 0);
     const lineItems = setupOnly ? [] : charged.flatMap((item, index) => [
       [`line_items[${index}][price_data][currency]`, 'gbp'],
       [`line_items[${index}][price_data][product_data][name]`, item.clubYear ? `${itemLabel(item)} – ${item.label}` : itemLabel(item)],
       [`line_items[${index}][price_data][product_data][metadata][line_id]`, item.lineId],
-      [`line_items[${index}][price_data][unit_amount]`, String(Math.round(Number(item.price) * 100))],
+      [`line_items[${index}][price_data][unit_amount]`, String(item.pricePence)],
       [`line_items[${index}][quantity]`, '1']
     ]);
     const session = await stripeRequest('checkout/sessions', [
@@ -2535,14 +2558,14 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
           // Saves the card or bank account for the monthly direct debits set up after payment.
           ...(subscriptionPlan ? [['payment_intent_data[setup_future_usage]', 'off_session']] : [])]),
       ...(debitText ? [['custom_text[submit][message]', `Your payment details are saved for ${debitText}.`.slice(0, 1200)]] : []),
-      ['success_url', `${siteUrl}/payment-success?session_id={CHECKOUT_SESSION_ID}&receipt_token=${receiptViewToken}`],
+      ['success_url', `${siteUrl}/payment-success?session_id={CHECKOUT_SESSION_ID}&receipt_token=${receiptToken}`],
       ['cancel_url', `${siteUrl}/membership`],
       ['metadata[order_ref]', orderRef],
-      ['metadata[total]', String(checkoutTotal)],
+      ['metadata[total]', String(toPounds(totalPence))],
       ['metadata[billing_mode]', hasRecurringItem ? 'monthly' : 'annual']
     ], 'POST', { idempotencyKey: `${orderRef}-checkout` });
     createdSessionId = session.id;
-    await updateFirestoreOrder(orderRef, { stripeSessionId: session.id, stripeMode: session.livemode ? 'live' : 'test' });
+    await updateFirestoreOrder(orderRef, { 'stripe.sessionId': session.id, 'stripe.mode': session.livemode ? 'live' : 'test' });
 
     res.json({ success: true, orderRef, sessionId: session.id, checkoutUrl: session.url });
   } catch (error) {
@@ -2569,7 +2592,8 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       const orderDocument = adminDb.collection('orders').doc(orderRef);
       await adminDb.runTransaction(async (transaction) => {
         paid = (await transaction.get(orderDocument)).data()?.status === 'paid';
-        if (!paid) transaction.update(orderDocument, { status: 'failed', failedAt: Timestamp.now(), failure: String(error.message).slice(0, 300) });
+        if (!paid) transaction.update(orderDocument, { status: 'failed',
+          paymentFailure: paymentFailureRecord(null, { at: Timestamp.now(), message: String(error.message).slice(0, 300) }) });
       }).catch((updateError) => console.error('Could not mark the failed checkout %s: %s', orderRef, updateError.message));
     }
     // A free order that was completed keeps what it took.
@@ -2597,34 +2621,34 @@ const sendEmail = async ({ to, subject, body, html, record = {} }) => {
   return true;
 };
 
-const sendOrderEmail = async ({ email, orderRef, accessToken, items, people = [], total, vouchers = [], siteUrl = '', billingMode = 'annual' }) => {
+const sendOrderEmail = async ({ email, orderRef, receiptToken, items, people = [], totalPence, vouchers = [], siteUrl = '', billingMode = 'annual' }) => {
   const orderSiteUrl = siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
   // Admin-chosen person details go in the email only, never the shareable receipt link.
   const personFields = await loadReceiptPersonFields();
   const receiptPeople = personFields.length ? await receiptPeopleWithRecords(people, email) : people;
-  const receipt = buildReceiptSummary(orderRef, { email, items, people: receiptPeople, total, vouchers, billingMode }, { personFields });
-  const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${accessToken}`;
+  const receipt = buildReceiptSummary(orderRef, { email, items, people: receiptPeople, totalPence, vouchers, billingMode }, { personFields });
+  const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${receiptToken}`;
   const body = [receiptEmailCopy(receipt), '', `Retrieve your receipt and subscription information: ${retrievalUrl}`, '',
     'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n');
   return sendEmail({ to: email, subject: `Your Forth Canoe Club receipt - ${orderRef}`, body, html: receiptEmailHtml(receipt, retrievalUrl),
-    record: { orderRef, items, people, total, receipt, retrievalUrl, vouchers } });
+    record: { orderRef, items, people, totalPence, receipt, retrievalUrl, vouchers } });
 };
 
 app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => {
   try {
     const separator = req.params.accessKey.indexOf('.');
     const orderRef = separator === -1 ? '' : req.params.accessKey.slice(0, separator);
-    const accessToken = separator === -1 ? '' : req.params.accessKey.slice(separator + 1);
-    if (!adminDb || !orderRef || !accessToken) return res.status(404).json({ error: 'Order not found.' });
+    const receiptToken = separator === -1 ? '' : req.params.accessKey.slice(separator + 1);
+    if (!adminDb || !orderRef || !receiptToken) return res.status(404).json({ error: 'Order not found.' });
 
     const document = await adminDb.collection('orders').doc(orderRef).get();
     if (!document.exists) return res.status(404).json({ error: 'Order not found.' });
     const fields = document.data();
-    if (fields.accessTokenHash !== hashAccessToken(accessToken)) return res.status(404).json({ error: 'Order not found.' });
+    if (!tokenMatches(receiptToken, fields.receiptTokenHash)) return res.status(404).json({ error: 'Order not found.' });
     if (fields.expiresAt?.toDate() < new Date()) return res.status(410).json({ error: 'This receipt link has expired.' });
 
     res.json({
-      ...buildLinkedReceipt(orderRef, fields),
+      ...buildLinkedReceipt(orderRef, await resolveOrderPeople(adminDb, fields)),
       createdAt: fields.createdAt?.toDate?.() || null,
       expiresAt: fields.expiresAt?.toDate?.() || null
     });

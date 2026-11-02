@@ -37,9 +37,11 @@ test('a deleted member is summarised without personal details and keeps a hidden
 });
 
 test('a deleted order keeps its reference, amount and items but masks every person', () => {
-  const fields = { email: 'Payer@Example.com', total: '65', status: 'paid', items: [{ name: 'Club tee', size: 'M' }, { name: 'Adult membership' }],
-    people: [{ firstName: 'Kit', lastName: 'Lee', dob: '2015-05-05', junior: true, guardian: { email: 'parent@example.com' }, email: '' }, { firstName: 'Al', lastName: 'Lee', dob: '1980-01-01', email: 'al@example.com' }] };
-  const entry = deletionAuditEntry({ kind: 'orders', id: 'FCC-ABC', fields, secret, adminUid: 'admin1', stripeAcknowledged: true });
+  const fields = { email: 'Payer@Example.com', totalPence: 6500, status: 'paid', items: [{ name: 'Club tee', size: 'M' }, { name: 'Adult membership' }],
+    people: [{ membershipId: 'M1', junior: true }, { membershipId: 'M2' }] };
+  // A recorded order holds references, so the caller passes the people resolved from their member records.
+  const orderPeople = [{ firstName: 'Kit', lastName: 'Lee', dob: '2015-05-05', junior: true, guardian: { email: 'parent@example.com' }, email: '' }, { firstName: 'Al', lastName: 'Lee', dob: '1980-01-01', email: 'al@example.com' }];
+  const entry = deletionAuditEntry({ kind: 'orders', id: 'FCC-ABC', fields, orderPeople, secret, adminUid: 'admin1', stripeAcknowledged: true });
   assert.equal(entry.recordId, 'FCC-ABC');
   assert.equal(entry.summary.total, 65);
   assert.deepEqual(entry.summary.items, ['Club tee (M)', 'Adult membership']);
@@ -48,4 +50,5 @@ test('a deleted order keeps its reference, amount and items but masks every pers
   for (const email of ['payer@example.com', 'parent@example.com', 'al@example.com']) assert.ok(entry.lookupKeys.includes(lookupKey(secret, 'email', email)), email);
   assert.ok(entry.lookupKeys.includes(lookupKey(secret, 'name-dob', 'Kit Lee|2015-05-05')));
   assert.equal(entry.stripeAcknowledged, true);
+  assert.deepEqual(entry.snapshot.people, fields.people, 'the snapshot keeps the stored references');
 });

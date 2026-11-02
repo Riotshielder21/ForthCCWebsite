@@ -3,18 +3,18 @@ import { test } from 'node:test';
 import { buildReceiptSummary, buildLinkedReceipt, receiptItemNames, receiptEmailCopy, receiptEmailHtml, normalizeReceiptPersonFields, RECEIPT_PERSON_FIELDS, receiptPersonWithRecord } from './receipt.js';
 
 const order = {
-  email: 'payer@example.test', total: 75, billingMode: 'monthly',
+  email: 'payer@example.test', totalPence: 7500, billingMode: 'monthly',
   people: [
     { firstName: 'Alex', lastName: 'Member', email: 'alex@example.test', lineIds: ['membership', 'subscription', 'event'] },
     { firstName: 'Jamie', lastName: 'Junior', guardian: { email: 'guardian@example.test' }, lineIds: ['junior'] }
   ],
   items: [
-    { lineId: 'membership', name: 'Adult membership', category: 'MEMBERSHIP', price: 25 },
-    { lineId: 'subscription', name: 'Coaching', category: 'SUBSCRIPTIONS', type: 'subscription', price: 20 },
-    { lineId: 'event', name: 'River trip', category: 'EVENTS', price: 10, imageUrl: 'https://example.test/trip.jpg',
+    { lineId: 'membership', name: 'Adult membership', category: 'MEMBERSHIP', pricePence: 2500 },
+    { lineId: 'subscription', name: 'Coaching', category: 'SUBSCRIPTIONS', type: 'subscription', pricePence: 2000 },
+    { lineId: 'event', name: 'River trip', category: 'EVENTS', pricePence: 1000, imageUrl: 'https://example.test/trip.jpg',
       eventSchedule: { mode: 'single', startDate: '2026-11-01', startTime: '10:00', endTime: '12:00', timeZone: 'Europe/London' } },
-    { lineId: 'junior', name: 'Junior membership', category: 'MEMBERSHIP', price: 15 },
-    { lineId: 'shirt', name: 'Club shirt', category: 'MERCHANDISE', size: 'M', price: 5 }
+    { lineId: 'junior', name: 'Junior membership', category: 'MEMBERSHIP', pricePence: 1500 },
+    { lineId: 'shirt', name: 'Club shirt', category: 'MERCHANDISE', size: 'M', pricePence: 500 }
   ],
   vouchers: [{ name: 'Gift voucher', code: 'FCC-GIFT', value: 60, expiresAt: '2027-10-22T00:00:00Z' }]
 };
@@ -49,7 +49,7 @@ test('HTML escapes all customer, catalogue and voucher text and attribute values
   const summary = buildReceiptSummary(unsafe, {
     ...order, email: unsafe,
     people: [{ firstName: unsafe, email: unsafe, lineIds: ['event'] }],
-    items: [{ lineId: 'event', name: unsafe, category: 'EVENTS', price: 10,
+    items: [{ lineId: 'event', name: unsafe, category: 'EVENTS', pricePence: 1000,
       imageUrl: 'https://example.test/image?x=" onerror="alert(1)' }],
     vouchers: [{ name: unsafe, code: unsafe, value: 10 }]
   });
@@ -62,18 +62,18 @@ test('HTML escapes all customer, catalogue and voucher text and attribute values
 test('images are optional, event-only and restricted to absolute HTTPS URLs', () => {
   for (const imageUrl of ['', '/relative.jpg', 'javascript:alert(1)', 'data:image/svg+xml,test', 'http://example.test/a.jpg', 'https://user:pass@example.test/a.jpg']) {
     const summary = buildReceiptSummary('FCC-123', {
-      items: [{ name: 'Event', category: 'EVENTS', price: 5, imageUrl }]
+      items: [{ name: 'Event', category: 'EVENTS', pricePence: 500, imageUrl }]
     });
     assert.doesNotMatch(receiptEmailHtml(summary, 'https://example.test/order/ref'), /<img/);
   }
   const summary = buildReceiptSummary('FCC-123', {
-    items: [{ name: 'Service', category: 'SERVICES', price: 5, imageUrl: 'https://example.test/a.jpg' }]
+    items: [{ name: 'Service', category: 'SERVICES', pricePence: 500, imageUrl: 'https://example.test/a.jpg' }]
   });
   assert.doesNotMatch(receiptEmailHtml(summary, 'https://example.test/order/ref'), /<img/);
 });
 
 test('link receipt copy can omit personal details and supports older orders without images or people', () => {
-  const summary = buildReceiptSummary('FCC-OLD', { items: [{ name: 'Legacy item', price: '5' }], total: '5' });
+  const summary = buildReceiptSummary('FCC-OLD', { items: [{ name: 'Legacy item', pricePence: 500 }], totalPence: 500 });
   const text = receiptEmailCopy(summary);
   assert.match(text, /Order reference: FCC-OLD/);
   assert.match(text, /Legacy item: £5.00/);
@@ -103,7 +103,7 @@ test('link receipts expose assigned names but exclude contact details, submitted
   const linked = buildLinkedReceipt('FCC-LINK', {
     ...order, people: [privatePerson],
     items: [{ ...order.items[0], email: privatePerson.email, dob: privatePerson.dob }],
-    receipt: privatePerson, accessTokenHash: 'private-token-hash'
+    receiptTokenHash: 'private-token-hash'
   });
   assert.deepEqual(linked.items[0].personNames, ['Alex Member']);
   assert.match(linked.copy, /Alex Member/);
@@ -112,11 +112,11 @@ test('link receipts expose assigned names but exclude contact details, submitted
     'Private Street', 'Private medical answer', 'Private contact', 'private-token-hash']) {
     assert.ok(!JSON.stringify(linked).includes(value), `link receipt must not expose ${value}`);
   }
-  assert.ok(!('receipt' in linked) && !('people' in linked));
+  assert.ok(!('receiptTokenHash' in linked) && !('people' in linked));
 });
 
 test('old orders without assignments retain their items without inventing names', () => {
-  const linked = buildLinkedReceipt('FCC-LEGACY', { total: '5', items: [{ name: 'Legacy purchase', price: '5' }] });
+  const linked = buildLinkedReceipt('FCC-LEGACY', { totalPence: 500, items: [{ name: 'Legacy purchase', pricePence: 500 }] });
   assert.deepEqual(linked.items[0].personNames, []);
   assert.match(linked.copy, /Legacy purchase: £5.00/);
 });
@@ -135,8 +135,8 @@ test('configured person details appear in both email formats, escaped and in all
   const people = [{ firstName: 'Kim', lastName: 'Junior', lineIds: ['junior'], dob: '2015-04-09', phone: '07700 900123',
     address: '1 Shore Road', postcode: 'KY1 1AA', medical: '<b>Asthma</b>', guardian: { name: 'Pat Junior', relationship: 'Parent', phone: '07700 900456' },
     emergencyContact: { name: '', phone: '', relationship: '' } }];
-  const items = [{ lineId: 'junior', name: 'Junior membership', category: 'MEMBERSHIP', price: 15 }];
-  const summary = buildReceiptSummary('FCC-9', { email: 'payer@example.test', total: 15, people, items },
+  const items = [{ lineId: 'junior', name: 'Junior membership', category: 'MEMBERSHIP', pricePence: 1500 }];
+  const summary = buildReceiptSummary('FCC-9', { email: 'payer@example.test', totalPence: 1500, people, items },
     { personFields: ['medical', 'dob', 'emergencyContact', 'guardian', 'address', 'phone', 'unknown', '__proto__'] });
   assert.deepEqual(summary.people[0].details, [
     { label: 'Date of birth', value: '09/04/2015' },
@@ -154,11 +154,11 @@ test('configured person details appear in both email formats, escaped and in all
 
 test('person details are absent by default and never reach the receipt link', () => {
   const people = [{ firstName: 'Kim', lastName: 'Junior', lineIds: ['junior'], dob: '2015-04-09', phone: '07700 900123', medical: 'Asthma' }];
-  const items = [{ lineId: 'junior', name: 'Junior membership', category: 'MEMBERSHIP', price: 15 }];
-  const summary = buildReceiptSummary('FCC-9', { total: 15, people, items });
+  const items = [{ lineId: 'junior', name: 'Junior membership', category: 'MEMBERSHIP', pricePence: 1500 }];
+  const summary = buildReceiptSummary('FCC-9', { totalPence: 1500, people, items });
   assert.equal('details' in summary.people[0], false);
   assert.ok(!receiptEmailCopy(summary).includes('2015') && !receiptEmailHtml(summary, 'https://x.test').includes('Asthma'));
-  const linked = JSON.stringify(buildLinkedReceipt('FCC-9', { total: 15, people, items }));
+  const linked = JSON.stringify(buildLinkedReceipt('FCC-9', { totalPence: 1500, people, items }));
   assert.ok(linked.includes('Kim Junior') && !linked.includes('2015') && !linked.includes('07700') && !linked.includes('Asthma'));
 });
 
@@ -170,9 +170,9 @@ test('stored receipt field settings are filtered to the allow-list', () => {
 
 test('club-year items show what was paid now and the monthly debit', () => {
   const summary = buildReceiptSummary('FCC-124', { ...order, people: [], items: [
-    { lineId: 'c', name: 'Coaching', category: 'SUBSCRIPTIONS', type: 'subscription', price: 16, monthly: true, monthlyAmount: 20, debits: 3,
+    { lineId: 'c', name: 'Coaching', category: 'SUBSCRIPTIONS', type: 'subscription', pricePence: 1600, monthly: true, monthlyPence: 2000, debits: 3,
       clubYear: 2026, label: '80% of this month now, then monthly from 1 Nov 2026' },
-    { lineId: 'm', name: 'Adult membership', category: 'MEMBERSHIP', price: 25, monthly: false, clubYear: 2027, label: 'Club year 2027/28' }
+    { lineId: 'm', name: 'Adult membership', category: 'MEMBERSHIP', pricePence: 2500, monthly: false, clubYear: 2027, label: 'Club year 2027/28' }
   ] });
   assert.deepEqual(summary.otherItems.map((item) => item.billing),
     ['80% of this month now, then monthly from 1 Nov 2026 at £20.00 a month', 'Club year 2027/28']);

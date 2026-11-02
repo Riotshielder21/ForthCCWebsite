@@ -22,7 +22,7 @@ test('item actions require a bounded reason, a stable operation ID and integer m
 });
 
 test('refund availability respects line allocation, external refunds and pending refunds', () => {
-  const item = { refunds: [{ paymentIntent: 'pi_test', amount: 400, status: 'pending' }, { paymentIntent: 'pi_test', amount: 200, status: 'failed' }] };
+  const item = { refunds: [{ paymentIntent: 'pi_test', amountPence: 400, status: 'pending' }, { paymentIntent: 'pi_test', amountPence: 200, status: 'failed' }] };
   assert.equal(refundAvailable(item, 'pi_test', 1000, { amount: 3000, amount_refunded: 400 }), 600);
   assert.equal(refundAvailable(item, 'pi_test', 1000, { amount: 3000, amount_refunded: 2900 }), 100);
   assert.equal(refundAvailable(item, 'pi_test', 300, { amount: 3000, amount_refunded: 0 }), 0);

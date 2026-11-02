@@ -47,10 +47,10 @@ const activeRefunds = (item) => (item.refunds || []).filter((refund) => !['faile
  */
 export const annualAdjustment = ({ item, product, volunteerPrice, paidAt, now = new Date() }) => {
   const done = activeRefunds(item).filter((refund) => refund.purpose === VOLUNTEER_ADJUSTMENT);
-  if (done.length) return { adjusted: true, amount: done.reduce((sum, refund) => sum + refund.amount, 0) };
+  if (done.length) return { adjusted: true, amount: done.reduce((sum, refund) => sum + refund.amountPence, 0) };
   const months = monthsLeftIn(item.clubYear, now);
   if (!months || volunteerPrice === null || item.monthly || item.volunteerBenefit || item.revokedAt || !product) return null;
-  const paid = pence(item.price);
+  const paid = Number(item.pricePence) || 0;
   let amount;
   let basis;
   const monthWord = `${months} month${months === 1 ? '' : 's'} left`;
@@ -69,6 +69,6 @@ export const annualAdjustment = ({ item, product, volunteerPrice, paidAt, now = 
   } else {
     return null;
   }
-  amount = Math.min(amount, paid - activeRefunds(item).reduce((sum, refund) => sum + refund.amount, 0));
+  amount = Math.min(amount, paid - activeRefunds(item).reduce((sum, refund) => sum + refund.amountPence, 0));
   return amount > 0 ? { adjusted: false, amount, months, basis } : null;
 };

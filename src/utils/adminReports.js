@@ -106,20 +106,20 @@ export const orderReport = (id, fields, members = new Map()) => ({
   id,
   email: fields.email || '',
   status: fields.status || 'unknown',
-  total: Number.isFinite(Number(fields.total)) ? Number(fields.total) : 0,
+  total: Number.isFinite(Number(fields.totalPence)) ? Number(fields.totalPence) / 100 : 0,
   createdAt: reportDate(fields.createdAt),
   paidAt: reportDate(fields.paidAt),
   // Orders for several people hold one Stripe subscription per person (or family).
   stripeSubscriptionId: [...new Set([fields.stripeSubscriptionId, ...(Array.isArray(fields.stripeSubscriptionIds) ? fields.stripeSubscriptionIds : [])].filter(Boolean))].join(', '),
   ...(fields.subscriptionSetupNeedsStaff === true ? { monthlyPaymentSetupFailed: true } : {}),
-  stripePaymentIntentId: fields.stripePaymentIntentId || '',
+  stripePaymentIntentId: fields.stripe?.paymentIntentId || '',
   subscriptionWarning: subscriptionWarning(fields),
   items: (Array.isArray(fields.items) ? fields.items : []).map((item, index) => ({
     lineId: orderLineId(item, index), productId: item.id || '',
     name: itemLabel(item), category: String(item.category || ''),
-    type: String(item.type || ''), price: Number.isFinite(Number(item.price)) ? Number(item.price) : null,
+    type: String(item.type || ''), price: Number.isFinite(Number(item.pricePence)) ? Number(item.pricePence) / 100 : null,
     revokedAt: reportDate(item.revokedAt), revokedBy: item.revokedBy || '', revokeReason: item.revokeReason || '',
-    refunds: (item.refunds || []).map((refund) => ({ ...refund, at: reportDate(refund.at) })),
+    refunds: (item.refunds || []).map(({ amountPence, ...refund }) => ({ ...refund, amount: amountPence, at: reportDate(refund.at) })),
     ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {})
   })),
   people: (Array.isArray(fields.people) ? fields.people : []).map((person) => personReport(person, Array.isArray(fields.items) ? fields.items : [], members.get(person.membershipId) || {}))

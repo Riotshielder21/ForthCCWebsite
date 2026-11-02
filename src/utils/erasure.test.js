@@ -32,18 +32,18 @@ test('a family is everyone sharing the family group; others stand alone', () => 
 });
 
 test('erasing a person strips their details from an order but keeps items and amounts', () => {
-  const order = { email: 'Parent@Example.com', total: '65', items: [{ name: 'Family' }], receipt: { name: 'x' }, accessTokenHash: 'abc',
+  const order = { email: 'Parent@Example.com', totalPence: 6500, items: [{ name: 'Family' }], receiptTokenHash: 'abc',
     people: [{ id: 'p1', membershipId: 'M1', lineIds: ['l1'], firstName: 'Pat', lastName: 'Lee', email: 'parent@example.com', medical: 'asthma' },
       { id: 'p2', membershipId: 'M2', lineIds: ['l1'], firstName: 'Kit', lastName: 'Lee', junior: true, guardian: { email: 'parent@example.com' } }] };
   const one = redactOrder(order, ['M2'], ['parent@example.com']);
   assert.deepEqual(one.people[1], { id: 'p2', lineIds: ['l1'], membershipId: 'M2', erased: true });
   assert.equal(one.people[0].firstName, 'Pat');
-  assert.deepEqual(one.receipt, {}, 'a legacy receipt snapshot must not retain an erased family member');
+  assert.equal(one.receiptTokenHash, undefined, 'the receipt link stays while the payer email does');
   assert.equal(one.email, undefined, 'the payer email stays while another person still uses it');
   const everyone = redactOrder(order, ['M1', 'M2'], ['parent@example.com']);
   assert.equal(everyone.email, '***');
-  assert.deepEqual(everyone.receipt, {});
-  assert.equal(everyone.accessTokenHash, '');
+  assert.equal(everyone.receiptTokenHash, '');
+  assert.equal(Object.hasOwn(everyone, 'receipt'), false);
   assert.equal(everyone.people.every((person) => person.erased && !person.firstName), true);
   assert.equal(redactOrder(order, ['M9'], ['nobody@example.com']), null);
   assert.equal(redactOrder({ ...order, email: '***', people: [] }, [], ['***']), null);

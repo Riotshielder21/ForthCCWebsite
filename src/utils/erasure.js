@@ -23,7 +23,7 @@ export const familyOf = (records, record) => record.householdId
   : record.familyGroup ? records.filter((candidate) => candidate.familyGroup === record.familyGroup) : [record];
 
 /** The order entry for an erased person keeps only references, never identifying details. */
-export const redactOrderPerson = (person) => ({ id: person.id, lineIds: person.lineIds || [], membershipId: person.membershipId || '', erased: true });
+export const redactOrderPerson = (person) => ({ ...(person.id ? { id: person.id } : {}), lineIds: person.lineIds || [], membershipId: person.membershipId || '', erased: true });
 
 /**
  * Field updates that strip an order of the erased people's details. The order itself, its items and its amount stay for the accounts.
@@ -44,7 +44,7 @@ export const redactOrder = (order, erasedMembershipIds, erasedEmails, erasedHous
   const emailErased = order.email !== '***' && gone.has(payer) && !stillUsed.has(payer);
   const changed = people.some((person, index) => person !== order.people[index]);
   if (!changed && !emailErased) return null;
-  return { people, receipt: {}, ...(emailErased ? { email: '***', accessTokenHash: '', receiptViewTokenHash: '' } : {}), personalDataErasedAt: true };
+  return { people, ...(emailErased ? { email: '***', receiptTokenHash: '' } : {}), personalDataErasedAt: true };
 };
 
 /** Keep financial amounts and billing state, not the erased beneficiaries or cancellation free text. */

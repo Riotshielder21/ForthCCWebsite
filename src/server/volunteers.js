@@ -699,7 +699,7 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
         if (!holders.includes(member.id)) continue;
         const { product, price } = await priceFor(item.id, holders, item.clubYear);
         const result = annualAdjustment({ item, product, volunteerPrice: price, paidAt: paidAt.get(order.id), now });
-        if (result) annual.push({ orderRef: order.id, lineId: item.lineId, name: item.name, paid: item.price, paymentIntent: data.stripePaymentIntentId || '', ...result });
+        if (result) annual.push({ orderRef: order.id, lineId: item.lineId, name: item.name, paid: (Number(item.pricePence) || 0) / 100, paymentIntent: data.stripe?.paymentIntentId || '', ...result });
       }
     }
     return { ...base, linked: true, monthly, annual };

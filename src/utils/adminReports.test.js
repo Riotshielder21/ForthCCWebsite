@@ -23,12 +23,16 @@ test('membership status is one of No, Active, Awaiting renewal, Expired or Revok
 });
 
 test('order reports expose purchases but not receipt access credentials', () => {
-  const fields = { email: 'test@example.com', accessTokenHash: 'private', total: '25', status: 'paid',
-    createdAt: { toDate: () => new Date('2026-10-10') }, items: [{ name: 'Gold', type: 'subscription', price: '25' }] };
+  const fields = { email: 'test@example.com', receiptTokenHash: 'private', totalPence: 2500, status: 'paid', stripe: { paymentIntentId: 'pi_1' },
+    createdAt: { toDate: () => new Date('2026-10-10') }, items: [{ name: 'Gold', type: 'subscription', pricePence: 2500,
+      refunds: [{ id: 're_1', amountPence: 500 }] }] };
   const report = orderReport('order-1', fields);
   assert.equal(report.total, 25);
   assert.equal(report.subscriptionWarning, true);
-  assert.equal(Object.hasOwn(report, 'accessTokenHash'), false);
+  assert.equal(Object.hasOwn(report, 'receiptTokenHash'), false);
+  assert.equal(report.stripePaymentIntentId, 'pi_1');
+  assert.equal(report.items[0].price, 25, 'line prices are reported in pounds');
+  assert.equal(report.items[0].refunds[0].amount, 500, 'refunds are reported in pence');
   assert.equal(subscriptionWarning({ stripeSubscriptionId: 'sub_123' }), true);
   assert.equal(subscriptionWarning({ items: [{ type: 'annual-oneoff' }] }), false);
   assert.equal(subscriptionWarning({ items: [{ type: 'annual-oneoff', monthly: true }] }), true);
@@ -134,11 +138,11 @@ test('event attendee exports use the linked household as the canonical source of
 
 test('mixed shop orders retain individual prices, sizes, quantities, and event schedules in reports', () => {
   const report = orderReport('MIXED-1', {
-    email: 'buyer@example.test', status: 'paid', total: '155',
+    email: 'buyer@example.test', status: 'paid', totalPence: 15500,
     items: [
-      { lineId: 'tee-s', name: 'Club shirt', category: 'MERCHANDISE', type: 'merchandise', size: 'S', price: 20 },
-      { lineId: 'tee-m', name: 'Club shirt', category: 'MERCHANDISE', type: 'merchandise', size: 'M', price: 20 },
-      { lineId: 'course-1', name: 'Week-long course', category: 'EVENTS', type: 'event-ticket', price: 115,
+      { lineId: 'tee-s', name: 'Club shirt', category: 'MERCHANDISE', type: 'merchandise', size: 'S', pricePence: 2000 },
+      { lineId: 'tee-m', name: 'Club shirt', category: 'MERCHANDISE', type: 'merchandise', size: 'M', pricePence: 2000 },
+      { lineId: 'course-1', name: 'Week-long course', category: 'EVENTS', type: 'event-ticket', pricePence: 11500,
         eventSchedule: { mode: 'consecutive', startDate: '2027-07-12', days: 5 } }
     ],
     people: [{ firstName: 'Alex', lastName: 'Example', lineIds: ['course-1'], events: [{ name: 'Week-long course',

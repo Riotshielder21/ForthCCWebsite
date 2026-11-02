@@ -97,7 +97,7 @@ export const legacyTerms = (membershipId, fields, orders = new Map(), defaultStr
     const subscribed = orderRefs.map((ref) => orders.get(ref)).find((order) => order?.stripeSubscriptionId
       && (order.items || []).some((item) => item.category === 'MEMBERSHIP' && item.type === 'subscription'));
     stripeMembership = subscribed
-      ? { stripeMembershipSubscriptionId: subscribed.stripeSubscriptionId, stripeMembershipMode: subscribed.stripeMode || defaultStripeMode }
+      ? { stripeMembershipSubscriptionId: subscribed.stripeSubscriptionId, stripeMembershipMode: subscribed.stripe?.mode || subscribed.stripeMode || defaultStripeMode }
       : { stripeMembershipSubscriptionId: '', stripeMembershipMode: '' };
   }
   // Key hire bought before `keyAccess` was recorded on the member still grants the boathouse code.

@@ -3,7 +3,7 @@
 // Back up first (gcloud firestore export) before running with --apply against a real project.
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { CURRENT_MEMBERSHIP_VERSION, planUpgrade } from '../src/utils/schema.js';
+import { CURRENT_MEMBERSHIP_VERSION, CURRENT_ORDER_VERSION, ORDER_MIGRATIONS, planUpgrade } from '../src/utils/schema.js';
 import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, memberIsJunior, householdGroupKey } from '../src/utils/households.js';
 import { allocateRecordIds } from '../src/utils/recordIds.js';
 import { legacyTerms, termId } from '../src/utils/membershipTerms.js';
@@ -117,4 +117,25 @@ if (apply && pending) await batch.commit();
 
 console.log(`${documents.length} member records read, ${changed} ${apply ? 'upgraded' : 'would be upgraded'} to version ${CURRENT_MEMBERSHIP_VERSION}.`);
 for (const [description, count] of tally) console.log(`  ${count} x ${description}`);
-if (!apply && changed) console.log('Dry run only. Re-run with --apply to write.');
+
+// Orders are read after the member pass so they include the membershipIds it links.
+const orderDocuments = (await db.collection('orders').get()).docs;
+const orderTally = new Map();
+let ordersChanged = 0;
+batch = db.batch();
+pending = 0;
+for (const document of orderDocuments) {
+  const plan = planUpgrade(document.data(), ORDER_MIGRATIONS);
+  if (!plan) continue;
+  ordersChanged += 1;
+  plan.descriptions.forEach((description) => orderTally.set(description, (orderTally.get(description) || 0) + 1));
+  if (!apply) continue;
+  batch.update(document.ref, { ...plan.set, ...Object.fromEntries(plan.remove.map((key) => [key, FieldValue.delete()])) });
+  pending += 1;
+  await commitIfFull();
+}
+if (apply && pending) await batch.commit();
+
+console.log(`${orderDocuments.length} orders read, ${ordersChanged} ${apply ? 'upgraded' : 'would be upgraded'} to version ${CURRENT_ORDER_VERSION}.`);
+for (const [description, count] of orderTally) console.log(`  ${count} x ${description}`);
+if (!apply && (changed || ordersChanged)) console.log('Dry run only. Re-run with --apply to write.');

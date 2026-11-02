@@ -3,6 +3,7 @@ import { buildRoster, rosterEmail, rosterDue } from '../utils/eventRoster.js';
 import { readJustgoSync } from './justgoSync.js';
 import { rateLimit } from './rateLimit.js';
 import { loadEntitlements } from './membershipTerms.js';
+import { resolveOrderPeople } from './orderPeople.js';
 
 /**
  * Emails each event leader the attendee list once bookings close (checked hourly), and lets an admin send it at any time.
@@ -27,7 +28,7 @@ export const registerEventRosterRoutes = (app, { requireAdmin, db, sendEmail, lo
   const paidOrders = async () => (await db().collection('orders').where('status', '==', 'paid').get()).docs.map((document) => ({ id: document.id, ...document.data() }));
 
   const sendRoster = async (product, orders, record) => {
-    const relevant = orders.filter((order) => (order.items || []).some((item) => item.id === product.id));
+    const relevant = await resolveOrderPeople(db(), orders.filter((order) => (order.items || []).some((item) => item.id === product.id)));
     const now = new Date();
     const roster = buildRoster(product.id, relevant, await loadMembers(relevant), now, await readJustgoSync(db(), now));
     const { subject, body } = rosterEmail(product, roster);
