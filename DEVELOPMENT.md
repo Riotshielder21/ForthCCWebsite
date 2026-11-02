@@ -338,7 +338,7 @@ The receipt email is sent after the monthly set-up, and a failure to send it doe
 
 ### Payment problems and Needs attention
 
-Problems that could cost a member money or leave them without what they paid for are written to the `attention` collection and listed at the top of **Reports & records → Needs attention**; the admin menu shows how many are open. The first time each problem appears the club is emailed at `STAFF_ALERT_EMAIL` (default: the club reply-to address). Raising the same problem again updates the entry rather than adding another.
+Problems that could cost a member money or leave them without what they paid for are written to the `attention` collection and listed at the top of **Reports & records → Needs attention**; the admin menu shows how many are open. The panel stays visible when there are no alerts, showing **Needs attention (0)** and **Nothing needs attention.** Loading and errors are shown explicitly rather than as an all-clear. The first time each problem appears the club is emailed at `STAFF_ALERT_EMAIL` (default: `committee@forthcanoeclub.co.uk`, distributed to members of that mailing list). Raising the same problem again updates the entry rather than adding another.
 
 | Kind | When | Retry button |
 | --- | --- | --- |

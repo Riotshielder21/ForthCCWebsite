@@ -71,7 +71,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const CLUB_REPLY_TO = 'secretary@forthcanoeclub.co.uk';
 const attention = createAttention({ db: () => adminDb, sendEmail: (message) => sendEmail(message),
-  alertEmail: process.env.STAFF_ALERT_EMAIL || CLUB_REPLY_TO });
+  alertEmail: process.env.STAFF_ALERT_EMAIL || 'committee@forthcanoeclub.co.uk' });
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isValidEmail = (value) => {
