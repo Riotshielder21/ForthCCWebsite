@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createHmac } from 'node:crypto';
+import { gzipSync, deflateSync, brotliCompressSync } from 'node:zlib';
 import { initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { initializeApp } from 'firebase/app';
@@ -87,6 +88,18 @@ try {
     });
     server.once('exit', (code) => { clearTimeout(timer); reject(new Error(`API exited ${code}: ${output}`)); });
   });
+  for (const [encoding, compress] of [['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]]) {
+    const compressed = compress(Buffer.from('{}'));
+    for (const body of [compressed, Buffer.concat([compressed, Buffer.from('trailing bytes')])]) {
+      for (const path of ['/api/checkout-session', '/api/stripe/webhook']) {
+        const rejected = await request(path, { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Encoding': encoding }, body });
+        assert.equal(rejected.status, 415, `${path} must reject ${encoding} before decompression`);
+        assert.match(rejected.result.error, /uncompressed JSON/);
+      }
+    }
+  }
+  assert.equal((await request('/health')).status, 200, 'compressed requests must not crash the API');
   assert.equal((await request('/api/admin/reports?kind=orders')).status, 401);
   const user = (await signInWithEmailAndPassword(auth, 'admin@forthcanoeclub.co.uk', 'local-test-password')).user;
   const token = await user.getIdToken(true);
