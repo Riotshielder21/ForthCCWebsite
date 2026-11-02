@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { rateLimit } from './rateLimit.js';
 import { membershipActivity } from '../utils/membership.js';
 import { memberIsJunior } from '../utils/households.js';
@@ -6,11 +6,12 @@ import { isCodeEmail, normaliseCodeEmail } from '../utils/emailCodes.js';
 import { validateDetailsUpdate, changedFields, managedByJustgo } from '../utils/myDetails.js';
 import { buildLinkedReceipt } from '../utils/receipt.js';
 import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
+import { activeSubscriptionItems } from '../utils/subscriptions.js';
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 /** Members verify their email with a code, then view and update their household's contact details. */
-export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes }) => {
+export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, raiseAttention = async () => {} }) => {
   const households = () => db().collection('households');
   const householdsFor = async (email) => (await households().where('email', '==', email).limit(10).get()).docs;
   const peopleIn = async (householdId) => (await db().collection('memberships').where('householdId', '==', householdId).limit(20).get()).docs;
@@ -30,6 +31,27 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes }) => {
       .filter((order) => order.data().status === 'paid' && order.data().createdAt?.toDate?.() >= start)
       .sort((a, b) => b.data().createdAt.toMillis() - a.data().createdAt.toMillis());
     return orders.map((order) => ({ ...buildLinkedReceipt(order.id, order.data()), createdAt: order.data().createdAt.toDate() }));
+  };
+  /**
+   * Active monthly payments this email pays for, and any that pay for people in its households. Another payer's
+   * email is not shown; the member can still ask the club to stop items they receive.
+   */
+  const monthlyPaymentsFor = async (email, householdDocs) => {
+    const memberIds = new Set((await Promise.all(householdDocs.map((household) => peopleIn(household.id)))).flat().map((person) => person.id));
+    const subscriptions = db().collection('subscriptions');
+    const found = new Map((await subscriptions.where('email', '==', email).limit(30).get()).docs.map((document) => [document.id, document]));
+    for (const ids of [...memberIds].reduce((chunks, id, index) => { if (index % 30 === 0) chunks.push([]); chunks.at(-1).push(id); return chunks; }, [])) {
+      (await subscriptions.where('membershipIds', 'array-contains-any', ids).limit(30).get()).docs.forEach((document) => found.set(document.id, document));
+    }
+    return [...found.values()].filter((document) => document.data().status === 'active').map((document) => {
+      const data = document.data();
+      const pays = data.email === email;
+      const items = activeSubscriptionItems(data).filter((item) => (pays || (item.membershipIds || []).some((id) => memberIds.has(id))));
+      const requested = new Set((data.cancelRequests || []).flatMap((request) => request.lineKeys || []));
+      return { subscriptionId: document.id, paidByYou: pays,
+        items: items.map((item) => ({ key: `${item.orderRef || data.orderRef || ''}/${item.lineId}`, name: item.name || '', names: item.names || [],
+          monthlyAmount: Number(item.monthlyAmount || 0), clubYear: item.clubYear || data.clubYear || null })).map((item) => ({ ...item, cancelRequested: requested.has(item.key) })) };
+    }).filter((subscription) => subscription.items.length);
   };
   const describe = async (household) => {
     const people = await peopleIn(household.id);
@@ -65,11 +87,45 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes }) => {
       const session = await emailCodes.requireEmailSession(req, res, 'details');
       if (!session) return;
       res.set('Cache-Control', 'no-store');
-      res.json({ email: session.email, expiresAt: session.expiresAt, households: await Promise.all((await householdsFor(session.email)).map(describe)),
-        purchases: await purchasesFor(session.email) });
+      const householdDocs = await householdsFor(session.email);
+      res.json({ email: session.email, expiresAt: session.expiresAt, households: await Promise.all(householdDocs.map(describe)),
+        purchases: await purchasesFor(session.email), monthlyPayments: await monthlyPaymentsFor(session.email, householdDocs) });
     } catch (error) {
       console.error('Could not load member details:', error.message);
       res.status(500).json({ error: 'Could not load your details.' });
+    }
+  });
+
+  // Members ask the club to stop monthly payments; staff make the change, so nothing is cancelled by mistake.
+  app.post('/api/my-details/monthly/:subscriptionId/cancel-request', rateLimit(5, 60 * 1000), async (req, res) => {
+    try {
+      if (!db()) return res.status(503).json({ error: 'Member details are not available right now.' });
+      const session = await emailCodes.requireEmailSession(req, res, 'details');
+      if (!session) return;
+      const subscription = (await monthlyPaymentsFor(session.email, await householdsFor(session.email)))
+        .find((candidate) => candidate.subscriptionId === req.params.subscriptionId);
+      if (!subscription) return res.status(404).json({ error: 'Those monthly payments were not found.' });
+      const keys = Array.isArray(req.body?.itemKeys) ? req.body.itemKeys.filter((key) => typeof key === 'string').slice(0, 20) : [];
+      const items = subscription.items.filter((item) => keys.includes(item.key) && !item.cancelRequested);
+      if (!items.length) return res.status(400).json({ error: 'Choose what you would like to stop.' });
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
+      const at = Timestamp.now();
+      await db().collection('subscriptions').doc(subscription.subscriptionId).update({
+        cancelRequests: FieldValue.arrayUnion({ at, by: session.email, lineKeys: items.map((item) => item.key), reason }) });
+      const summary = items.map((item) => `${item.name}${item.names.length ? ` for ${item.names.join(', ')}` : ''} (£${item.monthlyAmount.toFixed(2)} a month)`);
+      await raiseAttention('cancel-request', `${subscription.subscriptionId}-${at.toMillis()}`, { subscriptionId: subscription.subscriptionId, email: session.email,
+        data: { itemKeys: items.map((item) => item.key) },
+        detail: `${session.email} asked to stop: ${summary.join('; ')}.${subscription.paidByYou ? '' : ' They receive these items but someone else pays.'}${reason ? ` Reason: ${reason}` : ''} Cancel them under the member's Monthly payments, then resolve this with a note.` });
+      await sendEmail({ to: session.email, subject: 'We have your request to stop monthly payments',
+        body: ['We have received your request to stop these monthly payments:', '', ...summary.map((line) => `- ${line}`), '',
+          'The club will make the change and email you to confirm. Payments continue until then; anything taken after your request will be refunded.', '',
+          'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n'), record: { kind: 'cancel-request', subscriptionId: subscription.subscriptionId } })
+        .catch((error) => console.error('Could not confirm the cancellation request by email:', error.message));
+      res.set('Cache-Control', 'no-store');
+      res.json({ success: true, message: 'Your request has been sent to the club. We will email you when the payments are stopped.' });
+    } catch (error) {
+      console.error('Could not record the cancellation request:', error.message);
+      res.status(500).json({ error: 'Could not send your request. Please email secretary@forthcanoeclub.co.uk.' });
     }
   });
 

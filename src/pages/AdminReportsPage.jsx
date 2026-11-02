@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, CircleSlash, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl } from '../utils/api';
-import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, MEMBERSHIP_STATUSES } from '../utils/adminReports';
+import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
 import { eventScheduleLabel } from '../utils/catalogue';
 import CustomerVouchers from '../components/CustomerVouchers';
 import MonthlyPayments from '../components/MonthlyPayments';
@@ -14,6 +14,7 @@ import BoathouseCodePanel from '../components/BoathouseCodePanel';
 import AdminAccessPanel from '../components/AdminAccessPanel';
 import PurchasedItemActions from '../components/PurchasedItemActions';
 import KeyAccessControl from '../components/KeyAccessControl';
+import NeedsAttentionPanel from '../components/NeedsAttentionPanel';
 
 // Member register is the authoritative list, so it comes first.
 const RECORD_TABS = [[Users, 'members', 'Member register'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Repeat, 'subscribers', 'Stripe subscribers']];
@@ -75,6 +76,7 @@ export default function AdminReportsPage({ onNavigate }) {
   const [confirmation, setConfirmation] = useState('');
   const [stripeRequired, setStripeRequired] = useState(false);
   const [stripeAcknowledged, setStripeAcknowledged] = useState(false);
+  const [activeMonthly, setActiveMonthly] = useState([]);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const generation = useRef(0);
   const closeButton = useRef(null);
@@ -223,8 +225,29 @@ export default function AdminReportsPage({ onNavigate }) {
     setConfirmation('');
     setStripeRequired(kind === 'members' || record.subscriptionWarning);
     setStripeAcknowledged(false);
+    setActiveMonthly([]);
     setMessage('');
     setError('');
+  };
+  // Stops the monthly payments the server listed for this record, then lets the deletion go ahead.
+  const cancelActiveMonthly = async () => {
+    setDeleteBusy(true);
+    setError('');
+    try {
+      const token = await adminUser.getIdToken(true);
+      for (const path of activeMonthly.flatMap((subscription) => subscription.cancelPaths)) {
+        const response = await fetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ reason: `Record ${deleting.id} deleted` }) });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok && response.status !== 409) throw new Error(result.error || 'Could not cancel the monthly payments.');
+      }
+      setActiveMonthly([]);
+      setMessage('Monthly payments cancelled. You can now delete the record.');
+    } catch (cancelError) {
+      setError(cancelError.message);
+    } finally {
+      setDeleteBusy(false);
+    }
   };
   const scheduleCancellation = async () => {
     setScheduleBusy(true);
@@ -259,6 +282,7 @@ export default function AdminReportsPage({ onNavigate }) {
       });
       const result = await response.json();
       if (result.requiresStripeAcknowledgement) setStripeRequired(true);
+      setActiveMonthly(result.activeMonthly || []);
       if (!response.ok) throw new Error(result.error || 'Could not delete record.');
       setRecords((current) => current.filter((record) => record.id !== deleting.id));
       setMessage(`Record ${deleting.id} deleted. Stripe payments and other records were not changed.`);
@@ -276,6 +300,7 @@ export default function AdminReportsPage({ onNavigate }) {
     <header className="ReportsHeader"><div><h2 className="tile_heading_bold_1">Reports & records</h2>{!SettingsPanel && <span className="text_container">{records.length} loaded records{cursor ? ' (more available)' : ''}</span>}</div>
       <button className="EditorCommand" onClick={() => onNavigate('admin')}><ArrowLeft size={18} /> Website editor</button>
     </header>
+    <NeedsAttentionPanel adminUser={adminUser} />
     <div className="ReportsTabs" role="tablist" aria-label="Report type">
       {[...RECORD_TABS, ...SETTINGS_TABS].map(([Icon, id, label]) => <button key={id} role="tab" disabled={scheduleBusy} aria-selected={kind === id} className={kind === id ? 'is-selected' : ''} onClick={() => {
         if (id === kind) return;
@@ -291,7 +316,7 @@ export default function AdminReportsPage({ onNavigate }) {
     <div className="ReportsFilters">
       <label className="ReportsSearch"><Search size={18} /><input aria-label="Search report" placeholder={purchaseReport ? 'Email, order, or product' : 'Name, email, or member ID'} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{(kind === 'subscribers' ? ['Active', 'Inactive'] : purchaseReport ? ['paid', 'pending', 'failed', 'cancelled'] : [...MEMBERSHIP_STATUSES, ...new Set(records.map((record) => record.status).filter((value) => value && !MEMBERSHIP_STATUSES.includes(value)))]).map((value) => <option key={value}>{value}</option>)}</select></label>
-      {kind === 'members' && <><label>JustGo<select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">All members</option>{['Awaiting upload', 'Invitation sent', 'Needs staff upload', 'Added by staff, awaiting sync', 'In JustGo', 'Not in JustGo'].map((value) => <option key={value}>{value}</option>)}</select></label><label>Tier<select value={tierFilter} onChange={(event) => setTierFilter(event.target.value)}><option value="all">All tiers</option>{['adult', 'junior', 'family'].map((tier) => <option key={tier}>{tier}</option>)}</select></label></>}
+      {kind === 'members' && <><label>JustGo<select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">All members</option>{JUSTGO_STATES.map((value) => <option key={value}>{value}</option>)}</select></label><label>Tier<select value={tierFilter} onChange={(event) => setTierFilter(event.target.value)}><option value="all">All tiers</option>{['adult', 'junior', 'family'].map((tier) => <option key={tier}>{tier}</option>)}</select></label></>}
       {kind === 'members' && <><label>Includes<select value={includesFilter} onChange={(event) => setIncludesFilter(event.target.value)}><option value="all">Anything</option><option value="none">Membership only</option>{reportOptions(records, (record) => record.privileges).map((value) => <option key={value}>{value}</option>)}</select></label>
         <label>Renews via<select value={renewalFilter} onChange={(event) => setRenewalFilter(event.target.value)}><option value="all">Any</option><option value="website">Website</option><option value="justgo">JustGo</option><option value="none">Not set</option></select></label></>}
       {kind === 'orders' && <label>Purchase<select value={purchaseType} onChange={(event) => setPurchaseType(event.target.value)}><option value="all">All purchases</option>{PURCHASE_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
@@ -310,7 +335,7 @@ export default function AdminReportsPage({ onNavigate }) {
     {kind === 'members' && justgoSync && !justgoSync.healthy && <div className="ReportDeleteWarning" role="alert"><AlertTriangle size={22} /><div><strong>JustGo sync may have stopped</strong><p>{justgoSyncWarning(justgoSync)}</p></div></div>}
     {cursor && <p className="ReportNotice">Downloads include only loaded records matching the filters. Load all pages for a complete report.</p>}
     {kind === 'events' && <p className="ReportNotice">Event tickets are listed separately with the schedule saved at purchase. Totals cover event items only; each course ticket covers every listed session. Check payment status before treating a booking as paid. Load further pages even if a page has no events. Delete entire orders from Purchases, not this event-only view.</p>}
-    <p className="ReportNotice">{kind === 'subscribers' ? 'Active means Stripe reports active and payments are not paused or reversed on the latest invoice. Scheduled cancellation remains active until Stripe changes the status. Older refunds and disputes are not checked here. These are recurring Stripe subscriptions, not annual one-off purchases.' : kind === 'members' ? 'One register for every member. JustGo is the authority on whether a member is current and becomes their renewal method once they are linked. New website members are sent to JustGo automatically; an invitation JustGo emails to them can expire, so it is retried. Anyone the automatic upload could not complete shows Needs staff upload with the number of failed attempts, and appears on the staff upload list. Each member has a permanent club ID (M0001) that never changes; their membership number (FCC- and their Paddle Scotland number) appears once JustGo syncs them and updates if that number changes. Members are not shown either. Search covers names, IDs, membership and JustGo numbers, emergency contacts and what a membership includes.' : 'Purchases are not a verified member register. Use Stripe subscribers for current recurring subscription status.'} Email export does not establish permission to send marketing.</p>
+    <p className="ReportNotice">{kind === 'subscribers' ? 'Active means Stripe reports active and payments are not paused or reversed on the latest invoice. Scheduled cancellation remains active until Stripe changes the status. Older refunds and disputes are not checked here. These are recurring Stripe subscriptions, not annual one-off purchases.' : kind === 'members' ? 'One register for every member. JustGo is the authority on whether a member is current and becomes their renewal method once they are linked. New website members are sent to JustGo automatically through the JustGo API: an existing JustGo account is linked to FCC, or a new one is created, and the FCC membership is added. Any emails about this come from JustGo. Anyone the automatic upload could not complete, or whose result is uncertain, shows Needs staff upload and appears on the staff upload list. A Paddle Scotland suspension shows as Suspended and blocks club activity. Members unlinked from FCC in JustGo keep their status until staff review them. Accounts are never deleted from JustGo. Each member has a permanent club ID (M0001) that never changes; their membership number (FCC- and their Paddle Scotland number) appears once JustGo syncs them and updates if that number changes. Members are not shown either. Search covers names, IDs, membership and JustGo numbers, emergency contacts and what a membership includes.' : 'Purchases are not a verified member register. Use Stripe subscribers for current recurring subscription status.'} Email export does not establish permission to send marketing.</p>
     {error && !deleting && <p className="StatusTextError" role="alert">{error}</p>}
     {message && <p role="status">{message}</p>}
     <div className="ReportsTableWrap" tabIndex={0} role="region" aria-label="Records, scroll horizontally for more columns"><table className="ReportsTable"><thead><tr>
@@ -356,6 +381,7 @@ export default function AdminReportsPage({ onNavigate }) {
         </dl>)}</div>}
         {selected.history?.length > 0 && <div className="ReportPeople"><h4 className="CartItemTitle">Purchase history</h4><ul className="ReportItems">{selected.history.map((entry, index) => <li key={index}>{entry.orderRef}, {dateLabel(entry.paidAt)}: {entry.items.join(', ')}</li>)}</ul></div>}
         {kind === 'members' && selected.status === 'Unavailable' && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>Membership status unavailable</strong><p>{justgoSync && !justgoSync.healthy ? justgoSyncWarning(justgoSync) : 'JustGo sync has not confirmed this member this club year.'} Check their membership in JustGo.</p></div></div>}
+        {kind === 'members' && ['Suspended in JustGo', 'Not linked to FCC in JustGo'].includes(selected.justgo) && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>{selected.justgo}</strong><p>{selected.justgo === 'Suspended in JustGo' ? 'Paddle Scotland has suspended this member, so club activity is blocked. Check the suspension in JustGo.' : selected.justgoReview || 'Check in JustGo whether this was intended.'}</p></div></div>}
         {kind === 'members' && selected.justgoSync === 'pending' && <div className="ReportsRowActions">
           <button className="EditorCommand" type="button" onClick={() => justgoAction(selected.id, 'retry')}>Retry JustGo upload</button>
           <button className="EditorCommand" type="button" onClick={() => justgoAction(selected.id, 'manual')}>Manually added in JustGo</button>
@@ -368,6 +394,10 @@ export default function AdminReportsPage({ onNavigate }) {
         {!['subscribers', 'events'].includes(kind) && <button className="EditorCommand TileRemove" onClick={() => beginDelete(selected)}><Trash2 size={18} /> Delete this record</button>}</>}
       {deleting && <form onSubmit={(event) => { event.preventDefault(); deleteRecord(); }}>
         <p className="ReportNotice">Permanently deletes this {kind === 'orders' ? 'order' : 'member-register'} record only. Other customer records, Firebase login accounts, vouchers, Google Sheets, emails, and Stripe subscriptions remain unchanged. This is not complete customer erasure. Check retention requirements first.</p>
+        {activeMonthly.length > 0 && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>Monthly payments are still being collected.</strong>
+          <ul>{activeMonthly.map((subscription) => <li key={subscription.id}>{subscription.itemNames.join(', ')}{subscription.names.length ? ` for ${subscription.names.join(', ')}` : ''} — paid by {subscription.email} ({subscription.id})</li>)}</ul>
+          <p>Cancel them now (straight away, no refund), then delete the record.</p>
+          <button className="EditorCommand TileRemove" type="button" disabled={deleteBusy} onClick={cancelActiveMonthly}>{deleteBusy ? 'Cancelling…' : 'Cancel them now'}</button></div></div>}
         {stripeRequired && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>Cancel active subscriptions in Stripe first.</strong><p>Deleting website data does not stop recurring payments.{deleting.stripeSubscriptionId && ` Subscription: ${deleting.stripeSubscriptionId}`}</p><a className="ContentLink" href="https://dashboard.stripe.com/test/subscriptions" target="_blank" rel="noreferrer">Open Stripe test subscriptions</a><label><input type="checkbox" checked={stripeAcknowledged} onChange={(event) => setStripeAcknowledged(event.target.checked)} required /> I have checked Stripe and cancelled any active subscription before deletion.</label></div></div>}
         <label className="FormLabel SpaceT4">Type the record ID to confirm<input className="FormInput" autoComplete="off" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
         {error && <p className="StatusTextError" role="alert">{error}</p>}

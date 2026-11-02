@@ -11,6 +11,7 @@ import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { PRODUCTS } from '../src/constants/products.js';
 import { assignLines } from '../src/utils/checkout.js';
 import { eventAttendeeRows, justgoUploadRows } from '../src/utils/adminReports.js';
+import { sha256 } from '../src/utils/emailCodes.js';
 import { joiningShare, fullMonthsAfterCurrent, clubYearOf, clubYearDates, monthlyDebits, nextFirst } from '../src/utils/clubYear.js';
 
 const projectId = assertLocalFirebase(process.env);
@@ -114,6 +115,26 @@ const test = async (name, fn) => {
 const token = await (await signInWithEmailAndPassword(auth, 'admin@forthcanoeclub.co.uk', 'local-test-password')).user.getIdToken(true);
 const admin = { Authorization: `Bearer ${token}` };
 const shared = {};
+const reportFor = async (kind, recordId = '') => {
+  const records = [];
+  const cursors = new Set();
+  let cursor = '';
+  let response;
+  do {
+    const query = new URLSearchParams({ kind, ...(recordId ? { recordId } : {}), ...(cursor ? { cursor } : {}) });
+    response = await call('GET', `/api/admin/reports?${query}`, { headers: admin });
+    assert.equal(response.status, 200, response.text);
+    assert.ok(Array.isArray(response.json.records), 'reports return records on every page');
+    records.push(...response.json.records);
+    cursor = response.json.nextCursor;
+    if (cursor) {
+      assert.ok(!cursors.has(cursor), 'report pagination must advance');
+      cursors.add(cursor);
+    }
+  } while (cursor);
+  assert.equal(new Set(records.map((record) => record.id)).size, records.length, 'report pages do not repeat records');
+  return { ...response, json: { ...response.json, records } };
+};
 
 console.log(`Checkout flow test, run ${run}`);
 
@@ -268,7 +289,8 @@ await test('adult membership plus boat hire is recorded on the membership, custo
   assert.equal(Object.hasOwn(membership, 'email'), false);
   assert.equal(membership.medical, 'Asthma');
   assert.equal(membership.justgoSyncStatus, 'pending');
-  assert.deepEqual([membership.justgoUpload.status, membership.justgoUpload.mode, membership.justgoUpload.attempts], ['queued', 'new', 0], 'queued for the automatic JustGo upload');
+  assert.deepEqual([membership.justgoUpload.status, membership.justgoUpload.attempts], ['queued', 0], 'queued for the guarded JustGo API uploader');
+  assert.equal(Object.hasOwn(membership.justgoUpload, 'mode'), false, 'API uploads no longer select browser new-account or invitation modes');
   assert.ok(membership.validUntil.toDate() > new Date());
   assert.deepEqual(membership.privileges.map((entry) => entry.productId), ['boat-hire']);
   assert.equal(membership.history.length, 1);
@@ -309,7 +331,8 @@ await test('a returning member can add an add-on with only name and date of birt
   assert.equal(records.length, 1, 'no duplicate membership created');
   assert.deepEqual(records[0].privileges.map((entry) => entry.productId).sort(), ['boat-hire', 'keyhire']);
   assert.equal(records[0].history.length, 2);
-  assert.equal(records[0].address, '1 River Road', 'existing details are not overwritten by the short form');
+  assert.equal(records[0].household.address, '1 River Road', 'existing household details are not overwritten by the short form');
+  assert.equal(Object.hasOwn(records[0], 'address'), false, 'the member does not duplicate household contact details');
   const order = (await db.collection('orders').doc(orderRef).get()).data();
   assert.equal(order.people[0].existingMember, true);
 });
@@ -432,7 +455,7 @@ await test('junior members share a household only when their guardian matches, i
     assert.equal(Object.hasOwn(member.household, 'emergencyContact'), false, 'the guardian is the junior emergency contact');
   }
 
-  const orders = (await call('GET', '/api/admin/reports?kind=orders', { headers: admin })).json.records;
+  const orders = (await reportFor('orders', orderRef)).json.records;
   const report = orders.find((record) => record.id === orderRef);
   assert.equal(report.status, 'paid');
   assert.equal(report.people.length, 3);
@@ -442,10 +465,10 @@ await test('junior members share a household only when their guardian matches, i
       report.people.find((person) => person.name === 'Riley Other').emergencyContact],
     ['Morgan Guardian, Parent, 07700 900441', 'Morgan Guardian, Parent, 07700 900441', 'Riley Guardian, Grandparent, 07700 900552']
   );
-  const memberRows = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records;
-  const morganRow = memberRows.find((record) => record.name === 'Morgan Sibling');
-  const taylorRow = memberRows.find((record) => record.name === 'Taylor Sibling');
-  const rileyRow = memberRows.find((record) => record.name === 'Riley Other');
+  const memberRows = (await reportFor('members')).json.records;
+  const morganRow = memberRows.find((record) => record.id === morgan.id);
+  const taylorRow = memberRows.find((record) => record.id === taylor.id);
+  const rileyRow = memberRows.find((record) => record.id === riley.id);
   assert.deepEqual([morganRow.email, taylorRow.email, rileyRow.email], [guardianA.email, guardianA.email, guardianB.email]);
   assert.deepEqual([morganRow.parent, taylorRow.parent, rileyRow.parent], [
     'Morgan Guardian, Parent, 07700 900441', 'Morgan Guardian, Parent, 07700 900441', 'Riley Guardian, Grandparent, 07700 900552'
@@ -483,8 +506,8 @@ await test('multiple copies of shop services can be bought by different members 
   assert.equal(Number(order.total), order.items.reduce((total, item) => total + Number(item.price), 0));
   assert.deepEqual(
     order.people.map((person) => person.lineIds.map((lineId) => order.items.find((item) => item.lineId === lineId).id).sort())
-      .sort((a, b) => a[0].localeCompare(b[0])),
-    [['boat-hire', 'keyhire', 'membership-adult'], ['boat-hire', 'gold-sub', 'keyhire', 'membership-adult']]
+      .sort((a, b) => a.join(',').localeCompare(b.join(','))),
+    [['boat-hire', 'gold-sub', 'keyhire', 'membership-adult'], ['boat-hire', 'keyhire', 'membership-adult']]
   );
   const members = await Promise.all(order.people.map(async (person) =>
     (await db.collection('memberships').doc(person.membershipId).get()).data()
@@ -492,7 +515,7 @@ await test('multiple copies of shop services can be bought by different members 
   assert.equal(members.length, 2);
   assert.ok(members.every((member) => member.privileges.some((privilege) => privilege.productId === 'boat-hire')
     && member.privileges.some((privilege) => privilege.productId === 'keyhire')));
-  const report = (await call('GET', '/api/admin/reports?kind=orders', { headers: admin })).json.records.find((record) => record.id === orderRef);
+  const report = (await reportFor('orders', orderRef)).json.records.find((record) => record.id === orderRef);
   assert.deepEqual(
     ['ANNUAL BOAT & KIT HIRE', 'Boathouse Access', 'GOLD SUBSCRIPTION'].map((name) => report.items.filter((item) => item.name === name).length),
     [2, 2, 1]
@@ -598,46 +621,52 @@ await test('JustGo members are inactive until the sync confirms their renewal in
   assert.equal(addOn.status, 409);
   assert.equal(addOn.json.code, 'membership_required');
   assert.match(addOn.json.error, /renewal has not been confirmed/);
-  const register = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records.find((record) => record.id === `sca-E2E-U-${run}`);
+  const register = (await reportFor('members', `sca-E2E-U-${run}`)).json.records.find((record) => record.id === `sca-E2E-U-${run}`);
   const inWindow = now - yearStart < 14 * 86400000;
   assert.equal(register.status, inWindow ? 'Awaiting renewal' : 'Unavailable', 'with no completed sync run we cannot tell whether they renewed');
   await db.collection('settings').doc('justgoSync').set({ lastSuccessAt: new Date() });
-  const synced = await call('GET', '/api/admin/reports?kind=members', { headers: admin });
+  const synced = await reportFor('members', `sca-E2E-U-${run}`);
   await db.collection('settings').doc('justgoSync').delete();
   assert.equal(synced.json.records.find((record) => record.id === `sca-E2E-U-${run}`).status, inWindow ? 'Awaiting renewal' : 'Expired', 'a running sync that did not confirm them');
   assert.equal(synced.json.justgoSync.healthy, true);
   await db.collection('memberships').doc(`sca-E2E-U-${run}`).set({ lastJustgoSync: new Date() }, { merge: true });
   assert.equal((await checkout(lapsed, build(['boat-hire'], [details]))).status, 200, 'active once the sync confirms them');
-  const after = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records.find((record) => record.id === `sca-E2E-U-${run}`);
+  const after = (await reportFor('members', `sca-E2E-U-${run}`)).json.records.find((record) => record.id === `sca-E2E-U-${run}`);
   assert.equal(after.status, 'Active');
 });
 
-await test('a person with a membership number we do not hold is invited through JustGo', async () => {
+await test('a person with an unknown membership number is queued for JustGo identity reconciliation', async () => {
   const visitor = email('visitor');
   const basket = build(['membership-adult'], [{ ...adultDetails({ firstName: 'Vic', lastName: 'Visitor', email: visitor }), affiliationNumber: `PS-${run}` }]);
   await buy(visitor, basket);
   const [record] = await membershipsFor(visitor);
   assert.equal(record.affiliationNumber, `PS-${run}`);
-  assert.deepEqual([record.justgoUpload.status, record.justgoUpload.mode], ['queued', 'invite']);
+  assert.deepEqual([record.justgoUpload.status, record.justgoUpload.attempts], ['queued', 0]);
+  assert.equal(Object.hasOwn(record.justgoUpload, 'mode'), false, 'the API resolves the number instead of sending a browser invitation');
   shared.visitorMembership = record.id;
 });
 
 await test('staff can retry the upload or mark it as done by hand, and failures reach the staff list', async () => {
   const act = (id, action) => call('POST', `/api/admin/memberships/${id}/justgo`, { headers: admin, body: { action } });
   assert.equal((await call('POST', `/api/admin/memberships/${shared.visitorMembership}/justgo`, { body: { action: 'retry' } })).status, 401);
-  await db.collection('memberships').doc(shared.visitorMembership).set({ justgoUpload: { status: 'failed', needsStaff: true, failures: 3, attempts: 3, lastError: 'JustGo invitation expired' } }, { merge: true });
-  let report = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records;
+  await db.collection('memberships').doc(shared.visitorMembership).set({ justgoUpload: { status: 'failed', needsStaff: true, failures: 3, attempts: 3, lastError: 'JustGo request refused before writing' } }, { merge: true });
+  let report = (await reportFor('members', shared.visitorMembership)).json.records;
   const failed = report.find((record) => record.id === shared.visitorMembership);
   assert.equal(failed.justgo, 'Needs staff upload');
   assert.equal(failed.uploadFailures, 3);
   const staffRows = justgoUploadRows(report);
   const row = staffRows.find((entry) => entry[0] === shared.visitorMembership);
-  assert.deepEqual([row[1], row[10], row[11], row[12]], ['Vic', `PS-${run}`, 3, 'JustGo invitation expired']);
+  assert.deepEqual([row[1], row[10], row[11], row[12]], ['Vic', `PS-${run}`, 3, 'JustGo request refused before writing']);
   assert.equal((await act(shared.visitorMembership, 'retry')).status, 200);
-  report = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records;
+  report = (await reportFor('members', shared.visitorMembership)).json.records;
   assert.equal(report.find((record) => record.id === shared.visitorMembership).justgo, 'Awaiting upload');
+  for (const status of ['processing', 'submitted', 'review', 'revoked']) {
+    await db.collection('memberships').doc(shared.visitorMembership).set({ justgoUpload: { status } }, { merge: true });
+    assert.equal((await act(shared.visitorMembership, 'retry')).status, 409, `${status} needs reconciliation, not another write`);
+    assert.equal((await db.collection('memberships').doc(shared.visitorMembership).get()).data().justgoUpload.status, status);
+  }
   assert.equal((await act(shared.visitorMembership, 'manual')).status, 200);
-  report = (await call('GET', '/api/admin/reports?kind=members', { headers: admin })).json.records;
+  report = (await reportFor('members', shared.visitorMembership)).json.records;
   assert.equal(report.find((record) => record.id === shared.visitorMembership).justgo, 'Added by staff, awaiting sync');
   assert.equal((await act('sca-E2E-1', 'retry')).status, 409, 'already linked members are left alone');
   assert.equal((await act('nope', 'explode')).status, 400);
@@ -658,7 +687,9 @@ await test('family membership shares contact details and notes parents as the ch
   assert.equal(Object.hasOwn(kid, 'emergencyNote'), false);
   assert.equal(kid.household.emergencyContact.name, 'Pat Friend');
   assert.equal(kid.medical, 'Hay fever');
-  assert.equal(kid.photoConsent, false);
+  assert.equal(Object.hasOwn(kid, 'photoConsent'), false, 'consent is held in its versioned record');
+  assert.equal(kid.consents.photoVideo.accepted, false);
+  assert.equal(kid.consents.photoVideo.by, 'guardian');
   assert.equal(records.find((record) => record.firstName === 'Casey').household.emergencyContact.name, 'Pat Friend');
   shared.familyOrder = orderRef;
   shared.family = family;
@@ -767,7 +798,7 @@ await test('event tickets list attendees with contact and emergency details, eve
   assert.equal(savedOrder.items[0].imageUrl, imageUrl, 'order retains the catalogue event image');
   const mail = (await db.collection('testMail').where('orderRef', '==', orderRef).get()).docs[0].data();
   assert.ok(mail.html.includes(`src="${imageUrl}"`), 'event receipt email displays the saved image');
-  const report = await call('GET', '/api/admin/reports?kind=events', { headers: admin });
+  const report = await reportFor('events', orderRef);
   const record = report.json.records.find((entry) => entry.id === orderRef);
   assert.equal(record.items.length, 1);
   assert.deepEqual(record.people[0].events[0].eventSchedule, schedule);
@@ -777,14 +808,16 @@ await test('event tickets list attendees with contact and emergency details, eve
 });
 
 await test('reports: orders list shows each person and what they bought', async () => {
-  const report = await call('GET', '/api/admin/reports?kind=orders', { headers: admin });
+  const report = await reportFor('orders');
   assert.equal(report.status, 200);
   const family = report.json.records.find((record) => record.id === shared.familyOrder);
   assert.equal(family.status, 'paid');
   assert.equal(family.people.length, 3);
   const kit = family.people.find((person) => person.name === 'Kit Adult');
   assert.equal(kit.kind, 'Under 18');
-  assert.equal(kit.emergencyContact, 'Parents are the emergency contact');
+  assert.equal(kit.emergencyContact, 'Parents are the emergency contact', 'the order retains the family checkout emergency note');
+  assert.equal(kit.phone, '07700 900111', 'the household supplies an actionable parent contact alongside the note');
+  assert.equal(kit.email, shared.family);
   assert.equal(kit.address, '1 River Road, EH1 1AA');
   assert.deepEqual(kit.items, ['CLUB MEMBERSHIP — FAMILY']);
   const drew = family.people.find((person) => person.name === 'Drew Adult');
@@ -811,10 +844,17 @@ await test('reports: orders list shows each person and what they bought', async 
 });
 
 await test('reports: one member register holds website and JustGo members, complete and readable', async () => {
-  const report = await call('GET', '/api/admin/reports?kind=members', { headers: admin });
+  const report = await reportFor('members');
   assert.equal(report.status, 200);
   const mine = report.json.records.filter((record) => record.email.endsWith(`.${run}@example.test`));
-  assert.equal(mine.length, 1 + 2 + 3 + 3 + 1 + 1 + 1 + 2 + 1 + 1 + 1 + 2, 'alex 1, parent 2 children, family 3, guardian-grouped juniors 3, synced member 1, visitor 1, unconfirmed member 1, Stripe members 2, coaching member 1, receipt member 1, legacy member 1, multi-quantity members 2');
+  const [memberships, households] = await Promise.all([db.collection('memberships').get(), db.collection('households').get()]);
+  const contactEmails = new Map(households.docs.map((document) => [document.id, document.data().email]));
+  const expectedIds = memberships.docs.filter((document) => {
+    const member = document.data();
+    return member.contactOnly !== true && String(contactEmails.get(member.householdId) || member.email || '').endsWith(`.${run}@example.test`);
+  }).map((document) => document.id).sort();
+  assert.ok(expectedIds.length >= 19, 'this run creates the member and household fixtures');
+  assert.deepEqual(mine.map((record) => record.id).sort(), expectedIds, 'every member in this run appears exactly once, including separate household contacts');
   const alex = mine.find((record) => record.id === shared.alexMembership);
   assert.equal(alex.name, 'Alex Adult');
   assert.equal(alex.tier, 'adult');
@@ -833,8 +873,8 @@ await test('reports: one member register holds website and JustGo members, compl
   assert.equal(alex.justgo, 'Awaiting upload');
   assert.equal(alex.emergencyContact, 'Pat Friend, Friend, 07700 900222');
   const kid = mine.find((record) => record.name === 'Kit Adult');
-  assert.equal(kid.emergencyContact, 'Parents are the emergency contact');
-  assert.equal(kid.parent, 'Drew Adult, Parent, 07700 900111', 'parent contact recorded for the child');
+  assert.equal(kid.emergencyContact, 'Drew Adult, Parent/Guardian, 07700 900111');
+  assert.equal(kid.parent, 'Drew Adult, Parent/Guardian, 07700 900111', 'parent contact recorded for the child');
   assert.equal(kid.medical, 'Hay fever');
   const jam = mine.find((record) => record.name === 'Sam Synced');
   assert.equal(jam.source, 'justgo');
@@ -842,7 +882,7 @@ await test('reports: one member register holds website and JustGo members, compl
   assert.equal(jam.renewalMethod, 'justgo');
   const everyone = report.json.records;
   assert.ok(everyone.some((record) => record.name === 'Test Current' && record.source === 'justgo' && record.status === 'Active'), 'JustGo-synced members are in the same register');
-  assert.ok(everyone.some((record) => record.name === 'Test Expired' && record.status === 'Expired'));
+  assert.ok(everyone.some((record) => record.id === 'test-expired' && record.status === 'Pending'), 'the legacy JustGo fixture has never had a confirming sync, so its status is pending rather than assumed expired');
 });
 
 await test('payment failures and expired sessions retain order contents and expose status for retry', async () => {
@@ -914,7 +954,7 @@ await test('merchandise sizes and event capacity limit sales, expiry releases ho
   assert.deepEqual((await stock(tee)).remaining, { S: 0, M: 1 }, 'paying keeps the stock taken');
   const paidOrder = (await db.collection('orders').doc(first.json.orderRef).get()).data();
   assert.deepEqual(paidOrder.items.map((item) => item.size).sort(), ['M', 'S']);
-  const report = (await call('GET', '/api/admin/reports?kind=orders', { headers: admin })).json.records.find((record) => record.id === first.json.orderRef);
+  const report = (await reportFor('orders', first.json.orderRef)).json.records.find((record) => record.id === first.json.orderRef);
   assert.deepEqual(report.items.map((item) => item.name).sort(), ['Club tee (M)', 'Club tee (S)']);
 
   const remove = (orderRef) => call('DELETE', `/api/admin/records/orders/${orderRef}`, { headers: admin, body: { confirmId: orderRef, acknowledgeStripe: true } });
@@ -1218,18 +1258,20 @@ await test('admins save the three boathouse codes privately; only a changed code
   assert.equal((await db.collection('settings').doc('boathouseCode').get()).data().gateNote, 'Main gate');
 });
 
-await test('active volunteers who are inducted members get the boathouse code once, and again when it changes', async () => {
+await test('inducted key holders keep boathouse access across volunteer activation, once per code version', async () => {
   const codeMail = async (signupId) => (await db.collection('testMail').where('signupId', '==', signupId).get()).docs
     .map((document) => document.data()).filter((mail) => mail.kind === 'boathouse-code');
+  const before = await codeMail(shared.volunteerSignup);
+  const current = (await db.collection('settings').doc('boathouseCode').get()).data();
+  assert.equal(before.filter((mail) => mail.version === current.version).length, 1, 'saving the codes already notified this inducted key holder, even while inactive');
   assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { body: { active: true } })).status, 401);
   assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: 'yes' } })).status, 400);
-  assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: true, inducted: true } })).status, 400);
+  assert.equal((await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { inducted: false } })).status, 400, 'induction history cannot be removed');
 
-  const ticked = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: true } });
+  const ticked = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: true, inducted: true } });
   assert.equal(ticked.status, 200, ticked.text);
-  assert.equal(ticked.json.boathouseCode, 'sent');
-  const current = (await db.collection('settings').doc('boathouseCode').get()).data();
-  const [first] = await codeMail(shared.volunteerSignup);
+  assert.equal(ticked.json.boathouseCode, 'up-to-date');
+  const first = (await codeMail(shared.volunteerSignup)).find((mail) => mail.version === current.version);
   for (const field of ['gateCode', 'alarmCode', 'lockboxCode']) assert.ok(first.body.includes(current[field]), `email includes ${field}`);
   assert.match(first.body, /Gate code: /);
   assert.match(first.body, /Alarm code: /);
@@ -1237,48 +1279,49 @@ await test('active volunteers who are inducted members get the boathouse code on
   assert.equal(first.version, current.version);
   const again = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: true } });
   assert.equal(again.json.boathouseCode, 'up-to-date');
-  assert.equal((await codeMail(shared.volunteerSignup)).length, 1, 'no repeat email');
+  assert.equal((await codeMail(shared.volunteerSignup)).length, before.length, 'no repeat email');
   const listed = (await call('GET', '/api/admin/volunteers', { headers: admin })).json;
   assert.equal(listed.boathouseCodeSet, true);
   const row = listed.volunteers.find((volunteer) => volunteer.id === shared.volunteerSignup);
   assert.equal(row.active, true);
   assert.equal(row.boathouseCodeCurrent, true);
 
-  // Active but not inducted: nothing is sent.
+  // Activation also records induction, but non-members still receive no codes.
   const newcomerEmail = email('volunteer-not-inducted');
   await call('POST', '/api/lists', { body: { name: 'Otto Outsider', email: newcomerEmail, category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
   const newcomerId = (await db.collection('lists').where('email', '==', newcomerEmail).get()).docs[0].id;
-  assert.equal((await call('PATCH', `/api/admin/volunteers/${newcomerId}`, { headers: admin, body: { active: true } })).json.boathouseCode, 'not-active');
+  assert.equal((await call('PATCH', `/api/admin/volunteers/${newcomerId}`, { headers: admin, body: { active: true, tier: '20' } })).json.boathouseCode, 'not-active');
+  assert.equal((await db.collection('lists').doc(newcomerId).get()).data().inducted, true);
   assert.equal((await codeMail(newcomerId)).length, 0);
 
   const noteOnly = await call('POST', '/api/admin/boathouse-code', {
     headers: admin, body: { ...current, gateNote: 'Back door' }
   });
   assert.equal(noteOnly.json.changed, false);
-  assert.equal((await codeMail(shared.volunteerSignup)).length, 1, 'a note-only save emails nobody');
+  assert.equal((await codeMail(shared.volunteerSignup)).length, before.length, 'a note-only save emails nobody');
 
   const changedCodes = { ...current, alarmCode: `${current.alarmCode}-new` };
   const changed = await call('POST', '/api/admin/boathouse-code', { headers: admin, body: changedCodes });
   assert.equal(changed.json.changed, true);
   assert.ok(changed.json.notified.sent >= 1, changed.text);
   const mails = await codeMail(shared.volunteerSignup);
-  assert.equal(mails.length, 2);
+  assert.equal(mails.length, before.length + 1);
   const updatedMail = mails.find((mail) => mail.version === changed.json.version);
   assert.match(updatedMail.body, /boathouse codes have changed/i);
   for (const field of ['gateCode', 'alarmCode', 'lockboxCode']) assert.ok(updatedMail.body.includes(changedCodes[field]), `updated email includes ${field}`);
-  assert.equal((await codeMail(newcomerId)).length, 0, 'still nothing for a volunteer who is not inducted');
+  assert.equal((await codeMail(newcomerId)).length, 0, 'still nothing for a volunteer who is not a member');
 
   const untick = await call('PATCH', `/api/admin/volunteers/${shared.volunteerSignup}`, { headers: admin, body: { active: false } });
   assert.equal(untick.json.boathouseCode, 'not-active');
   await call('POST', '/api/admin/boathouse-code', { headers: admin, body: { ...changedCodes, gateCode: `${current.gateCode}-new` } });
-  assert.equal((await codeMail(shared.volunteerSignup)).length, 3, 'deactivation preserves key access until an admin explicitly revokes it');
+  assert.equal((await codeMail(shared.volunteerSignup)).length, before.length + 2, 'deactivation preserves key access until an admin explicitly revokes it');
 });
 
-await test('an active volunteer gets the boathouse code when checked in, or when they join after induction', async () => {
+await test('induction grants key access independently of yearly benefits, and an unlinked volunteer gets codes after joining', async () => {
   const codeMail = async (signupId) => (await db.collection('testMail').where('signupId', '==', signupId).get()).docs
     .map((document) => document.data()).filter((mail) => mail.kind === 'boathouse-code');
   const signUp = async (name, address) => {
-    await call('POST', '/api/lists', { body: { name, email: address, category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
+    await call('POST', '/api/lists', { body: { name, email: address, tier: '20', category: 'Volunteer Sign-ups', items: LIST_EXAMPLES['Volunteer Sign-ups'] } });
     return (await db.collection('lists').where('email', '==', address).get()).docs[0].id;
   };
   const patch = async (signupId, body) => (await call('PATCH', `/api/admin/volunteers/${signupId}`, { headers: admin, body })).json;
@@ -1286,19 +1329,22 @@ await test('an active volunteer gets the boathouse code when checked in, or when
   const memberEmail = email('boathouse-member');
   await buy(memberEmail, build(['membership-adult'], [adultDetails({ firstName: 'Bea', lastName: 'Boathouse', email: memberEmail })]));
   const memberSignup = await signUp('Bea Boathouse', memberEmail);
-  assert.equal((await patch(memberSignup, { active: true })).boathouseCode, 'not-active', 'not checked in yet');
-  assert.equal((await codeMail(memberSignup)).length, 0);
-  const checkedIn = await patch(memberSignup, { inducted: true });
-  assert.equal(checkedIn.outcome, 'issued');
-  assert.equal(checkedIn.boathouseCode, 'sent');
+  const inducted = await patch(memberSignup, { inducted: true });
+  assert.equal(inducted.boathouseCode, 'sent', 'induction grants key access without activating yearly benefits');
+  assert.equal((await codeMail(memberSignup)).length, 1);
+  const [inductedMember] = await membershipsFor(memberEmail);
+  assert.ok(inductedMember.keyAccess.grantedAt);
+  assert.equal(inductedMember.volunteer.years[clubYearOf()].active, false);
+  const checkedIn = await patch(memberSignup, { active: true });
+  assert.equal(checkedIn.outcome, 'benefits-added');
+  assert.equal(checkedIn.boathouseCode, 'up-to-date');
   assert.equal((await codeMail(memberSignup)).length, 1);
   assert.equal((await patch(memberSignup, { inducted: true })).boathouseCode, 'up-to-date', 'checking in again sends nothing new');
   assert.equal((await codeMail(memberSignup)).length, 1);
 
   const joinerEmail = email('boathouse-joiner');
   const joinerSignup = await signUp('Jo Joiner', joinerEmail);
-  await patch(joinerSignup, { active: true });
-  const awaiting = await patch(joinerSignup, { inducted: true });
+  const awaiting = await patch(joinerSignup, { active: true, inducted: true });
   assert.equal(awaiting.outcome, 'awaiting-membership');
   assert.equal(awaiting.boathouseCode, 'not-active');
   await buy(joinerEmail, build(['membership-adult'], [adultDetails({ firstName: 'Jo', lastName: 'Joiner', email: joinerEmail })]));
@@ -1327,12 +1373,7 @@ await test('admins record PVG and safeguarding expiry dates on a volunteer membe
   const expired = await call('PATCH', path, { headers: admin, body: { pvg: day(-1) } });
   assert.equal(expired.json.checks.pvg.status, 'expired');
   assert.equal(expired.json.checks.safeguarding.status, 'due', 'an update to one check leaves the other alone');
-  let register = [];
-  for (let cursor = null, page = 0; page < 20; page += 1) {
-    const result = (await call('GET', `/api/admin/reports?kind=members${cursor ? `&cursor=${cursor}` : ''}`, { headers: admin })).json;
-    register = register.concat(result.records);
-    if (register.some((record) => record.id === memberId) || !(cursor = result.nextCursor)) break;
-  }
+  const register = (await reportFor('members', memberId)).json.records;
   assert.match(register.find((record) => record.id === memberId)?.pvg || '', /^Expired \(/);
 
   const cleared = await call('PATCH', path, { headers: admin, body: { pvg: '', safeguarding: '' } });
@@ -1428,12 +1469,7 @@ await test('events open to non-members keep them as contacts, close on time and 
   assert.equal(contact.contactOnly, true);
   assert.equal(contact.status, undefined, 'a non-member gets no membership status');
   assert.equal(contact.ownKitLineIds, undefined);
-  let register = [];
-  for (let cursor = null, page = 0; page < 20; page += 1) {
-    const result = (await call('GET', `/api/admin/reports?kind=members${cursor ? `&cursor=${cursor}` : ''}`, { headers: admin })).json;
-    register = register.concat(result.records);
-    if (!(cursor = result.nextCursor)) break;
-  }
+  const register = (await reportFor('members')).json.records;
   assert.ok(register.length > 0);
   assert.ok(!register.some((record) => record.id === order.people[0].membershipId), 'contacts stay out of the member register');
 
@@ -1624,6 +1660,101 @@ await test('a payer has one monthly subscription per club year for everyone they
   const failedList = await call('GET', `/api/admin/subscriptions?orderRef=${failedRef}`, { headers: admin });
   assert.deepEqual(failedList.json.failed.map(({ itemNames, names, error }) => ({ itemNames, names, error })),
     [{ itemNames: ['E2E lesson block'], names: ['Gus Monthly'], error: 'Your card was declined.' }], 'staff see which item and member failed');
+});
+
+const openAttention = async () => (await call('GET', '/api/admin/attention', { headers: admin })).json.entries;
+const detailsSession = async (address) => {
+  const token = createHash('sha256').update(`details-${address}-${Date.now()}`).digest('hex');
+  await db.collection('emailSessions').doc(sha256(token)).set({ email: address, purpose: 'details', expiresAt: Date.now() + 60 * 60 * 1000, createdAt: Date.now() });
+  return { 'x-email-session': token };
+};
+
+await test('problems reach staff: a refused set-up is listed, can be retried and resolved with a note', async () => {
+  const entry = (await openAttention()).find((candidate) => candidate.kind === 'subscription-setup' && candidate.email === email('sub-fail'));
+  assert.ok(entry, 'the refused monthly set-up is in Needs attention');
+  assert.equal(entry.retry, true);
+  const retried = await call('POST', `/api/admin/attention/${entry.id}/retry`, { headers: admin, body: {} });
+  assert.equal(retried.status, 409, 'a retry Stripe still refuses is reported, not hidden');
+  assert.ok((await openAttention()).some((candidate) => candidate.id === entry.id), 'the entry stays open');
+  assert.equal((await call('POST', `/api/admin/attention/${entry.id}/resolve`, { headers: admin, body: { note: 'Member paid by bank transfer.' } })).status, 200);
+  assert.ok(!(await openAttention()).some((candidate) => candidate.id === entry.id));
+  const resolved = (await db.collection('attention').doc(entry.id).get()).data();
+  assert.equal(resolved.resolutionNote, 'Member paid by bank transfer.');
+});
+
+await test('a temporary Stripe fault is retried without a second subscription, and a member can ask to cancel', async () => {
+  const payer = email('flaky');
+  const result = await checkout(payer, lessonFor('Flo'), { billingMode: 'monthly' }, autumn);
+  assert.equal(result.status, 200, result.text);
+  assert.equal((await pay(result.json.orderRef)).status, 500, 'Stripe is asked to resend the webhook');
+  const waiting = await orderData(result.json.orderRef);
+  assert.equal(waiting.status, 'paid');
+  assert.equal(waiting.subscriptionPlan.status, 'pending');
+  assert.equal(waiting.subscriptionSetupNeedsStaff, undefined);
+  assert.equal((await pay(result.json.orderRef)).status, 200, 'the resent webhook finishes the set-up');
+  const order = await orderData(result.json.orderRef);
+  assert.equal(order.subscriptionPlan.status, 'active');
+  assert.equal(order.stripeSubscriptionIds.length, 1);
+  const [subscriptionId] = order.stripeSubscriptionIds;
+
+  const blocked = await call('DELETE', `/api/admin/records/orders/${result.json.orderRef}`, { headers: admin, body: { confirmId: result.json.orderRef } });
+  assert.equal(blocked.status, 409, 'an order cannot be deleted while its monthly payments run');
+  assert.equal(blocked.json.code, 'active_monthly_payments');
+  assert.deepEqual(blocked.json.activeMonthly.map((entry) => entry.id), [subscriptionId]);
+
+  const session = await detailsSession(payer);
+  const details = await call('GET', '/api/my-details', { headers: session });
+  assert.equal(details.status, 200, details.text);
+  const monthly = details.json.monthlyPayments.find((entry) => entry.subscriptionId === subscriptionId);
+  assert.ok(monthly, 'My details lists the monthly payments');
+  assert.deepEqual(monthly.items.map(({ name, names, cancelRequested }) => ({ name, names, cancelRequested })),
+    [{ name: 'E2E lesson block', names: ['Flo Monthly'], cancelRequested: false }]);
+  const path = `/api/my-details/monthly/${subscriptionId}/cancel-request`;
+  assert.equal((await call('POST', path, { headers: await detailsSession(email('someone-else')), body: { itemKeys: [monthly.items[0].key] } })).status, 404,
+    'another email cannot ask to cancel these payments');
+  const requested = await call('POST', path, { headers: session, body: { itemKeys: [monthly.items[0].key], reason: 'Moving away' } });
+  assert.equal(requested.status, 200, requested.text);
+  assert.equal((await call('POST', path, { headers: session, body: { itemKeys: [monthly.items[0].key] } })).status, 400, 'a request is only sent once');
+  const entry = (await openAttention()).find((candidate) => candidate.kind === 'cancel-request' && candidate.subscriptionId === subscriptionId);
+  assert.ok(entry, 'staff see the request');
+  assert.match(entry.detail, /Moving away/);
+  assert.equal((await db.collection('subscriptions').doc(subscriptionId).get()).data().status, 'active', 'staff make the change, not the request');
+  assert.equal((await call('GET', '/api/my-details', { headers: session })).json.monthlyPayments.find((entry) => entry.subscriptionId === subscriptionId).items[0].cancelRequested, true);
+});
+
+await test('an older unpaid checkout is closed, and a bank payment still clearing cannot be paid twice', async () => {
+  const payer = email('clearing');
+  const basket = build(['membership-adult'], [adultDetails({ firstName: 'Cleo', lastName: 'Clearing', email: payer })]);
+  const first = await checkout(payer, basket);
+  assert.equal(first.status, 200, first.text);
+  const second = await checkout(payer, basket);
+  assert.equal(second.status, 200, second.text);
+  assert.equal((await orderData(first.json.orderRef)).status, 'expired', 'the earlier checkout can no longer be paid');
+
+  const order = await orderData(second.json.orderRef);
+  const session = { id: order.stripeSessionId, mode: 'payment', payment_status: 'unpaid', amount_total: Math.round(order.total * 100),
+    metadata: { order_ref: second.json.orderRef }, payment_intent: `pi_${second.json.orderRef}` };
+  assert.equal((await sendWebhook({ type: 'checkout.session.completed', data: { object: session } })).status, 200);
+  assert.equal((await call('GET', `/api/checkout-status?session_id=${order.stripeSessionId}`)).json.status, 'processing');
+  const third = await checkout(payer, basket);
+  assert.equal(third.status, 409, 'the same person and item cannot be bought while the payment clears');
+  assert.equal(third.json.code, 'payment_processing');
+
+  assert.equal((await sendWebhook({ type: 'checkout.session.async_payment_failed', data: { object: session } })).status, 200);
+  assert.equal((await orderData(second.json.orderRef)).status, 'payment_failed');
+  assert.ok((await openAttention()).some((entry) => entry.kind === 'payment-failed' && entry.orderRef === second.json.orderRef), 'staff are told');
+  assert.equal((await checkout(payer, basket)).status, 200, 'after a failed payment the member can try again');
+});
+
+await test('starting again after paying, before Stripe tells us, is refused rather than charged twice', async () => {
+  const payer = email('paid-late');
+  const basket = build(['membership-adult'], [adultDetails({ firstName: 'Pat', lastName: 'Late', email: payer })]);
+  const first = await checkout(payer, basket);
+  assert.equal(first.status, 200, first.text);
+  const again = await checkout(payer, basket);
+  assert.equal(again.status, 409, 'the earlier payment is found instead of a second payment page');
+  assert.equal(again.json.code, 'already_paid');
+  assert.equal((await orderData(first.json.orderRef)).status, 'paid', 'the earlier order is recorded from Stripe');
 });
 
 await test('from January members renew for next club year or buy both, with a separate direct debit for each year', async () => {

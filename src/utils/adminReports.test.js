@@ -31,6 +31,11 @@ test('order reports expose purchases but not receipt access credentials', () => 
   assert.equal(Object.hasOwn(report, 'accessTokenHash'), false);
   assert.equal(subscriptionWarning({ stripeSubscriptionId: 'sub_123' }), true);
   assert.equal(subscriptionWarning({ items: [{ type: 'annual-oneoff' }] }), false);
+  assert.equal(subscriptionWarning({ items: [{ type: 'annual-oneoff', monthly: true }] }), true);
+  assert.equal(subscriptionWarning({ stripeSubscriptionIds: ['sub_1'] }), true);
+  assert.equal(subscriptionWarning({ stripeMembershipSubscriptionId: 'sub_2' }), true);
+  assert.equal(subscriptionWarning({ subscriptionIds: ['sub_3'] }), true);
+  assert.equal(subscriptionWarning({ stripeSubscriptionIds: [] }), false);
 });
 
 test('CSV quotes values and neutralizes spreadsheet formulas; emails deduplicate', () => {
@@ -60,6 +65,22 @@ test('event export lists every attendee with the details a leader needs', () => 
     items: [{ lineId: 'ticket', name: 'Course', category: 'EVENTS', revokedAt: '2026-10-01' }] });
   assert.deepEqual(eventAttendeeRows([revoked], () => ''), [], 'revoked attendees must not reappear as legacy fallback rows');
   assert.deepEqual(eventAttendeeRows([{ ...revoked, people: [] }], () => ''), [], 'revoked legacy tickets are omitted too');
+});
+
+test('attendee reports use versioned photo consent with legacy and checkout fallbacks', () => {
+  const items = [{ lineId: 'ticket', name: 'Course', category: 'EVENTS', price: 20 }];
+  const person = { firstName: 'Returning', lastName: 'Member', membershipId: 'M1', returning: true, lineIds: ['ticket'], photoConsent: false };
+  for (const [member, checkoutConsent, expected] of [
+    [{ consents: { photoVideo: { accepted: true } } }, false, true],
+    [{ consents: { photoVideo: { accepted: false } }, photoConsent: true }, true, false],
+    [{ photoConsent: true }, false, true],
+    [{}, true, true],
+    [{}, false, false]
+  ]) {
+    const report = orderReport('O1', { items, people: [{ ...person, photoConsent: checkoutConsent }] }, new Map([['M1', member]]));
+    assert.equal(report.people[0].photoConsent, expected);
+    assert.equal(eventAttendeeRows([report], () => '')[0][9], expected ? 'Yes' : 'No');
+  }
 });
 
 test('one membership report covers JustGo and website records', () => {
@@ -185,18 +206,35 @@ test('separate households may share an external emergency contact without sharin
 test('JustGo status follows the upload attempts, and the staff list holds only members needing staff', () => {
   const base = { firstName: 'Ann', lastName: 'Web', dob: '1990-01-01', email: 'a@example.com', phone: '1', address: '1 Road', postcode: 'EH1', membershipTier: 'adult', justgoSyncStatus: 'pending', validUntil: '2099-03-01', status: 'active', medical: 'Asthma' };
   const waiting = membershipReport('M1', { ...base, justgoUpload: { status: 'queued' } });
-  const invited = membershipReport('M2', { ...base, justgoUpload: { status: 'invited', inviteExpiresAt: '2026-10-20' } });
-  const failed = membershipReport('M3', { ...base, affiliationNumber: 'PS123', justgoUpload: { status: 'failed', needsStaff: true, failures: 3, lastError: 'Invitation expired' } });
+  const submitted = membershipReport('M2', { ...base, justgoUpload: { status: 'submitted', clubLinkReference: 'R1' } });
+  const failed = membershipReport('M3', { ...base, affiliationNumber: 'PS123', justgoUpload: { status: 'failed', needsStaff: true, failures: 3, lastError: 'JustGo said no' } });
   const manual = membershipReport('M4', { ...base, justgoUpload: { status: 'manual' } });
   const synced = membershipReport('sca-1', { affiliationNumber: '1', firstName: 'Jo', lastName: 'Sync', justgoSyncStatus: 'synced', status: 'active', validUntil: '2099-03-01' });
-  assert.deepEqual([waiting, invited, failed, manual, synced].map((record) => record.justgo),
-    ['Awaiting upload', 'Invitation sent', 'Needs staff upload', 'Added by staff, awaiting sync', 'In JustGo']);
+  const review = membershipReport('M5', { ...base, justgoUpload: { status: 'review' } });
+  assert.deepEqual([waiting, submitted, failed, manual, review, synced].map((record) => record.justgo),
+    ['Awaiting upload', 'Submitted, awaiting sync', 'Needs staff upload', 'Added by staff, awaiting sync', 'Needs staff upload', 'In JustGo']);
   assert.equal(failed.uploadFailures, 3);
-  assert.equal(failed.uploadError, 'Invitation expired');
-  const rows = justgoUploadRows([waiting, invited, failed, manual, synced]);
+  assert.equal(failed.uploadError, 'JustGo said no');
+  const rows = justgoUploadRows([waiting, submitted, failed, manual, synced]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].length, justgoUploadHeaders.length);
-  assert.deepEqual([rows[0][0], rows[0][1], rows[0][10], rows[0][11], rows[0][12]], ['M3', 'Ann', 'PS123', 3, 'Invitation expired']);
+  assert.deepEqual([rows[0][0], rows[0][1], rows[0][10], rows[0][11], rows[0][12]], ['M3', 'Ann', 'PS123', 3, 'JustGo said no']);
+});
+
+test('the JustGo profile shows suspensions, unlinks and unverified emails', () => {
+  const synced = { affiliationNumber: '1', firstName: 'Jo', lastName: 'Sync', justgoSyncStatus: 'synced', status: 'active', validUntil: '2099-03-01' };
+  const suspended = membershipReport('s1', { ...synced, status: 'Suspended', justgoProfile: { suspended: true, suspension: 'Full', accountStatus: 'Active' } });
+  assert.equal(suspended.justgo, 'Suspended in JustGo');
+  assert.equal(suspended.status, 'Suspended');
+  assert.equal(suspended.justgoAccount, 'Active, suspension Full');
+  assert.ok(MEMBERSHIP_STATUSES.includes('Suspended'));
+  const pendingWithSuspension = membershipReport('s2', { ...synced, justgoSyncStatus: 'pending', justgoProfile: { suspended: true } });
+  assert.equal(pendingWithSuspension.justgo, 'Suspended in JustGo', 'a suspension outranks a website renewal awaiting upload');
+  const unlinked = membershipReport('u1', { ...synced, justgoProfile: { clubLinked: false, reviewReason: 'No longer linked' } });
+  assert.deepEqual([unlinked.justgo, unlinked.justgoReview], ['Not linked to FCC in JustGo', 'No longer linked']);
+  assert.equal(membershipReport('e1', { ...synced, justgoProfile: { clubLinked: true, emailVerified: false } }).justgo, 'In JustGo (email not verified)');
+  const pending = membershipReport('p1', { ...synced, status: 'JustGo Pending', justgoProfile: { membershipName: 'FCC Adult', membershipStatus: 'Pending' } });
+  assert.deepEqual([pending.status, pending.justgoMembership], ['JustGo Pending', 'FCC Adult: Pending'], 'a join request made on JustGo is visible');
 });
 
 test('the member register shows PVG and safeguarding status with expiry dates', () => {
@@ -237,4 +275,13 @@ test('JustGo check statuses remain authoritative while a future membership await
   const report = membershipReport('pending-volunteer', fields);
   assert.equal(report.pvg, 'Current');
   assert.equal(report.safeguarding, 'Not supplied by JustGo');
+});
+
+test('JustGo credentials show their own status with our expiry warning', () => {
+  const now = new Date('2026-06-15T12:00:00Z');
+  const fields = { justgoSyncStatus: 'synced', checks: {
+    pvg: { source: 'justgo', status: 'Approved', expiresOn: '2026-08-01' }, safeguarding: { source: 'justgo', status: 'Completed', expiresOn: '2026-01-01' } } };
+  const report = membershipReport('cred-1', fields, now);
+  assert.equal(report.pvg, 'Approved, Due to expire (01/08/2026)');
+  assert.equal(report.safeguarding, 'Completed, Expired (01/01/2026)');
 });

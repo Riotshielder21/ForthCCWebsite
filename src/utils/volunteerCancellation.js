@@ -29,3 +29,32 @@ export const volunteerCancellationPhases = (subscription, schedule, stripeItemId
   }
   return { params, endsAt: boundary };
 };
+
+const priceIdOf = (price) => price?.id || price || '';
+
+/**
+ * Rebuilds a schedule from its current phase on without the given prices, so a cancelled item is neither billed now
+ * nor added back when a later phase starts. Phases left empty end the schedule early (it then cancels). Returns null
+ * when the current phase would be empty, meaning the whole subscription should be cancelled instead.
+ */
+export const scheduleWithoutPrices = (schedule, priceIds) => {
+  const drop = new Set(priceIds.filter(Boolean));
+  const from = schedule.current_phase?.start_date ?? schedule.phases?.[0]?.start_date;
+  const phases = [];
+  for (const phase of (schedule.phases || []).filter((candidate) => candidate.start_date >= from)) {
+    const items = (phase.items || []).filter((item) => !drop.has(priceIdOf(item.price)));
+    if (!items.length) break;
+    phases.push({ ...phase, items });
+  }
+  if (!phases.length) return null;
+  const params = [['end_behavior', phases.length < (schedule.phases || []).filter((candidate) => candidate.start_date >= from).length ? 'cancel' : schedule.end_behavior || 'cancel'],
+    ['proration_behavior', 'none']];
+  phases.forEach((phase, index) => {
+    params.push([`phases[${index}][start_date]`, String(phase.start_date)], [`phases[${index}][end_date]`, String(phase.end_date)],
+      [`phases[${index}][proration_behavior]`, 'none']);
+    if (phase.trial_end && phase.trial_end > phase.start_date) params.push([`phases[${index}][trial_end]`, String(phase.trial_end)]);
+    phase.items.forEach((item, position) => params.push([`phases[${index}][items][${position}][price]`, priceIdOf(item.price)],
+      [`phases[${index}][items][${position}][quantity]`, String(item.quantity || 1)]));
+  });
+  return params;
+};

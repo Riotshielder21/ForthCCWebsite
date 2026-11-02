@@ -44,7 +44,24 @@ export const redactOrder = (order, erasedMembershipIds, erasedEmails, erasedHous
   const emailErased = order.email !== '***' && gone.has(payer) && !stillUsed.has(payer);
   const changed = people.some((person, index) => person !== order.people[index]);
   if (!changed && !emailErased) return null;
-  return { people, ...(emailErased ? { email: '***', receipt: {}, accessTokenHash: '', receiptViewTokenHash: '' } : {}), personalDataErasedAt: true };
+  return { people, receipt: {}, ...(emailErased ? { email: '***', accessTokenHash: '', receiptViewTokenHash: '' } : {}), personalDataErasedAt: true };
+};
+
+/** Keep financial amounts and billing state, not the erased beneficiaries or cancellation free text. */
+export const redactSubscription = (record, targets, erasedEmails) => {
+  const ids = new Set(targets.map((target) => target.id));
+  const names = new Set(targets.map((target) => normaliseName(`${target.firstName || ''} ${target.lastName || ''}`)));
+  const remainingNames = (values = []) => values.filter((name) => !names.has(normaliseName(name)));
+  return {
+    email: erasedEmails.has(normaliseEmail(record.email)) ? '' : record.email || '',
+    payerErased: record.payerErased === true || erasedEmails.has(normaliseEmail(record.email)),
+    names: remainingNames(record.names),
+    membershipIds: (record.membershipIds || []).filter((id) => !ids.has(id)),
+    items: (record.items || []).map((item) => ({
+      ...item, names: remainingNames(item.names), membershipIds: (item.membershipIds || []).filter((id) => !ids.has(id))
+    })),
+    cancelRequests: (record.cancelRequests || []).map(({ at, lineKeys }) => ({ ...(at ? { at } : {}), lineKeys: lineKeys || [] }))
+  };
 };
 
 const REQUIRED_SHARED = [['contactName', 'a contact name'], ['contactRelationship', 'the contact\'s relationship'], ['phone', 'a phone number'], ['address', 'an address'],

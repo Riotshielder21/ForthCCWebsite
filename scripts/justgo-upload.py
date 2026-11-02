@@ -1,79 +1,32 @@
-"""Tries to add website members to JustGo, tracks every attempt, and hands failures to staff.
+"""Uploads paid website memberships through the default-disabled JustGo API.
 
 Run on a schedule (see config/fcc-upload.timer). Each website member waiting for JustGo has a `justgoUpload` record:
-  queued   -> waiting for an attempt        invited -> JustGo has emailed them; waiting for them to accept
-  failed   -> last attempt failed; retried later with a growing delay
-  manual   -> staff entered them by hand; the weekly sync will link them
-Invitations expire, so an unaccepted one counts as a failure and is sent again. After STAFF_AFTER failures the
-member is flagged `needsStaff` and appears on the register's staff list with the attempt count and last problem.
-The weekly sync (justgo-sync.py) marks them done once JustGo lists them.
+  queued     -> waiting for an attempt
+  processing -> an attempt is in progress (if interrupted, staff reconcile JustGo before retrying)
+  submitted  -> the account was found or created, linked to FCC and given the FCC membership; awaiting the read sync
+  failed     -> a request was refused before anything was written; retried later with a growing delay
+  review     -> the result is uncertain or needs a decision (ambiguous identity, suspension, partial write)
+  manual     -> staff entered them by hand; the sync will link them
+  revoked    -> the website membership was revoked; staff decide what to change in JustGo
+After STAFF_AFTER failures the member is flagged `needsStaff` and appears on the register's staff list with the attempt
+count and last problem. A submission the sync has not confirmed within 8 days is also flagged. Any emails (account
+creation, club-link notices) are sent by JustGo itself.
 """
 import asyncio
 import datetime
-import json
 import os
 
-import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import firestore
+from justgo_api import APIUploader, JustGoClient, JustGoError, JustGoReviewRequired, firestore_database, integration_config
 
 MAX_ATTEMPTS = int(os.environ.get("JUSTGO_UPLOAD_MAX_ATTEMPTS", "8"))
 STAFF_AFTER = int(os.environ.get("JUSTGO_UPLOAD_STAFF_AFTER", "2"))
-INVITE_DAYS = int(os.environ.get("JUSTGO_INVITE_DAYS", "7"))
 BACKOFF_HOURS = [1, 6, 24, 24, 48, 72, 72, 168]
-CONFIG_PATH = os.environ.get("JUSTGO_UPLOAD_CONFIG", os.path.join(os.path.dirname(__file__), "..", "config", "justgo-upload.json"))
-
-try:
-    firebase_admin.initialize_app(credentials.Certificate("serviceAccountKey.json"))
-    db = firestore.client()
-except Exception as error:  # the tests and local runs supply their own `db`
-    print(f"Firebase Init Error: {error}. Ensure serviceAccountKey.json is present.")
 
 
 class UploadError(Exception):
     """An attempt failed for a reason staff should know about."""
 
-
-class NotConfiguredUploader:
-    async def upload(self, member):
-        raise UploadError("JustGo upload automation is not configured yet (config/justgo-upload.json)")
-
-
-class PlaywrightUploader:
-    """Fills JustGo's add-member / invite form using selectors from config/justgo-upload.json.
-
-    The selectors must be mapped to JustGo's real forms before this can run; until then every attempt fails
-    cleanly and the member lands on the staff list.
-    """
-
-    def __init__(self, config):
-        self.config = config
-
-    async def upload(self, member):
-        from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
-
-        mode = member["justgoUpload"].get("mode", "new")
-        form = self.config["forms"][mode]
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await (await browser.new_context()).new_page()
-            try:
-                await page.goto(self.config["login_url"])
-                await page.fill(self.config["login"]["user"], os.environ["JUSTGO_USER"])
-                await page.fill(self.config["login"]["password"], os.environ["JUSTGO_PASS"])
-                await page.click(self.config["login"]["submit"])
-                await page.wait_for_selector(self.config["login"]["ready"], timeout=30000)
-                await page.goto(form["url"])
-                for field, selector in form["fields"].items():
-                    value = member.get(field) or ""
-                    if value:
-                        await page.fill(selector, str(value))
-                await page.click(form["submit"])
-                await page.wait_for_selector(form["success"], timeout=30000)
-            except PlaywrightTimeout as error:
-                raise UploadError(f"JustGo did not confirm the upload: {error}") from error
-            finally:
-                await browser.close()
-        return {"inviteExpiresAt": None}
 
 def upload_details(database, member):
     household_id = member.get("householdId")
@@ -98,11 +51,11 @@ def upload_details(database, member):
 
 
 def load_uploader():
-    try:
-        with open(CONFIG_PATH, encoding="utf-8") as handle:
-            return PlaywrightUploader(json.load(handle))
-    except FileNotFoundError:
-        return NotConfiguredUploader()
+    client = JustGoClient.from_env()
+    client.require_enabled(True)
+    uploader = APIUploader(client, integration_config())
+    uploader.validate_configuration()
+    return uploader
 
 
 def utcnow():
@@ -122,45 +75,85 @@ def after_failure(state, message, now):
 
 async def process_queue(database, uploader, now=None):
     """One pass over everyone still waiting for JustGo. Returns counts for the log."""
+    if hasattr(uploader, "validate_configuration"):
+        uploader.validate_configuration()
     now = now or utcnow()
-    summary = {"invited": 0, "failed": 0, "waiting": 0, "skipped": 0}
+    summary = {"submitted": 0, "review": 0, "failed": 0, "waiting": 0, "skipped": 0}
     for document in database.collection("memberships").where(filter=firestore.FieldFilter("justgoSyncStatus", "==", "pending")).stream():
         member = {"id": document.id, **document.to_dict()}
-        state = dict(member.get("justgoUpload") or {"status": "queued", "attempts": 0, "failures": 0, "mode": "new"})
+        state = dict(member.get("justgoUpload") or {"status": "queued", "attempts": 0, "failures": 0})
         status = state.get("status", "queued")
-        if status == "manual":
+        if status in ("manual", "revoked", "review", "processing"):
             summary["skipped"] += 1
             continue
-        if status == "invited":
-            expires = state.get("inviteExpiresAt")
-            if expires and expires > now:
-                summary["waiting"] += 1
-                continue
-            state = after_failure(state, "The JustGo invitation expired without being accepted", now)
-            state["nextAttemptAt"] = now
+        if status == "submitted":
+            if state.get("lastAttemptAt") and now - state["lastAttemptAt"] > datetime.timedelta(days=8):
+                document.reference.update({"justgoUpload.needsStaff": True,
+                                           "justgoUpload.lastError": "API submission has not been confirmed by the read sync in 8 days."},
+                                          option=database.write_option(last_update_time=document.update_time))
+            summary["waiting"] += 1
+            continue
         due = state.get("nextAttemptAt")
         if int(state.get("attempts", 0)) >= MAX_ATTEMPTS or (due and due > now):
             if state != member.get("justgoUpload"):
                 document.reference.set({"justgoUpload": state, "updatedAt": firestore.SERVER_TIMESTAMP}, merge=True)
             summary["skipped"] += 1
             continue
+        @firestore.transactional
+        def claim(transaction):
+            current = document.reference.get(transaction=transaction)
+            if current.update_time != document.update_time:
+                return False
+            transaction.update(document.reference, {"justgoUpload": {
+                **state, "status": "processing", "attempts": int(state.get("attempts", 0)) + 1,
+                "lastAttemptAt": now, "needsStaff": True,
+                "lastError": "Upload is in progress. If interrupted, reconcile JustGo before retrying.", "nextAttemptAt": None,
+            }, "updatedAt": firestore.SERVER_TIMESTAMP})
+            return True
+
+        if not claim(database.transaction()):
+            summary["skipped"] += 1
+            continue
+        claimed = document.reference.get()
+        if (claimed.to_dict().get("justgoUpload", {}).get("status") != "processing"
+                or claimed.to_dict()["justgoUpload"].get("attempts") != int(state.get("attempts", 0)) + 1):
+            summary["skipped"] += 1
+            continue
         state["attempts"] = int(state.get("attempts", 0)) + 1
         member["justgoUpload"] = state
+        result = {}
         try:
             result = await uploader.upload(upload_details(database, member)) or {}
-        except UploadError as error:
+        except JustGoReviewRequired as error:
+            state = {**state, "status": "review", "needsStaff": True, "lastError": str(error)[:300],
+                     "lastAttemptAt": now, "nextAttemptAt": None}
+            summary["review"] += 1
+        except (UploadError, JustGoError) as error:
             state = after_failure(state, str(error), now)
             summary["failed"] += 1
-        except Exception as error:  # an unexpected crash is still a failed attempt, never a lost member
-            state = after_failure(state, f"Unexpected error: {error}", now)
-            summary["failed"] += 1
+        except Exception:
+            # Unknown exceptions can happen after a successful external write. Never replay it automatically.
+            state = {**state, "status": "review", "needsStaff": True,
+                     "lastError": "Unexpected upload error. Reconcile JustGo before retrying.",
+                     "lastAttemptAt": now, "nextAttemptAt": None}
+            summary["review"] += 1
+            import traceback
+            traceback.print_exc()
         else:
-            state = {**state, "status": "invited", "lastError": "", "needsStaff": False, "lastAttemptAt": now, "invitedAt": now,
-                     "inviteExpiresAt": result.get("inviteExpiresAt") or now + datetime.timedelta(days=INVITE_DAYS), "nextAttemptAt": None}
-            summary["invited"] += 1
-        document.reference.set({"justgoUpload": state, "updatedAt": firestore.SERVER_TIMESTAMP}, merge=True)
+            state = {**state, "status": "submitted", "lastError": "", "needsStaff": False, "lastAttemptAt": now, "nextAttemptAt": None,
+                     "createdAccount": bool(result.get("createdAccount")), "clubLinkReference": result.get("clubLinkReference", ""),
+                     "membershipIds": list(result.get("membershipIds") or [])}
+            summary["submitted"] += 1
+        document.reference.update({
+            "justgoUpload": state, "updatedAt": firestore.SERVER_TIMESTAMP,
+            **({"justgoMemberId": result["justgoMemberId"]} if result.get("justgoMemberId") else {}),
+        }, option=database.write_option(last_update_time=claimed.update_time))
     return summary
 
 
 if __name__ == "__main__":
-    print(f"[{utcnow().isoformat()}] JustGo upload pass: {asyncio.run(process_queue(db, load_uploader()))}")
+    if not JustGoClient.from_env().writes_enabled or not JustGoClient.from_env().enabled:
+        print("JustGo API writes are disabled; upload pass skipped, no request was sent. Members stay queued.")
+        raise SystemExit(0)
+    uploader = load_uploader()  # Guard before opening Firestore or changing attempts.
+    print(f"[{utcnow().isoformat()}] JustGo upload pass: {asyncio.run(process_queue(firestore_database(), uploader))}")

@@ -5,7 +5,9 @@
 - **Stripe test mode:** card-based Test Clocks verify twelve full monthly payments when subscriptions end on 1 March, no extra March invoice, no cancellation credit, stopping automatic failed-payment retries at cancellation, and one delayed December catch-up charge. Still test actual Bacs mandate/settlement delays and webhook-driven voiding and membership updates through real checkout. Turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st).
 - **Renewal job deployment:** create a `renewal-job-token` secret, pass it to Cloud Run as `RENEWAL_JOB_TOKEN` in `.github/workflows/firebase-hosting.yml`, and install `config/fcc-renewals.{service,timer}` on the server with `RENEWAL_JOB_TOKEN` and `RENEWAL_JOB_URL` in its `.env`. Until then staff can send renewal emails from the admin page.
 - **Renewal email wording:** the email uses template text for now; agree the final wording with the club (`renewalEmail` in `src/utils/renewals.js`).
-- GDPR erasure cancels the person's subscriptions but does not blank the payer email and names on `subscriptions/{id}` records.
+- **Stripe erasure verification:** check customer deletion/redaction and shared-item cancellation with a real Stripe test-mode customer, including a failed-delete retry. The website now cancels the erased person's billing and removes identifying subscription fields automatically; Stripe can retain historical invoices, payments and mandates that require a separate dashboard/privacy-support review. A customer still paying for other members retains its payment method until a replacement payer is arranged.
+- **Stripe webhook events:** add `invoice.payment_failed` and `invoice.paid` to the live and test webhook endpoints (Needs attention uses them), and turn on Stripe's customer emails for failed payments. Set `STAFF_ALERT_EMAIL` if alerts should go somewhere other than the club reply-to address.
+- **Subscription schedules:** cancelling an item on a volunteer-scheduled subscription edits the schedule's phases. Check this against a real Stripe test-mode schedule; the flow-test mock has no schedules.
 
 ## Email and receipts
 
@@ -36,22 +38,6 @@
 - Add Firestore TTL policies on `expiresAt` for `emailCodes` and `emailSessions`; expired ones are already rejected, but the documents stay until removed.
 - Decide retention for `clubNightCheckins`, `clubNightAccessLog` and `selfServiceChanges` with the retention work above (GDPR erasure already removes them per person).
 - When a member changes their contact email in My details, the Stripe customer email is not updated; update it there if monthly-payment emails should follow.
-
-## Flow test failures (pre-existing)
-
-`scripts/test-checkout-flow.js` fails these eight scenarios (still failing identically with and without the receipt email changes), most likely expectations left over from before households were split out:
-
-- adult membership plus boat hire is recorded on the membership, customer and order;
-- consent and policy wording is recorded as numbered versions that follow changes;
-- a returning member can add an add-on with only name and date of birth (address is now on the household, not the member);
-- multiple copies of shop services in one mixed basket (the per-member item list now includes every item bought);
-- family membership emergency contact (`undefined` instead of `false`);
-- reports: orders list (a row is missing, reading `status` of `undefined`);
-- reports: member register count (23 records where 19 are expected);
-- replaying a webhook (`shared.family` is unset because the family scenario failed first).
-
-On an emulator that has run the flow test many times, the report-based scenarios (junior household, JustGo sync and uploads, event tickets, merchandise, reports) also fail: the admin reports return the first 100 records ordered by document id, so this run's records can fall onto a later page. Restart the emulators without imported data before relying on them.
-
 
 ## PRe Flight checks
 - Committee Content Review

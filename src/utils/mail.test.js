@@ -18,6 +18,18 @@ test('keeps plain ASCII subjects readable and strips header injection', () => {
   assert.doesNotMatch(message, /\r\nBcc:/);
 });
 
+test('adds a Reply-To header and rejects invalid addresses', () => {
+  const message = decode(buildRawEmail({
+    fromName: 'FCC', from: 'a@b.co', to: 'x@y.com', replyTo: 'secretary@forthcanoeclub.co.uk',
+    subject: 'Hi', body: 'x'
+  }));
+  assert.match(message, /Reply-To: secretary@forthcanoeclub\.co\.uk\r\n/);
+  assert.throws(() => buildRawEmail({
+    fromName: 'FCC', from: 'a@b.co', to: 'x@y.com', replyTo: 'secretary@example.test\r\nBcc: x@y.com',
+    subject: 'Hi', body: 'x'
+  }), /Invalid Reply-To address/);
+});
+
 test('rejects recipients that are not one plain address', () => {
   for (const to of ['x@y.com\r\nBcc: z@z.com', 'a@b.com, c@d.com', 'no-at-sign', '']) {
     assert.throws(() => buildRawEmail({ fromName: 'FCC', from: 'a@b.co', to, subject: 's', body: 'b' }), /Invalid recipient/);

@@ -38,8 +38,14 @@ registerMyDetailsRoutes(app, { db: () => db, sendEmail, emailCodes });
 registerClubNightRoutes(app, { requireAdmin, db: () => db, emailCodes, requestNow,
   loadCatalogue: async () => [{ id: 'gold-sub', name: 'Gold subscription', category: 'SUBSCRIPTIONS' }, { id: 'boat-hire', name: 'Boat hire', category: 'ADDONS' }] });
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY = 'rk_test_club_night_fixture';
 registerGdprRoutes(app, { requireAdmin, db: () => db, localFirebase: true, normalizeEmail, isValidEmail: (value) => /^[^@\s]+@[^@\s]+$/.test(value),
-  customerId: (email) => crypto.createHash('sha256').update(normalizeEmail(email)).digest('hex'), stripeReportRequest: async () => ({}) });
+  customerId: (email) => crypto.createHash('sha256').update(normalizeEmail(email)).digest('hex'),
+  stripeReportRequest: (key) => async (path) => {
+    assert.equal(key, 'rk_test_club_night_fixture');
+    assert.ok(path.startsWith('customers?'), `Unexpected Stripe request: ${path}`);
+    return { data: [], has_more: false };
+  } });
 const server = app.listen(0, '127.0.0.1');
 await new Promise((resolve) => server.on('listening', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;

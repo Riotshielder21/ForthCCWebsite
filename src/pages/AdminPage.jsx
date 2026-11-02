@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
 import { removeProduct, reserveProductId, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
 import { isLockedProduct } from '../utils/tripDiscount';
@@ -42,6 +42,16 @@ const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorate
 export default function AdminPage({ products, onNavigate }) {
   const editor = usePageEditor();
   const { adminUser, authReady } = editor;
+  const [attentionCount, setAttentionCount] = useState(0);
+  useEffect(() => {
+    if (!adminUser) return undefined;
+    let current = true;
+    adminUser.getIdToken().then((token) => fetch(apiUrl('/api/admin/attention'), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }))
+      .then((response) => response.ok ? response.json() : { count: 0 })
+      .then((result) => { if (current) setAttentionCount(result.count || 0); })
+      .catch(() => {});
+    return () => { current = false; };
+  }, [adminUser]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [draft, setDraft] = useState(EMPTY_PRODUCT);
   const [message, setMessage] = useState('');
@@ -233,7 +243,7 @@ export default function AdminPage({ products, onNavigate }) {
           <div className="AdminPreviewActions">
             <span className="StatusText StatusTextSuccess" role="status">Signed in as {adminUser.email}.</span>
             <div className="AdminHeaderButtons">
-              <button className="EditorCommand" onClick={() => onNavigate('admin-reports')}><FileText size={18} /> Reports & records</button>
+              <button className="EditorCommand" onClick={() => onNavigate('admin-reports')}><FileText size={18} /> Reports & records{attentionCount > 0 && <span className="NeedsAttentionCount" title={`${attentionCount} need attention`} aria-label={`${attentionCount} need attention`}>{attentionCount}</span>}</button>
               <button className="MobileMenuButton AdminSignOut" onClick={() => editor.logout().catch((logoutError) => setError(logoutError.message))}><LogOut className="IconMd" /> Sign out</button>
             </div>
           </div>

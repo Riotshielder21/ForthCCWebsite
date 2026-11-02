@@ -27,16 +27,28 @@ connectStorageEmulator(storage, storageHost, Number(storagePort));
 const port = 3003;
 const mockStripe = `
 const originalFetch = globalThis.fetch;
+let sessionNumber = 0;
+const customers = new Map();
 let subscription = { id: 'sub_legacy', customer: { id: 'cus_legacy', name: 'Legacy member', email: 'legacy@example.com' }, status: 'active',
   items: { data: [{ price: { id: 'price_local', nickname: 'Monthly test', currency: 'gbp', unit_amount: 2000, recurring: { interval: 'month' } } }] },
   latest_invoice: { payment_intent: { latest_charge: { refunded: false, disputed: false, amount_refunded: 0 } } } };
 globalThis.fetch = async (url, options) => {
   if (!String(url).startsWith('https://api.stripe.com/')) return originalFetch(url, options);
   const parsed = new URL(url);
+  const method = options?.method || 'GET';
+  if (parsed.pathname === '/v1/customers') {
+    const email = method === 'GET' ? parsed.searchParams.get('email') : new URLSearchParams(options.body).get('email');
+    if (!email || !['GET', 'POST'].includes(method)) throw new Error('Expected a customer lookup or creation with an email');
+    if (method === 'GET') return Response.json({ data: customers.has(email) ? [customers.get(email)] : [], has_more: false });
+    const customer = { id: 'cus_smoke_' + (customers.size + 1), email };
+    customers.set(email, customer);
+    return Response.json(customer);
+  }
   if (parsed.pathname === '/v1/checkout/sessions') {
     const body = new URLSearchParams(options.body);
-    if (body.get('mode') !== 'payment' || body.has('line_items[0][price_data][recurring][interval]')) throw new Error('Event ticket must be one-off');
-    return Response.json({ id: 'cs_event_fixture', url: 'https://checkout.stripe.com/test-fixture' });
+    if (body.get('mode') !== 'payment' || body.has('line_items[0][price_data][recurring][interval]')) throw new Error('These purchases must be one-off payments');
+    if (body.has('customer_email') || ![...customers.values()].some((customer) => customer.id === body.get('customer'))) throw new Error('Checkout must use the customer looked up or created for the payer');
+    return Response.json({ id: 'cs_event_fixture_' + ++sessionNumber, url: 'https://checkout.stripe.com/test-fixture' });
   }
   if (parsed.pathname === '/v1/subscriptions') return Response.json({ data: [subscription], has_more: false });
   if (parsed.pathname === '/v1/subscriptions/sub_legacy') {
@@ -55,9 +67,16 @@ const server = spawn(process.execPath, ['--import', `data:text/javascript,${enco
 let output = '';
 server.stdout.on('data', (chunk) => { output += chunk; });
 server.stderr.on('data', (chunk) => { output += chunk; });
-const request = async (path, options = {}) => {
+const request = async (path, options = {}, { expectJson = true } = {}) => {
   const response = await fetch(`http://127.0.0.1:${port}${path}`, options);
-  const result = await response.json();
+  const text = await response.text();
+  let result = text;
+  if (expectJson) {
+    try { result = JSON.parse(text); }
+    catch {
+      throw new Error(`Expected JSON from ${options.method || 'GET'} ${path}, received HTTP ${response.status}: ${text}\nAPI output:\n${output}`);
+    }
+  }
   return { status: response.status, result };
 };
 try {
@@ -82,13 +101,13 @@ try {
   const eventCheckout = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'TEST-EVENT', lineId: 'L1' }], billingMode: 'monthly',
       people: [{ id: 'P1', lineIds: ['L1'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }] }) });
-  assert.equal(eventCheckout.status, 200);
+  assert.equal(eventCheckout.status, 200, `Event checkout failed: ${JSON.stringify(eventCheckout.result)}\nAPI output:\n${output}`);
   const eventOrder = (await db.collection('orders').doc(eventCheckout.result.orderRef).get()).data();
   assert.deepEqual(eventOrder.items[0].eventSchedule, eventSchedule);
   assert.equal(eventOrder.items[0].price, 50);
   await db.collection('orders').doc(eventCheckout.result.orderRef).update({ status: 'paid', total: '80',
     items: [...eventOrder.items, { id: 'membership-adult', name: 'Membership', category: 'MEMBERSHIP', type: 'annual-oneoff', price: 30 }] });
-  const events = await request('/api/admin/reports?kind=events', { headers });
+  const events = await request(`/api/admin/reports?kind=events&recordId=${encodeURIComponent(eventCheckout.result.orderRef)}`, { headers });
   assert.equal(events.status, 200);
   const ticket = events.result.records.find((record) => record.id === eventCheckout.result.orderRef);
   assert.deepEqual(ticket.items[0].eventSchedule, eventSchedule);
@@ -99,7 +118,7 @@ try {
   const removed = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'TEST-EVENT' }] }) });
   assert.equal(removed.status, 400);
-  const report = await request('/api/admin/reports?kind=orders', { headers });
+  const report = await request('/api/admin/reports?kind=orders&recordId=TEST-SUBSCRIPTION', { headers });
   assert.equal(report.status, 200);
   assert.ok(report.result.records.some((record) => record.id === 'TEST-SUBSCRIPTION' && record.subscriptionWarning));
   const legacy = { id: 'sub_legacy', stripeCustomerId: 'cus_legacy', name: 'Legacy member', email: 'legacy@example.com', status: 'Active', items: [] };
@@ -136,10 +155,17 @@ try {
   const cancelledRecord = (await db.collection('stripeSubscriptions').doc(firstImport.clubSubscriptionId).get()).data();
   assert.equal(cancelledRecord.stripeStatus, 'canceled');
   assert.ok(cancelledRecord.immediateCancellationConfirmedBy);
-  assert.equal((await db.collection('adminSubscriptionAudit').get()).size, 1);
-  const members = await request('/api/admin/reports?kind=members', { headers });
-  assert.equal(members.result.records.find((record) => record.id === 'test-current').status, 'Active');
-  assert.equal(members.result.records.find((record) => record.id === 'test-expired').status, 'Expired');
+  const cancellationAudit = await db.collection('adminSubscriptionAudit').where('stripeSubscriptionId', '==', 'sub_legacy').get();
+  assert.equal(cancellationAudit.size, 1, 'repeating cancellation keeps one audit record for this subscription');
+  await db.collection('memberships').doc('SMOKE-CONFIRMED-EXPIRED').set({
+    firstName: 'Confirmed', lastName: 'Expired', status: 'active', validUntil: Timestamp.fromDate(new Date('2020-03-01T00:00:00Z')),
+    source: 'justgo', justgoSyncStatus: 'synced', lastJustgoSync: Timestamp.now()
+  });
+  for (const [id, status] of [['test-current', 'Active'], ['test-expired', 'Pending'], ['SMOKE-CONFIRMED-EXPIRED', 'Expired']]) {
+    const members = await request(`/api/admin/reports?kind=members&recordId=${id}`, { headers });
+    assert.equal(members.status, 200);
+    assert.equal(members.result.records.find((record) => record.id === id).status, status);
+  }
   const remove = (acknowledgeStripe) => request('/api/admin/records/orders/TEST-SUBSCRIPTION', {
     method: 'DELETE', headers, body: JSON.stringify({ confirmId: 'TEST-SUBSCRIPTION', acknowledgeStripe })
   });
@@ -147,14 +173,29 @@ try {
   assert.equal((await remove(true)).status, 200);
   assert.equal((await db.collection('orders').doc('TEST-SUBSCRIPTION').get()).exists, false);
   assert.equal((await db.collection('adminDeletionAudit').get()).empty, false);
-  const purchase = await request('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'receipt@example.com', total: '30', items: [{ name: 'Local purchase', price: 30 }] }) });
-  assert.equal(purchase.status, 200);
-  assert.equal(purchase.result.emailSent, true);
-  const receipt = await request(`/api/orders/${purchase.result.orderRef}.${purchase.result.accessToken}`);
+  assert.equal((await request('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'receipt@example.com', total: '0', items: [] }) }, { expectJson: false })).status, 404, 'unpaid orders cannot be created through the retired endpoint');
+  const purchase = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'keyhire', lineId: 'receipt-key' }], billingMode: 'annual',
+      people: [{ id: 'receipt-person', lineIds: ['receipt-key'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }] }) });
+  assert.equal(purchase.status, 200, `Receipt checkout failed: ${JSON.stringify(purchase.result)}\nAPI output:\n${output}`);
+  const purchaseOrder = (await db.collection('orders').doc(purchase.result.orderRef).get()).data();
+  const paidPayload = JSON.stringify({ type: 'checkout.session.completed', data: { object: {
+    id: purchaseOrder.stripeSessionId, mode: 'payment', payment_status: 'paid', amount_total: Math.round(Number(purchaseOrder.total) * 100),
+    payment_intent: 'pi_receipt_fixture', metadata: { order_ref: purchase.result.orderRef }
+  } } });
+  const paidAt = Math.floor(Date.now() / 1000);
+  const paidSignature = createHmac('sha256', 'whsec_local_only').update(`${paidAt}.${paidPayload}`).digest('hex');
+  const paid = await request('/api/stripe/webhook', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${paidAt},v1=${paidSignature}` }, body: paidPayload });
+  assert.equal(paid.status, 200, JSON.stringify(paid.result));
+  assert.equal((await db.collection('orders').doc(purchase.result.orderRef).get()).data().emailSent, true);
+  const mail = (await db.collection('testMail').where('orderRef', '==', purchase.result.orderRef).get()).docs[0].data();
+  const receipt = await request(`/api/orders/${new URL(mail.retrievalUrl).pathname.split('/order/')[1]}`);
   assert.equal(receipt.status, 200);
-  assert.equal(receipt.result.total, '30');
-  assert.equal((await db.collection('testMail').where('orderRef', '==', purchase.result.orderRef).get()).empty, false);
+  assert.equal(Number(receipt.result.total), Number(purchaseOrder.total));
+  assert.equal(receipt.result.items[0].name, 'Boathouse Access');
+  assert.deepEqual(receipt.result.items[0].personNames, ['Eve Event']);
+  assert.equal('people' in receipt.result, false, 'public receipt does not expose contact records');
   await db.collection('orders').doc('TEST-WEBHOOK').set({ email: 'webhook@example.com', status: 'pending', total: '25',
     stripeSessionId: 'cs_local_test', createdAt: Timestamp.now(), items: [{ name: 'Monthly test', price: 25, type: 'subscription' }] });
   const payload = JSON.stringify({ type: 'checkout.session.completed', data: { object: {
@@ -172,17 +213,33 @@ try {
   const batch = db.batch();
   for (let index = 0; index < 105; index += 1) batch.set(db.collection('orders').doc(`PAGING-${String(index).padStart(3, '0')}`), { email: 'paging@example.com', status: 'paid', total: '0', items: [] });
   await batch.commit();
-  const first = await request('/api/admin/reports?kind=orders', { headers });
-  assert.equal(first.result.records.length, 100);
-  assert.ok(first.result.nextCursor);
-  const second = await request(`/api/admin/reports?kind=orders&cursor=${encodeURIComponent(first.result.nextCursor)}`, { headers });
-  assert.ok(second.result.records.length > 0);
-  assert.equal(second.result.nextCursor, null);
-  assert.equal(new Set([...first.result.records, ...second.result.records].map((record) => record.id)).size, first.result.records.length + second.result.records.length);
+  const records = [];
+  const cursors = new Set();
+  let cursor = '';
+  let pages = 0;
+  do {
+    const page = await request(`/api/admin/reports?kind=orders${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { headers });
+    assert.equal(page.status, 200);
+    assert.ok(page.result.records.length <= 100);
+    if (pages === 0) assert.equal(page.result.records.length, 100);
+    records.push(...page.result.records);
+    cursor = page.result.nextCursor;
+    if (cursor) {
+      assert.equal(page.result.records.length, 100, 'non-final order pages are full');
+      assert.ok(!cursors.has(cursor), 'pagination must advance');
+      cursors.add(cursor);
+    }
+    pages += 1;
+  } while (cursor);
+  assert.ok(pages >= 2);
+  assert.equal(new Set(records.map((record) => record.id)).size, records.length, 'pages never repeat an order');
+  const pagingIds = records.filter((record) => /^PAGING-\d{3}$/.test(record.id)).map((record) => record.id).sort();
+  assert.deepEqual(pagingIds, Array.from({ length: 105 }, (_, index) => `PAGING-${String(index).padStart(3, '0')}`), 'all seeded pagination fixtures are returned regardless of other orders');
   console.log('Emulator smoke checks passed: catalogue preservation, event checkout/schedule snapshots/reports/deletion, subscriber imports, mocked Stripe immediate cancellation/audit, admin access, member expiry, pagination, deletion warnings, receipts, webhook and Storage rules.');
 } finally {
   const exited = once(server, 'exit');
   server.kill('SIGTERM');
   if (server.exitCode === null) await exited;
+  await db.collection('memberships').doc('SMOKE-CONFIRMED-EXPIRED').delete();
   await db.terminate();
 }

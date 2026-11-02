@@ -261,7 +261,7 @@ export default function App() {
       });
       const order = await response.json();
       if (!response.ok) {
-        if (['membership_required', 'renews_via_justgo', 'membership_active', 'renewal_unconfirmed', 'sold_out', 'club_year_unavailable', 'already_held'].includes(order.code)) {
+        if (['membership_required', 'renews_via_justgo', 'membership_active', 'renewal_unconfirmed', 'sold_out', 'club_year_unavailable', 'already_held', 'payment_processing', 'already_paid'].includes(order.code)) {
           refusedCartKey.current = cartKey;
           setCheckoutError(order.error);
           if (order.code === 'sold_out') refreshAvailability();

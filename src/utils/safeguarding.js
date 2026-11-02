@@ -38,11 +38,19 @@ export const checkLabel = (expiresOn, now = new Date()) => {
   return status === 'none' ? CHECK_STATUS_LABELS.none : `${CHECK_STATUS_LABELS[status]} (${formatCheckDate(expiresOn)})`;
 };
 
+/** A JustGo credential: JustGo's own status plus our expiry warning, e.g. "Approved, Due to expire (31/12/2026)". */
+export const justgoCheckLabel = (check, now = new Date()) => {
+  if (check?.source !== 'justgo') return 'Not supplied by JustGo';
+  const status = String(check.status || '').trim();
+  if (!parseDate(check.expiresOn)) return status || check.label || 'Not supplied by JustGo';
+  return [status, checkLabel(check.expiresOn, now)].filter(Boolean).join(', ');
+};
+
 /** Each check's expiry date and status, from a membership's `checks` field. */
 export const checkSummary = (checks = {}, now = new Date()) => Object.fromEntries(Object.keys(CHECK_TYPES).map((type) => {
   const expiresOn = parseDate(checks?.[type]?.expiresOn) ? checks[type].expiresOn : '';
   return [type, { expiresOn, status: checks?.[type]?.source === 'justgo' ? checks[type].status || 'none' : checkStatus(expiresOn, now),
-    ...(checks?.[type]?.source === 'justgo' ? { source: 'justgo', label: checks[type].label || 'Not supplied by JustGo' } : {}) }];
+    ...(checks?.[type]?.source === 'justgo' ? { source: 'justgo', expiryStatus: checkStatus(expiresOn, now), label: justgoCheckLabel(checks[type], now) } : {}) }];
 }));
 
 /** An admin update: one or both checks, each a YYYY-MM-DD expiry date or '' to clear it. */

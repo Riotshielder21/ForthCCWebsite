@@ -44,7 +44,7 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
           setStatus('paid');
           if (!notifiedPaid.current) {
             notifiedPaid.current = true;
-            onPaymentConfirmed(true);
+            onPaymentConfirmed?.(true);
           }
           if (!receiptToken) {
             setReceiptUnavailable(true);
@@ -61,7 +61,12 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
           return;
         }
         setStatus(result.status);
-        if (['expired', 'payment_failed'].includes(result.status)) return;
+        // A bank payment clears over days; the order is placed, so the basket is cleared to stop it being paid twice.
+        if (result.status === 'processing' && !notifiedPaid.current) {
+          notifiedPaid.current = true;
+          onPaymentConfirmed?.(true);
+        }
+        if (['expired', 'payment_failed', 'failed', 'processing'].includes(result.status)) return;
       } catch {
         if (active) setStatus(attempts < 30 ? 'checking' : 'unavailable');
       }
@@ -73,19 +78,22 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
   }, [sessionId, receiptToken, onPaymentConfirmed]);
 
   const paid = status === 'paid';
-  const failed = status === 'payment_failed';
+  const failed = status === 'payment_failed' || status === 'failed';
   const expired = status === 'expired';
+  const processing = status === 'processing';
   const free = sessionId.startsWith('cs_free_');
-  const Icon = paid ? CheckCircle2 : failed || expired || status === 'unavailable' ? AlertCircle : Loader2;
-  const title = paid ? (free ? 'Booking confirmed' : 'Payment confirmed') : failed ? 'Payment not completed' : expired ? 'Checkout expired' : 'Checking payment';
+  const Icon = paid || processing ? CheckCircle2 : failed || expired || status === 'unavailable' ? AlertCircle : Loader2;
+  const title = paid ? (free ? 'Booking confirmed' : 'Payment confirmed') : processing ? 'Payment processing' : failed ? 'Payment not completed' : expired ? 'Checkout expired' : 'Checking payment';
   const message = paid
     ? `${free ? 'Your discounts cover the whole order, so there is nothing to pay and your booking is confirmed.' : 'Your payment is confirmed.'} A copy of this receipt and a secure order link will be sent to ${receipt?.receipt.payerEmail || 'the checkout email address'}.`
+    : processing
+      ? 'Your order is placed and your bank payment is being processed. Bank payments take a few working days to clear; we will email your receipt when it does, or tell you if it fails. Please do not pay again.'
     : failed
       ? 'Stripe could not complete this payment. Your basket and checkout details are saved; return to your basket to try again or choose another payment method.'
       : expired
         ? 'This checkout session has expired. Your basket and checkout details are saved; return to your basket to start a new checkout.'
         : status === 'unavailable'
-          ? 'We could not confirm the payment status yet. Your basket and checkout details are still saved. Check your email before trying again.'
+          ? 'We could not confirm the payment status yet. Your basket and checkout details are still saved. Check your email for a receipt before trying again; starting a new checkout cancels this one, so you cannot be charged twice.'
           : 'Waiting for Stripe to confirm your payment. Your basket and checkout details are being kept while we check.';
 
   return (

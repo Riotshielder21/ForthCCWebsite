@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { familyOf, identityEmails, matchesIdentity, redactOrder, sharedDetailsErrors, sharedDetailsUpdate } from './erasure.js';
+import { familyOf, identityEmails, matchesIdentity, redactOrder, redactSubscription, sharedDetailsErrors, sharedDetailsUpdate } from './erasure.js';
 
 const member = { firstName: 'Jo', lastName: 'Lee', dob: '1990-01-02', email: 'Jo@Example.com', affiliationNumber: 'PS1' };
 
@@ -38,6 +38,7 @@ test('erasing a person strips their details from an order but keeps items and am
   const one = redactOrder(order, ['M2'], ['parent@example.com']);
   assert.deepEqual(one.people[1], { id: 'p2', lineIds: ['l1'], membershipId: 'M2', erased: true });
   assert.equal(one.people[0].firstName, 'Pat');
+  assert.deepEqual(one.receipt, {}, 'a legacy receipt snapshot must not retain an erased family member');
   assert.equal(one.email, undefined, 'the payer email stays while another person still uses it');
   const everyone = redactOrder(order, ['M1', 'M2'], ['parent@example.com']);
   assert.equal(everyone.email, '***');
@@ -73,4 +74,20 @@ test('replacement shared details are validated and applied to every remaining me
   assert.equal(update.contactRelationship, 'Parent');
   assert.equal(update.email, 'sam@example.com');
   assert.deepEqual(update.emergencyContact, { name: 'Pat', phone: '0778', relationship: 'Friend' });
+});
+
+test('subscription erasure keeps billing amounts and other beneficiaries, but not erased names, email or request text', () => {
+  const record = { email: 'jo@example.com', names: ['Jo Lee', 'Kit Lee'], membershipIds: ['M1', 'M2'],
+    items: [{ lineId: 'l1', names: ['Jo Lee'], membershipIds: ['M1'], monthlyAmount: 12, status: 'cancelled' },
+      { lineId: 'l2', names: ['Kit Lee', 'Jo Lee'], membershipIds: ['M2', 'M1'], monthlyAmount: 20, status: 'active' }],
+    cancelRequests: [{ at: 123, by: 'jo@example.com', lineKeys: ['o1/l1'], reason: 'Moving to my new address' }] };
+  const result = redactSubscription(record, [{ id: 'M1', firstName: 'Jo', lastName: 'Lee' }], new Set(['jo@example.com']));
+  assert.equal(result.email, '');
+  assert.deepEqual(result.names, ['Kit Lee']);
+  assert.deepEqual(result.membershipIds, ['M2']);
+  assert.deepEqual(result.items[0], { lineId: 'l1', names: [], membershipIds: [], monthlyAmount: 12, status: 'cancelled' });
+  assert.deepEqual(result.items[1].names, ['Kit Lee']);
+  assert.equal(result.items[1].status, 'active');
+  assert.deepEqual(result.cancelRequests, [{ at: 123, lineKeys: ['o1/l1'] }]);
+  assert.equal(redactSubscription({ ...record, email: 'other@example.com' }, [], new Set(['jo@example.com'])).email, 'other@example.com');
 });

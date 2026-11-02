@@ -15,12 +15,12 @@ import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTile
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart, expandClubYearLines, expandPeopleLines, NEXT_YEAR_LINE_SUFFIX } from './src/utils/pricing.js';
 import { clubYearOf, clubYearDates, clubYearLabel, clubYearKind, resolveClubYearChoice, holdsForClubYear } from './src/utils/clubYear.js';
-import { createClubYearSubscription } from './src/server/clubYearSubscription.js';
+import { createClubYearSubscription, clubYearCancelAt } from './src/server/clubYearSubscription.js';
 import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
 import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
-import { membershipActivity, renewalConfirmationOpen } from './src/utils/membership.js';
+import { membershipActivity, renewalConfirmationOpen, justgoUploadCanRetry } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
 import { readJustgoSync } from './src/server/justgoSync.js';
 import { buildRawEmail } from './src/utils/mail.js';
@@ -44,7 +44,7 @@ import { allocateRecordIds, reserveRecordIds } from './src/utils/recordIds.js';
 import { registerEmailCodeRoutes } from './src/server/emailCodes.js';
 import { registerMyDetailsRoutes } from './src/server/myDetails.js';
 import { registerClubNightRoutes } from './src/server/clubNight.js';
-import { volunteerCancellationPhases } from './src/utils/volunteerCancellation.js';
+import { volunteerCancellationPhases, scheduleWithoutPrices } from './src/utils/volunteerCancellation.js';
 import { monthlyAdjustment, volunteerPriceFor } from './src/utils/volunteerAdjustments.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
 import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
@@ -56,12 +56,16 @@ import { registerKeyAccessRoutes } from './src/server/keyAccess.js';
 import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemActions.js';
 import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
 import { isClubEmail } from './src/utils/adminAccess.js';
+import { createAttention, registerAttentionRoutes } from './src/server/attention.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const CLUB_REPLY_TO = 'secretary@forthcanoeclub.co.uk';
+const attention = createAttention({ db: () => adminDb, sendEmail: (message) => sendEmail(message),
+  alertEmail: process.env.STAFF_ALERT_EMAIL || CLUB_REPLY_TO });
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isValidEmail = (value) => {
@@ -266,9 +270,11 @@ const stripeRequest = async (path, params, method = 'POST', { idempotencyKey } =
       ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {})
     },
     ...(method === 'GET' || !params ? {} : { body: new URLSearchParams(params) })
-  });
-  const data = await response.json();
-  if (!response.ok) throw Object.assign(new Error(data.error?.message || 'Stripe request failed.'), { stripeCode: data.error?.code, stripeStatus: response.status });
+  }).catch((error) => { throw Object.assign(new Error(`Could not reach Stripe: ${error.message}`), { transient: true }); });
+  const data = await response.json().catch(() => ({}));
+  // Rate limits and Stripe-side faults are worth retrying; anything else Stripe refused stays refused.
+  if (!response.ok) throw Object.assign(new Error(data.error?.message || 'Stripe request failed.'), { stripeCode: data.error?.code, stripeStatus: response.status,
+    transient: response.status === 429 || response.status >= 500 || ['lock_timeout', 'idempotency_key_in_use'].includes(data.error?.code) });
   return data;
 };
 
@@ -460,7 +466,7 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, househ
         disclaimer: { ...order.policyVersions?.disclaimer, acceptedAt: paidAt, by: person.junior ? 'guardian' : 'self' },
         ...(existingMember ? {} : { photoVideo: { ...order.policyVersions?.photoVideo, accepted: person.photoConsent === true, recordedAt: paidAt, by: person.junior ? 'guardian' : 'self' } })
       },
-      ...(membershipLine || includedLine ? { status: 'active', validUntil, clubYears: FieldValue.arrayUnion(...new Set([...(person.heldClubYears || []), ...coveredYears])), membershipTier: membershipLine ? membershipLine.membershipTier || '' : grantedTier, justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, mode: (person.affiliationNumber || existingMember) ? 'invite' : 'new', nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
+      ...(membershipLine || includedLine ? { status: 'active', validUntil, clubYears: FieldValue.arrayUnion(...new Set([...(person.heldClubYears || []), ...coveredYears])), membershipTier: membershipLine ? membershipLine.membershipTier || '' : grantedTier, justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
       ...(membershipLine || includedLine ? { membershipAccessEndsAt: FieldValue.delete() } : {}),
       ...(previous && previous.source !== 'website' && previous.validUntil && !previous.membershipBeforeWebsite
         ? { membershipBeforeWebsite: { validUntil: previous.validUntil, source: previous.source || 'imported' } } : {}),
@@ -542,26 +548,30 @@ const releaseStock = (orderRef, productIds) => productIds.length ? adminDb.runTr
   snapshots.forEach((snapshot) => dropHold(transaction, snapshot, orderRef));
 }) : Promise.resolve();
 
-/** Terminal checkout failures update status but keep the saved order for support and retries. */
+/**
+ * Terminal checkout failures update status but keep the saved order for support and retries. Returns the order when
+ * this call changed it, so the caller can tell the customer once.
+ */
 const recordUnsuccessfulCheckout = async (session, status) => {
   const orderRef = session.metadata?.order_ref;
-  if (!orderRef || !adminDb) return;
-  await adminDb.runTransaction(async (transaction) => {
+  if (!orderRef || !adminDb) return null;
+  return adminDb.runTransaction(async (transaction) => {
     const orderDocument = adminDb.collection('orders').doc(orderRef);
     const document = await transaction.get(orderDocument);
     if (!document.exists) throw new Error('Order not found for unsuccessful Checkout Session.');
     const order = document.data();
     if (order.stripeSessionId !== session.id) throw new Error('Checkout Session does not match the order.');
-    if (order.status !== 'pending') return;
+    if (order.status !== 'pending') return null;
     const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
     const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
     const stock = await readStock(transaction, order.stockProductIds || []);
     stock.forEach((snapshot) => dropHold(transaction, snapshot, orderRef));
     const timestamp = Timestamp.now();
-    transaction.update(orderDocument, { status, ...(status === 'expired' ? { expiredAt: timestamp } : { paymentFailedAt: timestamp }) });
+    transaction.update(orderDocument, { status, paymentProcessing: false, ...(status === 'expired' ? { expiredAt: timestamp } : { paymentFailedAt: timestamp }) });
     if (discountDocument && discount?.reservedByOrder === orderRef && !discount.used) {
       transaction.update(discountDocument, { reservedByOrder: null, reservedUntil: null });
     }
+    return { ...order, orderRef };
   });
 };
 
@@ -596,7 +606,7 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       throw new Error('Payment does not match the order.');
     }
     if (order.emailSent === true) return null;
-    if (order.emailSendingUntil?.toMillis() > Date.now()) throw new Error('Receipt delivery is already in progress.');
+    if (order.emailSendingUntil?.toMillis() > Date.now()) throw Object.assign(new Error('Receipt delivery is already in progress.'), { busy: true });
     const stock = await readStock(transaction, order.stockProductIds || []);
     const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
     const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
@@ -627,7 +637,8 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       ? await transaction.getAll(...householdIds.map((id) => adminDb.collection('households').doc(id)))
       : [];
     const householdSnapshots = new Map(householdDocuments.map((household) => [household.id, household]));
-    if (discount?.singleUse && discount.used && discount.usedByOrder !== orderRef) throw new Error('Voucher has already been redeemed.');
+    // The customer has paid, so the order stands; staff decide what to do about the code being used twice.
+    const discountReused = Boolean(discount?.singleUse && discount.used && discount.usedByOrder !== orderRef);
     householdReservation.save();
     const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
       code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
@@ -648,7 +659,7 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
         });
       }
     }
-    if (discount?.singleUse) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
+    if (discount?.singleUse && !discountReused) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
     // Paid stock holds never lapse; rebuilt from the order in case the reservation was already cleared.
     stock.forEach((snapshot) => transaction.set(snapshot.ref, {
       holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
@@ -660,11 +671,16 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       people: order.people || [],
       status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
       stripePaymentIntentId: paymentIntent, ...(setupIntent ? { stripeSetupIntentId: setupIntent } : {}),
-      paidAt,
+      paidAt, paymentProcessing: false,
+      ...(discountReused ? { discountReused: true } : {}),
       emailSendingUntil: Timestamp.fromDate(new Date(Date.now() + 5 * 60 * 1000))
     });
-    return { ...order, vouchers };
+    return { ...order, vouchers, discountReused, discountUsedBy: discountReused ? discount.usedByOrder : '' };
   });
+  if (fields?.discountReused) {
+    await attention.raise('discount-reused', orderRef, { orderRef, email: fields.email,
+      detail: `Single-use code ${fields.discountCodeId} was already used by ${fields.discountUsedBy}, but ${orderRef} has been paid with it, so the order went through. Decide whether to accept it or ask for the difference.` });
+  }
   return fields && { ...fields, accessToken };
 };
 
@@ -712,65 +728,151 @@ const monthlyPriceParams = (prefix, item, product) => {
  * month and saved the card or bank account; debits then run on the 1st from `firstDebitAt` and the subscription is
  * cancelled at the club-year end (1 March), so the last debit is 1 February. Items paid with the same details
  * as a live subscription for the same club year join it, so they share one debit; different details may belong to
- * someone else, so they get their own subscription.
+ * someone else, so they get their own subscription. A subscription with a schedule (a volunteer's pending change)
+ * is never joined, so the schedule cannot drop or re-add the new items.
+ *
+ * `onTarget` saves the subscription on the order as soon as it is known, so a later failure resumes on it rather
+ * than leaving a live subscription the website does not know about. A resumed group adds only its missing items.
  */
-const setUpSubscriptionGroup = async ({ order, orderRef, group, lineById, paymentMethod, customer, fingerprint }) => {
+const setUpSubscriptionGroup = async ({ order, orderRef, group, lineById, paymentMethod, customer, fingerprint, onTarget }) => {
   const firstDebit = unixSeconds(group.firstDebitAt);
   const subscriptionEnd = unixSeconds(group.cutoffAt);
   const debitPassed = firstDebit <= Date.now() / 1000;
-  const owned = await adminDb.collection('subscriptions').where('email', '==', order.email).where('status', '==', 'active').limit(20).get();
   let target = null;
   let otherLive = false;
-  for (const document of owned.docs.filter((candidate) => candidate.data().clubYear === group.clubYear)) {
-    const candidate = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
-    if (!subscriptionLive(candidate)) continue;
-    if (await paymentFingerprint(stripeId(candidate.default_payment_method)) === fingerprint) {
-      target = candidate;
-      break;
+  if (group.stripeSubscriptionId) {
+    target = await stripeRequest(`subscriptions/${encodeURIComponent(group.stripeSubscriptionId)}`, null, 'GET');
+    if (['canceled', 'incomplete_expired'].includes(target.status)) {
+      throw new Error(`Subscription ${target.id} was cancelled after set-up started, so nothing more was added to it. Set up the remaining monthly items by hand if they are still wanted.`);
     }
-    otherLive = true;
+    if (group.created && subscriptionLive(target) && !target.cancel_at) {
+      target = await clubYearCancelAt(stripeRequest, target.id, { subscriptionEnd, orderRef, clubYear: group.clubYear });
+    }
+  } else {
+    const owned = await adminDb.collection('subscriptions').where('email', '==', order.email).where('status', '==', 'active').limit(20).get();
+    for (const document of owned.docs.filter((candidate) => candidate.data().clubYear === group.clubYear)) {
+      const candidate = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
+      if (!subscriptionLive(candidate) || candidate.schedule) continue;
+      if (await paymentFingerprint(stripeId(candidate.default_payment_method)) === fingerprint) {
+        target = candidate;
+        break;
+      }
+      otherLive = true;
+    }
+    if (target) await onTarget(target, false);
   }
+  // Only items tagged with this order's line count as present; an unrelated single item must not be mistaken for one.
+  const present = new Set((target?.items?.data || []).filter((item) => item.metadata?.order_ref === orderRef || item.price?.product?.metadata?.order_ref === orderRef
+    || (group.created && group.stripeSubscriptionId)).map((item) => item.metadata?.line_id || item.price?.product?.metadata?.line_id).filter(Boolean));
+  const missing = group.lineIds.filter((lineId) => !present.has(lineId));
   const products = new Map();
-  for (const lineId of group.lineIds) {
-    products.set(lineId, (await stripeRequest('products', [['name', itemLabel(lineById.get(lineId))], ['metadata[line_id]', lineId]], 'POST',
+  for (const lineId of missing) {
+    products.set(lineId, (await stripeRequest('products', [['name', itemLabel(lineById.get(lineId))], ['metadata[line_id]', lineId], ['metadata[order_ref]', orderRef]], 'POST',
       { idempotencyKey: `${orderRef}-${lineId}-product` })).id);
   }
   const itemMetadata = (prefix, lineId) => [[`${prefix}[line_id]`, lineId], [`${prefix}[order_ref]`, orderRef], [`${prefix}[club_year]`, String(group.clubYear)]];
   if (target) {
-    const endUpdate = clubYearEndUpdate(target, group.clubYear, subscriptionEnd);
+    const endUpdate = group.created ? null : clubYearEndUpdate(target, group.clubYear, subscriptionEnd);
     if (endUpdate) target = await stripeRequest(`subscriptions/${encodeURIComponent(target.id)}`, endUpdate, 'POST',
       { idempotencyKey: `${target.id}-club-year-end-${group.clubYear}-${subscriptionEnd}` });
     // A missed 1st (a delayed bank payment) is charged pro rata on the next debit; otherwise the next debit is a full month.
-    for (const lineId of group.lineIds) {
+    for (const lineId of missing) {
       await stripeRequest('subscription_items', [['subscription', target.id], ['proration_behavior', debitPassed && target.status === 'active' ? 'create_prorations' : 'none'],
         ...monthlyPriceParams('', lineById.get(lineId), products.get(lineId)), ...itemMetadata('metadata', lineId)], 'POST', { idempotencyKey: `${orderRef}-${lineId}-item` });
     }
-    return { subscription: await stripeRequest(`subscriptions/${encodeURIComponent(target.id)}`, null, 'GET'), created: false };
+    return { subscription: missing.length ? await stripeRequest(`subscriptions/${encodeURIComponent(target.id)}`, null, 'GET') : target,
+      created: Boolean(group.created), ...(group.newPaymentDetails ? { newPaymentDetails: true } : {}) };
   }
   const base = [['customer', customer], ['default_payment_method', paymentMethod], ['metadata[order_ref]', orderRef],
     ['metadata[club_year]', String(group.clubYear)], ['metadata[cutoff_at]', String(subscriptionEnd)],
     ...group.lineIds.flatMap((lineId, index) => [...monthlyPriceParams(`items[${index}]`, lineById.get(lineId), products.get(lineId)),
       ...itemMetadata(`items[${index}][metadata]`, lineId)])];
   const subscription = await createClubYearSubscription(stripeRequest, {
-    base, firstDebit, subscriptionEnd, orderRef, clubYear: group.clubYear
+    base, firstDebit, subscriptionEnd, orderRef, clubYear: group.clubYear, onCreated: (created) => onTarget(created, true, otherLive)
   });
   return { subscription, created: true, newPaymentDetails: otherLive };
 };
 
+/** Writes one group's subscription, customer and member records. Repeating it writes the same values. */
+const recordSubscriptionGroup = async ({ order, orderRef, plan, group, subscription, created, lineById, now }) => {
+  const batch = adminDb.batch();
+  const itemIds = stripeItemLines(subscription, group.lineIds);
+  const items = group.lineIds.map((lineId) => {
+    const line = lineById.get(lineId);
+    return { lineId, orderRef, productId: line?.id || '', name: line?.name || '', monthlyAmount: Number(line?.monthlyAmount ?? line?.price ?? 0),
+      clubYear: group.clubYear, stripeItemId: itemIds.get(lineId) || '', ...lineHolders(lineId, order.people), status: 'active' };
+  });
+  const membershipIds = [...new Set(items.flatMap((item) => item.membershipIds))];
+  const names = [...new Set(items.flatMap((item) => item.names))];
+  batch.set(adminDb.collection('subscriptions').doc(subscription.id), {
+    email: order.email, stripeMode: order.stripeMode || 'test', status: 'active', updatedAt: now, clubYear: group.clubYear,
+    firstDebitAt: group.firstDebitAt, cancelAt: group.cutoffAt,
+    orderRefs: FieldValue.arrayUnion(orderRef), items: FieldValue.arrayUnion(...items),
+    ...(membershipIds.length ? { membershipIds: FieldValue.arrayUnion(...membershipIds) } : {}),
+    ...(names.length ? { names: FieldValue.arrayUnion(...names) } : {}),
+    ...(created ? { orderRef, createdAt: group.createdAt || now } : {})
+  }, { merge: true });
+  batch.set(adminDb.collection('customers').doc(customerId(order.email)), { subscriptionIds: FieldValue.arrayUnion(subscription.id) }, { merge: true });
+  const isMembershipLine = (lineId) => lineById.get(lineId)?.category === 'MEMBERSHIP';
+  for (const membershipId of membershipIds) {
+    // Members see what they receive and who pays for it, even when the subscription belongs to someone else.
+    const received = items.filter((item) => item.membershipIds.includes(membershipId)).map(({ lineId, productId, name, monthlyAmount, clubYear }) => ({
+      subscriptionId: subscription.id, lineId, orderRef, productId, name, monthlyAmount, clubYear, payerEmail: order.email, status: 'active', startedAt: order.paidAt || now }));
+    // The latest club year's membership subscription is the one checked when the member buys again.
+    const latestMembershipYear = Math.max(0, ...(plan.groups || []).filter((candidate) => candidate.lineIds.some((lineId) => isMembershipLine(lineId)
+      && lineHolders(lineId, order.people).membershipIds.includes(membershipId))).map((candidate) => candidate.clubYear));
+    const ownsMembership = received.some((item) => isMembershipLine(item.lineId)) && group.clubYear === latestMembershipYear;
+    batch.set(adminDb.collection('memberships').doc(membershipId), {
+      subscriptionIds: FieldValue.arrayUnion(subscription.id), subscriptionItems: FieldValue.arrayUnion(...received),
+      ...(ownsMembership ? { stripeMembershipSubscriptionId: subscription.id, stripeMembershipMode: order.stripeMode || 'test' } : {}) }, { merge: true });
+  }
+  await batch.commit();
+  return itemIds;
+};
+
+const SETUP_LEASE_MS = 3 * 60 * 1000;
+const SETUP_ALERT_AFTER = 3;
+
 /**
  * Records the monthly items on a paid order against the payer's subscriptions, one per club year. Each item records
- * which members receive it. Safe to repeat: a recorded plan is skipped and Stripe calls use idempotency keys. A change
- * Stripe refuses is marked failed for staff rather than retried.
+ * which members receive it. Progress is saved per group, so a repeat (Stripe resending the webhook, or a staff
+ * retry) carries on where it stopped and Stripe calls use idempotency keys. A temporary fault leaves the plan
+ * pending and returns `retryLater`; after a few attempts staff are told. A change Stripe refuses is marked failed
+ * and raised for staff; any subscription already made is still recorded so it can be cancelled from the website.
+ * Revoked items are left out, so a retry never restarts billing for something staff took back.
  */
-const setUpSubscriptions = async (orderRef) => {
+const setUpSubscriptions = async (orderRef, { force = false } = {}) => {
   const orderReference = adminDb.collection('orders').doc(orderRef);
-  const order = (await orderReference.get()).data();
-  const plan = order?.subscriptionPlan;
-  if (order?.status !== 'paid' || !plan || plan.recordedAt) return;
+  const claimed = await adminDb.runTransaction(async (transaction) => {
+    const order = (await transaction.get(orderReference)).data();
+    const plan = order?.subscriptionPlan;
+    if (order?.status !== 'paid' || !plan || (plan.recordedAt && !(force && plan.status === 'failed'))) return null;
+    if (plan.runningUntil?.toMillis() > Date.now()) return { busy: true };
+    const attempts = (plan.attempts || 0) + 1;
+    const next = { ...plan, status: 'pending', recordedAt: null, error: '', runningUntil: Timestamp.fromMillis(Date.now() + SETUP_LEASE_MS), attempts };
+    transaction.update(orderReference, { subscriptionPlan: next });
+    return { order: { ...order, subscriptionPlan: next } };
+  });
+  if (!claimed) return { done: true };
+  if (claimed.busy) return { retryLater: true };
+  const { order } = claimed;
+  let plan = order.subscriptionPlan;
+  const revoked = new Set(order.items.filter((item) => item.revokedAt).map((item) => item.lineId));
   const lineById = new Map(order.items.map((item) => [item.lineId, item]));
   const now = Timestamp.now();
-  const results = [];
-  let next;
+  const save = async (fields = {}) => {
+    const subscriptionFor = new Map((plan.groups || []).filter((group) => group.stripeSubscriptionId)
+      .flatMap((group) => group.lineIds.map((lineId) => [lineId, group.stripeSubscriptionId])));
+    await orderReference.update({
+      subscriptionPlan: plan,
+      stripeSubscriptionIds: [...new Set(subscriptionFor.values())],
+      items: order.items.map((item) => subscriptionFor.has(item.lineId)
+        ? { ...item, stripeSubscriptionId: subscriptionFor.get(item.lineId), stripeSubscriptionItemId: plan.stripeItemIds?.[item.lineId] || item.stripeSubscriptionItemId || '' } : item),
+      ...fields
+    });
+  };
+  const setGroup = (index, fields) => { plan = { ...plan, groups: plan.groups.map((group, position) => position === index ? { ...group, ...fields } : group) }; };
+  let failure = null;
   try {
     const intent = order.stripePaymentIntentId
       ? await stripeRequest(`payment_intents/${encodeURIComponent(order.stripePaymentIntentId)}`, null, 'GET')
@@ -779,72 +881,61 @@ const setUpSubscriptions = async (orderRef) => {
     if (!paymentMethod) throw new Error('Stripe did not save a payment method at checkout.');
     const customer = stripeId(intent.customer) || await stripeCustomerFor(order.email);
     const fingerprint = await paymentFingerprint(paymentMethod);
-    for (const group of plan.groups || []) {
-      const result = await setUpSubscriptionGroup({ order, orderRef, group, lineById, paymentMethod, customer, fingerprint });
-      results.push({ group, ...result });
+    for (const [index, original] of (plan.groups || []).entries()) {
+      if (original.recorded) continue;
+      // A revoked line is never added again, even when its subscription already exists; a retry must not restart billing staff stopped.
+      const group = { ...original, lineIds: original.lineIds.filter((lineId) => !revoked.has(lineId)) };
+      if (!group.lineIds.length) { setGroup(index, { recorded: true, skipped: 'revoked' }); continue; }
+      const onTarget = async (subscription, created, newPaymentDetails = false) => {
+        setGroup(index, { stripeSubscriptionId: subscription.id, created, createdAt: now, ...(newPaymentDetails ? { newPaymentDetails: true } : {}) });
+        await save();
+      };
+      const result = await setUpSubscriptionGroup({ order, orderRef, group, lineById, paymentMethod, customer, fingerprint, onTarget });
+      const itemIds = await recordSubscriptionGroup({ order, orderRef, plan, group, subscription: result.subscription, created: result.created, lineById, now });
+      setGroup(index, { stripeSubscriptionId: result.subscription.id, created: result.created, recorded: true,
+        ...(result.newPaymentDetails ? { newPaymentDetails: true } : {}) });
+      plan = { ...plan, stripeItemIds: { ...(plan.stripeItemIds || {}), ...Object.fromEntries(itemIds) } };
+      await save();
     }
-    const batch = adminDb.batch();
-    const memberItems = new Map();
-    for (const { group, subscription, created } of results) {
-      const itemIds = stripeItemLines(subscription, group.lineIds);
-      const items = group.lineIds.map((lineId) => {
-        const line = lineById.get(lineId);
-        return { lineId, orderRef, productId: line?.id || '', name: line?.name || '', monthlyAmount: Number(line?.monthlyAmount ?? line?.price ?? 0),
-          clubYear: group.clubYear, stripeItemId: itemIds.get(lineId) || '', ...lineHolders(lineId, order.people), status: 'active' };
-      });
-      const membershipIds = [...new Set(items.flatMap((item) => item.membershipIds))];
-      const names = [...new Set(items.flatMap((item) => item.names))];
-      batch.set(adminDb.collection('subscriptions').doc(subscription.id), {
-        email: order.email, stripeMode: order.stripeMode || 'test', status: 'active', updatedAt: now, clubYear: group.clubYear,
-        firstDebitAt: group.firstDebitAt, cancelAt: group.cutoffAt,
-        orderRefs: FieldValue.arrayUnion(orderRef), items: FieldValue.arrayUnion(...items),
-        ...(membershipIds.length ? { membershipIds: FieldValue.arrayUnion(...membershipIds) } : {}),
-        ...(names.length ? { names: FieldValue.arrayUnion(...names) } : {}),
-        ...(created ? { orderRef, createdAt: now } : {})
-      }, { merge: true });
-      batch.set(adminDb.collection('customers').doc(customerId(order.email)), { subscriptionIds: FieldValue.arrayUnion(subscription.id) }, { merge: true });
-      for (const membershipId of membershipIds) {
-        // Members see what they receive and who pays for it, even when the subscription belongs to someone else.
-        const received = items.filter((item) => item.membershipIds.includes(membershipId)).map(({ lineId, productId, name, monthlyAmount, clubYear }) => ({
-          subscriptionId: subscription.id, lineId, orderRef, productId, name, monthlyAmount, clubYear, payerEmail: order.email, status: 'active', startedAt: order.paidAt || now }));
-        const entry = memberItems.get(membershipId) || { subscriptionIds: [], received: [], membershipSubscription: null };
-        entry.subscriptionIds.push(subscription.id);
-        entry.received.push(...received);
-        // The latest club year's membership subscription is the one checked when the member buys again.
-        if (received.some((item) => lineById.get(item.lineId)?.category === 'MEMBERSHIP')
-          && (!entry.membershipSubscription || entry.membershipSubscription.clubYear < group.clubYear)) {
-          entry.membershipSubscription = { id: subscription.id, clubYear: group.clubYear };
-        }
-        memberItems.set(membershipId, entry);
-      }
-    }
-    for (const [membershipId, entry] of memberItems) {
-      batch.set(adminDb.collection('memberships').doc(membershipId), {
-        subscriptionIds: FieldValue.arrayUnion(...entry.subscriptionIds), subscriptionItems: FieldValue.arrayUnion(...entry.received),
-        ...(entry.membershipSubscription ? { stripeMembershipSubscriptionId: entry.membershipSubscription.id, stripeMembershipMode: order.stripeMode || 'test' } : {}) }, { merge: true });
-    }
-    await batch.commit();
-    const groups = (plan.groups || []).map((group) => {
-      const result = results.find((candidate) => candidate.group === group);
-      return { ...group, stripeSubscriptionId: result.subscription.id, created: result.created, ...(result.newPaymentDetails ? { newPaymentDetails: true } : {}) };
-    });
-    next = { ...plan, groups, status: 'active', recordedAt: now,
-      stripeItemIds: Object.fromEntries(results.flatMap(({ group, subscription }) => [...stripeItemLines(subscription, group.lineIds)])),
-      ...(groups.some((group) => group.newPaymentDetails) ? { newPaymentDetails: true } : {}) };
   } catch (error) {
-    console.error('Could not set up the monthly payments on %s: %s', orderRef, error.message);
-    next = { ...plan, status: 'failed', error: error.message.slice(0, 300), recordedAt: now,
-      ...(results.length ? { partialSubscriptionIds: results.map(({ subscription }) => subscription.id) } : {}) };
+    failure = error;
   }
-  const subscriptionFor = new Map((next.groups || []).filter((group) => group.stripeSubscriptionId)
-    .flatMap((group) => group.lineIds.map((lineId) => [lineId, group.stripeSubscriptionId])));
-  await orderReference.update({
-    subscriptionPlan: next,
-    stripeSubscriptionIds: [...new Set(subscriptionFor.values())],
-    subscriptionSetupNeedsStaff: next.status === 'failed',
-    items: order.items.map((item) => subscriptionFor.has(item.lineId)
-      ? { ...item, stripeSubscriptionId: subscriptionFor.get(item.lineId), stripeSubscriptionItemId: next.stripeItemIds?.[item.lineId] || '' } : item)
-  });
+  if (!failure) {
+    plan = { ...plan, status: 'active', recordedAt: now, runningUntil: null, error: '',
+      ...((plan.groups || []).some((group) => group.newPaymentDetails) ? { newPaymentDetails: true } : {}) };
+    await save({ subscriptionSetupNeedsStaff: false });
+    await attention.settle('subscription-setup', orderRef);
+    return { done: true };
+  }
+  console.error('Could not set up the monthly payments on %s: %s', orderRef, failure.message);
+  // Whatever Stripe already has is recorded, so staff can see and cancel it here.
+  for (const [index, group] of (plan.groups || []).entries()) {
+    if (!group.stripeSubscriptionId || group.recorded) continue;
+    try {
+      const subscription = await stripeRequest(`subscriptions/${encodeURIComponent(group.stripeSubscriptionId)}`, null, 'GET');
+      const present = stripeItemLines(subscription, group.lineIds);
+      const partial = { ...group, lineIds: group.lineIds.filter((lineId) => present.has(lineId) && (!group.created ? subscription.items.data
+        .find((item) => item.id === present.get(lineId))?.metadata?.order_ref === orderRef : true)) };
+      if (partial.lineIds.length) {
+        await recordSubscriptionGroup({ order, orderRef, plan, group: partial, subscription, created: group.created, lineById, now });
+        setGroup(index, { partialLineIds: partial.lineIds });
+      }
+    } catch (error) { console.error('Could not record the partial subscription %s: %s', group.stripeSubscriptionId, error.message); }
+  }
+  const message = failure.message.slice(0, 300);
+  if (failure.transient && plan.attempts < SETUP_ALERT_AFTER) {
+    plan = { ...plan, status: 'pending', runningUntil: null, error: message };
+    await save();
+    return { retryLater: true };
+  }
+  plan = { ...plan, status: 'failed', error: message, recordedAt: now, runningUntil: null,
+    partialSubscriptionIds: (plan.groups || []).map((group) => group.stripeSubscriptionId).filter(Boolean) };
+  await save({ subscriptionSetupNeedsStaff: true });
+  await attention.raise('subscription-setup', orderRef, { orderRef, email: order.email,
+    detail: `Monthly payments for ${order.email} could not be set up: ${message}.${plan.partialSubscriptionIds.length
+      ? ` Some are already live in Stripe (${plan.partialSubscriptionIds.join(', ')}) and are listed on the order.` : ' Nothing was set up in Stripe.'}`
+      + (failure.transient ? ' Stripe kept failing; Retry once it is working again.' : ' Check the card or bank details with the member, then Retry, or refund.') });
+  return { failed: true };
 };
 
 /**
@@ -874,6 +965,169 @@ const recordSubscriptionEnded = async (subscription) => {
     ...(voided.length ? { voidedInvoices: voided } : {}),
     ...((voided.length || (!atCutoff && data.status === 'active')) ? { needsStaff: true } : {})
   }, { merge: true });
+  if (voided.length || (!atCutoff && data.status === 'active')) {
+    await attention.raise('subscription-ended', subscription.id, { subscriptionId: subscription.id, email: data.email || '',
+      detail: voided.length
+        ? `The club year ended with unpaid monthly debits (${voided.map((invoice) => `£${invoice.amountDue.toFixed(2)}`).join(', ')}); they were voided so the member is not chased later. Decide whether to ask for payment.`
+        : `Monthly payments for ${(data.names || []).join(', ') || data.email} ended before the club-year end (${subscription.cancellation_details?.reason || 'reason not given'}), usually because Stripe gave up on failed debits. What they bought may still show as active.` });
+  }
+};
+
+const PROCESSING_HOLD_DAYS = 14;
+
+/**
+ * A completed Checkout Session that is still unpaid is a bank payment (Bacs) clearing over a few working days. The
+ * order stays pending but is marked processing: its stock and single-use code stay held until it clears or fails.
+ */
+const recordPaymentProcessing = async (session) => {
+  const orderRef = session.metadata?.order_ref;
+  if (!orderRef || !adminDb) return;
+  await adminDb.runTransaction(async (transaction) => {
+    const orderDocument = adminDb.collection('orders').doc(orderRef);
+    const order = (await transaction.get(orderDocument)).data();
+    if (!order || order.stripeSessionId !== session.id || order.status !== 'pending' || order.paymentProcessing) return;
+    const discountDocument = order.discountCodeId ? adminDb.collection('discountCodes').doc(order.discountCodeId) : null;
+    const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
+    const stock = await readStock(transaction, order.stockProductIds || []);
+    stock.forEach((snapshot) => transaction.set(snapshot.ref, {
+      holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
+    }));
+    if (discount?.singleUse && discount.reservedByOrder === orderRef && !discount.used) {
+      transaction.update(discountDocument, { reservedUntil: Timestamp.fromMillis(Date.now() + PROCESSING_HOLD_DAYS * 24 * 60 * 60 * 1000) });
+    }
+    transaction.update(orderDocument, { paymentProcessing: true, processingSince: Timestamp.now(), stripePaymentIntentId: stripeId(session.payment_intent) });
+  });
+};
+
+const personKey = (person) => `${normaliseName(person.firstName)}|${normaliseName(person.lastName)}`;
+
+/** Where an earlier order covers one of the same people and items as this basket, or null. */
+const basketOverlap = (orderRef, order, people, selected) => {
+  const wanted = new Map(people.map((person) => [personKey(person),
+    new Set((person.lineIds || []).map((lineId) => selected.find((line) => line.lineId === lineId)?.id).filter(Boolean))]));
+  const overlap = (order.people || []).filter((person) => (person.lineIds || []).some((lineId) => {
+    const productId = (order.items || []).find((item) => item.lineId === lineId || item.sourceLineId === lineId)?.id;
+    return productId && wanted.get(personKey(person))?.has(productId);
+  }));
+  if (!overlap.length) return null;
+  const keys = new Set(overlap.map(personKey));
+  return { orderRef, itemNames: [...new Set((order.items || []).map((item) => item.name))],
+    personIds: people.filter((person) => keys.has(personKey(person))).map((person) => person.id) };
+};
+
+/** An order from this email that is still clearing and covers one of the same people and items. */
+const clearingOrderFor = async (email, people, selected) => {
+  const pending = await adminDb.collection('orders').where('email', '==', email).where('status', '==', 'pending').limit(20).get();
+  for (const document of pending.docs) {
+    const clearing = document.data().paymentProcessing && basketOverlap(document.id, document.data(), people, selected);
+    if (clearing) return clearing;
+  }
+  return null;
+};
+
+/**
+ * Expires this email's other open Checkout Sessions; any that turn out to be paid are completed instead.
+ * Returns the refs of orders that could not be expired, so the caller can check whether they were just paid.
+ */
+const expireEarlierCheckouts = async (email) => {
+  const pending = await adminDb.collection('orders').where('email', '==', email).where('status', '==', 'pending').limit(20).get();
+  const unexpired = [];
+  for (const document of pending.docs) {
+    const order = document.data();
+    const sessionId = order.stripeSessionId || '';
+    if (order.paymentProcessing || !/^cs_(?!free_)/.test(sessionId) || order.createdAt?.toMillis() < Date.now() - 25 * 60 * 60 * 1000) continue;
+    try {
+      const expired = await stripeRequest(`checkout/sessions/${encodeURIComponent(sessionId)}/expire`, [], 'POST');
+      await recordUnsuccessfulCheckout(expired, 'expired');
+    } catch (error) {
+      unexpired.push(document.id);
+      await reconcileCheckout(document.id, sessionId).catch((reconcileError) =>
+        console.error('Could not reconcile the earlier checkout %s: %s', document.id, reconcileError.message));
+    }
+  }
+  return unexpired;
+};
+
+/** Brings a pending order up to date with its Checkout Session, for when a webhook is late or was missed. */
+const reconcileCheckout = async (orderRef, sessionId) => {
+  const session = await stripeRequest(`checkout/sessions/${encodeURIComponent(sessionId)}`, null, 'GET');
+  if (session.metadata?.order_ref !== orderRef) return;
+  if (session.status === 'expired') await recordUnsuccessfulCheckout(session, 'expired');
+  else if (session.status === 'complete' && ['paid', 'no_payment_required'].includes(session.payment_status)) await completeCheckout(session);
+  else if (session.status === 'complete') await recordPaymentProcessing(session);
+};
+
+/** Tells the customer a bank payment failed to clear, and staff, once. */
+const reportPaymentFailed = async (order) => {
+  const site = order.siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
+  const itemNames = [...new Set((order.items || []).map((item) => item.name))].join(', ');
+  await sendEmail({ to: order.email, subject: `Your Forth Canoe Club payment did not go through - ${order.orderRef}`,
+    body: [`Your payment for ${itemNames} (order ${order.orderRef}) did not clear, so nothing has been taken and the order has not gone through.`, '',
+      `Please place the order again at ${site}/membership. Any discount code used has been released for you to use again.`, '',
+      'If your bank account details were wrong, check them before trying again. For help, contact secretary@forthcanoeclub.co.uk.'].join('\n'),
+    record: { orderRef: order.orderRef, kind: 'payment-failed' } })
+    .catch((error) => console.error('Could not email the payment failure for %s: %s', order.orderRef, error.message));
+  await attention.raise('payment-failed', order.orderRef, { orderRef: order.orderRef, email: order.email, alert: false,
+    detail: `The bank payment for ${itemNames} did not clear. The customer has been emailed to place the order again; the items and any code were released.` });
+};
+
+/**
+ * Records a paid Checkout Session, sets up its monthly payments and then emails the receipt. Each step can be
+ * repeated safely, so a failure returns an error (Stripe sends the webhook again) and is raised for staff.
+ */
+const completeCheckout = async (session) => {
+  const orderRef = session.metadata?.order_ref;
+  let fields;
+  try {
+    fields = await fulfilOrder({ orderRef, sessionId: session.id, amountTotal: session.amount_total ?? 0, paymentIntent: stripeId(session.payment_intent),
+      setupIntent: stripeId(session.setup_intent) });
+  } catch (error) {
+    if (!error.busy) {
+      await attention.raise('order-unrecorded', orderRef, { orderRef, email: session.customer_details?.email || session.customer_email || '', data: { sessionId: session.id },
+        detail: `Stripe took payment for ${orderRef} (Checkout Session ${session.id}) but the order could not be recorded: ${error.message}` });
+    }
+    throw error;
+  }
+  await attention.settle('order-unrecorded', orderRef);
+  // Monthly payments go first: a receipt email failing must not stop them being set up.
+  const setup = await setUpSubscriptions(orderRef);
+  if (fields) {
+    try {
+      await deliverOrder(orderRef, fields);
+    } catch (error) {
+      await attention.raise('receipt-email', orderRef, { orderRef, email: fields.email,
+        detail: `Order ${orderRef} is paid and recorded but the receipt email could not be sent: ${error.message}` });
+      throw error;
+    }
+  }
+  if (setup.retryLater) throw new Error('Monthly payment setup is waiting to be retried.');
+};
+
+// Staff retries from the Needs attention list.
+const attentionRetry = {
+  'order-unrecorded': async (entry) => {
+    const session = await stripeRequest(`checkout/sessions/${encodeURIComponent(entry.data?.sessionId || '')}`, null, 'GET');
+    if (!['paid', 'no_payment_required'].includes(session.payment_status)) throw failWith(409, 'Stripe does not show this checkout as paid.');
+    await completeCheckout(session);
+    return 'Order recorded.';
+  },
+  'subscription-setup': async (entry) => {
+    const result = await setUpSubscriptions(entry.orderRef, { force: true });
+    const plan = (await adminDb.collection('orders').doc(entry.orderRef).get()).data()?.subscriptionPlan;
+    if (result.retryLater) throw failWith(503, `Stripe is not responding (${plan?.error || 'try again shortly'}).`);
+    if (result.failed) throw failWith(409, plan?.error || 'Stripe refused the setup.');
+    return 'Monthly payments set up.';
+  },
+  'receipt-email': async (entry) => {
+    const reference = adminDb.collection('orders').doc(entry.orderRef);
+    const order = (await reference.get()).data();
+    if (!order || order.status !== 'paid') throw failWith(409, 'The order is not paid.');
+    if (order.emailSent) return 'The receipt had already been sent.';
+    const accessToken = createAccessToken();
+    await reference.update({ accessTokenHash: hashAccessToken(accessToken) });
+    await deliverOrder(entry.orderRef, { ...order, accessToken });
+    return 'Receipt sent.';
+  }
 };
 
 app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: 'application/json' }), async (req, res) => {
@@ -893,8 +1147,24 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
     }
 
     const event = JSON.parse(req.body.toString());
-    if (event.type === 'checkout.session.expired' || event.type === 'checkout.session.async_payment_failed') {
-      await recordUnsuccessfulCheckout(event.data.object, event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed');
+    if (event.type === 'checkout.session.expired') {
+      await recordUnsuccessfulCheckout(event.data.object, 'expired');
+      return res.json({ received: true });
+    }
+    if (event.type === 'checkout.session.async_payment_failed') {
+      const order = await recordUnsuccessfulCheckout(event.data.object, 'payment_failed');
+      if (order) await reportPaymentFailed(order);
+      return res.json({ received: true });
+    }
+    if (event.type === 'invoice.payment_failed') {
+      const invoice = event.data.object;
+      const subscriptionId = stripeId(invoice.subscription || invoice.parent?.subscription_details?.subscription);
+      await attention.raise('invoice-failed', invoice.id, { subscriptionId, email: invoice.customer_email || '', alert: false,
+        detail: `A monthly debit of £${((invoice.amount_due || 0) / 100).toFixed(2)} failed (attempt ${invoice.attempt_count || 1}). Stripe retries it and emails the customer${invoice.next_payment_attempt ? '' : '; no more retries are scheduled'}.` });
+      return res.json({ received: true });
+    }
+    if (event.type === 'invoice.paid') {
+      await attention.settle('invoice-failed', event.data.object.id, 'stripe', 'The debit was paid.');
       return res.json({ received: true });
     }
     if (event.type === 'payment_intent.payment_failed') {
@@ -907,14 +1177,14 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
     }
     if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
       const session = event.data.object;
-      if (!['paid', 'no_payment_required'].includes(session.payment_status)) return res.json({ received: true });
       const orderRef = session.metadata?.order_ref;
       if (!orderRef || !adminDb) return res.status(400).send('Order metadata is missing.');
+      if (!['paid', 'no_payment_required'].includes(session.payment_status)) {
+        await recordPaymentProcessing(session);
+        return res.json({ received: true });
+      }
       // Setup-mode sessions (nothing due now, monthly payments to come) have no amount.
-      const fields = await fulfilOrder({ orderRef, sessionId: session.id, amountTotal: session.amount_total ?? 0, paymentIntent: stripeId(session.payment_intent),
-        setupIntent: stripeId(session.setup_intent), stripeMode: session.livemode ? 'live' : 'test' });
-      if (fields) await deliverOrder(orderRef, fields);
-      await setUpSubscriptions(orderRef);
+      await completeCheckout(session);
     }
     res.json({ received: true });
   } catch (error) {
@@ -1024,7 +1294,9 @@ const stripeReportRequest = (secret) => async (path, options = {}) => {
     method: options.method || 'GET', headers, ...(options.body ? { body: options.body } : {}), signal: AbortSignal.timeout(20000)
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || 'Stripe request failed.');
+  if (!response.ok) throw Object.assign(new Error(data.error?.message || 'Stripe request failed.'), {
+    stripeCode: data.error?.code, stripeStatus: response.status
+  });
   return data;
 };
 
@@ -1127,10 +1399,13 @@ app.get('/api/admin/subscriptions', rateLimit(60, 60 * 1000), async (req, res) =
     }).map((item) => item.lineId);
     const order = text('orderRef') ? (await adminDb.collection('orders').doc(text('orderRef')).get()).data() : null;
     const plan = order?.subscriptionPlan;
+    // Lines that did reach Stripe are listed with their subscription above, so only the rest show as failed.
+    const settled = new Set((plan?.groups || []).flatMap((group) => group.recorded ? group.lineIds : group.partialLineIds || []));
+    const failedLineIds = (plan?.lineIds || []).filter((lineId) => !settled.has(lineId));
     res.json({ subscriptions: snapshot.docs.map(subscriptionView), volunteerCancellableLineIds,
-      failed: plan?.status === 'failed' ? [{ key: text('orderRef'), lineIds: plan.lineIds, error: plan.error,
-        names: [...new Set(plan.lineIds.flatMap((lineId) => lineHolders(lineId, order.people).names))],
-        itemNames: plan.lineIds.map((lineId) => order.items.find((item) => item.lineId === lineId)?.name).filter(Boolean) }] : [] });
+      failed: plan?.status === 'failed' && failedLineIds.length ? [{ key: text('orderRef'), lineIds: failedLineIds, error: plan.error,
+        names: [...new Set(failedLineIds.flatMap((lineId) => lineHolders(lineId, order.people).names))],
+        itemNames: failedLineIds.map((lineId) => order.items.find((item) => item.lineId === lineId)?.name).filter(Boolean) }] : [] });
   } catch (error) {
     console.error('Subscription lookup failed:', error.message);
     res.status(500).json({ error: 'Could not load the monthly payments.' });
@@ -1158,19 +1433,37 @@ const cancelSubscriptionLines = async (req, res, pick, action) => {
   res.json(result);
 };
 
-const stopSubscriptionItems = async (reference, record, ending, admin, action, reason = '') => {
+const stopSubscriptionItems = async (reference, record, ending, admin, action, reason = '', request = stripeRequest) => {
   const document = { id: reference.id };
   const active = activeSubscriptionItems(record);
-  const stripeSubscription = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
+  const stripeSubscription = await request(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
   const paidUntil = periodEnd(stripeSubscription) ? Timestamp.fromMillis(periodEnd(stripeSubscription) * 1000) : null;
   const wholeSubscription = ending.length === active.length;
+  // A schedule (a volunteer's pending change) would add cancelled items back at its next phase, so it is edited instead.
+  const scheduleId = stripeId(stripeSubscription.schedule);
+  const endingPrices = ending.map((item) => stripeId(stripeSubscription.items?.data?.find((entry) => entry.id === item.stripeItemId)?.price));
+  if (scheduleId && !wholeSubscription && stripeSubscription.status !== 'canceled' && endingPrices.some((price) => !price)) {
+    throw new Error('A scheduled monthly item could not be matched in Stripe. Reconcile the schedule before cancelling so other members are not affected.');
+  }
+  const scheduleParams = scheduleId && !wholeSubscription && stripeSubscription.status !== 'canceled'
+    ? scheduleWithoutPrices(await request(`subscription_schedules/${encodeURIComponent(scheduleId)}`, null, 'GET'),
+      endingPrices)
+    : null;
+  if (scheduleId && !wholeSubscription && stripeSubscription.status !== 'canceled' && !scheduleParams) {
+    throw new Error('Removing these scheduled items would stop other members too. Reconcile the Stripe schedule before cancelling.');
+  }
   if (wholeSubscription) {
-    if (stripeSubscription.status !== 'canceled') await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'DELETE');
+    if (stripeSubscription.status !== 'canceled') {
+      if (scheduleId) await request(`subscription_schedules/${encodeURIComponent(scheduleId)}/cancel`, [['prorate', 'false']], 'POST');
+      else await request(`subscriptions/${encodeURIComponent(document.id)}`, null, 'DELETE');
+    }
+  } else if (scheduleParams) {
+    await request(`subscription_schedules/${encodeURIComponent(scheduleId)}`, scheduleParams, 'POST');
   } else {
     for (const item of ending) {
       if (!item.stripeItemId) throw new Error(`No Stripe item is recorded for ${item.name}.`);
       try {
-        await stripeRequest(`subscription_items/${encodeURIComponent(item.stripeItemId)}?proration_behavior=none`, null, 'DELETE');
+        await request(`subscription_items/${encodeURIComponent(item.stripeItemId)}?proration_behavior=none`, null, 'DELETE');
       } catch (error) {
         // A previous attempt may have reached Stripe but failed before its local batch committed.
         if (error.stripeCode !== 'resource_missing') throw error;
@@ -1274,6 +1567,25 @@ app.post('/api/admin/subscribers/:id/cancel', rateLimit(10, 60 * 1000), async (r
   }
 });
 
+/**
+ * Monthly items still being collected for an order or member, with the cancel action for each subscription.
+ * Deleting the record would leave those debits running with nothing on the website to stop them.
+ */
+const activeMonthlyPaymentsFor = async (kind, id) => {
+  const query = kind === 'orders' ? adminDb.collection('subscriptions').where('orderRefs', 'array-contains', id)
+    : adminDb.collection('subscriptions').where('membershipIds', 'array-contains', id);
+  const snapshot = await query.limit(50).get();
+  return snapshot.docs.filter((document) => document.data().status === 'active').flatMap((document) => {
+    const items = activeSubscriptionItems(document.data()).filter((item) => kind === 'orders'
+      ? (item.orderRef || document.data().orderRef) === id : (item.membershipIds || document.data().membershipIds || []).includes(id));
+    if (!items.length) return [];
+    const base = `/api/admin/subscriptions/${encodeURIComponent(document.id)}`;
+    return [{ id: document.id, email: document.data().email || '', itemNames: [...new Set(items.map((item) => item.name))],
+      names: [...new Set(items.flatMap((item) => item.names || []))],
+      cancelPaths: kind === 'orders' ? items.map((item) => `${base}/items/${encodeURIComponent(item.lineId)}/cancel`) : [`${base}/members/${encodeURIComponent(id)}/cancel`] }];
+  });
+};
+
 app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
@@ -1285,6 +1597,11 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       return res.status(400).json({ error: 'Invalid report record.' });
     }
     if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Type the exact record ID to confirm deletion.' });
+    const activeMonthly = await activeMonthlyPaymentsFor(req.params.kind, req.params.id);
+    if (activeMonthly.length) {
+      return res.status(409).json({ code: 'active_monthly_payments', activeMonthly,
+        error: 'This record still has monthly payments being collected. Cancel them first; deleting the record would not stop them.' });
+    }
     const auditSecret = process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
     if (!auditSecret) return res.status(503).json({ error: 'Deletion audit is not configured. Set AUDIT_LOOKUP_SECRET.' });
     const reference = collection.doc(req.params.id);
@@ -1318,7 +1635,18 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
   }
 });
 
-registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail });
+registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail,
+  stopSubscriptionItems: async (subscriptionId, items, admin, stripeAdminRequest) => {
+    const reference = adminDb.collection('subscriptions').doc(subscriptionId);
+    const record = (await reference.get()).data();
+    if (!record) throw new Error('Subscription record disappeared during erasure. Reload the preview and retry.');
+    const keys = new Set(items.map((item) => `${item.orderRef}/${item.lineId}`));
+    const ending = activeSubscriptionItems(record).filter((item) => keys.has(`${item.orderRef || record.orderRef || ''}/${item.lineId}`));
+    const request = (path, params, method = 'POST') => stripeAdminRequest(path, {
+      method, ...(params ? { body: new URLSearchParams(params) } : {})
+    });
+    if (ending.length) await stopSubscriptionItems(reference, record, ending, admin, 'gdpr-erasure', 'GDPR erasure', request);
+  } });
 registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
 const { settleKeyAccess, notifyKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message) });
 const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
@@ -1327,9 +1655,11 @@ const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sen
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
-registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes });
+registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes,
+  raiseAttention: (kind, key, details) => attention.raise(kind, key, details) });
 registerClubNightRoutes(app, { requireAdmin, db: () => adminDb, emailCodes, requestNow, live: () => isLive(),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+registerAttentionRoutes(app, { requireAdmin, db: () => adminDb, retry: attentionRetry });
 registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
   stopMonthlyItem: async (orderRef, item, admin, reason) => {
     const subscriptions = await orderSubscriptions(adminDb, orderRef);
@@ -1494,7 +1824,7 @@ const sendContentPrNotification = async (pullRequest, requestedBy) => {
   const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
   if (!gmailApi || !sender || !recipient) return false;
   try {
-    const raw = buildRawEmail({ fromName: 'Forth Canoe Club Website', from: sender, to: recipient,
+    const raw = buildRawEmail({ fromName: 'Forth Canoe Club Website', from: sender, to: recipient, replyTo: CLUB_REPLY_TO,
       subject: `Website changes need your review: PR #${pullRequest.number}`,
       body: [`An administrator (${requestedBy}) submitted website content for review.`, '',
         `Review and merge the pull request to publish the changes: ${pullRequest.html_url}`, '',
@@ -1660,6 +1990,9 @@ app.post('/api/admin/memberships/:id/justgo', rateLimit(30, 60 * 1000), async (r
     const document = await reference.get();
     if (!document.exists) return res.status(404).json({ error: 'Membership not found.' });
     if (document.data().justgoSyncStatus !== 'pending') return res.status(409).json({ error: 'This member is already linked to JustGo.' });
+    if (action === 'retry' && !justgoUploadCanRetry(document.data().justgoUpload)) {
+      return res.status(409).json({ error: 'This JustGo operation needs confirmation or staff reconciliation, not another upload. Check JustGo first, then mark it manually added once the correct coverage is confirmed.' });
+    }
     const now = Timestamp.now();
     await reference.set({
       justgoUpload: action === 'retry'
@@ -1870,9 +2203,19 @@ app.get('/api/checkout-status', rateLimit(30, 60 * 1000), async (req, res) => {
   if (!/^cs_[a-zA-Z0-9_]+$/.test(sessionId)) return res.status(400).json({ error: 'Invalid Checkout Session.' });
   if (!adminDb) return res.status(503).json({ error: 'Checkout status is unavailable.' });
   try {
-    const snapshot = await adminDb.collection('orders').where('stripeSessionId', '==', sessionId).limit(1).get();
+    const find = () => adminDb.collection('orders').where('stripeSessionId', '==', sessionId).limit(1).get();
+    let snapshot = await find();
     if (snapshot.empty) return res.status(404).json({ error: 'Checkout order not found.' });
-    return res.json({ status: snapshot.docs[0].data().status || 'pending' });
+    const order = snapshot.docs[0].data();
+    // If the webhook is late or missing, ask Stripe directly (at most every 15 seconds per order).
+    if (order.status === 'pending' && !order.paymentProcessing && !sessionId.startsWith('cs_free_')
+      && Date.now() - order.createdAt.toMillis() > 10 * 1000 && !(order.reconciledAt?.toMillis() > Date.now() - 15 * 1000)) {
+      await snapshot.docs[0].ref.update({ reconciledAt: Timestamp.now() });
+      await reconcileCheckout(snapshot.docs[0].id, sessionId).catch((error) => console.error('Could not reconcile %s: %s', snapshot.docs[0].id, error.message));
+      snapshot = await find();
+    }
+    const current = snapshot.docs[0].data();
+    return res.json({ status: current.status === 'pending' && current.paymentProcessing ? 'processing' : current.status || 'pending' });
   } catch (error) {
     console.error('Could not load checkout status:', error.message);
     return res.status(503).json({ error: 'Checkout status is unavailable.' });
@@ -1909,7 +2252,10 @@ app.get('/api/checkout-receipt', rateLimit(20, 60 * 1000), async (req, res) => {
 app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => {
   let reservedDocument;
   let reservedStockIds = [];
-  const orderRef = `FCC-${crypto.randomUUID().toUpperCase()}`;
+  let createdSessionId = '';
+  let orderCreated = false;
+  // One reference for the whole request, so a failure releases exactly what this attempt reserved.
+  const orderRef = generateOrderRef();
   try {
     const email = normalizeEmail(req.body.email);
     const { items: requestedItems, billingMode = 'annual' } = req.body;
@@ -1918,7 +2264,6 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       return res.status(400).json({ error: 'Enter a valid email address and include at least one item.' });
     }
 
-    const orderRef = generateOrderRef();
     if (!adminDb) return res.status(503).json({ error: 'Order storage is not configured.' });
     const catalogSnapshot = await adminDb.collection('products').get();
     const catalog = resolveCatalogue(PRODUCTS, catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
@@ -2050,6 +2395,16 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       const householdId = existingHouseholds[0] || (await allocateRecordIds(adminDb, 'households'))[0];
       group.forEach((person) => { person.householdId = householdId; });
     }
+    // Only the newest checkout for an email can be paid, so going back and starting again cannot charge twice.
+    // This runs before the overlap checks so an earlier checkout that turns out to be paid or clearing is seen by them.
+    for (const earlierRef of await expireEarlierCheckouts(email)) {
+      const earlier = (await adminDb.collection('orders').doc(earlierRef).get()).data();
+      const paid = earlier && ['paid', 'partially_refunded'].includes(earlier.status) && basketOverlap(earlierRef, earlier, people, selected);
+      if (paid) {
+        return res.status(409).json({ code: 'already_paid', personIds: paid.personIds,
+          error: `Your earlier payment for ${paid.itemNames.join(', ')} (order ${paid.orderRef}) has gone through, so you do not need to pay again. Your receipt is on its way by email. Questions: secretary@forthcanoeclub.co.uk.` });
+      }
+    }
     // Club-year items cannot be bought twice for the same person and club year.
     const existingIds = [...new Set(storedPeople.filter((person) => person.existingMember).map((person) => person.membershipId))];
     const memberData = new Map(existingIds.length ? (await adminDb.getAll(...existingIds.map((id) => adminDb.collection('memberships').doc(id))))
@@ -2065,6 +2420,11 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
         return res.status(409).json({ code: 'already_held', personIds: [person.id], lineId: held.sourceLineId,
           error: `${person.firstName} ${person.lastName} already has ${held.name}${year}.${nextStep}` });
       }
+    }
+    const clearing = await clearingOrderFor(email, people, selected);
+    if (clearing) {
+      return res.status(409).json({ code: 'payment_processing', personIds: clearing.personIds,
+        error: `A payment for ${clearing.itemNames.join(', ')} (order ${clearing.orderRef}) is still clearing. Bank payments take a few working days and you will get a receipt by email when it clears, so you do not need to pay again. If it fails we will email you. Questions: secretary@forthcanoeclub.co.uk.` });
     }
     let promo = null;
     const code = typeof req.body.discountCode === 'string' ? req.body.discountCode.trim().toUpperCase() : '';
@@ -2138,11 +2498,15 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     await createFirestoreOrder({ orderRef, email, items, total: checkoutTotal, status: 'pending', discountCodeId: discountDocument?.id || null, stripeSessionId: freeSessionId,
       people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptViewTokenHash: hashAccessToken(receiptViewToken), stockProductIds: reservedStockIds, policyVersions,
       subscriptionPlan });
+    orderCreated = true;
     if (free) {
       const fields = await fulfilOrder({ orderRef, sessionId: freeSessionId, amountTotal: 0 });
       await updateFirestoreOrder(orderRef, { paymentMethod: 'free' });
       try { if (fields) await deliverOrder(orderRef, fields); }
-      catch (error) { console.error('Free order completed but the receipt email failed:', error.message); }
+      catch (error) {
+        console.error('Free order completed but the receipt email failed:', error.message);
+        await attention.raise('receipt-email', orderRef, { orderRef, email, detail: `The receipt for free order ${orderRef} could not be emailed: ${error.message}` });
+      }
       const params = new URLSearchParams({ session_id: freeSessionId, receipt_token: receiptViewToken });
       return res.json({ success: true, free: true, orderRef, sessionId: freeSessionId, checkoutUrl: `${siteUrl}/payment-success?${params}` });
     }
@@ -2178,7 +2542,8 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       ['metadata[order_ref]', orderRef],
       ['metadata[total]', String(checkoutTotal)],
       ['metadata[billing_mode]', hasRecurringItem ? 'monthly' : 'annual']
-    ]);
+    ], 'POST', { idempotencyKey: `${orderRef}-checkout` });
+    createdSessionId = session.id;
     await updateFirestoreOrder(orderRef, { stripeSessionId: session.id, stripeMode: session.livemode ? 'live' : 'test' });
 
     res.json({ success: true, orderRef, sessionId: session.id, checkoutUrl: session.url });
@@ -2196,6 +2561,21 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       }
     }
     console.error('Error creating Stripe Checkout session:', error.message);
+    // The customer is told checkout failed, so a session Stripe already made must not stay payable.
+    if (createdSessionId) {
+      await stripeRequest(`checkout/sessions/${encodeURIComponent(createdSessionId)}/expire`, [], 'POST')
+        .catch((expireError) => console.error('Could not expire the abandoned Checkout Session %s: %s', createdSessionId, expireError.message));
+    }
+    let paid = false;
+    if (orderCreated) {
+      const orderDocument = adminDb.collection('orders').doc(orderRef);
+      await adminDb.runTransaction(async (transaction) => {
+        paid = (await transaction.get(orderDocument)).data()?.status === 'paid';
+        if (!paid) transaction.update(orderDocument, { status: 'failed', failedAt: Timestamp.now(), failure: String(error.message).slice(0, 300) });
+      }).catch((updateError) => console.error('Could not mark the failed checkout %s: %s', orderRef, updateError.message));
+    }
+    // A free order that was completed keeps what it took.
+    if (paid) return res.status(500).json({ error: 'Your order is complete, but something went wrong afterwards. Check your email for the receipt.' });
     try { await releaseStock(orderRef, reservedStockIds); }
     catch (releaseError) { console.error('Could not release stock hold:', releaseError.message); }
     if (error.soldOut) return res.status(409).json({ code: 'sold_out', productId: error.productId, error: error.message });
@@ -2214,7 +2594,7 @@ const sendEmail = async ({ to, subject, body, html, record = {} }) => {
     console.error('Email not sent: set GOOGLE_WORKSPACE_DELEGATED_USER (and a service account with domain-wide delegation).');
     return false;
   }
-  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body, html });
+  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body, html, replyTo: CLUB_REPLY_TO });
   await gmailApi.users.messages.send({ userId: 'me', requestBody: { raw } });
   return true;
 };
