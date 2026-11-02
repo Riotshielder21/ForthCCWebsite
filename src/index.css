@@ -1037,6 +1037,8 @@
     @apply w-full max-h-48 object-cover rounded-xl;
   }
 
+  .AdminImageActions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+
   .AdminEventSchedule { min-width: 0; border: 0; margin: 16px 0; padding: 0; }
   .AdminEventTimes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 

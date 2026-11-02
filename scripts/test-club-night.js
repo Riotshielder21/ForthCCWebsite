@@ -34,9 +34,10 @@ const requireAdmin = async (req, res) => {
 };
 const requestNow = (req) => req.headers['x-test-now'] ? new Date(req.headers['x-test-now']) : new Date();
 const emailCodes = registerEmailCodeRoutes(app, { db: () => db, sendEmail });
+const eventProducts = [];
 registerMyDetailsRoutes(app, { db: () => db, sendEmail, emailCodes });
 registerClubNightRoutes(app, { requireAdmin, db: () => db, emailCodes, requestNow,
-  loadCatalogue: async () => [{ id: 'gold-sub', name: 'Gold subscription', category: 'SUBSCRIPTIONS' }, { id: 'boat-hire', name: 'Boat hire', category: 'ADDONS' }] });
+  loadCatalogue: async () => [{ id: 'gold-sub', name: 'Gold subscription', category: 'SUBSCRIPTIONS' }, { id: 'boat-hire', name: 'Boat hire', category: 'ADDONS' }, ...eventProducts] });
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY = 'rk_test_club_night_fixture';
 registerGdprRoutes(app, { requireAdmin, db: () => db, localFirebase: true, normalizeEmail, isValidEmail: (value) => /^[^@\s]+@[^@\s]+$/.test(value),
@@ -228,6 +229,40 @@ try {
   assert.deepEqual([firstList.data.session.id, firstList.data.checkins.length, firstList.data.sessions.length], ['club-night', 0, 2], 'sessions keep separate lists');
   assert.equal((await call('/api/admin/club-night', { method: 'PUT', admin: true, body: clubNightOnly })).status, 200);
 
+  const recurringSessions = { sessions: [{ name: 'Course practice', recurrence: {
+    frequency: 'weekly', startDate: `${year}-03-12`, endDate: `${year}-03-26`
+  }, start: '18:00', end: '20:00' }] };
+  const recurringSaved = await call('/api/admin/club-night', { method: 'PUT', admin: true, body: recurringSessions });
+  assert.deepEqual(recurringSaved.data.sessions[0].recurrence, recurringSessions.sessions[0].recurrence);
+  assert.deepEqual((await call('/api/club-night', { at: `${year}-03-12T12:00:00Z` })).data.sessions.map((entry) => entry.id), ['course-practice']);
+  assert.equal((await call('/api/club-night', { at: `${year}-03-13T12:00:00Z` })).data.open, false, 'weekly repeats do not open on intervening days');
+  assert.deepEqual((await call('/api/club-night', { at: `${year}-03-19T12:00:00Z` })).data.sessions.map((entry) => entry.id), ['course-practice']);
+  assert.equal((await call('/api/club-night', { at: `${year}-03-27T12:00:00Z` })).data.open, false, 'recurrence stops after the inclusive end date');
+  assert.equal((await call('/api/admin/club-night', { method: 'PUT', admin: true, body: clubNightOnly })).status, 200);
+
+  // Catalogue courses appear on each actual session date, not just their start date.
+  eventProducts.push({ id: 'P00001', name: 'Six-week course', category: 'EVENTS', capacity: 0, closeDate: `${year}-03-11`,
+    eventSchedule: { mode: 'weekly', startDate: `${year}-03-12`, weeks: 6, startTime: '15:00', endTime: '17:00', timeZone: 'Europe/London' } });
+  const courseId = 'event_P00001';
+  assert.deepEqual((await call('/api/club-night', { at: week3 })).data.sessions.map((entry) => entry.id), [courseId, 'club-night']);
+  assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: member, at: week3 })).status, 400, 'choose between club night and the course');
+  for (const [at, before] of [[week3, false], [new Date(clubNight.getTime() + 35 * 86400000).toISOString(), true]]) {
+    assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: courseId }, at })).status, 200);
+    const attendees = await call(`/api/club-night/checkins?sessionId=${courseId}`, { at, admin: true });
+    assert.equal(attendees.status, 200);
+    assert.deepEqual(attendees.data.checkins.map((entry) => [entry.name, entry.previouslyAttended]), [['Casey Member', before]]);
+    assert.equal((await call('/api/club-night/checkins?sessionId=club-night', { at, admin: true })).data.checkins.length, 0,
+      'course attendance does not mix with club night');
+  }
+  const betweenSessions = new Date(clubNight.getTime() + 15 * 86400000).toISOString();
+  const afterCourse = new Date(clubNight.getTime() + 42 * 86400000).toISOString();
+  for (const at of [betweenSessions, afterCourse]) {
+    assert.equal((await call('/api/club-night', { at })).data.sessions.some((entry) => entry.id === courseId), false);
+    assert.ok((await call(`/api/club-night/checkins?sessionId=${courseId}`, { at, admin: true })).status >= 400);
+    assert.ok((await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: courseId }, at })).status >= 400);
+  }
+  eventProducts.length = 0;
+
   // My details
   const sentBefore = sent.length;
   const mismatch = await call('/api/email-codes', { method: 'POST', body: { email: member.email, purpose: 'details', dob: '1999-09-09' } });
@@ -289,7 +324,7 @@ try {
   const ids = reservations.flat();
   assert.equal(new Set(ids).size, 12, 'concurrent reservations never reuse household IDs');
   assert.ok(ids.every((id) => /^H\d{5,}$/.test(id)));
-  console.log('PASS: club-night full-day access and midnight cut-off, member and guest check-in, contact-only guest records, volunteer email codes, today-only attendance, audited emergency contacts, purpose-bound sessions, self-service details and current receipts with confirmed email change, GDPR erasure and concurrent short household IDs.');
+  console.log('PASS: club-night full-day access and midnight cut-off, six-week course sessions and separate attendance, member and guest check-in, contact-only guest records, volunteer email codes, today-only attendance, audited emergency contacts, purpose-bound sessions, self-service details and current receipts with confirmed email change, GDPR erasure and concurrent short household IDs.');
 } finally {
   await clear();
   await new Promise((resolve) => server.close(resolve));

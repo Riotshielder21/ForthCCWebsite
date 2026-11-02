@@ -60,18 +60,18 @@ export default function NeedsAttentionPanel({ adminUser, onOpenRecord }) {
     finally { setBusy(''); }
   };
 
-  if (loading && !entries.length && !error) return null;
-  if (!entries.length && !error) return null;
   return <section className="NeedsAttention" aria-labelledby="needs-attention-heading">
     <header className="NeedsAttentionHeader">
       <button type="button" className="NeedsAttentionToggle" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <AlertTriangle size={20} /> <h3 id="needs-attention-heading">Needs attention</h3> <span className="NeedsAttentionCount">{entries.length}</span>
+        <AlertTriangle size={20} /> <h3 id="needs-attention-heading">Needs attention ({loading ? 'checking' : error ? 'unavailable' : entries.length})</h3>
       </button>
       <button type="button" className="EditorIconButton" title="Refresh" aria-label="Refresh needs attention" disabled={loading} onClick={load}><RefreshCw size={18} /></button>
     </header>
     {message && <p className="StatusTextSuccess" role="status">{message}</p>}
     {error && <p className="StatusTextError" role="alert">{error}</p>}
-    {open && <ul className="NeedsAttentionList">
+    {open && loading && <p role="status">Checking for alerts...</p>}
+    {open && !loading && !error && !entries.length && <p className="StatusTextSuccess" role="status">Nothing needs attention.</p>}
+    {open && entries.length > 0 && <ul className="NeedsAttentionList">
       {entries.map((entry) => <li key={entry.id} className="NeedsAttentionItem">
         <div>
           <strong>{entry.title}</strong>{entry.occurrences > 1 && <span className="ReportWarning">seen {entry.occurrences} times</span>}

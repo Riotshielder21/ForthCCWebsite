@@ -36,7 +36,7 @@ const MEMBERSHIP_RULE_NOTES = {
   included: 'Each person becomes an adult or junior club member (by age) until 1 March. Existing members pay the same price.'
 };
 
-const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description', 'imageUrl'];
+const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description'];
 const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorated 60%: full price, then 60% from 1 October', subscription: 'Prorated monthly: monthly price for each month left to 1 March' };
 
 export default function AdminPage({ products, onNavigate }) {
@@ -141,8 +141,12 @@ export default function AdminPage({ products, onNavigate }) {
 
   const handleSave = async (event) => {
     event.preventDefault();
-    if (saving || reservingId) return;
+    if (saving || reservingId || uploading) return;
     setError('');
+    if (imageFile) {
+      setError('Upload the selected image or remove it before saving the product.');
+      return;
+    }
     setSaving(true);
     try {
       const product = {
@@ -253,21 +257,39 @@ export default function AdminPage({ products, onNavigate }) {
       <div className="SectionBottom">
         <div className="AdminLayout">
           <aside className="main_tile AdminProductList">
-            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">Catalogue ({products.length})</h3><button type="button" className="PrimaryActionButtonCompact" onClick={startNewProduct} disabled={reservingId || saving}>{reservingId ? 'Creating...' : 'New'}</button></div>
+            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">Catalogue ({products.length})</h3><button type="button" className="PrimaryActionButtonCompact" onClick={startNewProduct} disabled={reservingId || saving || uploading}>{reservingId ? 'Creating...' : 'New'}</button></div>
             <button className="ContentLink AdminSeedButton" onClick={handleSeed}>Copy starter catalog</button>
             <div className="AdminProducts">
-              <PagedAdminList items={products} label="catalogue items" renderItem={(product) => <button key={product.id} className={`AdminProduct ${selectedProduct === product.id ? 'is-selected' : ''}`} onClick={() => editProduct(product)}><strong>{product.name}</strong><span>{product.category}</span></button>} />
+              <PagedAdminList items={products} label="catalogue items" renderItem={(product) => <button key={product.id} className={`AdminProduct ${selectedProduct === product.id ? 'is-selected' : ''}`} disabled={uploading || saving} onClick={() => editProduct(product)}><strong>{product.name}</strong><span>{product.category}</span></button>} />
             </div>
             {!products.length && <p className="text_container">No products. Add a new item or restore the starter catalogue.</p>}
           </aside>
           <form className="main_tile AdminEditor" onSubmit={handleSave}>
-            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && !isLockedProduct(selectedProduct) && <button type="button" className="CartRemoveButton" onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
+            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && !isLockedProduct(selectedProduct) && <button type="button" className="CartRemoveButton" disabled={uploading || saving} onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
             {selectedProduct && isLockedProduct(selectedProduct) && <p className="text_container text_container_note">This product cannot be removed: holding it gives £10 off single-day trips at checkout.</p>}
             {EDITABLE_FIELDS.map((field) => (
               <label className="FormLabel" key={field}>{field === 'basePrice' ? (draft.pricingMode === 'subscription' ? 'Monthly price' : 'Price') : field}
-                {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{CATEGORIES.filter((category) => category !== 'ALL').map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required={field !== 'imageUrl'} />}
+                {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{CATEGORIES.filter((category) => category !== 'ALL').map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required />}
               </label>
             ))}
+            <fieldset className="AdminEventSchedule">
+              <legend className="tile_heading_bold_1">Product image</legend>
+              {draft.imageUrl ? <img className="AdminImagePreview" src={draft.imageUrl} alt="Product preview" />
+                : <p className="text_container text_container_note">No image set.</p>}
+              <label className="FormLabel">Image URL<input className="FormInput" type="text" value={draft.imageUrl} disabled={uploading || saving}
+                onChange={(event) => { updateDraft('imageUrl', event.target.value); resetImageInput(); setMessage(''); setError(''); }} /></label>
+              <label className="FormLabel">Upload a new image<input key={fileInputKey} className="FormInput" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading || saving} onChange={(event) => { setImageFile(event.target.files?.[0] || null); setMessage(''); setError(''); }} /></label>
+              <div className="AdminImageActions">
+                <button type="button" className="EditorCommand" onClick={handleImageUpload} disabled={!imageFile || !draft.id || uploading || saving}>
+                  {uploading ? <Loader2 className="IconMd animate-spin" /> : <Upload className="IconMd" />} {uploading ? `Uploading ${imageFile?.name || 'image'}…` : 'Upload image'}
+                </button>
+                <button type="button" className="EditorCommand" disabled={uploading || saving || (!draft.imageUrl && !imageFile)} onClick={() => {
+                  updateDraft('imageUrl', ''); resetImageInput(); setError(''); setMessage('Image removed. Save the product to publish this change.');
+                }}><Trash2 className="IconMd" /> Remove image</button>
+              </div>
+              {imageFile && !uploading && <p className="StatusText" role="status">Not uploaded yet: {imageFile.name}. Upload it before saving.</p>}
+              <p className="text_container text_container_note"><ImagePlus className="IconSm" /> PNG, JPG, or WebP up to 5 MB. Paste a URL or upload an image, then save the product. Remove image clears the product image without deleting the stored file.</p>
+            </fieldset>
             {draft.category === 'EVENTS' && <fieldset className="AdminEventSchedule">
               <legend className="tile_heading_bold_1">Event schedule</legend>
               <label className="FormLabel">Schedule type<select className="FormInput" value={draft.eventSchedule.mode} onChange={(event) => updateEventSchedule('mode', event.target.value)}><option value="single">Single date</option><option value="consecutive">Consecutive-day course</option><option value="weekly">Consecutive-week course</option></select></label>
@@ -313,15 +335,8 @@ export default function AdminPage({ products, onNavigate }) {
               <label className="FormLabel">Membership<select className="FormInput" value={draft.membershipRule} onChange={(event) => updateDraft('membershipRule', event.target.value)}>{Object.entries(MEMBERSHIP_RULE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               <p className="text_container text_container_note">{MEMBERSHIP_RULE_NOTES[draft.membershipRule]}</p>
             </>}
-            <label className="FormLabel">Product image<input key={fileInputKey} className="FormInput" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={(event) => { setImageFile(event.target.files?.[0] || null); setMessage(''); setError(''); }} /></label>
-            <button type="button" className="EditorCommand" onClick={handleImageUpload} disabled={!imageFile || uploading}>
-              {uploading ? <Loader2 className="IconMd animate-spin" /> : <Upload className="IconMd" />} {uploading ? `Uploading ${imageFile?.name || 'image'}…` : 'Upload image'}
-            </button>
-            {imageFile && !uploading && <p className="StatusText" role="status">Not uploaded yet: {imageFile.name}</p>}
-            {draft.imageUrl && <img className="AdminImagePreview" src={draft.imageUrl} alt="Product preview" />}
             {message && <p className="StatusText StatusTextSuccess">{message}</p>}{error && <p className="StatusText StatusTextError">{error}</p>}
             <button className="FormSubmitButton" type="submit" disabled={uploading || reservingId || saving}><Save className="IconMd" /> {saving ? 'Saving...' : 'Save product'}</button>
-            <p className="text_container text_container_note"><ImagePlus className="IconSm" /> PNG, JPG, or WebP up to 5 MB.</p>
           </form>
         </div>
         <DiscountCodesPanel adminUser={adminUser} products={products} />

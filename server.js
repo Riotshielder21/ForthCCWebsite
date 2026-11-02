@@ -26,6 +26,7 @@ import { membershipActivity, renewalConfirmationOpen, justgoUploadCanRetry } fro
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
 import { readJustgoSync } from './src/server/justgoSync.js';
 import { buildRawEmail } from './src/utils/mail.js';
+import { emailReplyTo, isVolunteerEmail, TREASURER_REPLY_TO } from './src/utils/emailReplyTo.js';
 import { buildReceiptSummary, buildLinkedReceipt, receiptEmailCopy, receiptEmailHtml } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, cancelStripeSubscription, stripeSubscriberReport } from './src/utils/stripeReports.js';
@@ -70,7 +71,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const CLUB_REPLY_TO = 'secretary@forthcanoeclub.co.uk';
 const attention = createAttention({ db: () => adminDb, sendEmail: (message) => sendEmail(message),
-  alertEmail: process.env.STAFF_ALERT_EMAIL || CLUB_REPLY_TO });
+  alertEmail: process.env.STAFF_ALERT_EMAIL || 'committee@forthcanoeclub.co.uk' });
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isValidEmail = (value) => {
@@ -1050,7 +1051,7 @@ const reportPaymentFailed = async (order) => {
   await sendEmail({ to: order.email, subject: `Your Forth Canoe Club payment did not go through - ${order.orderRef}`,
     body: [`Your payment for ${itemNames} (order ${order.orderRef}) did not clear, so nothing has been taken and the order has not gone through.`, '',
       `Please place the order again at ${site}/membership. Any discount code used has been released for you to use again.`, '',
-      'If your bank account details were wrong, check them before trying again. For help, contact secretary@forthcanoeclub.co.uk.'].join('\n'),
+      `If your bank account details were wrong, check them before trying again. For help, contact ${TREASURER_REPLY_TO}.`].join('\n'),
     record: { orderRef: order.orderRef, kind: 'payment-failed' } })
     .catch((error) => console.error('Could not email the payment failure for %s: %s', order.orderRef, error.message));
   await attention.raise('payment-failed', order.orderRef, { orderRef: order.orderRef, email: order.email, alert: false,
@@ -2602,8 +2603,12 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
 
 /** Sends email through Workspace; the emulator stack writes it to `testMail` instead. */
 const sendEmail = async ({ to, subject, body, html, record = {} }) => {
+  const coordinatorEmail = isVolunteerEmail(record) && adminDb
+    ? (await adminDb.collection('settings').doc('volunteerCoordinator').get()).data()?.email || ''
+    : '';
+  const replyTo = emailReplyTo(record, coordinatorEmail);
   if (localFirebase) {
-    await adminDb.collection('testMail').add({ email: to, subject, body, ...(html ? { html } : {}), ...record, createdAt: Timestamp.now() });
+    await adminDb.collection('testMail').add({ email: to, subject, body, ...(html ? { html } : {}), ...record, replyTo, createdAt: Timestamp.now() });
     return true;
   }
   const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
@@ -2611,7 +2616,7 @@ const sendEmail = async ({ to, subject, body, html, record = {} }) => {
     console.error('Email not sent: set GOOGLE_WORKSPACE_DELEGATED_USER (and a service account with domain-wide delegation).');
     return false;
   }
-  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body, html, replyTo: CLUB_REPLY_TO });
+  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body, html, replyTo });
   await gmailApi.users.messages.send({ userId: 'me', requestBody: { raw } });
   return true;
 };
@@ -2624,9 +2629,9 @@ const sendOrderEmail = async ({ email, orderRef, receiptToken, items, people = [
   const receipt = buildReceiptSummary(orderRef, { email, items, people: receiptPeople, totalPence, vouchers, billingMode }, { personFields });
   const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${receiptToken}`;
   const body = [receiptEmailCopy(receipt), '', `Retrieve your receipt and subscription information: ${retrievalUrl}`, '',
-    'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n');
+    `For help, contact ${TREASURER_REPLY_TO}.`].join('\n');
   return sendEmail({ to: email, subject: `Your Forth Canoe Club receipt - ${orderRef}`, body, html: receiptEmailHtml(receipt, retrievalUrl),
-    record: { orderRef, items, people, totalPence, receipt, retrievalUrl, vouchers } });
+    record: { kind: 'order-receipt', orderRef, items, people, totalPence, receipt, retrievalUrl, vouchers } });
 };
 
 app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => {
