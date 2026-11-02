@@ -5,6 +5,7 @@ import { ageOn } from '../utils/checkout.js';
 import { needsRenewal, renewalBasket, renewalChoice, renewalEmail, renewalRound, renewalWindow } from '../utils/renewals.js';
 import { rateLimit } from './rateLimit.js';
 import { needsVolunteerRenewal } from '../utils/volunteering.js';
+import { loadEntitlements } from './membershipTerms.js';
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 const normaliseEmail = (value) => String(value || '').trim().toLowerCase();
@@ -73,7 +74,8 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
     });
     if (!members.length) return 0;
     let index = 0;
-    const basket = renewalBasket(members, catalog, window.clubYear, () => `r${++index}`);
+    const entitlements = await loadEntitlements(db(), members.map((member) => member.id));
+    const basket = renewalBasket(members.map((member) => ({ ...member, entitlements: entitlements.get(member.id) || [] })), catalog, window.clubYear, () => `r${++index}`);
     try {
       const volunteering = await volunteerRenewalContent(members, window.renewalYear, siteUrl());
       const email = renewalEmail({ ...basket, catalog, renewalYear: window.renewalYear, link: `${siteUrl()}/membership?renew=${token}`, expiresAt: window.expiresAt, reminder, volunteering });
@@ -178,7 +180,9 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
         .filter((member) => !(member.clubYears || []).includes(invite.renewalYear) && !((member.validUntil?.toMillis() || 0) >= renewedBy));
       if (!members.length) return res.status(410).json({ code: 'renewal_done', error: 'Everyone on this renewal link has already renewed.' });
       let index = 0;
-      const basket = renewalBasket(members, await loadCatalogue(), invite.renewalYear - 1, () => `renew-${++index}`);
+      const entitlements = await loadEntitlements(db(), members.map((member) => member.id));
+      const basket = renewalBasket(members.map((member) => ({ ...member, entitlements: entitlements.get(member.id) || [] })), await loadCatalogue(),
+        invite.renewalYear - 1, () => `renew-${++index}`);
       res.json({ email: invite.email, renewalYear: invite.renewalYear, clubYearChoice: choice, billingMode: basket.billingMode,
         items: basket.items.map((item) => ({ ...item, clubYearChoice: choice })),
         people: basket.people.map(({ membershipId: _membershipId, ...person }) => ({ ...person, junior: (ageOn(person.dob, now) ?? 18) < 18 })) });

@@ -3,6 +3,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { rateLimit } from './rateLimit.js';
 import { currentCheckoutPolicies } from './policies.js';
 import { clubYearOf, holdsForClubYear } from '../utils/clubYear.js';
+import { loadEntitlements } from './membershipTerms.js';
 import { membershipStatus } from '../utils/adminReports.js';
 import { readJustgoSync } from './justgoSync.js';
 import { householdForPerson, memberIsJunior, HOUSEHOLD_MEMBER_FIELDS } from '../utils/households.js';
@@ -170,7 +171,8 @@ export const registerClubNightRoutes = (app, { requireAdmin, db, emailCodes, req
         matches = [await createGuest(guest.value, now)];
       }
       const memberDocument = matches.length === 1 ? matches[0] : null;
-      const member = memberDocument?.data();
+      const member = memberDocument
+        ? { ...memberDocument.data(), entitlements: (await loadEntitlements(db(), [memberDocument.id])).get(memberDocument.id) || [] } : undefined;
       const memberStatus = member ? membershipStatus(member, now, await readJustgoSync(db(), now)) : matches.length > 1 ? 'Needs review' : 'No';
       const membershipActive = memberStatus.startsWith('Active');
       const clubYear = clubYearOf(now);

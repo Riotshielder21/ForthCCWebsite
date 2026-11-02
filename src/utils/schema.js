@@ -25,6 +25,12 @@ export const MEMBERSHIP_MIGRATIONS = [
           'familyGroup', 'junior', 'returning', 'disclaimerAccepted'].filter((key) => key in fields)
       };
     }
+  },
+  {
+    to: 4,
+    // scripts/migrate-schema.js writes the terms (legacyTerms in membershipTerms.js) in the same batch before these go.
+    description: 'Move privileges and purchase history to membershipTerms and orders',
+    upgrade: (fields) => ({ set: {}, remove: ['privileges', 'history'].filter((key) => key in fields) })
   }
 ];
 

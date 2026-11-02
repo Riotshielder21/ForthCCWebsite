@@ -185,8 +185,8 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     photoConsent: fields.consents?.photoVideo?.accepted === true || fields.photoConsent === true,
     pvg: check('pvg'), safeguarding: check('safeguarding'),
     volunteer: volunteerProfileLabels(fields, now).join('; '),
-    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set([...(fields.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => String(privilege.name || privilege.productId || '')), ...volunteerProfileLabels(fields, now)])],
-    history: (fields.history || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
+    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set([...(fields.entitlements || []).filter((item) => !item.endedAt).map((item) => String(item.name || item.productId || '')), ...volunteerProfileLabels(fields, now)])],
+    history: (fields.purchases || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
   };
 };
 export const memberReport = membershipReport;

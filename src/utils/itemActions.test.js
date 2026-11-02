@@ -29,11 +29,10 @@ test('refund availability respects line allocation, external refunds and pending
 });
 
 test('admin key-access revocation overrides induction and purchases', () => {
-  assert.equal(hasKeyAccess({ privileges: [{ productId: 'keyhire' }] }), true);
   assert.equal(hasKeyAccess({ volunteer: { inducted: true } }), true);
   assert.equal(hasKeyAccess({ keyAccess: { grantedAt: 1 } }), true);
-  assert.equal(hasKeyAccess({ privileges: [{ productId: 'keyhire', endedAt: 1 }] }), false);
-  assert.equal(hasKeyAccess({ keyAccess: { revokedAt: 1 }, volunteer: { inducted: true }, privileges: [{ productId: 'keyhire' }] }), false);
+  assert.equal(hasKeyAccess({}), false);
+  assert.equal(hasKeyAccess({ keyAccess: { grantedAt: 1, revokedAt: 2 }, volunteer: { inducted: true } }), false);
 });
 
 test('membership revocation remains effective if an external sync sets status active again', () => {

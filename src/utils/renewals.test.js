@@ -56,8 +56,8 @@ test('scheduled emails go on 1 February and a reminder on 15 February only', () 
 
 test('renewal basket shares one family membership and carries this year\'s services', () => {
   const members = [
-    { id: 'm1', firstName: 'Ann', lastName: 'Lee', dob: '1980-01-01', membershipTier: 'family', privileges: [{ productId: 'locker', clubYear: 2027 }, { productId: 'locker', clubYear: 2027 }, { productId: 'hoodie', clubYear: 2027 }] },
-    { id: 'm2', firstName: 'Bo', lastName: 'Lee', dob: '2015-01-01', membershipTier: 'family', privileges: [{ productId: 'locker', clubYear: 2026 }, { productId: 'locker', clubYear: 2027, endedAt: 1 }] }
+    { id: 'm1', firstName: 'Ann', lastName: 'Lee', dob: '1980-01-01', membershipTier: 'family', entitlements: [{ productId: 'locker', clubYear: 2027 }, { productId: 'locker', clubYear: 2027 }, { productId: 'hoodie', clubYear: 2027 }] },
+    { id: 'm2', firstName: 'Bo', lastName: 'Lee', dob: '2015-01-01', membershipTier: 'family', entitlements: [{ productId: 'locker', clubYear: 2026 }, { productId: 'locker', clubYear: 2027, endedAt: 1 }] }
   ];
   const basket = renewalBasket(members, catalog, 2027, counter());
   assert.deepEqual(basket.items, [{ id: 'membership-family', lineId: 'id3' }, { id: 'locker', lineId: 'id4' }]);
@@ -69,7 +69,7 @@ test('renewal basket gives individual memberships and keeps monthly billing for 
   const members = [
     { id: 'm1', membershipTier: 'junior', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, status: 'active' }] },
     { id: 'm2', membershipTier: 'adult', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, status: 'cancelled' }] },
-    { id: 'm3', membershipTier: 'adult', privileges: [{ productId: 'retired', clubYear: 2027 }] }
+    { id: 'm3', membershipTier: 'adult', entitlements: [{ productId: 'retired', clubYear: 2027 }] }
   ];
   const basket = renewalBasket(members, catalog, 2027, counter());
   assert.deepEqual(basket.items.map((item) => item.id), ['membership-junior', 'membership-adult', 'membership-adult', 'coaching']);
@@ -93,7 +93,7 @@ test('renewal lines are for next year until 1 March, then this year', () => {
 });
 
 test('renewal email lists the basket, the link and the expiry date', () => {
-  const basket = renewalBasket([{ id: 'm1', firstName: 'Ann', lastName: 'Lee', membershipTier: 'adult', privileges: [{ productId: 'locker', clubYear: 2027 }] }], [...catalog.slice(0, 4), { ...catalog[4], name: 'Locker <rental>' }], 2027, counter());
+  const basket = renewalBasket([{ id: 'm1', firstName: 'Ann', lastName: 'Lee', membershipTier: 'adult', entitlements: [{ productId: 'locker', clubYear: 2027 }] }], [...catalog.slice(0, 4), { ...catalog[4], name: 'Locker <rental>' }], 2027, counter());
   const email = renewalEmail({ ...basket, catalog: [{ id: 'membership-adult', name: 'Adult membership' }, { id: 'locker', name: 'Locker <rental>' }], renewalYear: 2028,
     link: 'https://example.test/membership?renew=abc', expiresAt: renewalWindow(january).expiresAt });
   assert.equal(email.subject, 'Renew your Forth Canoe Club membership for 2028/29');

@@ -2,6 +2,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { buildRoster, rosterEmail, rosterDue } from '../utils/eventRoster.js';
 import { readJustgoSync } from './justgoSync.js';
 import { rateLimit } from './rateLimit.js';
+import { loadEntitlements } from './membershipTerms.js';
 
 /**
  * Emails each event leader the attendee list once bookings close (checked hourly), and lets an admin send it at any time.
@@ -19,7 +20,8 @@ export const registerEventRosterRoutes = (app, { requireAdmin, db, sendEmail, lo
     const households = new Map(householdIds.length
       ? (await db().getAll(...householdIds.map((id) => db().collection('households').doc(id)))).filter((document) => document.exists).map((document) => [document.id, document.data()])
       : []);
-    return new Map(members.map(([id, member]) => [id, { ...member, household: households.get(member.householdId) || {} }]));
+    const entitlements = await loadEntitlements(db(), members.map(([id]) => id));
+    return new Map(members.map(([id, member]) => [id, { ...member, household: households.get(member.householdId) || {}, entitlements: entitlements.get(id) || [] }]));
   };
 
   const paidOrders = async () => (await db().collection('orders').where('status', '==', 'paid').get()).docs.map((document) => ({ id: document.id, ...document.data() }));

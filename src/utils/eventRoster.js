@@ -59,7 +59,7 @@ export const buildRoster = (productId, orders, members = new Map(), now = new Da
       const member = members.get(person.membershipId) || {};
       const report = personReport(person, items, member);
       const ownLineIds = (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId && !item.revokedAt)?.id).filter(Boolean);
-      const heldIds = [...currentPrivilegeIds(member.privileges, now), ...ownLineIds];
+      const heldIds = [...currentPrivilegeIds(member.entitlements, now), ...ownLineIds];
       return {
         name: report.name, kind: report.kind, dob: report.dob, phone: report.phone, email: report.email,
         emergencyContact: report.emergencyContact, medical: report.medical, swimming: report.swimming,

@@ -102,9 +102,14 @@ const membershipsFor = async (emailAddress) => {
   const householdMembers = (await Promise.all(households.docs.map((household) =>
     db.collection('memberships').where('householdId', '==', household.id).get()
   ))).flatMap((snapshot) => snapshot.docs);
-  return [...new Map([...legacy.docs, ...householdMembers].map((document) => [document.id, document])).values()]
-    .map((document) => ({ id: document.id, ...document.data(), household: householdById.get(document.data().householdId) || {} }));
+  const documents = [...new Map([...legacy.docs, ...householdMembers].map((document) => [document.id, document])).values()];
+  return Promise.all(documents.map(async (document) => ({ id: document.id, ...document.data(), household: householdById.get(document.data().householdId) || {},
+    entitlements: await entitlementsOf(document.id), purchases: await purchasesOf(document.id) })));
 };
+// Entitlements live on the member's membershipTerms documents and purchases on orders naming the member.
+const termsOf = async (membershipId) => (await db.collection('membershipTerms').where('membershipId', '==', membershipId).get()).docs.map((document) => document.data());
+const entitlementsOf = async (membershipId) => (await termsOf(membershipId)).flatMap((term) => (term.items || []).map((item) => ({ ...item, clubYear: term.clubYear })));
+const purchasesOf = async (membershipId) => (await db.collection('orders').where('membershipIds', 'array-contains', membershipId).get()).docs;
 
 const results = [];
 const test = async (name, fn) => {
@@ -292,8 +297,8 @@ await test('adult membership plus boat hire is recorded on the membership, custo
   assert.deepEqual([membership.justgoUpload.status, membership.justgoUpload.attempts], ['queued', 0], 'queued for the guarded JustGo API uploader');
   assert.equal(Object.hasOwn(membership.justgoUpload, 'mode'), false, 'API uploads no longer select browser new-account or invitation modes');
   assert.ok(membership.validUntil.toDate() > new Date());
-  assert.deepEqual(membership.privileges.map((entry) => entry.productId), ['boat-hire']);
-  assert.equal(membership.history.length, 1);
+  assert.deepEqual(membership.entitlements.map((entry) => entry.productId), ['boat-hire']);
+  assert.equal(membership.purchases.length, 1);
   assert.equal(membership.consents.disclaimer.policyKey, 'participation-disclaimer');
   assert.ok(membership.consents.disclaimer.version >= 1, 'the wording version shown at checkout is recorded');
   assert.equal(membership.consents.photoVideo.accepted, true);
@@ -329,8 +334,8 @@ await test('a returning member can add an add-on with only name and date of birt
   const orderRef = await buy(shared.alex, build(['keyhire'], [returning]));
   const records = await membershipsFor(shared.alex);
   assert.equal(records.length, 1, 'no duplicate membership created');
-  assert.deepEqual(records[0].privileges.map((entry) => entry.productId).sort(), ['boat-hire', 'keyhire']);
-  assert.equal(records[0].history.length, 2);
+  assert.deepEqual(records[0].entitlements.map((entry) => entry.productId).sort(), ['boat-hire', 'keyhire']);
+  assert.equal(records[0].purchases.length, 2);
   assert.equal(records[0].household.address, '1 River Road', 'existing household details are not overwritten by the short form');
   assert.equal(Object.hasOwn(records[0], 'address'), false, 'the member does not duplicate household contact details');
   const order = (await db.collection('orders').doc(orderRef).get()).data();
@@ -510,11 +515,11 @@ await test('multiple copies of shop services can be bought by different members 
     [['boat-hire', 'gold-sub', 'keyhire', 'membership-adult'], ['boat-hire', 'keyhire', 'membership-adult']]
   );
   const members = await Promise.all(order.people.map(async (person) =>
-    (await db.collection('memberships').doc(person.membershipId).get()).data()
+    ({ ...(await db.collection('memberships').doc(person.membershipId).get()).data(), entitlements: await entitlementsOf(person.membershipId) })
   ));
   assert.equal(members.length, 2);
-  assert.ok(members.every((member) => member.privileges.some((privilege) => privilege.productId === 'boat-hire')
-    && member.privileges.some((privilege) => privilege.productId === 'keyhire')));
+  assert.ok(members.every((member) => member.entitlements.some((privilege) => privilege.productId === 'boat-hire')
+    && member.entitlements.some((privilege) => privilege.productId === 'keyhire')));
   const report = (await reportFor('orders', orderRef)).json.records.find((record) => record.id === orderRef);
   assert.deepEqual(
     ['ANNUAL BOAT & KIT HIRE', 'Boathouse Access', 'GOLD SUBSCRIPTION'].map((name) => report.items.filter((item) => item.name === name).length),
@@ -545,7 +550,7 @@ await test('a membership number must agree with the date of birth', async () => 
   assert.match(wrongEmail.json.error, /email address or date of birth/);
   assert.match(wrongEmail.json.error, /JustGo will email you/);
   await buy(email('synced'), build(['boat-hire'], [synced]));
-  assert.equal((await db.collection('memberships').doc('sca-E2E-1').get()).data().privileges[0].productId, 'boat-hire');
+  assert.equal((await entitlementsOf('sca-E2E-1'))[0].productId, 'boat-hire');
 });
 
 await test('an active member cannot buy a second membership, and JustGo members renew through JustGo', async () => {
@@ -582,32 +587,25 @@ await test('Stripe subscription status is checked before treating a member as ac
 
   const cancelledEmail = email('stripe-cancelled');
   const cancelledDetails = adultDetails({ firstName: 'Stripe', lastName: 'Cancelled', email: cancelledEmail });
-  const cancelledOrder = `legacy-stripe-order-${run}`;
-  await db.collection('orders').doc(cancelledOrder).set({ stripeSubscriptionId: 'sub_e2e_cancelled', stripeMode: 'test',
-    items: [{ category: 'MEMBERSHIP', type: 'subscription' }] });
+  // Older records get their subscription reference from scripts/migrate-schema.js (see membershipTerms.test.js).
   await db.collection('memberships').doc(`stripe-cancelled-${run}`).set({
     firstName: cancelledDetails.firstName, lastName: cancelledDetails.lastName, dob: cancelledDetails.dob, email: cancelledEmail,
     status: 'active', validUntil: new Date('2099-03-01T00:00:00Z'), source: 'website', renewalMethod: 'website',
-    history: [{ orderRef: cancelledOrder }]
+    stripeMembershipSubscriptionId: 'sub_e2e_cancelled', stripeMembershipMode: 'test'
   });
   const addOn = await checkout(cancelledEmail, build(['keyhire'], [cancelledDetails]));
   assert.equal(addOn.status, 409);
   assert.equal(addOn.json.code, 'membership_required');
-  assert.equal((await db.collection('memberships').doc(`stripe-cancelled-${run}`).get()).data().stripeMembershipSubscriptionId, 'sub_e2e_cancelled');
   assert.equal((await checkout(cancelledEmail, build(['membership-adult'], [cancelledDetails]))).status, 200,
     'a canceled subscriber may buy a replacement membership');
 
   const noSubscriptionEmail = email('stripe-unlinked-history');
   const noSubscriptionDetails = adultDetails({ firstName: 'Legacy', lastName: 'Member', email: noSubscriptionEmail });
-  const ordinaryOrder = `legacy-annual-order-${run}`;
-  await db.collection('orders').doc(ordinaryOrder).set({ items: [{ category: 'MEMBERSHIP', type: 'annual-oneoff' }] });
   await db.collection('memberships').doc(`legacy-no-sub-${run}`).set({
     firstName: noSubscriptionDetails.firstName, lastName: noSubscriptionDetails.lastName, dob: noSubscriptionDetails.dob,
-    email: noSubscriptionEmail, status: 'active', validUntil: new Date('2099-03-01T00:00:00Z'),
-    history: [{ orderRef: ordinaryOrder }]
+    email: noSubscriptionEmail, status: 'active', validUntil: new Date('2099-03-01T00:00:00Z')
   });
-  assert.equal((await checkout(noSubscriptionEmail, build(['keyhire'], [noSubscriptionDetails]))).status, 200);
-  assert.equal((await db.collection('memberships').doc(`legacy-no-sub-${run}`).get()).data().stripeMembershipSubscriptionId, '');
+  assert.equal((await checkout(noSubscriptionEmail, build(['keyhire'], [noSubscriptionDetails]))).status, 200, 'an annual member with no subscription reference is active');
 });
 
 await test('JustGo members are inactive until the sync confirms their renewal in the club year', async () => {
@@ -1616,9 +1614,9 @@ await test('a payer has one monthly subscription per club year for everyone they
   assert.equal(benCancelled.json.subscription.status, 'active', 'the payer keeps paying for everyone else');
   assert.deepEqual(benCancelled.json.subscription.items.filter((item) => item.status === 'active').map((item) => item.productId).sort(), [lessonId, 'gold-sub'].sort());
   const benAfter = (await db.collection('memberships').doc(benId).get()).data();
-  assert.ok(benAfter.privileges.find((privilege) => privilege.productId === 'gold-sub').endedAt, 'Ben\'s gold entitlement ends');
+  assert.ok((await entitlementsOf(benId)).find((privilege) => privilege.productId === 'gold-sub').endedAt, 'Ben\'s gold entitlement ends');
   assert.equal(benAfter.subscriptionItems[0].status, 'cancelled');
-  assert.ok(!(await db.collection('memberships').doc(monaId).get()).data().privileges.find((privilege) => privilege.productId === 'gold-sub').endedAt);
+  assert.ok(!(await entitlementsOf(monaId)).find((privilege) => privilege.productId === 'gold-sub').endedAt);
   assert.equal((await call('POST', `/api/admin/subscriptions/${subscriptionId}/members/${benId}/cancel`, { headers: admin })).status, 409);
 
   const lesson = items.find((item) => item.productId === lessonId);
@@ -1936,10 +1934,10 @@ await test('every paid order produced a receipt email record', async () => {
 });
 
 await test('replaying a webhook does not duplicate records or emails', async () => {
-  const before = (await membershipsFor(shared.family)).map((record) => record.history.length);
+  const before = (await membershipsFor(shared.family)).map((record) => record.purchases.length);
   const replay = await pay(shared.familyOrder);
   assert.equal(replay.status, 200);
-  assert.deepEqual((await membershipsFor(shared.family)).map((record) => record.history.length), before);
+  assert.deepEqual((await membershipsFor(shared.family)).map((record) => record.purchases.length), before);
   assert.equal((await db.collection('testMail').where('orderRef', '==', shared.familyOrder).get()).size, 1);
 });
 

@@ -65,7 +65,7 @@ test('the roster lists each paid ticket with contacts, medical details, membersh
   const members = new Map([
     ['M1', { status: 'active', validUntil: '2028-02-28' }],
     ['M2', { status: 'active', validUntil: '2028-02-28', phone: '0799', medical: 'Diabetic', emergencyContact: { name: 'Yan', relationship: 'Sister', phone: '0722' },
-      privileges: [{ productId: 'boat-hire', grantedAt: '2026-04-01T00:00:00Z' }] }],
+      entitlements: [{ productId: 'boat-hire', grantedAt: '2026-04-01T00:00:00Z' }] }],
     ['M3', { contactOnly: true }]
   ]);
   const roster = buildRoster('trip', orders, members, now);

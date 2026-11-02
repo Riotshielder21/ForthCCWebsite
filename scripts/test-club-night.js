@@ -15,7 +15,7 @@ import { allocateRecordIds } from '../src/utils/recordIds.js';
 const PROJECT = 'demo-fcc-club-night-tests';
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: PROJECT });
 const db = getFirestore(initializeApp({ projectId: PROJECT }, 'club-night-tests'));
-const COLLECTIONS = ['households', 'memberships', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'customers', 'adminDeletionAudit', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals'];
+const COLLECTIONS = ['households', 'memberships', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'customers', 'adminDeletionAudit', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals', 'membershipTerms'];
 const clear = async () => {
   for (const name of COLLECTIONS) {
     const snapshot = await db.collection(name).get();
@@ -84,7 +84,8 @@ try {
   await db.collection('households').doc('HH-MEMBER').set({ contactName: 'Casey Member', contactRelationship: 'Member', email: member.email, phone: '0700 000001',
     address: '1 Quay', postcode: 'EH1 1AA', emergencyContact: { name: 'Robin Member', relationship: 'Partner', phone: '0700 000002' } });
   await db.collection('memberships').doc('M0001').set({ firstName: member.firstName, lastName: member.lastName, dob: member.dob, householdId: 'HH-MEMBER',
-    status: 'active', renewalMethod: 'website', validUntil: Timestamp.fromDate(clubYearDates(year).end), privileges: [{ productId: 'boat-hire', clubYear: year }] });
+    status: 'active', renewalMethod: 'website', validUntil: Timestamp.fromDate(clubYearDates(year).end) });
+  await db.collection('membershipTerms').doc(`M0001_${year}`).set({ membershipId: 'M0001', clubYear: year, items: [{ productId: 'boat-hire' }] });
   await db.collection('households').doc('HH-JUSTGO').set({ contactName: 'Jo Go', email: 'jo@example.test', phone: '1', address: 'a', postcode: 'b', emergencyContact: null });
   await db.collection('memberships').doc('M0002').set({ firstName: 'Jo', lastName: 'Go', dob: '1970-01-01', householdId: 'HH-JUSTGO', status: 'active', justgoSyncStatus: 'synced' });
   await db.collection('counters').doc('memberships').set({ next: 3 });
@@ -217,7 +218,7 @@ try {
   assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: member, at: week3 })).status, 400, 'attendees choose a session when there are several');
   const noSub = await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: 'gold-sub-session' }, at: week3 });
   assert.match(noSub.data.message, /see the volunteer/, 'no Gold subscription');
-  await db.collection('memberships').doc('M0001').update({ privileges: [{ productId: 'boat-hire', clubYear: year }, { productId: 'gold-sub', clubYear: year }] });
+  await db.collection('membershipTerms').doc(`M0001_${year}`).update({ items: [{ productId: 'boat-hire' }, { productId: 'gold-sub' }] });
   const withSub = await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: 'gold-sub-session' }, at: week3 });
   assert.match(withSub.data.message, /Enjoy Gold sub session/);
   const goldList = await call('/api/club-night/checkins?sessionId=gold-sub-session', { at: week3, session: volunteerSession });

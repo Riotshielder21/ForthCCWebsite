@@ -4,6 +4,7 @@ import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { PRODUCTS } from '../src/constants/products.js';
 import { clubYearDates, clubYearOf } from '../src/utils/clubYear.js';
+import { termId } from '../src/utils/membershipTerms.js';
 
 const projectId = assertLocalFirebase(process.env);
 initializeApp({ projectId });
@@ -81,12 +82,17 @@ household('TEST-HH-RENEWAL', {
   address: '5 Renewal Row', postcode: 'EH5 5EE'
 });
 for (const [id, fields] of Object.entries({
-  'test-renewal-parent': { firstName: 'Rowan', lastName: 'Renewal', dob: '1985-09-03',
-    privileges: [{ productId: 'keyhire', name: 'Boathouse Access', type: 'yearly-service', orderRef: 'TEST-RENEWAL', grantedAt: Timestamp.now(), clubYear: thisClubYear }] },
+  'test-renewal-parent': { firstName: 'Rowan', lastName: 'Renewal', dob: '1985-09-03', keyAccess: { grantedAt: Timestamp.now(), source: 'purchase' } },
   'test-renewal-child': { firstName: 'Robin', lastName: 'Renewal', dob: '2015-04-21' }
 })) {
   member(id, { ...fields, searchName: `${fields.firstName} ${fields.lastName}`.toLowerCase(), membershipTier: 'family', householdId: 'TEST-HH-RENEWAL',
     renewalMethod: 'website', clubYears: [thisClubYear], validUntil: Timestamp.fromDate(clubYearDates(thisClubYear).end) });
+  batch.set(db.collection('membershipTerms').doc(termId(id, thisClubYear)), {
+    membershipId: id, clubYear: thisClubYear, tier: 'family', source: 'website', orderRef: 'TEST-RENEWAL',
+    start: Timestamp.fromDate(clubYearDates(thisClubYear).start), end: Timestamp.fromDate(clubYearDates(thisClubYear).end),
+    items: id === 'test-renewal-parent'
+      ? [{ productId: 'keyhire', name: 'Boathouse Access', type: 'yearly-service', orderRef: 'TEST-RENEWAL', grantedAt: Timestamp.now() }] : []
+  });
 }
 const course = {
   name: 'Week-long paddling course', category: 'EVENTS', type: 'event-ticket', basePrice: 120,

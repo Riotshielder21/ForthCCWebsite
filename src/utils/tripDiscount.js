@@ -22,7 +22,7 @@ const toDate = (value) => {
   return Number.isFinite(date.getTime()) ? date : null;
 };
 
-/** Product ids from a membership's privileges for the current club year and not since cancelled. */
+/** Product ids from a member's entitlements (or volunteer privileges) for the current club year and not since cancelled. */
 export const currentPrivilegeIds = (privileges = [], now = new Date()) => {
   const year = clubYearOf(now);
   return (Array.isArray(privileges) ? privileges : [])

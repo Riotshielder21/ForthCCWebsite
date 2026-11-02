@@ -1,7 +1,7 @@
 """Reads FCC's members from the JustGo API into Firestore (run on a schedule; see config/fcc-sync.timer).
 
 JustGo is the source of truth for Paddle Scotland numbers, FCC membership status (including people who join FCC directly
-on JustGo), suspensions and PVG/safeguarding credentials. Website-only data (subscriptions, privileges, history,
+on JustGo), suspensions and PVG/safeguarding credentials. Website-only data (subscriptions, key access, club years,
 safety details) is never overwritten. Nothing is written to JustGo.
 """
 import asyncio

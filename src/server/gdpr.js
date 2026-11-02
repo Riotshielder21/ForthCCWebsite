@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { identityEmails, matchesIdentity, redactOrder, redactSubscription, sharedDetailsErrors, sharedDetailsUpdate } from '../utils/erasure.js';
 import { eraseStripeDetails } from './stripeErasure.js';
+import { memberOrders } from './membershipTerms.js';
 import { lookupKey, maskEmail, maskMembershipNumber, maskName, personLookupKeys } from '../utils/privacy.js';
 import { memberIsJunior } from '../utils/households.js';
 import { rateLimit } from './rateLimit.js';
@@ -85,8 +86,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
 
     // An email that still belongs to someone staying on the register is not erased.
     const orders = new Map();
-    const orderRefs = [...new Set(targets.flatMap((record) => (record.history || []).map((entry) => entry.orderRef)).filter((id) => typeof id === 'string' && id && !id.includes('/')))].slice(0, 300);
-    if (orderRefs.length) (await adminDb.getAll(...orderRefs.map((id) => adminDb.collection('orders').doc(id)))).forEach((document) => document.exists && orders.set(document.id, document.data()));
+    for (const record of targets) (await memberOrders(adminDb, record.id)).forEach((document) => orders.set(document.id, document.data()));
     const fullyErased = (order) => (order.people || []).length > 0 && order.people.every((person) => targetIds.has(person.membershipId) || person.erased);
     const candidateEmails = new Set([...subjects.map((subject) => normalizeEmail(subject.email)), ...targets.flatMap((record) => identityEmails(record, record.household)),
       ...[...orders.values()].filter(fullyErased).map((order) => normalizeEmail(order.email))].filter((email) => email && email !== '***'));
@@ -281,6 +281,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
         const ids = scope.targets.slice(index, index + 30).map((record) => record.id);
         linkedRecords.push(...(await adminDb.collection('renewalInvites').where('membershipIds', 'array-contains-any', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('volunteerRenewals').where('memberId', 'in', ids).get()).docs);
+        linkedRecords.push(...(await adminDb.collection('membershipTerms').where('membershipId', 'in', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('clubNightCheckins').where('memberId', 'in', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('clubNightAccessLog').where('memberId', 'in', ids).get()).docs);
       }

@@ -32,7 +32,7 @@ const check = async (command, args) => {
 };
 await run(process.execPath, ['scripts/seed-emulators.js']);
 for (const script of ['test-admin-domain.js', 'test-emulators.js', 'test-club-night.js', 'test-volunteering.js',
-  'test-item-actions.js', 'test-gdpr.js']) await check(process.execPath, [`scripts/${script}`]);
+  'test-item-actions.js', 'test-gdpr.js', 'test-migrate-schema.js']) await check(process.execPath, [`scripts/${script}`]);
 for (const script of ['test-justgo-api.py', 'test-justgo-sync.py', 'test-justgo-upload.py']) await check(process.env.PYTHON || 'python3', [`scripts/${script}`]);
 await run(process.execPath, ['scripts/seed-emulators.js']);
 

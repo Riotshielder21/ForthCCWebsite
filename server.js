@@ -57,6 +57,7 @@ import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemA
 import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
 import { isClubEmail } from './src/utils/adminAccess.js';
 import { createAttention, registerAttentionRoutes } from './src/server/attention.js';
+import { writePurchaseTerms, loadTerms, loadEntitlements, loadPurchases, endTermItems } from './src/server/membershipTerms.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -315,37 +316,18 @@ const toMembershipRecord = (document) => {
     justgo: data.justgoSyncStatus === 'synced' || data.renewalMethod === 'justgo',
     renewalMethod: data.renewalMethod || '', justgoSyncStatus: data.justgoSyncStatus || '', lastJustgoSync: data.lastJustgoSync?.toMillis() || 0,
     stripeMembershipSubscriptionId: data.stripeMembershipSubscriptionId || '', stripeMembershipMode: data.stripeMembershipMode || '',
-    hasStripeMembershipReference: Object.hasOwn(data, 'stripeMembershipSubscriptionId'), history: Array.isArray(data.history) ? data.history : [],
     familyTier: data.membershipTier === 'family'
   };
 };
 
-/** Backfill one recurring membership subscription from old orders, never coaching subscriptions. */
-const linkHistoricalStripeSubscription = async (member) => {
-  if (member.stripeMembershipSubscriptionId || member.hasStripeMembershipReference || !member.history.length) return member;
-  const orderRefs = [...new Set(member.history.map((entry) => entry.orderRef).filter((id) => typeof id === 'string' && id))].slice(-100);
-  if (!orderRefs.length) return member;
-  const orders = await adminDb.getAll(...orderRefs.map((id) => adminDb.collection('orders').doc(id)));
-  const order = orders.find((document) => document.exists && document.data().stripeSubscriptionId
-    && (document.data().items || []).some((item) => item.category === 'MEMBERSHIP' && item.type === 'subscription'))?.data();
-  if (!order) {
-    await adminDb.collection('memberships').doc(member.id).set({ stripeMembershipSubscriptionId: '', stripeMembershipMode: '' }, { merge: true });
-    return { ...member, stripeMembershipSubscriptionId: '', stripeMembershipMode: '', hasStripeMembershipReference: true };
-  }
-  const stripeMode = order.stripeMode || (process.env.STRIPE_SECRET_KEY?.includes('_live_') ? 'live' : 'test');
-  await adminDb.collection('memberships').doc(member.id).set({ stripeMembershipSubscriptionId: order.stripeSubscriptionId, stripeMembershipMode: stripeMode }, { merge: true });
-  return { ...member, stripeMembershipSubscriptionId: order.stripeSubscriptionId, stripeMembershipMode: stripeMode, hasStripeMembershipReference: true };
-};
-
 const stripeSubscriptionIsActive = async (member) => {
-  const linkedMember = await linkHistoricalStripeSubscription(member);
-  if (!linkedMember.stripeMembershipSubscriptionId) return true;
-  const mode = linkedMember.stripeMembershipMode || 'test';
+  if (!member.stripeMembershipSubscriptionId) return true;
+  const mode = member.stripeMembershipMode || 'test';
   const secrets = [process.env.STRIPE_REPORT_SECRET_KEY, process.env.STRIPE_SECRET_KEY]
     .filter((secret) => /^(sk|rk)_(test|live)_/.test(secret || '') && secret.includes(`_${mode}_`));
   if (!secrets.length) throw new Error('Stripe subscription validation is not configured for this mode.');
   const subscription = await stripeReportRequest(secrets[0])(
-    `subscriptions/${encodeURIComponent(linkedMember.stripeMembershipSubscriptionId)}?expand[]=customer&expand[]=latest_invoice.payment_intent.latest_charge`
+    `subscriptions/${encodeURIComponent(member.stripeMembershipSubscriptionId)}?expand[]=customer&expand[]=latest_invoice.payment_intent.latest_charge`
   );
   const report = stripeSubscriberReport(subscription);
   // A club-year subscription ends at the 1 March boundary after covering the full February payment period.
@@ -443,11 +425,14 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, househ
     // Membership runs to 1 March after the latest club year bought.
     const validUntil = coveredYears.length ? Timestamp.fromDate(clubYearDates(coveredYears.at(-1)).end) : null;
     const grantedTier = person.junior ? 'junior' : 'adult';
-    // Event tickets stay in the purchase history; privileges are ongoing entitlements for their club year.
-    const privileges = lines.filter((item) => !isMembership(item) && item.category !== 'EVENTS')
-      .map((item) => ({ productId: item.id, name: item.name, type: item.type, orderRef, grantedAt: paidAt, ...(item.lineId ? { lineId: item.lineId } : {}),
-        ...(item.clubYear ? { clubYear: item.clubYear } : {}) }));
-    const historyEntry = { orderRef, paidAt, items: lines.map((item) => ({ id: item.id, name: item.name, price: item.price, ...(item.clubYear ? { clubYear: item.clubYear } : {}) })) };
+    // Event tickets stay on the order; other lines are entitlements on that club year's membership term.
+    const entitlementLines = lines.filter((item) => !isMembership(item) && item.category !== 'EVENTS');
+    const termMemberships = new Map(coveredYears.map((year) => {
+      const line = membershipLines.findLast((item) => yearOf(item) === year);
+      return [year, line ? { line, included: false } : { line: includedLines.findLast((item) => yearOf(item) === year), included: true }];
+    }));
+    writePurchaseTerms(transaction, adminDb, { membershipId: person.membershipId, orderRef, paidAt, memberships: termMemberships,
+      tier: membershipLine ? membershipLine.membershipTier || '' : grantedTier, entitlementLines, yearOf });
     const { id, lineIds, membershipId, existingMember, householdId, ownKitLineIds, grantMembership: _grant, grantMembershipYears: _years, heldClubYears: _held, subscriptionGroup: _group, ...details } = person;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
     membershipIds.push(membershipId);
@@ -458,7 +443,8 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, househ
       }),
       // Non-members booking open events are kept as contact-only records until they buy a membership.
       ...(membershipLine || includedLine ? { contactOnly: FieldValue.delete() } : existingMember ? {} : { contactOnly: true }),
-      schemaVersion: CURRENT_MEMBERSHIP_VERSION,
+      // Existing records keep their version so the migration still converts anything older they hold.
+      ...(existingMember ? {} : { schemaVersion: CURRENT_MEMBERSHIP_VERSION }),
       ...(householdId ? { householdId } : {}),
       ...Object.fromEntries(HOUSEHOLD_MEMBER_FIELDS.map((key) => [key, FieldValue.delete()])),
       // Consent is recorded against the wording version shown at checkout; the disclaimer is re-accepted on every purchase.
@@ -475,9 +461,7 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, househ
         ? { stripeMembershipSubscriptionId: '', stripeMembershipMode: '' }
         : {}),
       ...(includedLine ? { stripeMembershipSubscriptionId: '', stripeMembershipMode: '', membershipIncludedWith: { productId: includedLine.id, name: includedLine.name, orderRef } } : {}),
-      ...(privileges.length ? { privileges: FieldValue.arrayUnion(...privileges) } : {}),
       ...(lines.some((item) => item.id === 'keyhire') ? { keyAccess: { grantedAt: paidAt, source: 'purchase' } } : {}),
-      history: FieldValue.arrayUnion(historyEntry),
       updatedAt: paidAt
     }, { merge: true });
   }
@@ -669,6 +653,7 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       memberSnapshots: new Map(memberDocuments.map((document) => [document.id, document])) });
     transaction.update(orderDocument, {
       people: order.people || [],
+      membershipIds: [...new Set((order.people || []).map((person) => person.membershipId).filter(Boolean))],
       status: 'paid', vouchers, accessTokenHash: hashAccessToken(accessToken), recordsWritten: true,
       stripePaymentIntentId: paymentIntent, ...(setupIntent ? { stripeSetupIntentId: setupIntent } : {}),
       paidAt, paymentProcessing: false,
@@ -1354,8 +1339,10 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
     }
     const now = new Date();
     const justgoSync = req.query.kind === 'members' ? await readJustgoSync(adminDb, now) : null;
+    const listed = req.query.kind === 'members' ? documents.map((document) => document.id) : [];
+    const [entitlements, purchases] = listed.length ? await Promise.all([loadEntitlements(adminDb, listed), loadPurchases(adminDb, listed)]) : [new Map(), new Map()];
     const records = documents.filter((document) => req.query.kind !== 'members' || document.data().contactOnly !== true).map((document) => (req.query.kind === 'members'
-      ? membershipReport(document.id, document.data(), now, households.get(document.data().householdId) || {}, justgoSync)
+      ? membershipReport(document.id, { ...document.data(), entitlements: entitlements.get(document.id) || [], purchases: purchases.get(document.id) || [] }, now, households.get(document.data().householdId) || {}, justgoSync)
       : orderReport(document.id, document.data(), members)));
     res.json({ records: eventReport ? records.filter((record) => record.items.some((item) => item.category === 'EVENTS'))
       .map((record) => ({ ...record, orderTotal: record.total, items: record.items.filter((item) => item.category === 'EVENTS'),
@@ -1490,15 +1477,24 @@ const stopSubscriptionItems = async (reference, record, ending, admin, action, r
   const endsMembership = ending.some((item) => orderLines.get(`${item.orderRef || record.orderRef}/${item.lineId}`)?.category === 'MEMBERSHIP');
   const memberIds = [...new Set(ending.flatMap((item) => item.membershipIds || record.membershipIds || []))];
   const members = memberIds.length ? await adminDb.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id))) : [];
+  const terms = await loadTerms(adminDb, memberIds);
   for (const member of members.filter((entry) => entry.exists)) {
     const data = member.data();
     const linkedMembership = endsMembership && data.stripeMembershipSubscriptionId === document.id;
+    endTermItems(batch, terms.get(member.id) || [], (item) => isEnding(item), now);
+    const cutShort = linkedMembership && paidUntil && (!data.validUntil || data.validUntil.toMillis() > paidUntil.toMillis());
+    if (cutShort) {
+      for (const term of terms.get(member.id) || []) {
+        if (term.data().source && term.data().end?.toMillis() > paidUntil.toMillis()) {
+          batch.update(term.ref, { end: term.data().start?.toMillis() > paidUntil.toMillis() ? term.data().start : paidUntil, updatedAt: now });
+        }
+      }
+    }
     batch.update(member.ref, {
-      privileges: (data.privileges || []).map((privilege) => isEnding(privilege) && !privilege.endedAt ? { ...privilege, endedAt: now } : privilege),
       subscriptionItems: (data.subscriptionItems || []).map((item) => isEnding(item) && item.status === 'active'
         ? { ...item, status: 'cancelled', cancelledAt: now } : item),
       ...(linkedMembership ? { stripeMembershipSubscriptionId: '', monthlyPaymentsCancelledAt: now,
-        ...(paidUntil && (!data.validUntil || data.validUntil.toMillis() > paidUntil.toMillis()) ? { validUntil: paidUntil } : {}) } : {}),
+        ...(cutShort ? { validUntil: paidUntil } : {}) } : {}),
       updatedAt: now
     });
   }
@@ -2037,6 +2033,7 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
     if (olderCodes.length) voucherDocs.push(...(await adminDb.getAll(...olderCodes.map((code) => adminDb.collection('discountCodes').doc(code)))).filter((document) => document.exists));
     if (!voucherDocs.length && !orderSnapshot.size && !allMembers.length) return res.status(404).json({ error: 'No customer found.' });
     const now = Date.now();
+    const entitlements = await loadEntitlements(adminDb, allMembers.map((document) => document.id));
     res.json({
       email,
       vouchers: voucherDocs.map((document) => {
@@ -2053,7 +2050,7 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
           id: document.id, name: `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.name || 'Unnamed',
           membershipTier: data.membershipTier || '', status: data.status === 'active' && data.validUntil?.toMillis() <= now ? 'expired' : data.status || 'unknown',
           validUntil: data.validUntil?.toMillis() || 0, affiliationNumber: data.affiliationNumber || '', membershipNumber: data.membershipNumber || '',
-          privileges: (data.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => privilege.name)
+          privileges: (entitlements.get(document.id) || []).filter((item) => !item.endedAt).map((item) => item.name)
         };
       }),
       orders: orderSnapshot.docs.map((document) => {
@@ -2407,8 +2404,9 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
     // Club-year items cannot be bought twice for the same person and club year.
     const existingIds = [...new Set(storedPeople.filter((person) => person.existingMember).map((person) => person.membershipId))];
+    const heldEntitlements = await loadEntitlements(adminDb, existingIds);
     const memberData = new Map(existingIds.length ? (await adminDb.getAll(...existingIds.map((id) => adminDb.collection('memberships').doc(id))))
-      .filter((document) => document.exists).map((document) => [document.id, document.data()]) : []);
+      .filter((document) => document.exists).map((document) => [document.id, { ...document.data(), entitlements: heldEntitlements.get(document.id) || [] }]) : []);
     for (const person of storedPeople.filter((candidate) => memberData.has(candidate.membershipId))) {
       const held = person.lineIds.map((id) => lines.find((line) => line.lineId === id))
         .find((line) => line && !isMembership(line) && line.category !== 'EVENTS' && clubYearKind(line)
@@ -2440,7 +2438,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     if (selected.some(isTripEvent)) {
       for (const person of storedPeople) if (memberData.has(person.membershipId)) {
         const data = memberData.get(person.membershipId);
-        tripPrivileges.set(person.id, [...(data.privileges || []), ...volunteerPrivileges(data, volunteerTiers, now)]);
+        tripPrivileges.set(person.id, [...data.entitlements, ...volunteerPrivileges(data, volunteerTiers, now)]);
       }
     }
     const volunteerLines = applyVolunteerBenefits(lines, storedPeople, memberData, volunteerTiers, now);

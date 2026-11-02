@@ -85,7 +85,7 @@ const refund = (amount, paymentIntent, revoke = false) => ({ ...action(), action
 const order = async (suffix, items, people = [], extra = {}) => {
   const id = `TEST-${run}-${suffix}`;
   return put(`orders/${id}`, { status: 'paid', total: String(items.reduce((sum, item) => sum + item.price, 0)),
-    items, people, paidAt: Timestamp.now(), ...extra });
+    items, people, membershipIds: [...new Set(people.map((person) => person.membershipId).filter(Boolean))], paidAt: Timestamp.now(), ...extra });
 };
 const path = (reference, line = 'line') => `/api/admin/orders/${reference.id}/items/${line}`;
 const charge = (intent, amount) => charges.set(intent, { amount, amount_refunded: 0, paid: true, currency: 'gbp' });
@@ -121,12 +121,13 @@ const checkMainServer = async () => {
     assert.equal(signIn.status, 200, session.error?.message);
     await auth.verifyIdToken(session.idToken, true);
     const headers = { Authorization: `Bearer ${session.idToken}`, 'Content-Type': 'application/json' };
-    const holder = await put(`memberships/MONTHLY-${run}`, { source: 'website', privileges: [] });
+    const holder = await put(`memberships/MONTHLY-${run}`, { source: 'website' });
     const purchase = await order('main-monthly', [{ id: 'boat-hire', lineId: 'line', category: 'SERVICES', monthly: true, price: 0 }],
       [{ membershipId: holder.id, lineIds: ['line'] }], { subscriptionPlan: { recordedAt: Timestamp.now() } });
     const subscription = await put(`subscriptions/sub_main_${run}`, { orderRef: 'another-order', orderRefs: [purchase.id],
       status: 'active', items: [{ lineId: 'line', orderRef: purchase.id, membershipIds: [holder.id], status: 'active' }] });
-    await holder.update({ privileges: [{ productId: 'boat-hire', orderRef: purchase.id, lineId: 'line' }],
+    await put(`membershipTerms/${holder.id}_2026`, { membershipId: holder.id, clubYear: 2026, items: [{ productId: 'boat-hire', orderRef: purchase.id, lineId: 'line' }] });
+    await holder.update({
       subscriptionItems: [{ subscriptionId: subscription.id, orderRef: purchase.id, lineId: 'line', status: 'active' }] });
     const response = await fetch(`http://127.0.0.1:${port}${path(purchase)}/actions`, { method: 'POST', headers, body: JSON.stringify(action('Stop monthly hire')) });
     assert.equal(response.status, 200, await response.text());
@@ -155,7 +156,9 @@ const checkMainServer = async () => {
 };
 try {
   const member = await put(`memberships/M-${run}`, { firstName: 'Key', lastName: 'Holder', email: 'key@example.test',
-    privileges: [{ productId: 'keyhire', orderRef: `TEST-${run}-key`, lineId: 'line' }], history: [] });
+    keyAccess: { grantedAt: Timestamp.now(), source: 'purchase' } });
+  const keyTerm = await put(`membershipTerms/${member.id}_2026`, { membershipId: member.id, clubYear: 2026,
+    items: [{ productId: 'keyhire', orderRef: `TEST-${run}-key`, lineId: 'line' }] });
   const keyOrder = await order('key', [{ id: 'keyhire', lineId: 'line', category: 'SERVICES', price: 10 }],
     [{ membershipId: member.id, lineIds: ['line'] }], { stripePaymentIntentId: 'pi_key' });
   charge('pi_key', 1000);
@@ -177,12 +180,13 @@ try {
   remoteRefunds[0].status = 'succeeded';
   assert.equal((await call(`${path(keyOrder)}/payments`)).status, 200);
   assert.equal((await keyOrder.get()).data().items[0].refunds[0].status, 'succeeded', 'payment refresh persists the latest Stripe refund status');
-  assert.equal((await member.get()).data().privileges[0].endedAt, undefined, 'refund-only preserves access');
+  assert.equal((await keyTerm.get()).data().items[0].endedAt, undefined, 'refund-only preserves access');
   assert.equal((await call(`${path(keyOrder)}/actions`, 'POST', refund(701, 'pi_key'))).status, 400, 'line over-refund rejected');
   assert.equal((await call(`${path(keyOrder)}/actions`, 'POST', refund(700, 'pi_key', true))).status, 200);
   const revoked = (await member.get()).data();
   assert.ok(revoked.keyAccess.revokedAt);
-  assert.ok(revoked.privileges[0].endedAt);
+  assert.ok((await keyTerm.get()).data().items[0].endedAt);
+  assert.equal((await keyTerm.get()).data().items[0].revokeReason, 'Test reason');
   assert.equal((await keyOrder.get()).data().total, '10', 'financial history is retained');
   assert.equal((await keyOrder.get()).data().items[0].refunds.length, 2);
   await call('/api/admin/boathouse-code', 'POST', { ...settings, alarmCode: 'changed' });
@@ -249,12 +253,14 @@ try {
   assert.equal((await call(`${path(monthly)}/actions`, 'POST', refund(1201, 'pi_invoice'))).status, 400);
   assert.equal((await call(`${path(monthly)}/actions`, 'POST', refund(1200, 'pi_invoice'))).status, 200);
 
-  const membership = await put(`memberships/FAMILY-${run}`, { source: 'website', status: 'active', validUntil: Timestamp.fromDate(new Date('2099-03-01')),
-    history: [], privileges: [] });
+  const membership = await put(`memberships/FAMILY-${run}`, { source: 'website', status: 'active', validUntil: Timestamp.fromDate(new Date('2099-03-01')) });
+  const membershipTerm = await put(`membershipTerms/FAMILY-${run}_2026`, { membershipId: membership.id, clubYear: 2026, source: 'website', tier: 'family',
+    orderRef: `TEST-${run}-membership`, start: Timestamp.fromDate(new Date('2026-03-01')), end: Timestamp.fromDate(new Date('2027-03-01')), items: [] });
   const membershipOrder = await order('membership', [{ id: 'membership', category: 'MEMBERSHIP', lineId: 'line', clubYear: 2026, price: 30 }],
     [{ membershipId: membership.id, lineIds: ['line'] }]);
   assert.equal((await call(`${path(membershipOrder)}/actions`, 'POST', action())).status, 200);
   assert.equal((await membership.get()).data().status, 'revoked');
+  assert.ok((await membershipTerm.get()).data().revokedAt, 'the revoked club year is marked on its term');
   assert.equal((await membershipOrder.get()).exists, true);
   assert.ok(stopped.length >= 4, 'revocations call the shared monthly cancellation service');
 

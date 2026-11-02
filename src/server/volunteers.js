@@ -12,6 +12,7 @@ import { needsRenewal } from '../utils/renewals.js';
 import { allocateRecordIds, reserveRecordIds } from '../utils/recordIds.js';
 import { validateVolunteerPage, volunteerPageFromLegacy } from '../utils/volunteerPage.js';
 import { normaliseName } from '../utils/checkout.js';
+import { memberOrders } from './membershipTerms.js';
 
 
 /** Public forms, yearly volunteer membership entitlements and privately emailed boathouse access codes. */
@@ -687,12 +688,10 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
           pending, error: pending && last?.status === 'failed' ? last.error : '' });
       }
     }
-    const history = member.data().history || [];
-    const paidAt = new Map(history.filter((entry) => entry.orderRef).map((entry) => [entry.orderRef, entry.paidAt?.toDate?.() || null]));
-    const orderRefs = [...paidAt.keys()].slice(-50);
-    const orders = orderRefs.length ? await db().getAll(...orderRefs.map((id) => db().collection('orders').doc(id))) : [];
+    const orders = (await memberOrders(db(), member.id)).slice(0, 50);
+    const paidAt = new Map(orders.map((document) => [document.id, document.data().paidAt?.toDate?.() || null]));
     const annual = [];
-    for (const order of orders.filter((document) => document.exists && document.data().status === 'paid')) {
+    for (const order of orders.filter((document) => document.data().status === 'paid')) {
       const data = order.data();
       for (const item of data.items || []) {
         if (!item.lineId || item.clubYear !== year || item.monthly) continue;

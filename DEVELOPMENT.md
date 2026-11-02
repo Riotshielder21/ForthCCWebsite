@@ -103,11 +103,21 @@ The volunteer table shows the name and membership status. Its row-end details bu
 - Existing API rate limits reduce repeated requests per IP, but are per server instance and do not protect Firebase's static pages. Enforced bot filtering/challenges need an edge service (for example Cloudflare); Cloud Armor needs a supported load balancer and restricted direct-origin access. Do not blanket-challenge API routes or Stripe webhooks. User-agent blocking alone is easily spoofed.
 - After deployment, check `/robots.txt` on both the public site and the API hostname, and check `X-Robots-Tag` on `/my-details`, `/admin/reports`, `/order/example` and an API response. Public `/` must not have `noindex`.
 
-## Household Data Migration
+## Data Migrations
+
+`node scripts/migrate-schema.js` brings stored records up to the current schema. It is a dry run by default (it prints what would change and writes nothing); add `--apply` to write. It is repeatable: records already converted are skipped. Take a Firestore export first. `scripts/test-migrate-schema.js` runs it against old-shape records in the emulator (part of `scripts/test-local.mjs`).
+
+### Households
 
 Member contact details are stored once in `households`; membership documents keep a `householdId` and personal membership/safety information. A family shares one household. For a junior, the parent or guardian is the household contact and no separate emergency contact is saved; adult-led households keep the external emergency contact there.
 
 Before migrating existing data, take a Firestore export. Run `node scripts/migrate-schema.js` for a dry run, inspect the household groups and counts, then run `node scripts/migrate-schema.js --apply` to create household documents and remove contact/checkout fields from member records. The migration is repeatable and stops if an under-18 record cannot be linked to complete parent/guardian details, so correct those records and rerun it. The JustGo sync also creates household records for new imports; under-18 imports without complete parent/guardian details are skipped and logged for staff follow-up.
+
+### Membership terms
+
+Each person has one `membershipTerms/{membershipId}_{clubYear}` document per club year: `tier`, `start`, `end`, `orderRef` and `source` (`website`, `included` with `includedWith`, `justgo` or `imported`) for the membership, and `items` for the entitlements bought for that year (boat hire, key hire, subscriptions), each with `productId`, `orderRef`, `lineId`, `grantedAt` and, once stopped or revoked, `endedAt` (and `revokeReason`/`revokedBy`). A term with no `source` holds entitlements only. The member record keeps `status`, `validUntil`, `clubYears` and `membershipTier` as the current term. Purchase history is the member's orders: a paid order lists everyone it covers in `membershipIds`. Server code reads entitlements with `loadEntitlements` in `src/server/membershipTerms.js`, which attaches them as `entitlements` for `holdsForClubYear`, `renewalBasket`, rosters and trip discounts.
+
+Version 4 of the member schema moves the old `privileges[]` and `history[]` into terms: each privilege goes onto its club year's term, each club year in `clubYears` becomes a membership term matched to the order that bought it, those orders get `membershipIds`, and the recurring membership subscription (`stripeMembershipSubscriptionId`) and key access are recorded from the old orders when missing.
 
 Stop manually running emulators before this isolated API/Storage smoke test:
 
@@ -268,7 +278,7 @@ Run the offline client checks with `bin/python scripts/test-justgo-api.py`; they
 The club year runs from 1 March and is named by the year it starts (1 March 2027 – 28/29 February 2028 is **2027**). Dates and sale windows are in `src/utils/clubYear.js` and use London time.
 
 - **Sale windows:** before 1 January only this club year is sold. From 1 January the basket asks, for each membership, service and subscription, whether it is for **this club year**, **next club year** or **both** (`clubYearChoice` on each basket line; `both` is one line that the server splits into this year's line and a next-year line). This year's membership stops on 8 February and everything else for this year on 15 February; after that only next year is offered. Events, merchandise and vouchers have no club year.
-- **Records:** order lines and privileges record `clubYear`, and members record every club year they hold in `clubYears` (for example `[2027, 2028]` for someone who renewed early), with `validUntil` the end of the latest. Older privileges without `clubYear` use the year they were granted. A member who holds only next year is not covered for this year, except that from 8 February a next-year membership also covers the rest of this year.
+- **Records:** order lines and membership terms record `clubYear`, and members record every club year they hold in `clubYears` (for example `[2027, 2028]` for someone who renewed early), with `validUntil` the end of the latest. A member who holds only next year is not covered for this year, except that from 8 February a next-year membership also covers the rest of this year.
 - A held service or subscription cannot be bought again for the same club year (`already_held`), and an active member cannot buy a membership for a year they already hold (`membership_active`).
 
 ## Monthly Subscriptions

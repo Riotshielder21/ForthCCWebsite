@@ -34,7 +34,7 @@ website.set({
     "firstName": "Alex", "lastName": "Tester", "searchName": "alex tester", "email": alex_email, "dob": "1988-05-05",
     "phone": "07700 900111", "address": "1 River Road", "postcode": "EH1 1AA", "status": "active", "source": "website",
     "justgoSyncStatus": "pending", "emergencyContact": {"name": "Pat Friend", "phone": "07700 900222", "relationship": "Friend"},
-    "privileges": [{"productId": "boat-hire", "name": "ANNUAL BOAT & KIT HIRE"}], "history": [{"orderRef": "FCC-X"}], "medical": "Asthma",
+    "subscriptionItems": [{"productId": "boat-hire", "name": "ANNUAL BOAT & KIT HIRE"}], "keyAccess": {"source": "purchase"}, "medical": "Asthma",
 })
 
 ahead_email = f"ahead.{run}@example.test"
@@ -91,7 +91,7 @@ assert alex["justgoSyncStatus"] == "synced"
 assert alex["membershipNumber"] == f"FCC-{number_existing}", "staff see the FCC membership number once synced"
 assert alex["address"] == "1 River Road" and alex["phone"] == "07700 900111", "website contact details not overwritten"
 assert alex["emergencyContact"]["name"] == "Pat Friend", "website emergency contact not overwritten"
-assert alex["privileges"][0]["productId"] == "boat-hire" and alex["history"] and alex["medical"] == "Asthma", "website-only data kept"
+assert alex["subscriptionItems"][0]["productId"] == "boat-hire" and alex["keyAccess"] and alex["medical"] == "Asthma", "website-only data kept"
 assert alex["source"] == "website" and alex["searchName"] == "alex tester"
 assert alex["status"] == "active"
 assert alex["justgoMemberId"] == ids["alex"] and alex["justgoProfile"]["clubLinked"] is True and alex["justgoProfile"]["emailVerified"] is True

@@ -6,6 +6,7 @@ import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { CURRENT_MEMBERSHIP_VERSION, planUpgrade } from '../src/utils/schema.js';
 import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, memberIsJunior, householdGroupKey } from '../src/utils/households.js';
 import { allocateRecordIds } from '../src/utils/recordIds.js';
+import { legacyTerms, termId } from '../src/utils/membershipTerms.js';
 
 const apply = process.argv.includes('--apply');
 initializeApp(process.env.GCLOUD_PROJECT ? { projectId: process.env.GCLOUD_PROJECT } : undefined);
@@ -30,6 +31,40 @@ const commitIfFull = async () => {
   await batch.commit();
   batch = db.batch();
   pending = 0;
+};
+const count = (description, amount = 1) => tally.set(description, (tally.get(description) || 0) + amount);
+const sameItem = (a, b) => a.orderRef === b.orderRef && a.productId === b.productId && (a.lineId || '') === (b.lineId || '');
+
+/** Version 4: the record's privileges and purchase history become membership terms, and its orders name the member. */
+const termWrites = async (document) => {
+  const fields = document.data();
+  const refs = [...new Set((fields.history || []).map((entry) => entry?.orderRef).filter((ref) => typeof ref === 'string' && ref && !ref.includes('/')))];
+  const orderDocuments = refs.length ? await db.getAll(...refs.map((ref) => db.collection('orders').doc(ref))) : [];
+  const orders = new Map(orderDocuments.filter((order) => order.exists).map((order) => [order.id, order.data()]));
+  const stripeMode = process.env.STRIPE_SECRET_KEY?.includes('_live_') ? 'live' : 'test';
+  const plan = legacyTerms(document.id, fields, orders, stripeMode);
+  const writes = [];
+  for (const term of plan.terms) {
+    const reference = db.collection('membershipTerms').doc(termId(document.id, term.clubYear));
+    const existing = (await reference.get()).data();
+    // Terms written by purchases made after this release are kept; only what they lack is added.
+    const { items, ...membership } = term;
+    const missing = items.filter((item) => !(existing?.items || []).some((held) => sameItem(held, item)));
+    const fields = { membershipId: document.id, clubYear: term.clubYear, updatedAt: Timestamp.now(),
+      ...(existing?.source || !('source' in membership) ? {} : membership),
+      ...(missing.length ? { items: FieldValue.arrayUnion(...missing) } : {}) };
+    if (existing && !missing.length && (existing.source || !('source' in membership))) continue;
+    count('Write membershipTerms documents');
+    writes.push(() => batch.set(reference, fields, { merge: true }));
+  }
+  for (const ref of plan.orderRefs.filter((id) => orders.has(id) && !(orders.get(id).membershipIds || []).includes(document.id))) {
+    count('Link orders to their members (membershipIds)');
+    writes.push(() => batch.update(db.collection('orders').doc(ref), { membershipIds: FieldValue.arrayUnion(document.id) }));
+  }
+  const memberSet = { ...(plan.stripeMembership || {}), ...(plan.keyAccess ? { keyAccess: plan.keyAccess } : {}) };
+  if (plan.stripeMembership?.stripeMembershipSubscriptionId) count('Record the recurring membership subscription from old orders');
+  if (plan.keyAccess) count('Record key access from key hire bought before it was tracked');
+  return { writes, memberSet };
 };
 
 for (const [groupKey, group] of groups) {
@@ -63,8 +98,14 @@ for (const [groupKey, group] of groups) {
     if (!plan && !mustLink && !mustClean) continue;
     changed += 1;
     plan?.descriptions.forEach((description) => tally.set(description, (tally.get(description) || 0) + 1));
+    const terms = plan && plan.from < 4 ? await termWrites(document) : { writes: [], memberSet: {} };
     if (!apply) continue;
-    const set = { ...(plan?.set || {}), householdId };
+    for (const write of terms.writes) {
+      write();
+      pending += 1;
+      await commitIfFull();
+    }
+    const set = { ...(plan?.set || {}), ...terms.memberSet, householdId };
     const remove = new Set(plan?.remove || []);
     HOUSEHOLD_MEMBER_FIELDS.forEach((key) => { if (key in current) remove.add(key); });
     batch.update(document.ref, { ...set, ...Object.fromEntries([...remove].map((key) => [key, FieldValue.delete()])) });

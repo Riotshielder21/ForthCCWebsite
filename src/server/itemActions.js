@@ -4,6 +4,7 @@ import { orderLineId, minorUnits, validateItemAction, refundAvailable } from '..
 import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
 import { isMembership, grantsMembership } from '../utils/checkout.js';
 import { wantedQuantities } from '../utils/inventory.js';
+import { endTermItems, loadTerms, memberOrders } from './membershipTerms.js';
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const stripeId = (value) => typeof value === 'string' ? value : value?.id || '';
@@ -122,8 +123,11 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
     const target = order.items[index];
     const memberIds = [...new Set((order.people || []).filter((person) => person.lineIds?.includes(target.lineId)).map((person) => person.membershipId).filter(Boolean))];
     const members = memberIds.length ? await transaction.getAll(...memberIds.map((id) => db().collection('memberships').doc(id))) : [];
-    const previousOrderIds = [...new Set(members.flatMap((member) => (member.data()?.history || []).map((entry) => entry.orderRef)).filter((id) => id && id !== reference.id))];
-    const previousOrders = previousOrderIds.length ? await transaction.getAll(...previousOrderIds.map((id) => db().collection('orders').doc(id))) : [];
+    const terms = await loadTerms(db(), memberIds, transaction);
+    const previousOrders = new Map();
+    for (const id of memberIds) {
+      (await memberOrders(db(), id, transaction)).filter((entry) => entry.id !== reference.id).forEach((entry) => previousOrders.set(entry.id, entry));
+    }
     const stocks = await transaction.get(db().collection('stock').doc(target.id));
     const voucherIndex = order.items.slice(0, index).filter((item) => item.type === 'voucher').length;
     const voucher = target.type === 'voucher' ? order.vouchers?.[voucherIndex] : null;
@@ -134,16 +138,14 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
     const changedItems = order.items.map((item, itemIndex) => itemIndex === index ? { ...item, revokedAt: at, revokedBy: by, revokeReason: reason } : item);
     for (const document of members.filter((document) => document.exists)) {
       const member = document.data();
-      const update = {
-        privileges: (member.privileges || []).map((privilege) => privilege.orderRef === reference.id
-          && (target.lineId ? privilege.lineId === target.lineId : privilege.productId === target.id)
-          ? { ...privilege, endedAt: at, revokeReason: reason, revokedBy: by } : privilege),
-        updatedAt: at
-      };
+      const memberTerms = terms.get(document.id) || [];
+      endTermItems(transaction, memberTerms, (item) => item.orderRef === reference.id
+        && (target.lineId ? item.lineId === target.lineId : item.productId === target.id), at, { revokeReason: reason, revokedBy: by });
+      const update = { updatedAt: at };
       if (target.id === 'keyhire') update.keyAccess = { ...member.keyAccess, revokedAt: at, reason, by };
       if (isMembership(target) || (grantsMembership(target) && member.membershipIncludedWith?.orderRef === reference.id)) {
         const orders = [{ id: reference.id, ...order, items: changedItems },
-          ...previousOrders.filter((entry) => entry.exists && entry.data().status === 'paid').map((entry) => ({ id: entry.id, ...entry.data() }))];
+          ...[...previousOrders.values()].filter((entry) => entry.data().status === 'paid').map((entry) => ({ id: entry.id, ...entry.data() }))];
         const years = new Set();
         for (const purchase of orders) {
           const person = purchase.people?.find((person) => person.membershipId === document.id);
@@ -166,6 +168,10 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
         update.justgoSyncStatus = 'pending';
         update.justgoUpload = { status: 'revoked', needsStaff: true, lastError: 'Admin revoked a purchased membership. Review the matching JustGo record.' };
         update.membershipRevokedAt = at;
+        // Club years no longer bought are marked revoked on their terms; the year's entitlements stay as they are.
+        for (const term of memberTerms.filter((entry) => entry.data().orderRef === reference.id && !years.has(entry.data().clubYear) && !entry.data().revokedAt)) {
+          transaction.update(term.ref, { revokedAt: at, revokeReason: reason, revokedBy: by, end: term.data().start?.toMillis() > at.toMillis() ? term.data().start : at, updatedAt: at });
+        }
       }
       transaction.update(document.ref, update);
     }
