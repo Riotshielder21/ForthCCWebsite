@@ -17,6 +17,8 @@ import { calculateCart, expandClubYearLines, expandPeopleLines, NEXT_YEAR_LINE_S
 import { clubYearOf, clubYearDates, clubYearLabel, clubYearKind, resolveClubYearChoice, holdsForClubYear } from './src/utils/clubYear.js';
 import { createClubYearSubscription, clubYearCancelAt } from './src/server/clubYearSubscription.js';
 import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
+import { DISCOUNT_TYPES, discountDisplayStatus, discountFailure } from './src/utils/discountCodes.js';
+import { REASON_REQUIRED, auditEntry, requiredReason } from './src/utils/auditLog.js';
 import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
@@ -127,8 +129,8 @@ const scheduleVolunteerRemoval = async (reference, lineId, actor) => {
   const cancelScheduledAt = Timestamp.fromMillis(endsAt * 1000);
   await reference.update({ items: document.data().items.map((entry) => entry.lineId === item.lineId
     ? { ...entry, cancelScheduledAt, cancellationScheduleId: schedule.id } : entry) });
-  await adminDb.collection('adminSubscriptionAudit').add({ action: 'schedule-volunteer-benefit-cancellation',
-    adminUid: actor.uid, stripeSubscriptionId: document.id, lineIds: [item.lineId], checkedAt: Timestamp.now(), cancelScheduledAt });
+  await adminDb.collection('auditLog').add(auditEntry({ kind: 'subscription', action: 'schedule-volunteer-benefit-cancellation',
+    actor, at: Timestamp.now(), stripeSubscriptionId: document.id, lineIds: [item.lineId], cancelScheduledAt }));
   return cancelScheduledAt;
 };
 
@@ -155,8 +157,8 @@ const repriceVolunteerItem = async (reference, lineId, to, actor) => {
     await member.ref.update({ subscriptionItems: (member.data().subscriptionItems || []).map((entry) => entry.subscriptionId === document.id
       && entry.lineId === lineId && entry.status === 'active' ? { ...entry, monthlyAmount: to } : entry) });
   }
-  await adminDb.collection('adminSubscriptionAudit').add({ action: 'volunteer-price-change', adminUid: actor.uid,
-    stripeSubscriptionId: document.id, lineIds: [lineId], from: item.monthlyAmount, to, checkedAt: at });
+  await adminDb.collection('auditLog').add(auditEntry({ kind: 'subscription', action: 'volunteer-price-change', actor, at,
+    stripeSubscriptionId: document.id, lineIds: [lineId], from: item.monthlyAmount, to }));
 };
 
 /**
@@ -288,8 +290,6 @@ const stripeCustomerFor = async (email) => {
   return existing.data?.[0]?.id || (await stripeRequest('customers', [['email', email]])).id;
 };
 
-const customerId = (email) => crypto.createHash('sha256').update(normalizeEmail(email)).digest('hex');
-
 /** Only configured frontend origins may receive Stripe's success and cancel redirects. */
 const checkoutSiteOrigin = (req) => {
   const configuredSite = process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
@@ -389,9 +389,8 @@ const findMembership = async (person, now = new Date()) => {
   };
 };
 
-const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, householdSnapshots = new Map(), memberSnapshots = new Map() }) => {
+const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapshots = new Map(), memberSnapshots = new Map() }) => {
   const paidYear = clubYearOf(paidAt.toDate());
-  const membershipIds = [];
   const households = new Map();
   for (const person of order.people || []) {
     if (!person.householdId) continue;
@@ -437,7 +436,6 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, househ
       tier: membershipLine ? membershipLine.membershipTier || '' : grantedTier, entitlementLines, yearOf });
     const { id, lineIds, membershipId, existingMember, householdId, ownKitLineIds, grantMembership: _grant, grantMembershipYears: _years, heldClubYears: _held, subscriptionGroup: _group, ...details } = person;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
-    membershipIds.push(membershipId);
     const previous = memberSnapshots.get(membershipId)?.data();
     transaction.set(adminDb.collection('memberships').doc(membershipId), {
       ...(existingMember ? {} : {
@@ -467,13 +465,6 @@ const recordPurchase = (transaction, { orderRef, order, vouchers, paidAt, househ
       updatedAt: paidAt
     }, { merge: true });
   }
-  transaction.set(adminDb.collection('customers').doc(customerId(order.email)), {
-    email: order.email, updatedAt: paidAt, orderRefs: FieldValue.arrayUnion(orderRef),
-    ...(membershipIds.length ? { membershipIds: FieldValue.arrayUnion(...membershipIds) } : {}),
-    ...(vouchers.length ? { vouchers: FieldValue.arrayUnion(...vouchers.map((voucher) => ({
-      code: voucher.code, name: voucher.name, value: voucher.value, orderRef, expiresAt: voucher.expiresAt
-    }))) } : {})
-  }, { merge: true });
 };
 
 const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, subscriptionPlan = null }) => {
@@ -558,7 +549,7 @@ const recordUnsuccessfulCheckout = async (session, status) => {
     const timestamp = Timestamp.now();
     transaction.update(orderDocument, { status, 'stripe.processing': false, ...(status === 'expired' ? { expiredAt: timestamp }
       : { paymentFailure: paymentFailureRecord(order.paymentFailure, { at: timestamp }) }) });
-    if (discountDocument && discount?.reservedByOrder === orderRef && !discount.used) {
+    if (discountDocument && discount?.reservedByOrder === orderRef && discount.status !== 'used') {
       transaction.update(discountDocument, { reservedByOrder: null, reservedUntil: null });
     }
     return { ...order, orderRef };
@@ -631,7 +622,7 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
       : [];
     const householdSnapshots = new Map(householdDocuments.map((household) => [household.id, household]));
     // The customer has paid, so the order stands; staff decide what to do about the code being used twice.
-    const discountReused = Boolean(discount?.singleUse && discount.used && discount.usedByOrder !== orderRef);
+    const discountReused = Boolean(discount?.singleUse && discount.status === 'used' && discount.usedByOrder !== orderRef);
     householdReservation.save();
     const vouchers = order.vouchers || (order.items || []).filter((item) => item.type === 'voucher').map((item) => ({
       code: `FCC-${crypto.randomBytes(12).toString('hex').toUpperCase()}`,
@@ -644,21 +635,21 @@ const fulfilOrder = async ({ orderRef, sessionId, amountTotal, paymentIntent = '
     if (!order.vouchers) {
       for (const voucher of vouchers) {
         transaction.create(adminDb.collection('discountCodes').doc(voucher.code), {
-          code: voucher.code, label: voucher.name, discountType: 'credit', discountValue: voucher.value,
+          code: voucher.code, label: voucher.name, type: 'credit', discountValue: voucher.value,
           ...(voucher.productId ? { sourceProductId: voucher.productId } : {}),
           productIds: voucher.scope.productIds, categories: voucher.scope.categories,
-          used: false, singleUse: true, excludedCategories: ['MEMBERSHIP'],
+          status: 'active', singleUse: true, excludedCategories: ['MEMBERSHIP'],
           orderRef, email: order.email, createdAt: Timestamp.now(), expiresAt: voucher.expiresAt
         });
       }
     }
-    if (discount?.singleUse && !discountReused) transaction.update(discountDocument, { used: true, usedByOrder: orderRef, usedAt: Timestamp.now() });
+    if (discount?.singleUse && !discountReused) transaction.update(discountDocument, { status: 'used', usedByOrder: orderRef, usedAt: Timestamp.now() });
     // Paid stock holds never lapse; rebuilt from the order in case the reservation was already cleared.
     stock.forEach((snapshot) => transaction.set(snapshot.ref, {
       holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
     }));
     const paidAt = order.paidAt || Timestamp.now();
-    if (!order.fulfilment?.recordsWritten) recordPurchase(transaction, { orderRef, order, vouchers, paidAt, householdSnapshots,
+    if (!order.fulfilment?.recordsWritten) recordPurchase(transaction, { orderRef, order, paidAt, householdSnapshots,
       memberSnapshots: new Map(memberDocuments.map((document) => [document.id, document])) });
     // The member and household records now hold everyone's details, so the order keeps only references to them.
     transaction.update(orderDocument, {
@@ -808,7 +799,6 @@ const recordSubscriptionGroup = async ({ order, orderRef, plan, group, subscript
     ...(names.length ? { names: FieldValue.arrayUnion(...names) } : {}),
     ...(created ? { orderRef, createdAt: group.createdAt || now } : {})
   }, { merge: true });
-  batch.set(adminDb.collection('customers').doc(customerId(order.email)), { subscriptionIds: FieldValue.arrayUnion(subscription.id) }, { merge: true });
   const isMembershipLine = (lineId) => lineById.get(lineId)?.category === 'MEMBERSHIP';
   for (const membershipId of membershipIds) {
     // Members see what they receive and who pays for it, even when the subscription belongs to someone else.
@@ -988,7 +978,7 @@ const recordPaymentProcessing = async (session) => {
     stock.forEach((snapshot) => transaction.set(snapshot.ref, {
       holds: withHold(snapshot.data()?.holds || {}, orderRef, wantedQuantities(order.items.filter((item) => item.id === snapshot.id)), Date.now(), null)
     }));
-    if (discount?.singleUse && discount.reservedByOrder === orderRef && !discount.used) {
+    if (discount?.singleUse && discount.reservedByOrder === orderRef && discount.status !== 'used') {
       transaction.update(discountDocument, { reservedUntil: Timestamp.fromMillis(Date.now() + PROCESSING_HOLD_DAYS * 24 * 60 * 60 * 1000) });
     }
     transaction.update(orderDocument, { 'stripe.processing': true, 'stripe.processingSince': Timestamp.now(), 'stripe.paymentIntentId': stripeId(session.payment_intent) });
@@ -1307,6 +1297,15 @@ const stripeReportRequest = (secret) => async (path, options = {}) => {
   return data;
 };
 
+/** Names for staff come from the member records a mirrored subscriber pays for; erased or missing ones are left out. */
+const withMemberNames = async (records) => {
+  const ids = [...new Set(records.flatMap((record) => record.membershipIds || []))];
+  const members = ids.length ? await adminDb.getAll(...ids.map((id) => adminDb.collection('memberships').doc(id))) : [];
+  const names = new Map(members.filter((document) => document.exists)
+    .map((document) => [document.id, `${document.data().firstName || ''} ${document.data().lastName || ''}`.trim()]));
+  return records.map((record) => ({ ...record, names: (record.membershipIds || []).map((id) => names.get(id)).filter(Boolean) }));
+};
+
 app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
   if (!await requireAdmin(req, res)) return;
   res.set('Cache-Control', 'no-store');
@@ -1321,8 +1320,8 @@ app.get('/api/admin/reports', rateLimit(60, 60 * 1000), async (req, res) => {
       if (!/^(sk|rk)_(test|live)_/.test(secret)) return res.status(503).json({ error: 'Stripe reporting is not configured. Set a server-only Stripe report key with read access.' });
       const mode = secret.includes('_live_') ? 'live' : 'test';
       if (localFirebase && mode === 'live') return res.status(400).json({ error: 'Use Stripe test data with local emulators.' });
-      const result = await loadStripeSubscribers(stripeReportRequest(secret), cursor);
-      const records = await importStripeSubscribers(adminDb, result.records, mode, result.checkedAt);
+      const { payerEmails, ...result } = await loadStripeSubscribers(stripeReportRequest(secret), cursor);
+      const records = await withMemberNames(await importStripeSubscribers(adminDb, result.records, mode, result.checkedAt, payerEmails));
       return res.json({ ...result, records, mode, imported: records.length, clubYearEnd: nextClubYearEnd() });
     }
     if (!adminDb) return res.status(503).json({ error: 'Report storage is not configured.' });
@@ -1434,6 +1433,8 @@ const cancelSubscriptionLines = async (req, res, pick, action) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   if (!adminDb) return res.status(503).json({ error: 'Subscription storage is not configured.' });
+  const reason = requiredReason(req.body);
+  if (!reason) return res.status(400).json({ error: REASON_REQUIRED });
   const reference = adminDb.collection('subscriptions').doc(String(req.params.id).slice(0, 100));
   const document = await reference.get();
   if (!document.exists) return res.status(404).json({ error: 'Subscription not found.' });
@@ -1441,11 +1442,11 @@ const cancelSubscriptionLines = async (req, res, pick, action) => {
   const active = activeSubscriptionItems(record);
   const ending = pick(active);
   if (!ending.length) return res.status(409).json({ error: 'Those monthly payments are already cancelled.' });
-  const result = await stopSubscriptionItems(reference, record, ending, admin, action, req.body?.reason || '');
+  const result = await stopSubscriptionItems(reference, record, ending, admin, action, reason);
   res.json(result);
 };
 
-const stopSubscriptionItems = async (reference, record, ending, admin, action, reason = '', request = stripeRequest) => {
+const stopSubscriptionItems = async (reference, record, ending, admin, action, reason, request = stripeRequest) => {
   const document = { id: reference.id };
   const active = activeSubscriptionItems(record);
   const stripeSubscription = await request(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
@@ -1523,10 +1524,8 @@ const stopSubscriptionItems = async (reference, record, ending, admin, action, r
       updatedAt: now
     });
   }
-  batch.set(adminDb.collection('adminSubscriptionAudit').doc(), {
-    adminUid: admin.uid, adminEmail: admin.email || '', action: wholeSubscription ? 'cancel-subscription' : action,
-    stripeSubscriptionId: document.id, orderRefs, lineIds: [...endingLines], reason, checkedAt: now
-  });
+  batch.set(adminDb.collection('auditLog').doc(), auditEntry({ kind: 'subscription', action: wholeSubscription ? 'cancel-subscription' : action,
+    reason, actor: admin, at: now, stripeSubscriptionId: document.id, orderRefs, lineIds: [...endingLines] }));
   await batch.commit();
   return { subscription: subscriptionView(await reference.get()), cancelledWholeSubscription: wholeSubscription, cancelledLineIds: [...endingLines] };
 };
@@ -1562,6 +1561,8 @@ app.post('/api/admin/subscribers/:id/cancel', rateLimit(10, 60 * 1000), async (r
       || confirmId !== id || acknowledgeImmediateCancellation !== true) {
       return res.status(400).json({ error: 'Confirm the exact subscription ID and approve immediate cancellation.' });
     }
+    const reason = requiredReason(req.body);
+    if (!reason) return res.status(400).json({ error: REASON_REQUIRED });
     if (localFirebase && mode === 'live') return res.status(400).json({ error: 'Live billing changes are disabled with local emulators.' });
     const secret = process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY || '';
     if (!/^(sk|rk)_(test|live)_/.test(secret)) return res.status(503).json({ error: 'Subscription cancellation is not configured. Set STRIPE_SUBSCRIPTION_ADMIN_KEY on the server.' });
@@ -1573,13 +1574,11 @@ app.post('/api/admin/subscribers/:id/cancel', rateLimit(10, 60 * 1000), async (r
     }
     const result = await cancelStripeSubscription(stripeReportRequest(secret), id, clubCustomerId, mode);
     const checkedAt = new Date().toISOString();
-    const [record] = await importStripeSubscribers(adminDb, [result.record], mode, checkedAt);
+    const [record] = await withMemberNames(await importStripeSubscribers(adminDb, [result.record], mode, checkedAt));
     const batch = adminDb.batch();
     batch.set(registry, { immediateCancellationConfirmedAt: checkedAt, immediateCancellationConfirmedBy: admin.uid }, { merge: true });
-    batch.set(adminDb.collection('adminSubscriptionAudit').doc(`immediate-${mode}-${id}`), {
-      adminUid: admin.uid, stripeSubscriptionId: id, clubCustomerId, mode, action: 'cancel-immediately',
-      changed: result.changed, checkedAt
-    }, { merge: true });
+    batch.set(adminDb.collection('auditLog').doc(`subscription_immediate-${mode}-${id}`), auditEntry({ kind: 'subscription', action: 'cancel-immediately',
+      reason, actor: admin, at: new Date(checkedAt), stripeSubscriptionId: id, clubCustomerId, mode, changed: result.changed }), { merge: true });
     await batch.commit();
     res.json({ ...result, record, checkedAt });
   } catch (error) {
@@ -1618,6 +1617,8 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       return res.status(400).json({ error: 'Invalid report record.' });
     }
     if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Type the exact record ID to confirm deletion.' });
+    const reason = requiredReason(req.body);
+    if (!reason) return res.status(400).json({ error: REASON_REQUIRED });
     const activeMonthly = await activeMonthlyPaymentsFor(req.params.kind, req.params.id);
     if (activeMonthly.length) {
       return res.status(409).json({ code: 'active_monthly_payments', activeMonthly,
@@ -1644,10 +1645,8 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       const stock = req.params.kind === 'orders' ? await readStock(transaction, limitedProductIds(fields.items || [])) : [];
       stock.forEach((snapshot) => dropHold(transaction, snapshot, req.params.id));
       transaction.delete(reference);
-      transaction.create(adminDb.collection('adminDeletionAudit').doc(), {
-        ...deletionAuditEntry({ kind: req.params.kind, id: req.params.id, fields, orderPeople, secret: auditSecret, adminUid: admin.uid, stripeAcknowledged: req.body.acknowledgeStripe === true }),
-        createdAt: Timestamp.now()
-      });
+      transaction.create(adminDb.collection('auditLog').doc(), auditEntry({ kind: 'deletion', action: 'delete-record', reason, actor: admin, at: Timestamp.now(),
+        ...deletionAuditEntry({ kind: req.params.kind, id: req.params.id, fields, orderPeople, secret: auditSecret, stripeAcknowledged: req.body.acknowledgeStripe === true }) }));
       return { status: 200, success: true };
     });
     res.status(result.status).json(result);
@@ -1657,8 +1656,8 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
   }
 });
 
-registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail,
-  stopSubscriptionItems: async (subscriptionId, items, admin, stripeAdminRequest) => {
+registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail,
+  stopSubscriptionItems: async (subscriptionId, items, admin, stripeAdminRequest, reason) => {
     const reference = adminDb.collection('subscriptions').doc(subscriptionId);
     const record = (await reference.get()).data();
     if (!record) throw new Error('Subscription record disappeared during erasure. Reload the preview and retry.');
@@ -1667,7 +1666,7 @@ registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, 
     const request = (path, params, method = 'POST') => stripeAdminRequest(path, {
       method, ...(params ? { body: new URLSearchParams(params) } : {})
     });
-    if (ending.length) await stopSubscriptionItems(reference, record, ending, admin, 'gdpr-erasure', 'GDPR erasure', request);
+    if (ending.length) await stopSubscriptionItems(reference, record, ending, admin, 'gdpr-erasure', `GDPR erasure: ${reason}`, request);
   } });
 registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
 const { settleKeyAccess, notifyKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message) });
@@ -1975,16 +1974,9 @@ const findDiscountCode = async (code) => {
   return snapshot.docs[0] || null;
 };
 
-const discountFailure = (discount) => {
-  if (!discount || discount.used || discount.active === false) return 'Invalid or already used code.';
-  if (discount.expiresAt?.toMillis() <= Date.now()) return 'Code expired.';
-  if (discount.singleUse && discount.reservedUntil?.toMillis() > Date.now()) return 'Voucher is already in checkout. Try again later.';
-  return null;
-};
-
 const publicDiscount = (discount) => ({
-  label: discount.label || 'Discount', discountType: discount.discountType || 'multiplier',
-  discountValue: discount.discountValue ?? 0.25, allowsAnnualStacking: discount.allowsAnnualStacking === true,
+  label: discount.label || 'Discount', type: discount.type,
+  discountValue: discount.discountValue, allowsAnnualStacking: discount.allowsAnnualStacking === true,
   productIds: Array.isArray(discount.productIds) ? discount.productIds : [],
   categories: Array.isArray(discount.categories) ? discount.categories : []
 });
@@ -2066,7 +2058,7 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
         const data = document.data();
         return {
           code: data.code, value: data.discountValue, orderRef: data.orderRef, usedByOrder: data.usedByOrder || '',
-          status: data.active === false ? 'revoked' : data.used ? 'used' : data.expiresAt?.toMillis() <= now ? 'expired' : data.reservedUntil?.toMillis() > now ? 'in checkout' : 'active',
+          status: discountDisplayStatus(data, now),
           createdAt: data.createdAt?.toMillis() || 0, expiresAt: data.expiresAt?.toMillis() || 0, usedAt: data.usedAt?.toMillis() || 0
         };
       }).sort((a, b) => b.createdAt - a.createdAt),
@@ -2098,12 +2090,12 @@ app.get('/api/admin/discount-codes', rateLimit(30, 60 * 1000), async (req, res) 
     const now = Date.now();
     const vouchers = summariseVoucherCodes(snapshot.docs.map((document) => document.data()).map((data) => ({
       orderRef: data.orderRef, sourceProductId: data.sourceProductId, label: data.label, discountValue: data.discountValue,
-      used: data.used === true, expiresAt: data.expiresAt?.toMillis() || 0
+      status: data.status, expiresAt: data.expiresAt?.toMillis() || 0
     })), now);
     const codes = snapshot.docs.map((document) => document.data()).filter((data) => !data.orderRef).map((data) => ({
-      code: data.code, label: data.label || '', discountType: data.discountType || 'multiplier',
-      discountValue: data.discountValue ?? 0.25, productIds: Array.isArray(data.productIds) ? data.productIds : [],
-      singleUse: data.singleUse === true, used: data.used === true, active: data.active !== false,
+      code: data.code, label: data.label || '', type: data.type,
+      discountValue: data.discountValue, productIds: Array.isArray(data.productIds) ? data.productIds : [],
+      singleUse: data.singleUse === true, status: data.status,
       expired: data.expiresAt?.toMillis() <= now, expiresAt: data.expiresAt?.toMillis() || 0, createdAt: data.createdAt?.toMillis() || 0
     })).sort((a, b) => b.createdAt - a.createdAt).slice(0, 500);
     res.json({ codes, vouchers });
@@ -2114,21 +2106,21 @@ app.get('/api/admin/discount-codes', rateLimit(30, 60 * 1000), async (req, res) 
 });
 
 const parseDiscountFields = (body, { requireFutureExpiry }) => {
-  const { label, discountType } = body;
+  const { label, type } = body;
   const discountValue = Number(body.discountValue);
   const expiry = body.expiresAt ? new Date(body.expiresAt) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
   const productIds = Array.isArray(body.productIds) ? body.productIds : [];
   if (typeof label !== 'string' || !label.trim() || label.length > 120 ||
-      !['credit', 'multiplier', 'flat'].includes(discountType) || !Number.isFinite(discountValue) || discountValue <= 0 ||
-      (discountType === 'multiplier' && discountValue > 1) || !Number.isFinite(expiry.getTime()) || (requireFutureExpiry && expiry <= new Date())) {
+      !DISCOUNT_TYPES.includes(type) || !Number.isFinite(discountValue) || discountValue <= 0 ||
+      (type === 'multiplier' && discountValue > 1) || !Number.isFinite(expiry.getTime()) || (requireFutureExpiry && expiry <= new Date())) {
     return { error: 'Enter a valid label, discount value and expiry.' };
   }
   if (productIds.length > 50 || productIds.some((id) => typeof id !== 'string' || id.length > 100)) {
     return { error: 'Choose valid products for this code.' };
   }
   return { fields: {
-    label: label.trim(), discountType, discountValue, productIds: [...new Set(productIds)],
-    singleUse: discountType === 'credit' || body.singleUse === true, expiresAt: Timestamp.fromDate(expiry)
+    label: label.trim(), type, discountValue, productIds: [...new Set(productIds)],
+    singleUse: type === 'credit' || body.singleUse === true, expiresAt: Timestamp.fromDate(expiry)
   } };
 };
 
@@ -2138,8 +2130,10 @@ app.patch('/api/admin/discount-codes/:code', rateLimit(30, 60 * 1000), async (re
     if (!adminDb) return res.status(503).json({ error: 'Discount storage is not configured.' });
     const document = await findDiscountCode(String(req.params.code).toUpperCase());
     if (!document || document.data().orderRef) return res.status(404).json({ error: 'Discount code not found.' });
-    if (typeof req.body.active === 'boolean' && Object.keys(req.body).length === 1) {
-      await document.ref.update({ active: req.body.active });
+    if ('status' in req.body && Object.keys(req.body).length === 1) {
+      if (!['active', 'disabled'].includes(req.body.status)) return res.status(400).json({ error: 'A code can only be turned on or off.' });
+      if (document.data().status === 'used') return res.status(409).json({ error: 'This code has been used.' });
+      await document.ref.update({ status: req.body.status });
       return res.json({ success: true });
     }
     const { error, fields } = parseDiscountFields(req.body, { requireFutureExpiry: false });
@@ -2161,7 +2155,7 @@ app.post('/api/admin/discount-codes', rateLimit(20, 60 * 1000), async (req, res)
     if (error || !/^[A-Z0-9-]{3,64}$/.test(code)) return res.status(400).json({ error: error || 'Enter a valid code.' });
     if (await findDiscountCode(code)) return res.status(409).json({ error: 'This discount code already exists.' });
     await adminDb.collection('discountCodes').doc(code).create({
-      code, ...fields, used: false, active: true,
+      code, ...fields, status: 'active',
       allowsAnnualStacking: req.body.allowsAnnualStacking === true,
       excludedCategories: ['MEMBERSHIP'], createdBy: admin.uid,
       createdAt: Timestamp.now()
@@ -2573,7 +2567,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       try {
         await adminDb.runTransaction(async (transaction) => {
           const document = await transaction.get(reservedDocument);
-          if (document.data()?.reservedByOrder === orderRef && !document.data()?.used) {
+          if (document.data()?.reservedByOrder === orderRef && document.data()?.status !== 'used') {
             transaction.update(reservedDocument, { reservedByOrder: null, reservedUntil: null });
           }
         });

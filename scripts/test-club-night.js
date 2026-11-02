@@ -15,7 +15,7 @@ import { allocateRecordIds } from '../src/utils/recordIds.js';
 const PROJECT = 'demo-fcc-club-night-tests';
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: PROJECT });
 const db = getFirestore(initializeApp({ projectId: PROJECT }, 'club-night-tests'));
-const COLLECTIONS = ['households', 'memberships', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'customers', 'adminDeletionAudit', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals', 'membershipTerms'];
+const COLLECTIONS = ['households', 'memberships', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'auditLog', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals', 'membershipTerms'];
 const clear = async () => {
   for (const name of COLLECTIONS) {
     const snapshot = await db.collection(name).get();
@@ -273,14 +273,14 @@ try {
   const guestId = guestRecord.id;
   await signIn(guest.email, 'details', guest.dob);
   assert.ok((await db.collection('clubNightCheckins').where('memberId', '==', guestId).get()).size >= 2);
-  const erased = await call('/api/admin/gdpr/erase', { method: 'POST', admin: true, body: { ...guest, scope: 'person', confirm: 'ERASE' } });
+  const erased = await call('/api/admin/gdpr/erase', { method: 'POST', admin: true, body: { ...guest, scope: 'person', confirm: 'ERASE', reason: 'Guest asked to be forgotten' } });
   assert.equal(erased.status, 200, JSON.stringify(erased.data));
   assert.equal((await db.collection('clubNightCheckins').where('memberId', '==', guestId).get()).size, 0, 'check-ins erased');
   assert.equal((await db.collection('emailSessions').where('email', '==', guest.email).get()).size, 0, 'email sessions erased');
   assert.equal((await db.collection('memberships').doc(guestId).get()).exists, false);
   const memberId = (await db.collection('memberships').where('householdId', '==', 'HH-MEMBER').get()).docs[0].id;
   assert.ok((await db.collection('clubNightAccessLog').where('memberId', '==', memberId).get()).size >= 1);
-  const memberErased = await call('/api/admin/gdpr/erase', { method: 'POST', admin: true, body: { ...member, email: newEmail, scope: 'person', confirm: 'ERASE' } });
+  const memberErased = await call('/api/admin/gdpr/erase', { method: 'POST', admin: true, body: { ...member, email: newEmail, scope: 'person', confirm: 'ERASE', reason: 'Member asked to be forgotten' } });
   assert.equal(memberErased.status, 200, JSON.stringify(memberErased.data));
   assert.equal((await db.collection('clubNightAccessLog').where('memberId', '==', memberId).get()).size, 0, 'emergency-contact access log erased');
   assert.equal((await db.collection('selfServiceChanges').where('householdId', '==', 'HH-MEMBER').get()).size, 0, 'self-service log erased');

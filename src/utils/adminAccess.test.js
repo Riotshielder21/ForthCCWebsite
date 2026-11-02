@@ -22,9 +22,16 @@ test('an admin change needs an action and a club email', () => {
 });
 
 test('admins cannot remove themselves', () => {
-  assert.ok(validateAdminChange({ action: 'revoke', email: 'me@forthcanoeclub.co.uk' }, 'Me@forthcanoeclub.co.uk').error);
-  assert.ok(validateAdminChange({ action: 'revoke', email: 'jo@forthcanoeclub.co.uk' }, 'me@forthcanoeclub.co.uk').value);
+  assert.ok(validateAdminChange({ action: 'revoke', email: 'me@forthcanoeclub.co.uk', reason: 'Left' }, 'Me@forthcanoeclub.co.uk').error);
+  assert.deepEqual(validateAdminChange({ action: 'revoke', email: 'jo@forthcanoeclub.co.uk', reason: ' Left the committee ' }, 'me@forthcanoeclub.co.uk').value,
+    { action: 'revoke', email: 'jo@forthcanoeclub.co.uk', reason: 'Left the committee' });
   assert.ok(validateAdminChange({ action: 'grant', email: 'me@forthcanoeclub.co.uk' }, 'me@forthcanoeclub.co.uk').value);
+});
+
+test('removing admin access needs a reason', () => {
+  for (const reason of [undefined, '', '   ', 'x'.repeat(1001)]) {
+    assert.match(validateAdminChange({ action: 'revoke', email: 'jo@forthcanoeclub.co.uk', reason }, 'me@forthcanoeclub.co.uk').error, /reason/);
+  }
 });
 
 test('only verified Google sign-ins on the club domain can be approved', () => {

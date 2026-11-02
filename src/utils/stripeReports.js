@@ -1,3 +1,4 @@
+/** A Stripe subscription as staff see it. The payer's name and email stay in Stripe; see `subscriberMembershipIds`. */
 export const stripeSubscriberReport = (subscription) => {
   const customer = typeof subscription.customer === 'object' ? subscription.customer : null;
   const invoice = typeof subscription.latest_invoice === 'object' ? subscription.latest_invoice : null;
@@ -14,8 +15,7 @@ export const stripeSubscriberReport = (subscription) => {
   }));
   const timestamp = (value) => value ? new Date(value * 1000).toISOString() : null;
   return {
-    id: subscription.id, stripeCustomerId: customer?.id || subscription.customer || '',
-    name: customer?.deleted ? '' : customer?.name || '', email: customer?.deleted ? '' : customer?.email || '',
+    id: subscription.id, stripeCustomerId: customer?.id || subscription.customer || '', orderRef: subscription.metadata?.order_ref || '',
     status: active ? 'Active' : 'Inactive', stripeStatus: subscription.status,
     reason: reversed ? 'Payment refunded or disputed' : suspended ? 'Payments suspended' : active ? '' : subscription.status,
     cancelAt: timestamp(subscription.cancel_at), cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
@@ -30,8 +30,28 @@ export const loadStripeSubscribers = async (request, cursor) => {
   params.append('expand[]', 'data.latest_invoice.payment_intent.latest_charge');
   if (cursor) params.set('starting_after', cursor);
   const result = await request(`subscriptions?${params}`);
-  return { records: result.data.map(stripeSubscriberReport), nextCursor: result.has_more ? result.data.at(-1)?.id : null,
+  return { records: result.data.map(stripeSubscriberReport), payerEmails: payerEmails(result.data), nextCursor: result.has_more ? result.data.at(-1)?.id : null,
     checkedAt: new Date().toISOString() };
+};
+
+/** Each subscription's payer email, used only to find their orders and never stored. */
+export const payerEmails = (subscriptions) => new Map(subscriptions.map((subscription) => [subscription.id,
+  typeof subscription.customer === 'object' && !subscription.customer?.deleted ? String(subscription.customer?.email || '').trim().toLowerCase() : '']));
+
+/**
+ * The members a Stripe subscription pays for: from its `subscriptions` record, else the order in its metadata, else
+ * every order placed with the payer's email.
+ */
+export const subscriberMembershipIds = async (db, record, email = '') => {
+  const own = (await db.collection('subscriptions').doc(record.id).get()).data();
+  if (own?.membershipIds?.length) return own.membershipIds;
+  if (record.orderRef) {
+    const order = (await db.collection('orders').doc(record.orderRef).get()).data();
+    if (order?.membershipIds?.length) return order.membershipIds;
+  }
+  if (!email) return [];
+  const orders = await db.collection('orders').where('email', '==', email).limit(50).get();
+  return [...new Set(orders.docs.flatMap((document) => document.data().membershipIds || []))];
 };
 
 export const nextClubYearEnd = (now = new Date()) => {
@@ -49,22 +69,33 @@ export const importedSubscriber = (record, mode) => {
     clubSubscriptionId: `FCC-${mode}-${record.id}`, stripeMode: mode };
 };
 
-export const importStripeSubscribers = async (db, records, mode, checkedAt) => {
-  const imported = records.map((record) => importedSubscriber(record, mode));
+/**
+ * Mirrors subscriptions into `stripeSubscriptions` and their payers into `stripeCustomers`, each with the
+ * `membershipIds` they cover. A subscriber with no matching members keeps the ones already mirrored.
+ */
+export const importStripeSubscribers = async (db, records, mode, checkedAt, emails = new Map()) => {
+  const imported = await Promise.all(records.map(async (record) => ({ ...importedSubscriber(record, mode),
+    membershipIds: await subscriberMembershipIds(db, record, emails.get(record.id)) })));
   if (!imported.length) return imported;
-  const customers = new Map(imported.map((record) => [record.clubCustomerId, {
-    clubCustomerId: record.clubCustomerId, stripeCustomerId: record.stripeCustomerId,
-    stripeMode: mode, name: record.name, email: record.email, lastCheckedAt: checkedAt
-  }]));
+  const customers = new Map();
+  for (const record of imported) {
+    const customer = customers.get(record.clubCustomerId) || { clubCustomerId: record.clubCustomerId, stripeCustomerId: record.stripeCustomerId,
+      stripeMode: mode, membershipIds: [], lastCheckedAt: checkedAt };
+    customer.membershipIds = [...new Set([...customer.membershipIds, ...record.membershipIds])];
+    customers.set(record.clubCustomerId, customer);
+  }
   const writes = [
     ...[...customers].map(([id, fields]) => ({ ref: db.collection('stripeCustomers').doc(id), fields })),
-    ...imported.map((record) => ({ ref: db.collection('stripeSubscriptions').doc(record.clubSubscriptionId),
+    ...imported.map((record) => ({ ref: db.collection('stripeSubscriptions').doc(record.clubSubscriptionId), record,
       fields: { ...record, lastCheckedAt: checkedAt } }))
   ];
   await db.runTransaction(async (transaction) => {
     const existing = await transaction.getAll(...writes.map((write) => write.ref));
-    writes.forEach((write, index) => transaction.set(write.ref, { ...write.fields,
-      ...(!existing[index].exists ? { firstImportedAt: checkedAt } : {}) }, { merge: true }));
+    writes.forEach((write, index) => {
+      const membershipIds = [...new Set([...(existing[index].data()?.membershipIds || []), ...write.fields.membershipIds])];
+      transaction.set(write.ref, { ...write.fields, membershipIds, ...(!existing[index].exists ? { firstImportedAt: checkedAt } : {}) }, { merge: true });
+      if (write.record) write.record.membershipIds = membershipIds;
+    });
   });
   return imported;
 };

@@ -9,11 +9,11 @@ const TYPES = [
   ['credit', 'Fixed amount off the total (£)'],
   ['flat', 'Fixed amount off each monthly subscription (£)']
 ];
-const EMPTY = { code: '', label: '', discountType: 'multiplier', value: '', productIds: [], singleUse: false, expiresAt: '' };
+const EMPTY = { code: '', label: '', type: 'multiplier', value: '', productIds: [], singleUse: false, expiresAt: '' };
 
-const describe = (code) => code.discountType === 'multiplier'
+const describe = (code) => code.type === 'multiplier'
   ? `${Math.round(code.discountValue * 10000) / 100}% off`
-  : `£${Number(code.discountValue).toFixed(2)} off${code.discountType === 'flat' ? ' per month' : ''}`;
+  : `£${Number(code.discountValue).toFixed(2)} off${code.type === 'flat' ? ' per month' : ''}`;
 
 export default function DiscountCodesPanel({ adminUser, products }) {
   const [codes, setCodes] = useState([]);
@@ -56,7 +56,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
 
   const update = (field, value) => setDraft((current) => ({ ...current, [field]: value }));
   // Fixed-amount codes default to single use; the admin can still untick flat ones.
-  const changeType = (discountType) => setDraft((current) => ({ ...current, discountType, singleUse: discountType === 'multiplier' ? current.singleUse : true }));
+  const changeType = (type) => setDraft((current) => ({ ...current, type, singleUse: type === 'multiplier' ? current.singleUse : true }));
   const toggleProduct = (id) => update('productIds', draft.productIds.includes(id)
     ? draft.productIds.filter((candidate) => candidate !== id)
     : [...draft.productIds, id]);
@@ -69,8 +69,8 @@ export default function DiscountCodesPanel({ adminUser, products }) {
     try {
       const value = Number(draft.value);
       const body = {
-        label: draft.label, discountType: draft.discountType,
-        discountValue: draft.discountType === 'multiplier' ? value / 100 : value,
+        label: draft.label, type: draft.type,
+        discountValue: draft.type === 'multiplier' ? value / 100 : value,
         productIds: draft.productIds, singleUse: draft.singleUse,
         ...(draft.expiresAt ? { expiresAt: `${draft.expiresAt}T23:59:59` } : {})
       };
@@ -102,8 +102,8 @@ export default function DiscountCodesPanel({ adminUser, products }) {
     setMessage('');
     setError('');
     setDraft({
-      code: code.code, label: code.label, discountType: code.discountType,
-      value: String(code.discountType === 'multiplier' ? Math.round(code.discountValue * 10000) / 100 : code.discountValue),
+      code: code.code, label: code.label, type: code.type,
+      value: String(code.type === 'multiplier' ? Math.round(code.discountValue * 10000) / 100 : code.discountValue),
       productIds: code.productIds, singleUse: code.singleUse,
       expiresAt: code.expiresAt ? new Date(code.expiresAt).toISOString().slice(0, 10) : ''
     });
@@ -113,7 +113,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
   const vouchers = voucherRows(products, voucherSummaries);
   const currentRows = [
     ...vouchers.map((row) => ({ kind: 'voucher', ...row })),
-    ...codes.filter((code) => showDisabled || code.active).map((code) => ({ kind: 'code', ...code }))
+    ...codes.filter((code) => showDisabled || code.status !== 'disabled').map((code) => ({ kind: 'code', ...code }))
   ];
   const voucherStatus = (row) => row.issued
     ? `${row.issued} issued: ${row.active} active${row.active ? ` (£${row.unspent.toFixed(2)} unspent)` : ''}, ${row.used} used, ${row.expired} expired`
@@ -157,7 +157,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
   const toggleActive = async (code) => {
     setError('');
     try {
-      await request(`/api/admin/discount-codes/${encodeURIComponent(code.code)}`, { method: 'PATCH', body: JSON.stringify({ active: !code.active }) });
+      await request(`/api/admin/discount-codes/${encodeURIComponent(code.code)}`, { method: 'PATCH', body: JSON.stringify({ status: code.status === 'active' ? 'disabled' : 'active' }) });
       load();
     } catch (toggleError) {
       setError(toggleError.message);
@@ -190,12 +190,12 @@ export default function DiscountCodesPanel({ adminUser, products }) {
           <label className="FormLabel">Code<input className="FormInput" required disabled={Boolean(editing)} pattern="[A-Za-z0-9-]{3,64}" maxLength={64} value={draft.code} onChange={(event) => update('code', event.target.value.toUpperCase())} /></label>
           <label className="FormLabel">Label shown to customers<input className="FormInput" required maxLength={120} value={draft.label} onChange={(event) => update('label', event.target.value)} /></label>
           <label className="FormLabel">Type
-            <select className="FormInput" value={draft.discountType} onChange={(event) => changeType(event.target.value)}>
+            <select className="FormInput" value={draft.type} onChange={(event) => changeType(event.target.value)}>
               {TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
-          <label className="FormLabel">{draft.discountType === 'multiplier' ? 'Percentage (1-100)' : 'Amount (£)'}
-            <input className="FormInput" type="number" required min="0.01" max={draft.discountType === 'multiplier' ? '100' : undefined} step="0.01" value={draft.value} onChange={(event) => update('value', event.target.value)} />
+          <label className="FormLabel">{draft.type === 'multiplier' ? 'Percentage (1-100)' : 'Amount (£)'}
+            <input className="FormInput" type="number" required min="0.01" max={draft.type === 'multiplier' ? '100' : undefined} step="0.01" value={draft.value} onChange={(event) => update('value', event.target.value)} />
           </label>
           <label className="FormLabel">Expires (optional, default 1 year)<input className="FormInput" type="date" value={draft.expiresAt} onChange={(event) => update('expiresAt', event.target.value)} /></label>
         </div>
@@ -205,7 +205,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
             <label key={product.id} className="CheckoutCheck"><input type="checkbox" checked={draft.productIds.includes(product.id)} onChange={() => toggleProduct(product.id)} /> {product.name}</label>
           )} />
         </fieldset>
-        <label className="CheckoutCheck"><input type="checkbox" checked={draft.singleUse || draft.discountType === 'credit'} disabled={draft.discountType === 'credit'} onChange={(event) => update('singleUse', event.target.checked)} /> Single use (disabled after one order){draft.discountType === 'credit' ? ' - always on for this type' : ''}</label>
+        <label className="CheckoutCheck"><input type="checkbox" checked={draft.singleUse || draft.type === 'credit'} disabled={draft.type === 'credit'} onChange={(event) => update('singleUse', event.target.checked)} /> Single use (disabled after one order){draft.type === 'credit' ? ' - always on for this type' : ''}</label>
         </>}
         {message && <p className="StatusText StatusTextSuccess">{message}</p>}
         {error && <p className="StatusText StatusTextError">{error}</p>}
@@ -240,11 +240,11 @@ export default function DiscountCodesPanel({ adminUser, products }) {
                   <td>{row.label}</td>
                   <td>{describe(row)}</td>
                   <td>{row.productIds.length ? row.productIds.map(nameFor).join(', ') : 'Everything except membership'}</td>
-                  <td>{row.used ? 'used' : row.expired ? 'expired' : row.active ? 'active' : 'disabled'}{row.singleUse ? ' (single use)' : ''}</td>
+                  <td>{row.status === 'active' && row.expired ? 'expired' : row.status}{row.singleUse ? ' (single use)' : ''}</td>
                   <td>{row.expiresAt ? new Date(row.expiresAt).toLocaleDateString('en-GB') : ''}</td>
                   <td className="DiscountCodeActionCell"><div className="DiscountCodeActions">
                     <button type="button" disabled={saving} className="PrimaryActionButtonCompact" onClick={() => startEdit(row)}>Edit</button>
-                    <button type="button" className="PrimaryActionButtonCompact" onClick={() => toggleActive(row)}>{row.active ? 'Disable' : 'Enable'}</button>
+                    {row.status !== 'used' && <button type="button" className="PrimaryActionButtonCompact" onClick={() => toggleActive(row)}>{row.status === 'active' ? 'Disable' : 'Enable'}</button>}
                   </div></td>
                 </tr>
               ))}

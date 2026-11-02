@@ -12,7 +12,7 @@ export const summariseVoucherCodes = (codes, now = Date.now()) => {
     const group = groups.get(key) || { productId: code.sourceProductId || '', label: code.label || '', issued: 0, active: 0, used: 0, expired: 0, unspent: 0 };
     const value = Number(code.discountValue) || 0;
     group.issued += 1;
-    if (code.used) group.used += 1;
+    if (code.status === 'used') group.used += 1;
     else if (code.expiresAt && code.expiresAt <= now) group.expired += 1;
     else {
       group.active += 1;

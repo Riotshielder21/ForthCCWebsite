@@ -6,7 +6,7 @@ import { PRODUCTS } from '../constants/products.js';
 const now = new Date(2026, 9, 1);
 const membership = { id: 'member', category: 'MEMBERSHIP', type: 'annual-oneoff', basePrice: 30 };
 const service = { id: 'service', category: 'SERVICES', type: 'annual-oneoff', basePrice: 85 };
-const subscription = { id: 'sub', category: 'SUBSCRIPTIONS', type: 'subscription', basePrice: 25, hasAnnualDiscount: true };
+const subscription = { id: 'sub', category: 'SUBSCRIPTIONS', type: 'subscription', pricingMode: 'subscription', allowMonthly: true, basePrice: 25, hasAnnualDiscount: true };
 
 test('each purchasable starter product can be priced as a one-item cart', () => {
   // 1 September: before prorated items drop to 60%, and a whole joining month for monthly items.
@@ -23,42 +23,42 @@ test('each purchasable starter product can be priced as a one-item cart', () => 
 });
 
 test('a code scoped to specific products only discounts those products', () => {
-  const result = calculateCart([membership, service], true, { discountType: 'multiplier', discountValue: 0.5, productIds: ['member'] }, now);
+  const result = calculateCart([membership, service], true, { type: 'multiplier', discountValue: 0.5, productIds: ['member'] }, now);
   assert.equal(result.items[0].displayPrice, 15);
   assert.equal(result.items[1].displayPrice, 85);
-  const unscoped = calculateCart([membership, service], true, { discountType: 'credit', discountValue: 10, productIds: ['service'] }, now);
+  const unscoped = calculateCart([membership, service], true, { type: 'credit', discountValue: 10, productIds: ['service'] }, now);
   assert.equal(unscoped.total, 105);
 });
 
 test('voucher credit applies to non-membership items, including vouchers, and is capped', () => {
   const voucher = { id: 'gift', category: 'VOUCHERS', type: 'voucher', basePrice: 60 };
-  const result = calculateCart([membership, service, voucher], true, { discountType: 'credit', discountValue: 200 }, now);
+  const result = calculateCart([membership, service, voucher], true, { type: 'credit', discountValue: 200 }, now);
   assert.equal(result.total, 30);
   assert.equal(result.items[0].displayPrice, 30);
   assert.equal(result.promoDiscountValue, 145);
 });
 
 test('percentage discount excludes membership but includes services', () => {
-  const result = calculateCart([membership, service], true, { discountType: 'multiplier', discountValue: 0.2 }, now);
+  const result = calculateCart([membership, service], true, { type: 'multiplier', discountValue: 0.2 }, now);
   assert.equal(result.total, 98);
   assert.equal(result.items[0].displayPrice, 30);
 });
 
 test('flat subscription savings are deducted once without annual stacking', () => {
-  const result = calculateCart([subscription], true, { discountType: 'flat', discountValue: 5 }, now);
+  const result = calculateCart([subscription], true, { type: 'flat', discountValue: 5 }, now);
   assert.equal(result.total, 100);
   assert.equal(result.promoDiscountValue, 25);
   assert.equal(result.annualSaving, 0);
 });
 
 test('voucher credit does not reduce future monthly subscription payments', () => {
-  const result = calculateCart([membership, subscription], false, { discountType: 'credit', discountValue: 60 }, now);
+  const result = calculateCart([membership, subscription], false, { type: 'credit', discountValue: 60 }, now);
   assert.equal(result.total, 30);
   assert.equal(result.recurringMonthlyTotal, 25);
 });
 
 test('annual discounts still apply before voucher credit', () => {
-  const result = calculateCart([subscription], true, { discountType: 'credit', discountValue: 60 }, now);
+  const result = calculateCart([subscription], true, { type: 'credit', discountValue: 60 }, now);
   assert.equal(result.subtotal, 100);
   assert.equal(result.total, 40);
   assert.equal(result.annualSaving, 25);
@@ -66,7 +66,7 @@ test('annual discounts still apply before voucher credit', () => {
 
 test('credit skips memberships and is consumed in cart order across eligible items', () => {
   const voucher = { id: 'gift', category: 'VOUCHERS', type: 'voucher', basePrice: 60 };
-  const result = calculateCart([membership, service, voucher], false, { discountType: 'credit', discountValue: 100 }, now);
+  const result = calculateCart([membership, service, voucher], false, { type: 'credit', discountValue: 100 }, now);
   assert.deepEqual(result.items.map(({ displayPrice, promoSaving, promoEligible }) => ({ displayPrice, promoSaving, promoEligible })), [
     { displayPrice: 30, promoSaving: 0, promoEligible: false },
     { displayPrice: 0, promoSaving: 85, promoEligible: true },
@@ -78,7 +78,7 @@ test('credit skips memberships and is consumed in cart order across eligible ite
 
 test('a non-empty product scope replaces default eligibility and can include memberships', () => {
   const result = calculateCart([membership, service], false, {
-    discountType: 'credit', discountValue: 40, productIds: ['member']
+    type: 'credit', discountValue: 40, productIds: ['member']
   }, now);
   assert.deepEqual(result.items.map(({ displayPrice, promoEligible }) => ({ displayPrice, promoEligible })), [
     { displayPrice: 0, promoEligible: true },
@@ -89,7 +89,7 @@ test('a non-empty product scope replaces default eligibility and can include mem
 
 test('an empty product scope uses the default non-membership eligibility', () => {
   const result = calculateCart([membership, service], false, {
-    discountType: 'credit', discountValue: 10, productIds: []
+    type: 'credit', discountValue: 10, productIds: []
   }, now);
   assert.deepEqual(result.items.map(({ displayPrice, promoEligible }) => ({ displayPrice, promoEligible })), [
     { displayPrice: 30, promoEligible: false },
@@ -99,7 +99,7 @@ test('an empty product scope uses the default non-membership eligibility', () =>
 
 test('credit is capped at eligible spend and unused credit is not included in the discount total', () => {
   const result = calculateCart([membership, service], false, {
-    discountType: 'credit', discountValue: 500
+    type: 'credit', discountValue: 500
   }, now);
   assert.equal(result.items[0].displayPrice, 30);
   assert.equal(result.items[1].displayPrice, 0);
@@ -109,7 +109,7 @@ test('credit is capped at eligible spend and unused credit is not included in th
 
 test('zero or negative credit does not increase prices or create savings', () => {
   for (const discountValue of [0, -10]) {
-    const result = calculateCart([service], false, { discountType: 'credit', discountValue }, now);
+    const result = calculateCart([service], false, { type: 'credit', discountValue }, now);
     assert.equal(result.items[0].displayPrice, 85);
     assert.equal(result.promoDiscountValue, 0);
     assert.equal(result.total, 85);
@@ -118,7 +118,7 @@ test('zero or negative credit does not increase prices or create savings', () =>
 
 test('a full multiplier discount reduces eligible prices and monthly recurring cost to zero', () => {
   const result = calculateCart([subscription], false, {
-    discountType: 'multiplier', discountValue: 1
+    type: 'multiplier', discountValue: 1
   }, now);
   assert.equal(result.items[0].displayPrice, 0);
   assert.equal(result.items[0].recurringMonthlyCost, 0);
@@ -128,19 +128,19 @@ test('a full multiplier discount reduces eligible prices and monthly recurring c
 
 test('flat discounts affect subscriptions only and cannot reduce them below zero', () => {
   const expensiveFlat = calculateCart([subscription], false, {
-    discountType: 'flat', discountValue: 40
+    type: 'flat', discountValue: 40
   }, now);
   assert.equal(expensiveFlat.items[0].displayPrice, 0);
   assert.equal(expensiveFlat.items[0].promoSaving, 25);
   assert.equal(expensiveFlat.items[0].recurringMonthlyCost, 0);
 
-  const oneOff = calculateCart([service], false, { discountType: 'flat', discountValue: 40 }, now);
+  const oneOff = calculateCart([service], false, { type: 'flat', discountValue: 40 }, now);
   assert.equal(oneOff.items[0].displayPrice, 85);
   assert.equal(oneOff.items[0].promoSaving, 0);
 });
 
 test('flat annual subscription discounts stack with annual savings only when explicitly allowed', () => {
-  const promo = { discountType: 'flat', discountValue: 5 };
+  const promo = { type: 'flat', discountValue: 5 };
   const withoutStacking = calculateCart([subscription], true, promo, now);
   const withStacking = calculateCart([subscription], true, { ...promo, allowsAnnualStacking: true }, now);
 
@@ -156,7 +156,7 @@ test('flat annual subscription discounts stack with annual savings only when exp
 
 test('monthly subscription pricing has no annual saving and reports its discounted recurring amount', () => {
   const result = calculateCart([subscription], false, {
-    discountType: 'multiplier', discountValue: 0.2
+    type: 'multiplier', discountValue: 0.2
   }, now);
   assert.equal(result.subtotal, 25);
   assert.equal(result.items[0].displayPrice, 20);
@@ -189,7 +189,7 @@ test('prorated service pricing drops to 60% on 1 October', () => {
 
 test('percentage savings round to pennies before subtracting from the line price', () => {
   const item = { id: 'pennies', category: 'SERVICES', type: 'annual-oneoff', basePrice: 19.99 };
-  const result = calculateCart([item], false, { discountType: 'multiplier', discountValue: 0.333 }, now);
+  const result = calculateCart([item], false, { type: 'multiplier', discountValue: 0.333 }, now);
   assert.equal(result.items[0].promoSaving, 6.66);
   assert.equal(result.items[0].displayPrice, 13.33);
   assert.equal(result.total, 13.33);
@@ -197,7 +197,7 @@ test('percentage savings round to pennies before subtracting from the line price
 
 test('duplicate cart lines are priced independently and consume credit in line order', () => {
   const duplicate = { id: 'same-service', category: 'SERVICES', type: 'annual-oneoff', basePrice: 85 };
-  const result = calculateCart([duplicate, duplicate], false, { discountType: 'credit', discountValue: 100 }, now);
+  const result = calculateCart([duplicate, duplicate], false, { type: 'credit', discountValue: 100 }, now);
   assert.deepEqual(result.items.map(({ displayPrice, promoSaving }) => ({ displayPrice, promoSaving })), [
     { displayPrice: 0, promoSaving: 85 },
     { displayPrice: 70, promoSaving: 15 }
@@ -209,7 +209,7 @@ test('duplicate cart lines are priced independently and consume credit in line o
 test('a scoped multiplier discounts every duplicate line with a matching product id', () => {
   const duplicate = { id: 'same-service', category: 'SERVICES', type: 'annual-oneoff', basePrice: 85 };
   const result = calculateCart([duplicate, duplicate], false, {
-    discountType: 'multiplier', discountValue: 0.1, productIds: ['same-service', 'same-service']
+    type: 'multiplier', discountValue: 0.1, productIds: ['same-service', 'same-service']
   }, now);
   assert.deepEqual(result.items.map(({ displayPrice, promoSaving }) => ({ displayPrice, promoSaving })), [
     { displayPrice: 76.5, promoSaving: 8.5 },
@@ -220,7 +220,7 @@ test('a scoped multiplier discounts every duplicate line with a matching product
 
 test('seasonal prorated service savings are calculated before voucher credit is applied', () => {
   const yearlyService = { id: 'annual-service', category: 'SERVICES', type: 'yearly-service', pricingMode: 'prorated', basePrice: 85 };
-  const result = calculateCart([yearlyService], false, { discountType: 'credit', discountValue: 20 }, new Date(2026, 10, 1));
+  const result = calculateCart([yearlyService], false, { type: 'credit', discountValue: 20 }, new Date(2026, 10, 1));
   assert.equal(result.subtotal, 51);
   assert.equal(result.items[0].displayPrice, 31);
   assert.equal(result.items[0].annualSaving, 34);
@@ -229,7 +229,7 @@ test('seasonal prorated service savings are calculated before voucher credit is 
 test('credit limited to categories or products only covers those items', () => {
   const event = { id: 'trip', category: 'EVENTS', type: 'event-ticket', basePrice: 30 };
   const hire = { id: 'boat-hire', category: 'SERVICES', type: 'yearly-service', pricingMode: 'fixed', basePrice: 85 };
-  const credit = (scope) => calculateCart([membership, hire, event], true, { discountType: 'credit', discountValue: 200, ...scope }, now);
+  const credit = (scope) => calculateCart([membership, hire, event], true, { type: 'credit', discountValue: 200, ...scope }, now);
   assert.equal(credit({ categories: ['EVENTS'] }).total, 115);
   assert.equal(credit({ productIds: ['boat-hire'] }).total, 60);
   assert.equal(credit({ categories: ['EVENTS'], productIds: ['boat-hire'] }).total, 30);

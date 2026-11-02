@@ -98,12 +98,12 @@ for (const [id, fields] of Object.entries({
 }
 const course = {
   name: 'Week-long paddling course', category: 'EVENTS', type: 'event-ticket', basePrice: 120,
-  capacity: 12, hasAnnualDiscount: false,
+  capacity: 12, hasAnnualDiscount: false, active: true, sortOrder: 1000, pricingMode: 'fixed', allowMonthly: false,
   eventSchedule: { mode: 'consecutive', startDate: '2027-07-12', startTime: '09:00', endTime: '16:00', days: 5, timeZone: 'Europe/London' }
 };
 batch.set(db.collection('products').doc('test-week-course'), course);
 batch.set(db.collection('products').doc('test-shirt'), {
-  name: 'Test club shirt', category: 'MERCHANDISE', type: 'merchandise', basePrice: 20,
+  name: 'Test club shirt', category: 'MERCHANDISE', type: 'merchandise', basePrice: 20, active: true, sortOrder: 1010, pricingMode: 'fixed', allowMonthly: false,
   variants: [{ size: 'S', stock: 4 }, { size: 'M', stock: 3 }, { size: 'L', stock: 2 }]
 });
 // Paid orders are stored as fulfilled: people become references, and anyone without a member record keeps only their name.

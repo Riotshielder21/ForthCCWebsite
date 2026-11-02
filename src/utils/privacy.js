@@ -33,11 +33,11 @@ const orderPeople = (people) => (Array.isArray(people) ? people : []).map((perso
 }));
 
 /**
- * The audit record for a deleted order or member: a masked summary for display, keyed lookups for erasure requests,
+ * The `auditLog` details for a deleted order or member (`recordKind`): a masked summary for display, keyed lookups for erasure requests,
  * and a hidden snapshot so the delete can be reversed until the person asks for GDPR erasure. A recorded order keeps
  * only references to its people, so `orderPeople` gives them resolved from their member records.
  */
-export const deletionAuditEntry = ({ kind, id, fields, orderPeople: resolvedPeople = fields.people, secret, adminUid, stripeAcknowledged = false }) => {
+export const deletionAuditEntry = ({ kind, id, fields, orderPeople: resolvedPeople = fields.people, secret, stripeAcknowledged = false }) => {
   const isOrder = kind === 'orders';
   const people = isOrder ? orderPeople(resolvedPeople) : [{
     email: fields.junior ? fields.guardian?.email : fields.email, firstName: fields.firstName, lastName: fields.lastName, dob: fields.dob, affiliationNumber: fields.affiliationNumber
@@ -49,7 +49,7 @@ export const deletionAuditEntry = ({ kind, id, fields, orderPeople: resolvedPeop
     : { label: 'Member', maskedName: maskName(`${fields.firstName || ''} ${fields.lastName || ''}`) || maskName(fields.name), maskedEmail: maskEmail(fields.email),
         membershipNumber: maskMembershipNumber(fields.affiliationNumber), tier: fields.membershipTier || '', status: fields.status || '', validUntil: fields.validUntil ?? null };
   return {
-    kind, adminUid, stripeAcknowledged,
+    recordKind: kind, stripeAcknowledged,
     recordId: isOrder ? id : null,
     recordIdHash: createHash('sha256').update(id).digest('hex'),
     summary,

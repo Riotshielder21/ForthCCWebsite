@@ -114,20 +114,27 @@ try {
   assert.equal(ticket.total, 50);
   assert.equal(ticket.orderTotal, 80);
   assert.equal(ticket.items.length, 1);
-  await db.collection('products').doc('TEST-EVENT').set({ deleted: true }, { merge: true });
+  await db.collection('products').doc('TEST-EVENT').set({ active: false }, { merge: true });
   const removed = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'TEST-EVENT' }] }) });
   assert.equal(removed.status, 400);
   const report = await request('/api/admin/reports?kind=orders&recordId=TEST-SUBSCRIPTION', { headers });
   assert.equal(report.status, 200);
   assert.ok(report.result.records.some((record) => record.id === 'TEST-SUBSCRIPTION' && record.subscriptionWarning));
-  const legacy = { id: 'sub_legacy', stripeCustomerId: 'cus_legacy', name: 'Legacy member', email: 'legacy@example.com', status: 'Active', items: [] };
-  const [firstImport] = await importStripeSubscribers(db, [legacy], 'test', '2026-10-11T00:00:00Z');
-  const [secondImport] = await importStripeSubscribers(db, [{ ...legacy, email: 'updated@example.com' }], 'test', '2026-10-12T00:00:00Z');
+  await db.collection('orders').doc('TEST-LEGACY-PAYER').set({ status: 'paid', email: 'legacy@example.com', membershipIds: ['test-current'], items: [] });
+  const legacy = { id: 'sub_legacy', stripeCustomerId: 'cus_legacy', orderRef: '', status: 'Active', items: [] };
+  const [firstImport] = await importStripeSubscribers(db, [legacy], 'test', '2026-10-11T00:00:00Z', new Map([['sub_legacy', 'legacy@example.com']]));
+  const [secondImport] = await importStripeSubscribers(db, [legacy], 'test', '2026-10-12T00:00:00Z', new Map([['sub_legacy', 'updated@example.com']]));
   assert.equal(firstImport.clubCustomerId, secondImport.clubCustomerId);
+  assert.deepEqual(secondImport.membershipIds, ['test-current'], 'members found earlier are kept');
   const imported = (await db.collection('stripeSubscriptions').doc(firstImport.clubSubscriptionId).get()).data();
   assert.equal(imported.firstImportedAt, '2026-10-11T00:00:00Z');
   assert.equal(imported.lastCheckedAt, '2026-10-12T00:00:00Z');
+  const importedCustomer = (await db.collection('stripeCustomers').doc(firstImport.clubCustomerId).get()).data();
+  for (const mirrored of [imported, importedCustomer]) {
+    assert.deepEqual(mirrored.membershipIds, ['test-current'], 'the mirror records the members the payer\'s orders cover');
+    assert.equal('name' in mirrored || 'email' in mirrored, false, 'the payer\'s name and email are not copied');
+  }
   assert.equal((await db.collection('stripeCustomers').get()).size, 1);
   assert.equal((await db.collection('stripeSubscriptions').get()).size, 1);
   assert.equal((await request('/api/admin/subscribers/sub_legacy/cancel', {
@@ -137,26 +144,33 @@ try {
   assert.equal(subscribers.status, 200);
   assert.equal(subscribers.result.records[0].clubCustomerId, firstImport.clubCustomerId);
   assert.equal(subscribers.result.records[0].status, 'Active');
+  assert.deepEqual(subscribers.result.records[0].names, ['Test Current'], 'staff see member names resolved from the member records');
+  assert.equal('email' in subscribers.result.records[0] || 'name' in subscribers.result.records[0], false);
   const cancel = (overrides = {}) => request('/api/admin/subscribers/sub_legacy/cancel', {
     method: 'POST', headers, body: JSON.stringify({ mode: 'test', clubCustomerId: firstImport.clubCustomerId,
-      confirmId: 'sub_legacy', acknowledgeImmediateCancellation: true, ...overrides })
+      confirmId: 'sub_legacy', acknowledgeImmediateCancellation: true, reason: 'Payer asked to stop', ...overrides })
   });
   assert.equal((await cancel({ acknowledgeImmediateCancellation: false })).status, 400);
   assert.equal((await cancel({ mode: 'live' })).status, 400);
   assert.equal((await cancel({ clubCustomerId: 'FCC-test-cus_wrong' })).status, 409);
+  const unexplained = await cancel({ reason: '' });
+  assert.equal(unexplained.status, 400, 'stopping billing needs a reason');
+  assert.match(unexplained.result.error, /reason/i);
   const cancelled = await cancel();
   assert.equal(cancelled.status, 200);
   assert.equal(cancelled.result.record.stripeStatus, 'canceled');
   assert.equal(cancelled.result.record.status, 'Inactive');
   assert.equal(cancelled.result.changed, true);
+  assert.deepEqual(cancelled.result.record.names, ['Test Current']);
   const repeated = await cancel();
   assert.equal(repeated.status, 200);
   assert.equal(repeated.result.changed, false);
   const cancelledRecord = (await db.collection('stripeSubscriptions').doc(firstImport.clubSubscriptionId).get()).data();
   assert.equal(cancelledRecord.stripeStatus, 'canceled');
   assert.ok(cancelledRecord.immediateCancellationConfirmedBy);
-  const cancellationAudit = await db.collection('adminSubscriptionAudit').where('stripeSubscriptionId', '==', 'sub_legacy').get();
+  const cancellationAudit = await db.collection('auditLog').where('stripeSubscriptionId', '==', 'sub_legacy').get();
   assert.equal(cancellationAudit.size, 1, 'repeating cancellation keeps one audit record for this subscription');
+  assert.deepEqual([cancellationAudit.docs[0].data().kind, cancellationAudit.docs[0].data().reason], ['subscription', 'Payer asked to stop']);
   await db.collection('memberships').doc('SMOKE-CONFIRMED-EXPIRED').set({
     firstName: 'Confirmed', lastName: 'Expired', status: 'active', validUntil: Timestamp.fromDate(new Date('2020-03-01T00:00:00Z')),
     source: 'justgo', justgoSyncStatus: 'synced', lastJustgoSync: Timestamp.now()
@@ -166,13 +180,14 @@ try {
     assert.equal(members.status, 200);
     assert.equal(members.result.records.find((record) => record.id === id).status, status);
   }
-  const remove = (acknowledgeStripe) => request('/api/admin/records/orders/TEST-SUBSCRIPTION', {
-    method: 'DELETE', headers, body: JSON.stringify({ confirmId: 'TEST-SUBSCRIPTION', acknowledgeStripe })
+  const remove = (acknowledgeStripe, reason = 'Test order') => request('/api/admin/records/orders/TEST-SUBSCRIPTION', {
+    method: 'DELETE', headers, body: JSON.stringify({ confirmId: 'TEST-SUBSCRIPTION', acknowledgeStripe, reason })
   });
+  assert.equal((await remove(true, '')).status, 400, 'deleting a record needs a reason');
   assert.equal((await remove(false)).status, 409);
   assert.equal((await remove(true)).status, 200);
   assert.equal((await db.collection('orders').doc('TEST-SUBSCRIPTION').get()).exists, false);
-  assert.equal((await db.collection('adminDeletionAudit').get()).empty, false);
+  assert.equal((await db.collection('auditLog').where('recordId', '==', 'TEST-SUBSCRIPTION').get()).docs[0].data().reason, 'Test order');
   assert.equal((await request('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'receipt@example.com', total: '0', items: [] }) }, { expectJson: false })).status, 404, 'unpaid orders cannot be created through the retired endpoint');
   const purchase = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -26,7 +26,7 @@ const EMPTY_PRODUCT = {
   capacity: '',
   variants: [{ size: '', stock: 0 }],
   eventSchedule: { mode: 'single', startDate: '', startTime: '15:00', endTime: '17:00', days: 1, weeks: 1, timeZone: 'Europe/London' },
-  leaderName: '', leaderEmail: '', closeDate: '', membershipRule: 'required'
+  leaderName: '', leaderEmail: '', closeDate: '', membershipRule: 'required', sortOrder: 0
 };
 
 const MEMBERSHIP_RULE_LABELS = { required: 'Club members only', none: 'Open to non-members', included: 'Club membership included' };
@@ -129,7 +129,7 @@ export default function AdminPage({ products, onNavigate }) {
     try {
       const id = await reserveProductId(await adminUser.getIdToken());
       setSelectedProduct(null);
-      setDraft({ ...EMPTY_PRODUCT, id });
+      setDraft({ ...EMPTY_PRODUCT, id, sortOrder: Math.max(0, ...products.map((product) => product.sortOrder)) + 10 });
       setMessage('');
       resetImageInput();
     } catch (idError) {
@@ -149,6 +149,7 @@ export default function AdminPage({ products, onNavigate }) {
         ...draft,
         ...normaliseProduct(draft),
         basePrice: Number(draft.basePrice),
+        sortOrder: Number(draft.sortOrder),
         hasAnnualDiscount: Boolean(draft.hasAnnualDiscount) && normaliseProduct(draft).pricingMode === 'subscription'
       };
       if (product.category === 'MERCHANDISE') {
@@ -299,6 +300,7 @@ export default function AdminPage({ products, onNavigate }) {
               <button type="button" className="EditorCommand" onClick={addVariant}>Add size</button>
               <p className="text_container text_container_note">Customers choose a size and quantity. A size that sells out is greyed out, and the item leaves the shop when every size is gone. Delete a refunded order in Reports to return its stock.</p>
             </fieldset>}
+            <label className="FormLabel">Shop position (lower numbers show first)<input className="FormInput" type="number" required step="1" value={draft.sortOrder} onChange={(event) => updateDraft('sortOrder', event.target.value)} /></label>
             {draft.category === 'SERVICES'
               ? <label className="FormLabel">Pricing<select className="FormInput" value={draft.pricingMode} onChange={(event) => updateDraft('pricingMode', event.target.value)}>{Object.entries(PRICING_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               : <p className="text_container text_container_note">{{ MEMBERSHIP: draft.type === 'external' ? 'External link: bought through JustGo, not this shop.' : 'Membership is a fixed club-year price. It is never prorated or paid monthly.', SUBSCRIPTIONS: 'Subscription: monthly price for each month left to 1 March.', VOUCHERS: 'Voucher: a fixed price that issues a credit code.', EVENTS: 'Event ticket: a fixed price for the whole event or course.', MERCHANDISE: 'Merchandise: a fixed price per item.' }[draft.category]}</p>}

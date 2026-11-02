@@ -288,7 +288,7 @@ export default function App() {
       if (validation.valid) {
         setActivePromo({
           label: validation.label,
-          discountType: validation.discountType,
+          type: validation.type,
           discountValue: validation.discountValue,
           allowsAnnualStacking: validation.allowsAnnualStacking === true,
           productIds: validation.productIds || [],
@@ -626,7 +626,7 @@ export default function App() {
                   )}
                   {activePromo && calculations.promoDiscountValue > 0 && (
                     <div className="CartSummaryLine">
-                      {activePromo.discountType !== 'multiplier'
+                      {activePromo.type !== 'multiplier'
                         ? `${activePromo.label} (${activePromo.code}): -£${calculations.promoDiscountValue.toFixed(2)}`
                         : `${activePromo.label} (${(activePromo.discountValue * 100).toFixed(0)}%): -£${calculations.promoDiscountValue.toFixed(2)}`}
                     </div>

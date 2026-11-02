@@ -265,8 +265,8 @@ await test('voucher-only purchase needs no membership and creates a voucher on t
   const mail = await db.collection('testMail').where('orderRef', '==', shared.voucherOrder).get();
   assert.equal(mail.size, 1);
   assert.ok(mail.docs[0].data().vouchers.some((entry) => entry.code === voucher.code), 'voucher code is in the receipt email');
-  const stored = (await db.collection('customers').get()).docs.map((document) => document.data()).find((record) => record.email === buyer);
-  assert.ok(stored.vouchers.some((entry) => entry.code === voucher.code), 'voucher saved on customer record');
+  const stored = (await db.collection('discountCodes').doc(voucher.code).get()).data();
+  assert.deepEqual([stored.orderRef, stored.email, stored.status, stored.type], [shared.voucherOrder, buyer, 'active', 'credit'], 'the voucher code records who bought it');
 });
 
 await test('voucher receipt links show unassigned items without contact details', async () => {
@@ -729,10 +729,10 @@ await test('checkout validation rejects bad details with a clear message', async
 
 await test('discount codes: create, edit, scope, disable, apply', async () => {
   const code = `BOAT${run.toUpperCase()}`;
-  const create = await call('POST', '/api/admin/discount-codes', { headers: admin, body: { code, label: 'Boat 20', discountType: 'multiplier', discountValue: 0.2, productIds: ['boat-hire'] } });
+  const create = await call('POST', '/api/admin/discount-codes', { headers: admin, body: { code, label: 'Boat 20', type: 'multiplier', discountValue: 0.2, productIds: ['boat-hire'] } });
   assert.equal(create.status, 200, create.text);
-  assert.equal((await call('POST', '/api/admin/discount-codes', { headers: admin, body: { code, label: 'Dup', discountType: 'multiplier', discountValue: 0.2 } })).status, 409);
-  assert.equal((await call('POST', '/api/admin/discount-codes', { headers: admin, body: { code: `X${run}`, label: 'Bad', discountType: 'multiplier', discountValue: 5 } })).status, 400);
+  assert.equal((await call('POST', '/api/admin/discount-codes', { headers: admin, body: { code, label: 'Dup', type: 'multiplier', discountValue: 0.2 } })).status, 409);
+  assert.equal((await call('POST', '/api/admin/discount-codes', { headers: admin, body: { code: `X${run}`, label: 'Bad', type: 'multiplier', discountValue: 5 } })).status, 400);
   const listed = (await call('GET', '/api/admin/discount-codes', { headers: admin })).json.codes.find((entry) => entry.code === code);
   assert.deepEqual(listed.productIds, ['boat-hire']);
   const valid = await call('POST', '/api/discount-codes/validate', { body: { code } });
@@ -747,12 +747,14 @@ await test('discount codes: create, edit, scope, disable, apply', async () => {
     [Math.round(boatPrice * 0.8 * 100), boatPrice * 100 - Math.round(boatPrice * 0.8 * 100), boatPrice * 100, code], 'the order records its discount in pence and the code used');
   const notApplicable = await checkout(email('newjoiner'), build(['membership-adult'], [adultDetails({ email: email('newjoiner') })]), { discountCode: code });
   assert.equal(notApplicable.status, 400);
-  assert.equal((await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { label: 'Boat 50', discountType: 'multiplier', discountValue: 0.5, productIds: ['boat-hire'] } })).status, 200);
+  assert.equal((await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { label: 'Boat 50', type: 'multiplier', discountValue: 0.5, productIds: ['boat-hire'] } })).status, 200);
   const edited = await checkout(memberEmail, build(['boat-hire'], [member]), { discountCode: code });
   assert.equal((await db.collection('orders').doc(edited.json.orderRef).get()).data().totalPence, boatPrice * 50);
-  await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { active: false } });
+  assert.equal((await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { status: 'disabled' } })).status, 200);
+  assert.equal((await db.collection('discountCodes').doc(code).get()).data().status, 'disabled');
   assert.equal((await call('POST', '/api/discount-codes/validate', { body: { code } })).json.valid, false);
-  await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { active: true } });
+  assert.equal((await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { status: 'used' } })).status, 400, 'staff cannot mark a code used');
+  assert.equal((await call('PATCH', `/api/admin/discount-codes/${code}`, { headers: admin, body: { status: 'active' } })).status, 200);
   assert.equal((await call('POST', '/api/discount-codes/validate', { body: { code } })).json.valid, true);
 });
 
@@ -942,7 +944,7 @@ await test('payment failures and expired sessions retain order contents and expo
 await test('merchandise sizes and event capacity limit sales, expiry releases holds and deleting a refunded order frees stock', async () => {
   const tee = `E2E-TEE-${run}`;
   await db.collection('products').doc(tee).set({ name: 'Club tee', category: 'MERCHANDISE', type: 'merchandise', basePrice: 15, description: 'Tee',
-    variants: [{ size: 'S', stock: 1 }, { size: 'M', stock: 2 }], deleted: false });
+    variants: [{ size: 'S', stock: 1 }, { size: 'M', stock: 2 }], active: true, sortOrder: 1000, pricingMode: 'fixed', allowMonthly: false });
   const shirt = (size, n) => ({ id: tee, lineId: `${tee}-${size}-${n}`, size });
   const order = (who, items) => call('POST', '/api/checkout-session', { body: { email: who, items, people: [], billingMode: 'annual' } });
   const stock = async (id) => (await call('GET', '/api/availability')).json.availability[id];
@@ -973,7 +975,7 @@ await test('merchandise sizes and event capacity limit sales, expiry releases ho
   const report = (await reportFor('orders', first.json.orderRef)).json.records.find((record) => record.id === first.json.orderRef);
   assert.deepEqual(report.items.map((item) => item.name).sort(), ['Club tee (M)', 'Club tee (S)']);
 
-  const remove = (orderRef) => call('DELETE', `/api/admin/records/orders/${orderRef}`, { headers: admin, body: { confirmId: orderRef, acknowledgeStripe: true } });
+  const remove = (orderRef) => call('DELETE', `/api/admin/records/orders/${orderRef}`, { headers: admin, body: { confirmId: orderRef, acknowledgeStripe: true, reason: 'Refunded' } });
   assert.equal((await remove(first.json.orderRef)).status, 200);
   assert.deepEqual((await stock(tee)).remaining, { S: 1, M: 2 }, 'deleting the refunded order returns its stock');
 
@@ -995,17 +997,21 @@ await test('merchandise sizes and event capacity limit sales, expiry releases ho
 });
 
 await test('deleted orders keep a masked audit entry and GDPR erasure removes a person everywhere but keeps the accounts', async () => {
-  const erase = (body) => call('POST', '/api/admin/gdpr/erase', { headers: admin, body });
+  const erase = (body) => call('POST', '/api/admin/gdpr/erase', { headers: admin, body: { reason: 'Asked to be forgotten', ...body } });
   const preview = (body) => call('POST', '/api/admin/gdpr/preview', { headers: admin, body });
-  const remove = (orderRef) => call('DELETE', `/api/admin/records/orders/${orderRef}`, { headers: admin, body: { confirmId: orderRef, acknowledgeStripe: true } });
-  const customerCount = async (who) => (await db.collection('customers').where('email', '==', who).get()).size;
+  const remove = (orderRef, reason = 'Duplicate order') => call('DELETE', `/api/admin/records/orders/${orderRef}`, { headers: admin, body: { confirmId: orderRef, acknowledgeStripe: true, reason } });
 
   const gdpr = email('gdpr');
   const details = adultDetails({ firstName: 'Gail', lastName: 'Erase', dob: yearsAgo(41, 3, 3), email: gdpr });
   const membershipOrder = await buy(gdpr, build(['membership-adult'], [details]));
   const addOnOrder = await buy(gdpr, build(['keyhire'], [{ returning: true, firstName: 'Gail', lastName: 'Erase', dob: details.dob, disclaimerAccepted: true }]));
+  const unexplained = await remove(addOnOrder, '  ');
+  assert.equal(unexplained.status, 400, 'deleting a record needs a reason');
+  assert.match(unexplained.json.error, /reason/i);
+  assert.ok((await db.collection('orders').doc(addOnOrder).get()).exists, 'nothing is deleted without a reason');
   assert.equal((await remove(addOnOrder)).status, 200);
-  const audit = (await db.collection('adminDeletionAudit').where('recordId', '==', addOnOrder).get()).docs[0].data();
+  const audit = (await db.collection('auditLog').where('recordId', '==', addOnOrder).get()).docs[0].data();
+  assert.deepEqual([audit.kind, audit.action, audit.recordKind, audit.reason, audit.by], ['deletion', 'delete-record', 'orders', 'Duplicate order', 'admin@forthcanoeclub.co.uk']);
   assert.equal(audit.summary.maskedEmail, 'g***@e***.test');
   assert.equal(audit.summary.people[0].name, 'G*** E***');
   assert.equal(audit.summary.total, 50);
@@ -1024,6 +1030,10 @@ await test('deleted orders keep a masked audit entry and GDPR erasure removes a 
   const before = (await db.collection('orders').doc(membershipOrder).get()).data();
   const total = before.totalPence;
   assert.ok(before.receiptTokenHash);
+  const noReason = await erase({ ...identity, scope: 'person', confirm: 'ERASE', reason: '' });
+  assert.equal(noReason.status, 400, 'erasure needs a reason');
+  assert.match(noReason.json.error, /reason/i);
+  assert.equal((await membershipsFor(gdpr)).length, 1, 'nothing is erased without a reason');
   const erased = await erase({ ...identity, scope: 'person', confirm: 'ERASE' });
   assert.equal(erased.status, 200, erased.text);
   assert.equal(erased.json.erased, 1);
@@ -1031,11 +1041,11 @@ await test('deleted orders keep a masked audit entry and GDPR erasure removes a 
   const kept = (await db.collection('orders').doc(membershipOrder).get()).data();
   assert.deepEqual([kept.email, kept.totalPence, kept.items.length, kept.people[0].erased, kept.people[0].firstName, kept.receiptTokenHash], ['***', total, 1, true, undefined, '']);
   assert.equal('receipt' in kept, false);
-  assert.equal(await customerCount(gdpr), 0);
-  const purged = (await db.collection('adminDeletionAudit').where('recordId', '==', addOnOrder).get()).docs[0].data();
+  const purged = (await db.collection('auditLog').where('recordId', '==', addOnOrder).get()).docs[0].data();
   assert.deepEqual([purged.snapshot, purged.personalDataErased], [null, true]);
-  const trail = (await db.collection('adminDeletionAudit').where('kind', '==', 'gdpr-erasure').get()).docs.map((document) => document.data()).find((entry) => entry.summary.ordersRedacted.includes(membershipOrder));
+  const trail = (await db.collection('auditLog').where('action', '==', 'gdpr-erasure').get()).docs.map((document) => document.data()).find((entry) => entry.summary.ordersRedacted.includes(membershipOrder));
   assert.ok(trail, 'the erasure itself is recorded');
+  assert.deepEqual([trail.kind, trail.reason], ['deletion', 'Asked to be forgotten']);
   assert.equal(JSON.stringify(trail.summary).includes(gdpr), false);
   assert.equal((await erase({ ...identity, scope: 'person', confirm: 'ERASE' })).status, 404, 'nothing is left to erase');
 
@@ -1072,7 +1082,6 @@ await test('deleted orders keep a masked audit entry and GDPR erasure removes a 
   assert.equal(everyone.json.erased, 2);
   assert.equal((await membershipsFor(sharedDetails.email)).length, 0);
   assert.equal((await db.collection('orders').doc(familyOrder).get()).data().email, '***');
-  assert.equal(await customerCount(family), 0);
 
   const subscriber = email('gdpr-sub');
   const subDetails = adultDetails({ firstName: 'Sub', lastName: 'Erase', dob: yearsAgo(44, 4, 4), email: subscriber });
@@ -1586,7 +1595,7 @@ const lessonFor = (firstName) => {
   return { lines, people: assignLines([], lines, makeId).map((person) => ({ ...person, ...adultDetails({ firstName, lastName: 'Monthly', dob: yearsAgo(20), email: email(firstName.toLowerCase()) }) })) };
 };
 const orderData = async (orderRef) => (await db.collection('orders').doc(orderRef).get()).data();
-const customerKey = (address) => createHash('sha256').update(address).digest('hex');
+const subscriptionIdsPaidBy = async (address) => (await db.collection('subscriptions').where('email', '==', address).get()).docs.map((document) => document.id).sort();
 await db.collection('products').doc(lessonId).set({ name: 'E2E lesson block', category: 'SERVICES', pricingMode: 'subscription', allowMonthly: true, basePrice: 20, membershipRule: 'none' });
 
 await test('a payer has one monthly subscription per club year for everyone they pay for, and staff can stop one member\'s items', async () => {
@@ -1614,7 +1623,7 @@ await test('a payer has one monthly subscription per club year for everyone they
   const stored = (await db.collection('subscriptions').doc(subscriptionId).get()).data();
   assert.equal(stored.clubYear, autumnYear);
   assert.equal(stored.cancelAt.toMillis(), thisYear.end.getTime());
-  assert.deepEqual((await db.collection('customers').doc(customerKey(payer)).get()).data().subscriptionIds, [subscriptionId]);
+  assert.deepEqual(await subscriptionIdsPaidBy(payer), [subscriptionId]);
 
   const named = await Promise.all(order.people.map(async ({ membershipId }) => [(await db.collection('memberships').doc(membershipId).get()).data().firstName, membershipId]));
   const monaId = named.find(([firstName]) => firstName === 'Mona')[1];
@@ -1632,7 +1641,10 @@ await test('a payer has one monthly subscription per club year for everyone they
   assert.deepEqual(benList.json.subscriptions.map((entry) => entry.id), [subscriptionId]);
 
   assert.equal((await call('POST', `/api/admin/subscriptions/${subscriptionId}/members/${benId}/cancel`)).status, 401, 'cancelling needs an admin');
-  const benCancelled = await call('POST', `/api/admin/subscriptions/${subscriptionId}/members/${benId}/cancel`, { headers: admin });
+  const unexplained = await call('POST', `/api/admin/subscriptions/${subscriptionId}/members/${benId}/cancel`, { headers: admin, body: { reason: ' ' } });
+  assert.equal(unexplained.status, 400, 'stopping a payment needs a reason');
+  assert.match(unexplained.json.error, /reason/i);
+  const benCancelled = await call('POST', `/api/admin/subscriptions/${subscriptionId}/members/${benId}/cancel`, { headers: admin, body: { reason: 'Ben moved away' } });
   assert.equal(benCancelled.status, 200, benCancelled.text);
   assert.equal(benCancelled.json.cancelledWholeSubscription, false);
   assert.equal(benCancelled.json.subscription.status, 'active', 'the payer keeps paying for everyone else');
@@ -1641,10 +1653,12 @@ await test('a payer has one monthly subscription per club year for everyone they
   assert.ok((await entitlementsOf(benId)).find((privilege) => privilege.productId === 'gold-sub').endedAt, 'Ben\'s gold entitlement ends');
   assert.equal(benAfter.subscriptionItems[0].status, 'cancelled');
   assert.ok(!(await entitlementsOf(monaId)).find((privilege) => privilege.productId === 'gold-sub').endedAt);
-  assert.equal((await call('POST', `/api/admin/subscriptions/${subscriptionId}/members/${benId}/cancel`, { headers: admin })).status, 409);
+  const benAudit = (await db.collection('auditLog').where('stripeSubscriptionId', '==', subscriptionId).get()).docs.map((document) => document.data());
+  assert.ok(benAudit.some((entry) => entry.kind === 'subscription' && entry.reason === 'Ben moved away'), 'the reason is in the audit log');
+  assert.equal((await call('POST', `/api/admin/subscriptions/${subscriptionId}/members/${benId}/cancel`, { headers: admin, body: { reason: 'Again' } })).status, 409);
 
   const lesson = items.find((item) => item.productId === lessonId);
-  const lessonCancelled = await call('POST', `/api/admin/subscriptions/${subscriptionId}/items/${lesson.lineId}/cancel`, { headers: admin });
+  const lessonCancelled = await call('POST', `/api/admin/subscriptions/${subscriptionId}/items/${lesson.lineId}/cancel`, { headers: admin, body: { reason: 'Lessons finished' } });
   assert.equal(lessonCancelled.status, 200, lessonCancelled.text);
   assert.equal(lessonCancelled.json.subscription.status, 'active', 'Mona\'s gold is still paid');
   assert.ok((await orderData(orderRef)).items.find((item) => item.lineId === lesson.lineId).monthlyCancelledAt);
@@ -1670,7 +1684,7 @@ await test('a payer has one monthly subscription per club year for everyone they
   assert.notEqual(secondCard.stripeSubscriptionIds[0], firstCard.stripeSubscriptionIds[0], 'different card or bank details, which may be someone else\'s, get a new subscription');
   assert.equal(secondCard.subscriptionPlan.newPaymentDetails, true);
   assert.equal(secondCard.subscriptionSetupNeedsStaff, false);
-  assert.deepEqual((await db.collection('customers').doc(customerKey(cardPayer)).get()).data().subscriptionIds.sort(),
+  assert.deepEqual(await subscriptionIdsPaidBy(cardPayer),
     [firstCard.stripeSubscriptionIds[0], secondCard.stripeSubscriptionIds[0]].sort());
   const untouched = (await db.collection('subscriptions').doc(firstCard.stripeSubscriptionIds[0]).get()).data();
   assert.deepEqual(untouched.orderRefs, [firstCardRef], 'the existing subscription stays as it was');
@@ -1719,7 +1733,7 @@ await test('a temporary Stripe fault is retried without a second subscription, a
   assert.equal(order.stripeSubscriptionIds.length, 1);
   const [subscriptionId] = order.stripeSubscriptionIds;
 
-  const blocked = await call('DELETE', `/api/admin/records/orders/${result.json.orderRef}`, { headers: admin, body: { confirmId: result.json.orderRef } });
+  const blocked = await call('DELETE', `/api/admin/records/orders/${result.json.orderRef}`, { headers: admin, body: { confirmId: result.json.orderRef, reason: 'Test order' } });
   assert.equal(blocked.status, 409, 'an order cannot be deleted while its monthly payments run');
   assert.equal(blocked.json.code, 'active_monthly_payments');
   assert.deepEqual(blocked.json.activeMonthly.map((entry) => entry.id), [subscriptionId]);

@@ -1,3 +1,5 @@
+import { requiredReason } from './auditLog.js';
+
 export const ADMIN_DOMAIN = 'forthcanoeclub.co.uk';
 
 export const isClubEmail = (email) => {
@@ -6,7 +8,10 @@ export const isClubEmail = (email) => {
   return parts.length === 2 && parts[0].length > 0 && parts[1] === ADMIN_DOMAIN;
 };
 
-/** Checks a request to grant or remove admin access. Admins cannot remove themselves, so at least one always remains. */
+/**
+ * Checks a request to grant or remove admin access. Admins cannot remove themselves, so at least one always remains,
+ * and removing someone needs a reason.
+ */
 export const validateAdminChange = (body = {}, actorEmail = '') => {
   const action = body.action;
   if (action !== 'grant' && action !== 'revoke') return { error: 'Choose to approve or remove admin access.' };
@@ -14,7 +19,9 @@ export const validateAdminChange = (body = {}, actorEmail = '') => {
   if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+$/.test(email) || email.length > 254) return { error: 'Enter a valid email address.' };
   if (!isClubEmail(email)) return { error: `Only @${ADMIN_DOMAIN} accounts can be admins.` };
   if (action === 'revoke' && email === String(actorEmail).toLowerCase()) return { error: 'You cannot remove your own admin access.' };
-  return { value: { action, email } };
+  if (action === 'grant') return { value: { action, email } };
+  const reason = requiredReason(body);
+  return reason ? { value: { action, email, reason } } : { error: 'Enter a reason for removing admin access (up to 1000 characters).' };
 };
 
 /**

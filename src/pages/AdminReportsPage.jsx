@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, CircleSlash, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl } from '../utils/api';
-import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
+import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, onlyEventPeriod, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
 import { eventScheduleLabel } from '../utils/catalogue';
 import CustomerVouchers from '../components/CustomerVouchers';
+import ReasonInput from '../components/ReasonInput';
 import MonthlyPayments from '../components/MonthlyPayments';
 import GdprErasurePanel from '../components/GdprErasurePanel';
 import ReceiptEmailPanel from '../components/ReceiptEmailPanel';
@@ -69,6 +70,7 @@ export default function AdminReportsPage({ onNavigate }) {
   const [includesFilter, setIncludesFilter] = useState('all');
   const [renewalFilter, setRenewalFilter] = useState('all');
   const [eventFilter, setEventFilter] = useState('all');
+  const [eventPeriod, setEventPeriod] = useState('current');
   const [planFilter, setPlanFilter] = useState('all');
   const [selected, setSelected] = useState(null);
   const [erasure, setErasure] = useState(null);
@@ -78,6 +80,7 @@ export default function AdminReportsPage({ onNavigate }) {
   const [stripeAcknowledged, setStripeAcknowledged] = useState(false);
   const [activeMonthly, setActiveMonthly] = useState([]);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [reason, setReason] = useState('');
   const generation = useRef(0);
   const closeButton = useRef(null);
   const returnFocus = useRef(null);
@@ -91,7 +94,7 @@ export default function AdminReportsPage({ onNavigate }) {
     if (!response.ok) throw new Error(result.error || 'Could not reload the record.');
     const record = result.records.find((record) => record.id === selected.id);
     if (!record) throw new Error('Updated record could not be found. Reload the report.');
-    setSelected(record);
+    setSelected(kind === 'events' ? onlyEvent(onlyEventPeriod([record], eventPeriod), eventFilter)[0] || null : record);
     setRecords((current) => current.map((entry) => entry.id === record.id ? record : entry));
   };
 
@@ -155,13 +158,15 @@ export default function AdminReportsPage({ onNavigate }) {
   useEffect(() => {
     setScheduleConfirmation('');
     setScheduleAcknowledged(false);
+    setReason('');
     if (!selected) setScheduling(false);
   }, [selected?.id, scheduling]);
   const canCancel = (record) => kind === 'subscribers' && record?.status === 'Active' && Boolean(record.clubCustomerId);
   const openRecord = (record, schedule = false) => { setSelected(record); setScheduling(schedule); setError(''); };
 
-  const filtered = onlyEvent(records.filter((record) => {
-    const haystack = `${record.id} ${record.clubCustomerId || ''} ${record.clubSubscriptionId || ''} ${record.email || ''} ${record.name || ''} ${record.affiliationNumber || ''} ${record.membershipNumber || ''} ${record.phone || ''} ${record.address || ''} ${record.emergencyContact || ''} ${record.parent || ''} ${record.tier || ''} ${(record.privileges || []).join(' ')} ${(record.items || []).map((item) => item.name).join(' ')}`.toLowerCase();
+  const periodRecords = kind === 'events' ? onlyEventPeriod(records, eventPeriod) : records;
+  const filtered = onlyEvent(periodRecords.filter((record) => {
+    const haystack = `${record.id} ${record.clubCustomerId || ''} ${record.clubSubscriptionId || ''} ${record.email || ''} ${record.name || ''} ${(record.names || []).join(' ')} ${record.affiliationNumber || ''} ${record.membershipNumber || ''} ${record.phone || ''} ${record.address || ''} ${record.emergencyContact || ''} ${record.parent || ''} ${record.tier || ''} ${(record.privileges || []).join(' ')} ${(record.items || []).map((item) => item.name).join(' ')}`.toLowerCase();
     return haystack.includes(search.toLowerCase()) && (status === 'all' || record.status === status)
       && (kind !== 'members' || ((sourceFilter === 'all' || record.justgo === sourceFilter) && (tierFilter === 'all' || record.tier === tierFilter)
         && (includesFilter === 'all' || (includesFilter === 'none' ? !record.privileges.length : record.privileges.includes(includesFilter)))
@@ -208,12 +213,12 @@ export default function AdminReportsPage({ onNavigate }) {
     }
     const headers = purchaseReport
       ? ['Order ID', 'Email', 'Status', 'Created', 'Paid', kind === 'events' ? 'Event tickets total GBP' : 'Total GBP', 'Items and schedules', 'Stripe subscription ID', 'Stripe check required']
-      : kind === 'subscribers' ? ['Subscription ID', 'Customer ID', 'Club customer ID', 'Club subscription ID', 'Name', 'Email', 'Eligibility', 'Stripe status', 'Reason', 'Plans', 'Period end', 'Cancellation date', 'Payment reversed', 'Refund check available', 'Checked at', 'Stripe mode']
+      : kind === 'subscribers' ? ['Subscription ID', 'Customer ID', 'Club customer ID', 'Club subscription ID', 'Order', 'Members', 'Eligibility', 'Stripe status', 'Reason', 'Plans', 'Period end', 'Cancellation date', 'Payment reversed', 'Refund check available', 'Checked at', 'Stripe mode']
       : ['Membership ID', 'Membership number', 'Name', 'Date of birth', 'Email', 'Phone', 'Address', 'Affiliation number', 'Tier', 'Status', 'Valid until', 'Includes', 'Emergency contact', 'Parent or guardian', 'Medical', 'Swimming', 'Photo consent', 'PVG', 'Safeguarding', 'JustGo', 'Renews via', 'Last updated'];
     const rows = filtered.map((record) => purchaseReport
       ? [record.id, record.email, record.status, record.createdAt, record.paidAt, record.total,
         record.items.map((item) => `${item.name}${item.price === null ? '' : ` (${money(item.price)})`}${item.eventSchedule ? ` — ${eventScheduleLabel(item.eventSchedule)}` : ''}`).join('; '), record.stripeSubscriptionId, record.subscriptionWarning ? 'Yes' : 'No']
-      : kind === 'subscribers' ? [record.id, record.stripeCustomerId, record.clubCustomerId, record.clubSubscriptionId, record.name, record.email, record.status, record.stripeStatus, record.reason,
+      : kind === 'subscribers' ? [record.id, record.stripeCustomerId, record.clubCustomerId, record.clubSubscriptionId, record.orderRef, (record.names || []).join('; '), record.status, record.stripeStatus, record.reason,
         record.items.map((item) => `${item.name}: ${item.amount ?? 'variable'} ${item.currency.toUpperCase()}/${item.interval}`).join('; '),
         record.currentPeriodEnd, record.cancelAt, record.paymentReversed ? 'Yes' : 'No', record.refundCheckAvailable ? 'Yes' : 'No', checkedAt, stripeMode]
       : [record.id, record.membershipNumber, record.name, record.dob, record.email, record.phone, record.address, record.affiliationNumber, record.includedWith ? `${record.tier} (included with ${record.includedWith})` : record.tier, record.status, record.expiry, record.privileges.join('; '), record.emergencyContact, record.parent, record.medical, record.swimming, record.photoConsent ? 'Yes' : 'No', record.pvg, record.safeguarding, record.justgo, record.renewalMethod, record.lastUpdated]);
@@ -223,6 +228,7 @@ export default function AdminReportsPage({ onNavigate }) {
     setSelected(null);
     setDeleting(record);
     setConfirmation('');
+    setReason('');
     setStripeRequired(kind === 'members' || record.subscriptionWarning);
     setStripeAcknowledged(false);
     setActiveMonthly([]);
@@ -237,7 +243,7 @@ export default function AdminReportsPage({ onNavigate }) {
       const token = await adminUser.getIdToken(true);
       for (const path of activeMonthly.flatMap((subscription) => subscription.cancelPaths)) {
         const response = await fetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ reason: `Record ${deleting.id} deleted` }) });
+          body: JSON.stringify({ reason }) });
         const result = await response.json().catch(() => ({}));
         if (!response.ok && response.status !== 409) throw new Error(result.error || 'Could not cancel the monthly payments.');
       }
@@ -257,7 +263,7 @@ export default function AdminReportsPage({ onNavigate }) {
       const response = await fetch(apiUrl(`/api/admin/subscribers/${encodeURIComponent(selected.id)}/cancel`), {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ mode: stripeMode, clubCustomerId: selected.clubCustomerId,
-          confirmId: scheduleConfirmation, acknowledgeImmediateCancellation: scheduleAcknowledged })
+          confirmId: scheduleConfirmation, acknowledgeImmediateCancellation: scheduleAcknowledged, reason })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not confirm immediate Stripe cancellation.');
@@ -278,7 +284,7 @@ export default function AdminReportsPage({ onNavigate }) {
       const token = await adminUser.getIdToken(true);
       const response = await fetch(apiUrl(`/api/admin/records/${kind}/${encodeURIComponent(deleting.id)}`), {
         method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ confirmId: confirmation, acknowledgeStripe: stripeAcknowledged })
+        body: JSON.stringify({ confirmId: confirmation, acknowledgeStripe: stripeAcknowledged, reason })
       });
       const result = await response.json();
       if (result.requiresStripeAcknowledgement) setStripeRequired(true);
@@ -309,10 +315,15 @@ export default function AdminReportsPage({ onNavigate }) {
         setCursor(null);
         setLoading(true);
         setCheckedAt(null); setStripeMode(''); setClubYearEnd(null);
-        setKind(id); setSourceFilter('all'); setTierFilter('all'); setIncludesFilter('all'); setRenewalFilter('all'); setEventFilter('all'); setPlanFilter('all'); setPurchaseType('all'); setStatus(id === 'members' ? 'Active' : id === 'subscribers' ? 'Active' : 'all'); setPurchaseType('all'); setSearch(''); setMessage('');
+        setKind(id); setSourceFilter('all'); setTierFilter('all'); setIncludesFilter('all'); setRenewalFilter('all'); setEventFilter('all'); setEventPeriod('current'); setPlanFilter('all'); setPurchaseType('all'); setStatus(id === 'members' ? 'Active' : id === 'subscribers' ? 'Active' : 'all'); setPurchaseType('all'); setSearch(''); setMessage('');
       }}><Icon size={18} /> {label}</button>)}
     </div>
     {SettingsPanel ? <SettingsPanel adminUser={adminUser} /> : <>
+    {kind === 'events' && <div className="ReportsTabs" role="tablist" aria-label="Event period">
+      {[['current', 'Current events'], ['past', 'Past events']].map(([id, label]) => <button key={id} role="tab" aria-selected={eventPeriod === id} className={eventPeriod === id ? 'is-selected' : ''} onClick={() => {
+        setEventPeriod(id); setEventFilter('all');
+      }}>{label}</button>)}
+    </div>}
     <div className="ReportsFilters">
       <label className="ReportsSearch"><Search size={18} /><input aria-label="Search report" placeholder={purchaseReport ? 'Email, order, or product' : 'Name, email, or member ID'} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{(kind === 'subscribers' ? ['Active', 'Inactive'] : purchaseReport ? ['paid', 'pending', 'failed', 'cancelled'] : [...MEMBERSHIP_STATUSES, ...new Set(records.map((record) => record.status).filter((value) => value && !MEMBERSHIP_STATUSES.includes(value)))]).map((value) => <option key={value}>{value}</option>)}</select></label>
@@ -320,7 +331,7 @@ export default function AdminReportsPage({ onNavigate }) {
       {kind === 'members' && <><label>Includes<select value={includesFilter} onChange={(event) => setIncludesFilter(event.target.value)}><option value="all">Anything</option><option value="none">Membership only</option>{reportOptions(records, (record) => record.privileges).map((value) => <option key={value}>{value}</option>)}</select></label>
         <label>Renews via<select value={renewalFilter} onChange={(event) => setRenewalFilter(event.target.value)}><option value="all">Any</option><option value="website">Website</option><option value="justgo">JustGo</option><option value="none">Not set</option></select></label></>}
       {kind === 'orders' && <label>Purchase<select value={purchaseType} onChange={(event) => setPurchaseType(event.target.value)}><option value="all">All purchases</option>{PURCHASE_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
-      {kind === 'events' && <label>Event<select value={eventFilter} onChange={(event) => setEventFilter(event.target.value)}><option value="all">All events</option>{reportEventNames(records).map((value) => <option key={value}>{value}</option>)}</select></label>}
+      {kind === 'events' && <label>Event<select value={eventFilter} onChange={(event) => setEventFilter(event.target.value)}><option value="all">All events</option>{reportEventNames(periodRecords).map((value) => <option key={value}>{value}</option>)}</select></label>}
       {kind === 'subscribers' && <label>Plan<select value={planFilter} onChange={(event) => setPlanFilter(event.target.value)}><option value="all">All plans</option>{reportOptions(records, (record) => record.items.map((item) => item.name)).map((value) => <option key={value}>{value}</option>)}</select></label>}
       <button className="EditorIconButton" title="Refresh report" aria-label="Refresh report" disabled={loading || deleteBusy || scheduleBusy} onClick={() => load()}><RefreshCw size={18} /></button>
     </div>
@@ -334,19 +345,19 @@ export default function AdminReportsPage({ onNavigate }) {
     {kind === 'subscribers' && <p className="ReportNotice">Subscriptions normally end at the club-year cutoff{clubYearEnd ? ` (${dateLabel(clubYearEnd)})` : ''}. View details is information-only. Stop billing immediately cancels the entire subscription early, after confirmation, without issuing a refund.</p>}
     {kind === 'members' && justgoSync && !justgoSync.healthy && <div className="ReportDeleteWarning" role="alert"><AlertTriangle size={22} /><div><strong>JustGo sync may have stopped</strong><p>{justgoSyncWarning(justgoSync)}</p></div></div>}
     {cursor && <p className="ReportNotice">Downloads include only loaded records matching the filters. Load all pages for a complete report.</p>}
-    {kind === 'events' && <p className="ReportNotice">Event tickets are listed separately with the schedule saved at purchase. Totals cover event items only; each course ticket covers every listed session. Check payment status before treating a booking as paid. Load further pages even if a page has no events. Delete entire orders from Purchases, not this event-only view.</p>}
+    {kind === 'events' && <p className="ReportNotice">Event tickets are listed separately with the schedule saved at purchase. Tickets move to Past events after their final session ends (Europe/London). Missing or invalid schedules stay in Current events for staff review. Totals and exports cover only the selected event period and filters; each course ticket covers every listed session. Check payment status before treating a booking as paid. Load further pages even if a page has no matching events. Delete entire orders from Purchases, not this event-only view.</p>}
     <p className="ReportNotice">{kind === 'subscribers' ? 'Active means Stripe reports active and payments are not paused or reversed on the latest invoice. Scheduled cancellation remains active until Stripe changes the status. Older refunds and disputes are not checked here. These are recurring Stripe subscriptions, not annual one-off purchases.' : kind === 'members' ? 'One register for every member. JustGo is the authority on whether a member is current and becomes their renewal method once they are linked. New website members are sent to JustGo automatically through the JustGo API: an existing JustGo account is linked to FCC, or a new one is created, and the FCC membership is added. Any emails about this come from JustGo. Anyone the automatic upload could not complete, or whose result is uncertain, shows Needs staff upload and appears on the staff upload list. A Paddle Scotland suspension shows as Suspended and blocks club activity. Members unlinked from FCC in JustGo keep their status until staff review them. Accounts are never deleted from JustGo. Each member has a permanent club ID (M0001) that never changes; their membership number (FCC- and their Paddle Scotland number) appears once JustGo syncs them and updates if that number changes. Members are not shown either. Search covers names, IDs, membership and JustGo numbers, emergency contacts and what a membership includes.' : 'Purchases are not a verified member register. Use Stripe subscribers for current recurring subscription status.'} Email export does not establish permission to send marketing.</p>
     {error && !deleting && <p className="StatusTextError" role="alert">{error}</p>}
     {message && <p role="status">{message}</p>}
     <div className="ReportsTableWrap" tabIndex={0} role="region" aria-label="Records, scroll horizontally for more columns"><table className="ReportsTable"><thead><tr>
-      {(kind === 'subscribers' ? ['Customer', 'Email', 'Subscription', 'Status', 'Plans', 'Period end', ''] : purchaseReport ? ['Order', 'Customer email', kind === 'events' ? 'Event / course schedule' : 'Purchased', 'Status', kind === 'events' ? 'Tickets total' : 'Total', 'Created', ''] : ['Member', 'Email', 'Membership number', 'Tier', 'Status', 'Valid until', 'Includes', 'JustGo', '']).map((label, index) => <th key={index} scope="col" className={!label ? 'ReportsActionsCell' : undefined}>{label || 'Actions'}</th>)}
+      {(kind === 'subscribers' ? ['Members', 'Order', 'Subscription', 'Status', 'Plans', 'Period end', ''] : purchaseReport ? ['Order', 'Customer email', kind === 'events' ? 'Event / course schedule' : 'Purchased', 'Status', kind === 'events' ? 'Tickets total' : 'Total', 'Created', ''] : ['Member', 'Email', 'Membership number', 'Tier', 'Status', 'Valid until', 'Includes', 'JustGo', '']).map((label, index) => <th key={index} scope="col" className={!label ? 'ReportsActionsCell' : undefined}>{label || 'Actions'}</th>)}
     </tr></thead><tbody>
       {filtered.map((record) => <tr key={record.id}>{purchaseReport ? <>
         <td><button className="ContentLink" onClick={() => setSelected(record)}>{record.id}</button></td><td>{record.email || 'Not recorded'}</td>
         <td>{record.items.map((item, index) => <div key={index}>{item.name}{item.eventSchedule && <p>{eventScheduleLabel(item.eventSchedule)}</p>}</div>)}{record.subscriptionWarning && <span className="ReportWarning">Stripe check</span>}</td>
         <td>{record.status}</td><td>{money(record.total)}</td><td>{dateLabel(record.createdAt)}</td>
       </> : kind === 'subscribers' ? <>
-        <td><button className="ContentLink" onClick={() => setSelected(record)}>{record.name || record.stripeCustomerId}</button><div>{record.clubCustomerId}</div></td><td>{record.email || 'Not recorded'}</td>
+        <td><button className="ContentLink" onClick={() => setSelected(record)}>{record.names?.join(', ') || record.stripeCustomerId}</button><div>{record.clubCustomerId}</div></td><td>{record.orderRef || 'Not recorded'}</td>
         <td><a className="ContentLink" href={`https://dashboard.stripe.com/${stripeMode === 'test' ? 'test/' : ''}subscriptions/${encodeURIComponent(record.id)}`} target="_blank" rel="noreferrer">{record.id}</a></td>
         <td>{record.status}<div>{record.stripeStatus}</div>{record.reason && <span className="ReportWarning">{record.reason}</span>}{!record.refundCheckAvailable && <div className="ReportWarning">Refund check unavailable</div>}</td>
         <td>{record.items.map((item, index) => <div key={index}>{item.name}<br />{item.amount ?? 'Variable'} {item.currency.toUpperCase()} / {item.interval} {item.quantity > 1 ? `× ${item.quantity}` : ''}</div>)}</td>
@@ -362,13 +373,14 @@ export default function AdminReportsPage({ onNavigate }) {
       <div className="ReportsHeader"><h3 id="record-dialog-title" className="tile_heading_bold_1">{deleting ? 'Delete record' : scheduling ? 'Stop billing immediately' : 'Record details'}</h3><button ref={closeButton} className="EditorIconButton" aria-label="Close record dialog" disabled={deleteBusy || scheduleBusy} onClick={() => { setSelected(null); setDeleting(null); }}><X size={18} /></button></div>
       <p className="ReportRecordId">{(selected || deleting).id}</p>
       {selected && scheduling && <form onSubmit={(event) => { event.preventDefault(); scheduleCancellation(); }}>
-        <dl className="ReportDetails">{[['Customer', selected.name || selected.stripeCustomerId], ['Email', selected.email], ['Plans', (selected.items || []).map((item) => `${item.name} ${item.amount ?? 'Variable'} ${item.currency.toUpperCase()} / ${item.interval}`).join(', ')], ['Current period ends', dateLabel(selected.currentPeriodEnd)], ['Already scheduled to end', selected.cancelAt || selected.cancelAtPeriodEnd ? dateLabel(selected.cancelAt || selected.currentPeriodEnd) : 'No']].filter(([, value]) => value).map(([label, value]) => <React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}</dl>
+        <dl className="ReportDetails">{[['Members', selected.names?.join(', ') || selected.stripeCustomerId], ['Order', selected.orderRef], ['Plans', (selected.items || []).map((item) => `${item.name} ${item.amount ?? 'Variable'} ${item.currency.toUpperCase()} / ${item.interval}`).join(', ')], ['Current period ends', dateLabel(selected.currentPeriodEnd)], ['Already scheduled to end', selected.cancelAt || selected.cancelAtPeriodEnd ? dateLabel(selected.cancelAt || selected.currentPeriodEnd) : 'No']].filter(([, value]) => value).map(([label, value]) => <React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}</dl>
         {canCancel(selected) ? <>
           <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>Immediately cancels this {stripeMode} Stripe subscription</strong><p>Stop recurring billing now, not at the club-year end or the end of the paid period. This cancels every item on this subscription and cannot be undone. No refund, prorated credit or final invoice is created. Existing unpaid invoices or payments already processing may still be collected. The bank mandate itself is not cancelled.</p></div></div>
           <label className="FormLabel SpaceT4">Type subscription ID to cancel immediately<input className="FormInput" value={scheduleConfirmation} onChange={(event) => setScheduleConfirmation(event.target.value)} autoComplete="off" disabled={scheduleBusy} /></label>
           <label className="AdminCheckbox ReportNotice"><input type="checkbox" checked={scheduleAcknowledged} onChange={(event) => setScheduleAcknowledged(event.target.checked)} disabled={scheduleBusy} /> I approve cancelling this entire subscription immediately without a refund.</label>
+          <ReasonInput value={reason} onChange={setReason} disabled={scheduleBusy} />
           {error && <p className="StatusTextError" role="alert">{error}</p>}
-          <button className="EditorCommand TileRemove" type="submit" disabled={scheduleBusy || scheduleConfirmation !== selected.id || !scheduleAcknowledged}><CircleSlash size={18} /> {scheduleBusy ? 'Cancelling with Stripe…' : 'Stop billing immediately'}</button>
+          <button className="EditorCommand TileRemove" type="submit" disabled={scheduleBusy || scheduleConfirmation !== selected.id || !scheduleAcknowledged || !reason.trim()}><CircleSlash size={18} /> {scheduleBusy ? 'Cancelling with Stripe…' : 'Stop billing immediately'}</button>
         </> : <p className="ReportNotice">This subscription is no longer active, so there is nothing to cancel here.</p>}
         <button className="EditorCommand SpaceT4" type="button" disabled={scheduleBusy} onClick={() => setScheduling(false)}><FileText size={18} /> View full details</button>
       </form>}
@@ -396,12 +408,13 @@ export default function AdminReportsPage({ onNavigate }) {
         <p className="ReportNotice">Permanently deletes this {kind === 'orders' ? 'order' : 'member-register'} record only. Other customer records, Firebase login accounts, vouchers, Google Sheets, emails, and Stripe subscriptions remain unchanged. This is not complete customer erasure. Check retention requirements first.</p>
         {activeMonthly.length > 0 && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>Monthly payments are still being collected.</strong>
           <ul>{activeMonthly.map((subscription) => <li key={subscription.id}>{subscription.itemNames.join(', ')}{subscription.names.length ? ` for ${subscription.names.join(', ')}` : ''} — paid by {subscription.email} ({subscription.id})</li>)}</ul>
-          <p>Cancel them now (straight away, no refund), then delete the record.</p>
-          <button className="EditorCommand TileRemove" type="button" disabled={deleteBusy} onClick={cancelActiveMonthly}>{deleteBusy ? 'Cancelling…' : 'Cancel them now'}</button></div></div>}
+          <p>Cancel them now (straight away, no refund), then delete the record. The reason below is recorded for both.</p>
+          <button className="EditorCommand TileRemove" type="button" disabled={deleteBusy || !reason.trim()} onClick={cancelActiveMonthly}>{deleteBusy ? 'Cancelling…' : 'Cancel them now'}</button></div></div>}
         {stripeRequired && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>Cancel active subscriptions in Stripe first.</strong><p>Deleting website data does not stop recurring payments.{deleting.stripeSubscriptionId && ` Subscription: ${deleting.stripeSubscriptionId}`}</p><a className="ContentLink" href="https://dashboard.stripe.com/test/subscriptions" target="_blank" rel="noreferrer">Open Stripe test subscriptions</a><label><input type="checkbox" checked={stripeAcknowledged} onChange={(event) => setStripeAcknowledged(event.target.checked)} required /> I have checked Stripe and cancelled any active subscription before deletion.</label></div></div>}
         <label className="FormLabel SpaceT4">Type the record ID to confirm<input className="FormInput" autoComplete="off" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+        <ReasonInput value={reason} onChange={setReason} disabled={deleteBusy} />
         {error && <p className="StatusTextError" role="alert">{error}</p>}
-        <button className="EditorCommand TileRemove" type="submit" disabled={deleteBusy || confirmation !== deleting.id || (stripeRequired && !stripeAcknowledged)}><Trash2 size={18} /> {deleteBusy ? 'Deleting…' : 'Permanently delete record'}</button>
+        <button className="EditorCommand TileRemove" type="submit" disabled={deleteBusy || confirmation !== deleting.id || (stripeRequired && !stripeAcknowledged) || !reason.trim()}><Trash2 size={18} /> {deleteBusy ? 'Deleting…' : 'Permanently delete record'}</button>
       </form>}
     </section></div>}
     {erasure && <GdprErasurePanel adminUser={adminUser} start={erasure} onClose={() => setErasure(null)} onErased={() => load()} />}

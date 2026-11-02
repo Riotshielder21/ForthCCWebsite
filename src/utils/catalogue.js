@@ -5,23 +5,42 @@ import { isLockedProduct } from './tripDiscount.js';
  * subscription ("prorated monthly" for services) is a monthly price for each month left until the next 1 March.
  */
 export const PRICING_MODES = ['fixed', 'prorated', 'subscription'];
-const LEGACY_FIXED_SERVICES = ['keyhire'];
 const CATEGORY_TYPES = { VOUCHERS: 'voucher', EVENTS: 'event-ticket', SUBSCRIPTIONS: 'subscription', MERCHANDISE: 'merchandise' };
 
 /**
- * The type follows the category; only services choose a pricing mode. Older saved products are mapped here: a
- * `yearly-service` was always prorated, so it stays prorated, except key hire, which is a fixed price. Only subscription
- * pricing can be paid monthly, and it allows monthly payments unless an admin turns them off.
+ * The type follows the category; only services choose a pricing mode, and only subscription pricing can be paid
+ * monthly (when `allowMonthly` is set).
  */
 export const productTerms = (product) => {
   if (product.category === 'MEMBERSHIP') return { type: product.type === 'external' ? 'external' : 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false };
   if (product.category === 'SERVICES') {
-    const legacy = product.type === 'subscription' ? 'subscription' : product.type === 'yearly-service' && !LEGACY_FIXED_SERVICES.includes(product.id) ? 'prorated' : 'fixed';
-    const pricingMode = PRICING_MODES.includes(product.pricingMode) ? product.pricingMode : legacy;
-    return { type: pricingMode === 'subscription' ? 'subscription' : 'yearly-service', pricingMode, allowMonthly: pricingMode === 'subscription' && product.allowMonthly !== false };
+    const pricingMode = PRICING_MODES.includes(product.pricingMode) ? product.pricingMode : 'fixed';
+    return { type: pricingMode === 'subscription' ? 'subscription' : 'yearly-service', pricingMode, allowMonthly: pricingMode === 'subscription' && product.allowMonthly === true };
   }
-  if (product.category === 'SUBSCRIPTIONS') return { type: 'subscription', pricingMode: 'subscription', allowMonthly: product.allowMonthly !== false };
+  if (product.category === 'SUBSCRIPTIONS') return { type: 'subscription', pricingMode: 'subscription', allowMonthly: product.allowMonthly === true };
   return { type: CATEGORY_TYPES[product.category] || 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false };
+};
+
+const LEGACY_FIXED_SERVICES = ['keyhire'];
+
+/**
+ * Converts a saved product to the current shape. `active` replaces the soft-delete `deleted` flag (and any
+ * `hidden`/`visible`), `sortOrder` is backfilled from the shop's display order (`displayIndex`), and products saved
+ * before `pricingMode`/`allowMonthly` existed get the terms they were sold on: a `yearly-service` was prorated except
+ * key hire, and a subscription could be paid monthly. A partial override with no `category` (a removed starter
+ * product) keeps the starter terms. Returns only what changes.
+ */
+export const productUpgrade = (fields, displayIndex) => {
+  const set = {};
+  const remove = ['deleted', 'hidden', 'visible'].filter((key) => key in fields);
+  if (typeof fields.active !== 'boolean') set.active = fields.deleted !== true && fields.hidden !== true && fields.visible !== false;
+  if (typeof fields.sortOrder !== 'number') set.sortOrder = (displayIndex + 1) * 10;
+  if (fields.category && !PRICING_MODES.includes(fields.pricingMode)) {
+    set.pricingMode = fields.category === 'SUBSCRIPTIONS' || (fields.category === 'SERVICES' && fields.type === 'subscription') ? 'subscription'
+      : fields.category === 'SERVICES' && fields.type === 'yearly-service' && !LEGACY_FIXED_SERVICES.includes(fields.id) ? 'prorated' : 'fixed';
+  }
+  if (fields.category && typeof fields.allowMonthly !== 'boolean') set.allowMonthly = (set.pricingMode || fields.pricingMode) === 'subscription';
+  return { set, remove };
 };
 
 /**
@@ -44,17 +63,15 @@ export const normaliseProduct = (product) => {
   return { ...rest, ...productTerms(product), ...(rule ? { membershipRule: rule, membershipRequired: rule !== 'none' } : {}) };
 };
 
-// Locked products (the trip discount depends on them) stay in the shop even if a deletion was saved.
+// Inactive products leave the shop, except locked ones (the trip discount depends on them). Sorted by `sortOrder`.
 export const resolveCatalogue = (defaults, saved) => {
   const products = new Map(defaults.map((product) => [product.id, product]));
   for (const product of saved) {
-    if (product.deleted === true && isLockedProduct(product.id)) {
-      const { deleted: _deleted, ...kept } = product;
-      products.set(product.id, { ...products.get(product.id), ...kept });
-    } else if (product.deleted === true) products.delete(product.id);
+    if (product.active === false && isLockedProduct(product.id)) products.set(product.id, { ...products.get(product.id), ...product, active: true });
+    else if (product.active === false) products.delete(product.id);
     else products.set(product.id, product);
   }
-  return [...products.values()].map(normaliseProduct);
+  return [...products.values()].map(normaliseProduct).sort((a, b) => a.sortOrder - b.sortOrder);
 };
 
 export const validateEventSchedule = (schedule) => {

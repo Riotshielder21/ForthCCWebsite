@@ -15,7 +15,10 @@ export const PRODUCTS = [
     basePrice: 85.00,
     description: 'Unlimited kit hire for the club year.',
     type: 'yearly-service',
-    pricingMode: 'prorated'
+    pricingMode: 'prorated',
+    allowMonthly: false,
+    active: true,
+    sortOrder: 10
   },
   {
     id: 'club-membership',
@@ -25,7 +28,11 @@ export const PRODUCTS = [
     priceLabel: 'Starting from £12.50',
     description: 'Required for anyone paddling with us after 3 trial sessions. Managed via JustGo.',
     externalLink: 'https://sca.justgo.com/Workbench/Show/5',
-    type: 'external'
+    type: 'external',
+    pricingMode: 'fixed',
+    allowMonthly: false,
+    active: true,
+    sortOrder: 20
   },
   {
     id: 'membership-junior',
@@ -34,7 +41,11 @@ export const PRODUCTS = [
     basePrice: 17.50,
     description: 'For paddlers aged 8–17. Includes SCA membership. Club year runs from 1 March.',
     type: 'annual-oneoff',
-    membershipTier: 'junior'
+    membershipTier: 'junior',
+    pricingMode: 'fixed',
+    allowMonthly: false,
+    active: true,
+    sortOrder: 30
   },
   {
     id: 'membership-adult',
@@ -43,7 +54,11 @@ export const PRODUCTS = [
     basePrice: 30.00,
     description: 'Individual adult membership. Includes SCA membership. Club year runs from 1 March.',
     type: 'annual-oneoff',
-    membershipTier: 'adult'
+    membershipTier: 'adult',
+    pricingMode: 'fixed',
+    allowMonthly: false,
+    active: true,
+    sortOrder: 40
   },
   {
     id: 'membership-family',
@@ -52,7 +67,11 @@ export const PRODUCTS = [
     basePrice: 50.00,
     description: 'Covers all members of a household. Includes SCA membership. Club year runs from 1 March.',
     type: 'annual-oneoff',
-    membershipTier: 'family'
+    membershipTier: 'family',
+    pricingMode: 'fixed',
+    allowMonthly: false,
+    active: true,
+    sortOrder: 50
   },
   {
     id: 'blue-sub',
@@ -61,7 +80,11 @@ export const PRODUCTS = [
     basePrice: 25.00,
     description: 'One (1) coached session per week. Covers Polo, Slalom, or Sprint, River Trips and more.',
     hasAnnualDiscount: true,
-    type: 'subscription'
+    type: 'subscription',
+    pricingMode: 'subscription',
+    allowMonthly: true,
+    active: true,
+    sortOrder: 60
   },
   {
     id: 'gold-sub',
@@ -70,7 +93,11 @@ export const PRODUCTS = [
     basePrice: 30.00,
     description: 'Unlimited coached sessions. Ideal for competitive Sprint and Marathon paddlers, Canoe polo and more.',
     hasAnnualDiscount: true,
-    type: 'subscription'
+    type: 'subscription',
+    pricingMode: 'subscription',
+    allowMonthly: true,
+    active: true,
+    sortOrder: 70
   },
   {
     id: 'vouchers',
@@ -80,7 +107,11 @@ export const PRODUCTS = [
     description: 'Recieve a code and giftvoucher for a friend or family member to use against any of our courses. Valid for 1 year.',
     hasAnnualDiscount: false,
     allowsAnnualStacking: false,
-    type: 'voucher'
+    type: 'voucher',
+    pricingMode: 'fixed',
+    allowMonthly: false,
+    active: true,
+    sortOrder: 80
   },
   {
     id: 'keyhire',
@@ -91,6 +122,9 @@ export const PRODUCTS = [
     hasAnnualDiscount: false,
     allowsAnnualStacking: false,
     type: 'yearly-service',
-    pricingMode: 'fixed'
+    pricingMode: 'fixed',
+    allowMonthly: false,
+    active: true,
+    sortOrder: 90
   }
 ];

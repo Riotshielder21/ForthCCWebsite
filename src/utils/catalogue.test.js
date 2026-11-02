@@ -1,15 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseProduct, productTerms, productMembershipRule, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
+import { normaliseProduct, productTerms, productUpgrade, productMembershipRule, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
 import { calculateCart } from './pricing.js';
 import { PRODUCTS } from '../constants/products.js';
 
-test('first saved product preserves starter catalogue; overrides and deletions stay explicit', () => {
-  const defaults = [{ id: 'starter', name: 'Starter' }, { id: 'other' }];
-  assert.equal(resolveCatalogue(defaults, [{ id: 'new' }]).length, 3);
-  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', name: 'Edited' }])[0], normaliseProduct({ id: 'starter', name: 'Edited' }));
-  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', deleted: true }]), [normaliseProduct({ id: 'other' })]);
-  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', deleted: true }, { id: 'other', deleted: true }]), []);
+test('first saved product preserves starter catalogue; overrides and removals stay explicit; sorted by sortOrder', () => {
+  const defaults = [{ id: 'starter', name: 'Starter', sortOrder: 10 }, { id: 'other', sortOrder: 20 }];
+  assert.equal(resolveCatalogue(defaults, [{ id: 'new', sortOrder: 30 }]).length, 3);
+  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', name: 'Edited', sortOrder: 10 }])[0], normaliseProduct({ id: 'starter', name: 'Edited', sortOrder: 10 }));
+  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', active: false }]), [normaliseProduct({ id: 'other', sortOrder: 20 })]);
+  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', active: false }, { id: 'other', active: false }]), []);
+  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'new', sortOrder: 5 }, { id: 'other', sortOrder: 1 }]).map(({ id }) => id), ['other', 'new', 'starter']);
+  const locked = resolveCatalogue([{ id: 'boat-hire', name: 'Boat hire', sortOrder: 10 }], [{ id: 'boat-hire', active: false }]);
+  assert.deepEqual(locked.map(({ id, name, active }) => [id, name, active]), [['boat-hire', 'Boat hire', true]], 'locked products stay in the shop');
+  assert.deepEqual(resolveCatalogue(PRODUCTS, []).map(({ id }) => id), PRODUCTS.map(({ id }) => id));
+});
+
+test('saved products are upgraded to active, sortOrder and explicit pricing terms', () => {
+  assert.deepEqual(productUpgrade({ id: 'x', category: 'EVENTS', deleted: true }, 3), { set: { active: false, sortOrder: 40, pricingMode: 'fixed', allowMonthly: false }, remove: ['deleted'] });
+  assert.deepEqual(productUpgrade({ id: 'x', category: 'EVENTS', deleted: false, hidden: false }, 0).set.active, true);
+  assert.deepEqual(productUpgrade({ id: 'x', category: 'EVENTS', visible: false }, 0).set.active, false);
+  assert.deepEqual(productUpgrade({ id: 'boat-hire', category: 'SERVICES', type: 'yearly-service' }, 0).set.pricingMode, 'prorated');
+  assert.deepEqual(productUpgrade({ id: 'keyhire', category: 'SERVICES', type: 'yearly-service' }, 0).set.pricingMode, 'fixed');
+  assert.deepEqual(productUpgrade({ id: 's', category: 'SERVICES', type: 'subscription' }, 0).set, { active: true, sortOrder: 10, pricingMode: 'subscription', allowMonthly: true });
+  assert.deepEqual(productUpgrade({ id: 's', category: 'SUBSCRIPTIONS', allowMonthly: false }, 0).set, { active: true, sortOrder: 10, pricingMode: 'subscription' });
+  assert.deepEqual(productUpgrade({ id: 'boat-hire', deleted: true }, 0), { set: { active: false, sortOrder: 10 }, remove: ['deleted'] }, 'a partial override keeps the starter terms');
+  const current = { id: 'x', category: 'SERVICES', pricingMode: 'fixed', allowMonthly: false, active: true, sortOrder: 70 };
+  assert.deepEqual(productUpgrade(current, 2), { set: {}, remove: [] });
+  for (const product of PRODUCTS) assert.deepEqual(productUpgrade(product, 0), { set: {}, remove: [] }, `${product.id} is already current`);
 });
 
 test('only event products retain event schedule metadata', () => {
@@ -53,7 +71,7 @@ test('course-place voucher purchase value can be applied as scoped credit to a c
   const course = { id: 'course-place', category: 'EVENTS', type: 'event-ticket', basePrice: 75 };
   const purchase = calculateCart([voucher], false);
   const redemption = calculateCart([course], false, {
-    discountType: 'credit',
+    type: 'credit',
     discountValue: purchase.items[0].displayPrice,
     productIds: [course.id]
   });
@@ -66,14 +84,12 @@ test('course-place voucher purchase value can be applied as scoped credit to a c
 test('product terms follow the category, and only services choose a pricing mode', () => {
   assert.deepEqual(productTerms({ category: 'MEMBERSHIP', type: 'subscription', allowMonthly: true }), { type: 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false });
   assert.equal(productTerms({ category: 'MEMBERSHIP', type: 'external' }).type, 'external');
-  assert.deepEqual(productTerms({ category: 'SERVICES', type: 'yearly-service' }), { type: 'yearly-service', pricingMode: 'prorated', allowMonthly: false });
-  assert.equal(productTerms({ id: 'keyhire', category: 'SERVICES', type: 'yearly-service' }).pricingMode, 'fixed');
+  assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'prorated' }), { type: 'yearly-service', pricingMode: 'prorated', allowMonthly: false });
   assert.equal(productTerms({ category: 'SERVICES', pricingMode: 'fixed', type: 'yearly-service' }).pricingMode, 'fixed');
   assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'prorated', allowMonthly: true }), { type: 'yearly-service', pricingMode: 'prorated', allowMonthly: false });
-  assert.deepEqual(productTerms({ category: 'SERVICES', type: 'subscription' }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: true });
+  assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'subscription', allowMonthly: true }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: true });
   assert.equal(productTerms({ category: 'SERVICES', pricingMode: 'subscription', allowMonthly: false }).allowMonthly, false);
-  assert.equal(productTerms({ category: 'SERVICES', pricingMode: 'subscription', allowMonthly: true }).allowMonthly, true);
-  assert.deepEqual(productTerms({ category: 'SUBSCRIPTIONS' }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: true });
+  assert.deepEqual(productTerms({ category: 'SUBSCRIPTIONS', allowMonthly: true }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: true });
   assert.equal(productTerms({ category: 'SUBSCRIPTIONS', allowMonthly: false }).allowMonthly, false);
   for (const [category, type] of [['VOUCHERS', 'voucher'], ['EVENTS', 'event-ticket'], ['MERCHANDISE', 'merchandise']]) {
     assert.deepEqual(productTerms({ category, type: 'subscription', pricingMode: 'prorated', allowMonthly: true }), { type, pricingMode: 'fixed', allowMonthly: false });
@@ -86,7 +102,7 @@ test('product terms follow the category, and only services choose a pricing mode
 test('a subscription that does not allow monthly payments is charged up front even in monthly mode', () => {
   const now = new Date(2026, 9, 1);
   const upfront = normaliseProduct({ id: 'up', category: 'SUBSCRIPTIONS', basePrice: 10, allowMonthly: false });
-  const monthly = normaliseProduct({ id: 'mo', category: 'SUBSCRIPTIONS', basePrice: 10 });
+  const monthly = normaliseProduct({ id: 'mo', category: 'SUBSCRIPTIONS', basePrice: 10, allowMonthly: true });
   const fixed = normaliseProduct({ id: 'fx', category: 'SERVICES', type: 'yearly-service', pricingMode: 'fixed', basePrice: 85 });
   const cart = calculateCart([upfront, monthly, fixed], false, null, now);
   assert.deepEqual(cart.items.map((item) => item.monthlyBilling), [false, true, false]);

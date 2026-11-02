@@ -80,7 +80,7 @@ export const saveProduct = async (product) => {
   await setDoc(doc(db, 'products', id), {
     ...productData,
     ...cleanStockFields(product),
-    deleted: false,
+    active: true,
     updatedAt: serverTimestamp()
   }, { merge: true });
 };
@@ -88,7 +88,7 @@ export const saveProduct = async (product) => {
 export const removeProduct = async (id) => {
   if (!db) throw new Error('Content database is unavailable.');
   if (isLockedProduct(id)) throw new Error('This product gives the automatic trip discount, so it cannot be removed.');
-  await setDoc(doc(db, 'products', id), { deleted: true, updatedAt: serverTimestamp() }, { merge: true });
+  await setDoc(doc(db, 'products', id), { active: false, updatedAt: serverTimestamp() }, { merge: true });
 };
 
 export const seedProducts = async (products) => {

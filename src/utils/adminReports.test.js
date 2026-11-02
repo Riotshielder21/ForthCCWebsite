@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders } from './adminReports.js';
+import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders, onlyEventPeriod, onlyEvent, reportEventNames } from './adminReports.js';
 
 test('membership status is one of No, Active, Awaiting renewal, Expired or Revoked, or a raw imported status', () => {
   const now = new Date('2026-10-10T12:00:00Z');
@@ -273,6 +273,88 @@ test('report filters narrow purchases, events, and options', async () => {
   assert.equal(onlyEvent(records, 'Intro course').length, 2);
 });
 
+
+const ticketSchedule = (startDate, extra = {}) => ({
+  mode: 'single', startDate, startTime: '15:00', endTime: '17:00', timeZone: 'Europe/London', ...extra
+});
+
+test('event periods archive single events and courses only when their final session ends', () => {
+  const records = [{
+    id: 'mixed', items: [
+      { name: 'Past day', price: 10, eventSchedule: ticketSchedule('2026-10-30') },
+      { name: 'Ongoing weekly course', price: 60, eventSchedule: ticketSchedule('2026-10-19', { mode: 'weekly', weeks: 6 }) },
+      { name: 'Completed daily course', price: 30, eventSchedule: ticketSchedule('2026-10-29', { mode: 'consecutive', days: 3 }) },
+      { name: 'Future day', price: 20, eventSchedule: ticketSchedule('2026-11-03') }
+    ]
+  }];
+  const now = new Date('2026-11-02T10:25:00Z');
+  assert.deepEqual(onlyEventPeriod(records, 'current', now)[0].items.map((item) => item.name), ['Ongoing weekly course', 'Future day']);
+  assert.deepEqual(onlyEventPeriod(records, 'past', now)[0].items.map((item) => item.name), ['Past day', 'Completed daily course']);
+
+  const course = [{ id: 'course', items: [records[0].items[1]] }];
+  assert.equal(onlyEventPeriod(course, 'past', new Date('2026-11-23T16:59:59Z')).length, 0);
+  assert.equal(onlyEventPeriod(course, 'past', new Date('2026-11-23T17:00:00Z')).length, 1);
+  assert.equal(onlyEventPeriod(course, 'current', new Date('2026-11-23T17:00:00Z')).length, 0);
+});
+
+test('event periods use London time across BST, GMT, midnight and course clock changes', () => {
+  for (const [schedule, end] of [
+    [ticketSchedule('2026-07-01'), '2026-07-01T16:00:00Z'],
+    [ticketSchedule('2026-11-02'), '2026-11-02T17:00:00Z'],
+    [ticketSchedule('2026-07-01', { startTime: '00:00', endTime: '00:30' }), '2026-06-30T23:30:00Z'],
+    [ticketSchedule('2026-10-18', { mode: 'weekly', weeks: 2 }), '2026-10-25T17:00:00Z'],
+    [ticketSchedule('2026-03-28', { mode: 'consecutive', days: 2 }), '2026-03-29T16:00:00Z']
+  ]) {
+    const records = [{ items: [{ eventSchedule: schedule }] }];
+    assert.equal(onlyEventPeriod(records, 'past', new Date(new Date(end).getTime() - 1)).length, 0);
+    assert.equal(onlyEventPeriod(records, 'past', new Date(end)).length, 1);
+  }
+});
+
+test('event periods scope totals, attendee exports, emails and event options without changing purchases', () => {
+  const old = ticketSchedule('2026-10-30');
+  const upcoming = ticketSchedule('2026-11-10');
+  const report = orderReport('mixed', {
+    email: 'buyer@example.com', status: 'paid', totalPence: 9000,
+    items: [
+      { lineId: 'old', name: 'Course', category: 'EVENTS', pricePence: 1000, eventSchedule: old },
+      { lineId: 'new', name: 'Course', category: 'EVENTS', pricePence: 5000, eventSchedule: upcoming },
+      { lineId: 'other', name: 'Future trip', category: 'EVENTS', pricePence: 3000, eventSchedule: upcoming }
+    ],
+    people: [
+      { firstName: 'Past', lastName: 'Attendee', lineIds: ['old'] },
+      { firstName: 'Current', lastName: 'Attendee', lineIds: ['new', 'other'] }
+    ]
+  });
+  const records = [report, { id: 'old-only', email: 'past@example.com', items: [report.items[0]] }];
+  const before = structuredClone(records);
+  const now = new Date('2026-11-02T10:25:00Z');
+  const current = onlyEventPeriod(records, 'current', now);
+  const past = onlyEventPeriod(records, 'past', now);
+  assert.deepEqual(current.map((record) => [record.id, record.total]), [['mixed', 80]]);
+  assert.deepEqual(past.map((record) => [record.id, record.total]), [['mixed', 10], ['old-only', 10]]);
+  assert.deepEqual(reportEventNames(current), ['Course', 'Future trip']);
+  assert.deepEqual(reportEventNames(past), ['Course']);
+  assert.deepEqual(uniqueReportEmails(current), ['buyer@example.com']);
+  const selectedCourse = onlyEvent(current, 'Course');
+  assert.equal(selectedCourse[0].total, 50);
+  const rows = eventAttendeeRows(selectedCourse, (schedule) => schedule.startDate);
+  assert.deepEqual(rows.map((row) => row.slice(0, 3)), [['Course', '2026-11-10', 'Current Attendee']]);
+  assert.deepEqual(eventAttendeeRows(past, (schedule) => schedule.startDate).map((row) => row[2]), ['Past Attendee', 'Attendee details not recorded']);
+  assert.deepEqual(records, before);
+});
+
+test('missing and invalid event schedules stay visible for staff review, never silently archived', () => {
+  const records = [{ items: [
+    { name: 'Legacy ticket', price: 10 },
+    { name: 'Invalid ticket', price: 20, eventSchedule: ticketSchedule('2026-02-30') },
+    { name: 'Incomplete ticket', eventSchedule: { startDate: '2020-01-01' } }
+  ] }];
+  const now = new Date('2026-11-02T10:25:00Z');
+  assert.equal(onlyEventPeriod(records, 'current', now)[0].items.length, 3);
+  assert.deepEqual(onlyEventPeriod(records, 'past', now), []);
+  assert.deepEqual(onlyEventPeriod([], 'past', now), []);
+});
 
 test('JustGo check statuses remain authoritative while a future membership awaits upload', () => {
   const fields = { justgoSyncStatus: 'pending', lastJustgoSync: 1, checks: { pvg: { source: 'justgo', label: 'Current' }, safeguarding: { expiresOn: '2030-01-01' } } };

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ShieldX, X } from 'lucide-react';
 import { apiUrl } from '../utils/api';
+import ReasonInput from './ReasonInput';
 import { sharedDetailsErrors } from '../utils/erasure';
 
 const EMPTY_LOOKUP = { email: '', firstName: '', lastName: '', dob: '', affiliationNumber: '' };
@@ -19,6 +20,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
   const [preview, setPreview] = useState(null);
   const [shared, setShared] = useState(EMPTY_SHARED);
   const [confirmation, setConfirmation] = useState('');
+  const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -57,7 +59,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
   const sharedProblems = needsShared ? sharedDetailsErrors(shared) : [];
   const nothingFound = preview && !preview.people.length && !preview.deletedRecords.length;
   const familyChoiceMissing = hasFamily && !scope;
-  const ready = preview && !nothingFound && !familyChoiceMissing && !sharedProblems.length && confirmation === 'ERASE' && !busy;
+  const ready = preview && !nothingFound && !familyChoiceMissing && !sharedProblems.length && confirmation === 'ERASE' && Boolean(reason.trim()) && !busy;
 
   const submit = async (event) => {
     event.preventDefault();
@@ -65,7 +67,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
     setBusy(true);
     setError('');
     try {
-      const data = await post('/api/admin/gdpr/erase', { ...query, scope: scope || 'person', confirm: 'ERASE', ...(scope === 'person' && preview.remaining.length ? { sharedDetails: shared } : {}) });
+      const data = await post('/api/admin/gdpr/erase', { ...query, scope: scope || 'person', confirm: 'ERASE', reason, ...(scope === 'person' && preview.remaining.length ? { sharedDetails: shared } : {}) });
       setResult(data);
       onErased?.();
     } catch (eraseError) {
@@ -139,6 +141,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
         </ul>
 
         <label className="FormLabel SpaceT4">Type ERASE to confirm<input className="FormInput" autoComplete="off" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy || familyChoiceMissing} /></label>
+        <ReasonInput value={reason} onChange={setReason} disabled={busy || familyChoiceMissing} />
         {familyChoiceMissing && <p className="StatusText" role="status">Choose how to handle the family first.</p>}
         <button className="EditorCommand TileRemove" type="submit" disabled={!ready}><ShieldX size={18} /> {busy ? 'Working…' : 'Erase personal data'}</button>
       </form>}

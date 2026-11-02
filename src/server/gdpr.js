@@ -6,6 +6,7 @@ import { memberOrders } from './membershipTerms.js';
 import { lookupKey, maskEmail, maskMembershipNumber, maskName, personLookupKeys } from '../utils/privacy.js';
 import { memberIsJunior } from '../utils/households.js';
 import { rateLimit } from './rateLimit.js';
+import { REASON_REQUIRED, auditEntry, requiredReason } from '../utils/auditLog.js';
 import { EMAIL_CODE_PURPOSES, codeDocumentId } from '../utils/emailCodes.js';
 
 const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -23,7 +24,7 @@ const leftHouseholdIds = (records, targets) => {
  * GDPR erasure. Starts from the member register, follows the person into every other collection, keeps orders for the
  * accounts with identifying details removed, and leaves only a masked audit entry.
  */
-export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail, stopSubscriptionItems }) => {
+export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail, stopSubscriptionItems }) => {
   const auditSecret = () => process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
 
   /** Everything an erasure for this request would touch. `scope` is 'person' or 'family'. */
@@ -107,7 +108,16 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
 
     const emailList = [...erasedEmails];
     const byEmail = async (collection) => (await Promise.all(emailList.map((email) => adminDb.collection(collection).where('email', '==', email).get()))).flatMap((snapshot) => snapshot.docs);
-    const [discountCodes, lists, mirrorCustomers, mirrorSubscriptions] = await Promise.all([byEmail('discountCodes'), byEmail('lists'), byEmail('stripeCustomers'), byEmail('stripeSubscriptions')]);
+    // The Stripe mirror records which members each payer and subscription covers, not their names or emails.
+    const byMembers = async (collection) => {
+      const ids = [...targetIds];
+      const found = new Map();
+      for (let index = 0; index < ids.length; index += 30) {
+        (await adminDb.collection(collection).where('membershipIds', 'array-contains-any', ids.slice(index, index + 30)).get()).docs.forEach((document) => found.set(document.id, document));
+      }
+      return [...found.values()];
+    };
+    const [discountCodes, lists, mirrorCustomers, mirrorSubscriptions] = await Promise.all([byEmail('discountCodes'), byEmail('lists'), byMembers('stripeCustomers'), byMembers('stripeSubscriptions')]);
     const subscriptions = new Map();
     const warnings = [];
     // Items to stop on subscriptions that keep paying for someone staying: only those held by erased people alone.
@@ -121,7 +131,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       const record = document.data();
       const id = record.id || record.stripeSubscriptionId;
       if (id) {
-        candidates.set(id, { email: record.email, stripeMode: record.stripeMode, people: [] });
+        candidates.set(id, { people: (record.membershipIds || []).map((membershipId) => ({ membershipId })) });
         modes.set(id, record.stripeMode || 'test');
       }
     }
@@ -160,14 +170,12 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       else if (!stored.exists) warnings.push(`Subscription ${id} also covers people who are staying, so it was not cancelled. Review it in Stripe.`);
     }
 
-    const customerDocs = candidateEmails.size ? (await adminDb.getAll(...[...candidateEmails].map((email) => adminDb.collection('customers').doc(customerId(email))))).filter((document) => document.exists) : [];
-
     const auditDocs = new Map();
     for (const subject of subjects) {
       const [nameKey] = personLookupKeys(secret, { ...subject, email: '' });
       if (!nameKey) continue;
       const emailKeys = [...new Set([subject.email, ...targets.filter((record) => matchesIdentity(record, subject, record.household)).flatMap((record) => identityEmails(record, record.household))].filter(Boolean))].map((email) => lookupKey(secret, 'email', email));
-      (await adminDb.collection('adminDeletionAudit').where('lookupKeys', 'array-contains', nameKey).limit(50).get()).docs
+      (await adminDb.collection('auditLog').where('lookupKeys', 'array-contains', nameKey).limit(50).get()).docs
         .filter((document) => !document.data().personalDataErased && emailKeys.some((key) => document.data().lookupKeys.includes(key)))
         .forEach((document) => auditDocs.set(document.id, document));
     }
@@ -177,7 +185,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       const members = familyRecords.filter((record) => record.householdId === id);
       return members.length && members.every((record) => targetIds.has(record.id));
     }).map((document) => document.id);
-    return { targets, remaining, family: familyRecords, households: householdRecords, erasedHouseholdIds, subjects, erasedEmails, orderUpdates, subscriptions, subscriptionRecords, itemStops, warnings, discountCodes, lists, mirrorCustomers, mirrorSubscriptions, customerDocs, auditDocs };
+    return { targets, remaining, family: familyRecords, households: householdRecords, erasedHouseholdIds, subjects, erasedEmails, orderUpdates, subscriptions, subscriptionRecords, itemStops, warnings, discountCodes, lists, mirrorCustomers, mirrorSubscriptions, auditDocs };
   };
 
   const describe = (scope) => ({
@@ -188,7 +196,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
     ordersRedacted: scope.orderUpdates.length, subscriptionsToCancel: [...scope.subscriptions.keys()],
     subscriptionItemsToStop: scope.itemStops.map((stop) => ({ id: stop.id, itemNames: stop.items.map((item) => item.name) })), warnings: scope.warnings,
     related: { discountCodes: scope.discountCodes.length, lists: scope.lists.length, stripeRecords: scope.mirrorCustomers.length + scope.mirrorSubscriptions.length },
-    deletedRecords: [...scope.auditDocs].map(([id, document]) => ({ id, summary: document.data().summary, deletedAt: document.data().createdAt?.toDate?.() || null }))
+    deletedRecords: [...scope.auditDocs].map(([id, document]) => ({ id, summary: document.data().summary, deletedAt: document.data().at?.toDate?.() || null }))
   });
 
   app.post('/api/admin/gdpr/preview', rateLimit(30, 60 * 1000), async (req, res) => {
@@ -217,6 +225,8 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       const secret = auditSecret();
       if (!secret) return res.status(503).json({ error: 'Deletion audit is not configured. Set AUDIT_LOOKUP_SECRET.' });
       if (req.body?.confirm !== 'ERASE') return res.status(400).json({ error: 'Type ERASE to confirm.' });
+      const reason = requiredReason(req.body);
+      if (!reason) return res.status(400).json({ error: REASON_REQUIRED });
       const scopeName = ['family', 'person'].includes(req.body.scope) ? req.body.scope : '';
       const scope = await loadScope(req.body, scopeName || 'person', secret);
       if (scope.error) return res.status(scope.status).json({ error: scope.error });
@@ -259,7 +269,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
           }
         }
         // Stop billing before removing either the Stripe customer or the local records needed for a retry.
-        for (const stop of scope.itemStops) await stopSubscriptionItems(stop.id, stop.items, admin, request);
+        for (const stop of scope.itemStops) await stopSubscriptionItems(stop.id, stop.items, admin, request, reason);
         const journal = await stripeJournal.get();
         stripeErasure = await eraseStripeDetails(request, {
           subscriptionIds: stripeIds, emails: scope.erasedEmails, customerIds: journal.data()?.customerIds || [],
@@ -338,23 +348,18 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
         const forms = await adminDb.collection('formSubmissions').where('email', '==', email).get();
         forms.docs.forEach((document) => batch.delete(document.ref));
       }
-      [...scope.mirrorCustomers, ...scope.mirrorSubscriptions].forEach((document) => batch.update(document.ref, { name: '', email: '' }));
+      [...scope.mirrorCustomers, ...scope.mirrorSubscriptions].forEach((document) => batch.update(document.ref, { membershipIds: FieldValue.arrayRemove(...targetIds) }));
       for (const [id, mode] of cancellations) {
-        batch.set(adminDb.collection('stripeSubscriptions').doc(`FCC-${mode}-${id}`), { status: 'Inactive', stripeStatus: 'canceled', reason: 'Cancelled for GDPR erasure', name: '', email: '' }, { merge: true });
+        batch.set(adminDb.collection('stripeSubscriptions').doc(`FCC-${mode}-${id}`), { status: 'Inactive', stripeStatus: 'canceled', reason: 'Cancelled for GDPR erasure' }, { merge: true });
       }
-      scope.customerDocs.forEach((document) => {
-        if (scope.erasedEmails.has(normalizeEmail(document.data().email))) batch.delete(document.ref);
-        else batch.update(document.ref, { membershipIds: FieldValue.arrayRemove(...targetIds) });
-      });
       scope.auditDocs.forEach((document) => batch.update(document.ref, { snapshot: null, personalDataErased: true, personalDataErasedAt: Timestamp.now() }));
       const people = scope.targets.map((record) => ({ name: maskName(fullName(record)), email: maskEmail(identityEmails(record, record.household)[0]), membershipNumber: maskMembershipNumber(record.affiliationNumber), tier: record.membershipTier || '' }));
-      batch.create(adminDb.collection('adminDeletionAudit').doc(), {
-        kind: 'gdpr-erasure', adminUid: admin.uid, createdAt: Timestamp.now(), personalDataErased: true, snapshot: null,
+      batch.create(adminDb.collection('auditLog').doc(), auditEntry({ kind: 'deletion', action: 'gdpr-erasure', reason, actor: admin, at: Timestamp.now(), personalDataErased: true, snapshot: null,
         recordIdHash: crypto.createHash('sha256').update([...targetIds].sort().join(',') || 'lookup').digest('hex'),
         summary: { label: 'GDPR erasure', scope: left.length ? 'person' : scope.family.length > 1 ? 'family' : 'person', people, ordersRedacted: scope.orderUpdates.map(({ id }) => id),
           subscriptionsCancelled: cancellations.map(([id]) => id), earlierDeletionsPurged: scope.auditDocs.size },
         lookupKeys: [...new Set(scope.subjects.flatMap((subject) => [...personLookupKeys(secret, subject), ...(subject.email ? [lookupKey(secret, 'email', subject.email)] : [])]))]
-      });
+      }));
       await batch.commit();
 
       const manual = [];

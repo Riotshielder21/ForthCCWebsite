@@ -54,10 +54,9 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
   const renewalOpen = now >= clubYearDates(currentYear).renewalOpens;
   const clubYearInfo = { now, nextClubYearStart, monthsRemaining, joiningShare: share };
   const items = cart.map((item) => {
-    // Catalogue items carry pricingMode (see productTerms); anything without one is fixed unless it is a subscription.
-    const pricingMode = item.pricingMode || (item.type === 'subscription' ? 'subscription' : 'fixed');
-    const monthlyBilling = pricingMode === 'subscription' && !isAnnual && (item.allowMonthly ?? item.type === 'subscription');
-    const kind = clubYearKind({ ...item, pricingMode });
+    const { pricingMode } = item;
+    const monthlyBilling = pricingMode === 'subscription' && !isAnnual && item.allowMonthly;
+    const kind = clubYearKind(item);
     const nextYear = Boolean(kind) && item.clubYearPart === 'next';
     const clubYear = kind ? currentYear + (nextYear ? 1 : 0) : null;
     const schedule = monthlyBilling ? monthlyDebits(clubYear, now) : { firstDebit: null, debits: 0 };
@@ -65,7 +64,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
     const promoEligible = promo?.productIds?.length || promo?.categories?.length
       ? Boolean(promo.productIds?.includes(item.id) || promo.categories?.includes(item.category))
       : item.category !== 'MEMBERSHIP';
-    const flat = promoEligible && promo?.discountType === 'flat' && pricingMode === 'subscription';
+    const flat = promoEligible && promo?.type === 'flat' && pricingMode === 'subscription';
     const monthly = flat ? Math.max(0, item.basePrice - promo.discountValue) : item.basePrice;
     const annualRate = item.hasAnnualDiscount && (!flat || promo.allowsAnnualStacking) ? 1 - DISCOUNTS.ANNUAL : 1;
     let subtotalPrice = item.basePrice;
@@ -95,7 +94,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
     // Automatic trip discounts (see tripDiscount.js) come off before any promo code.
     const tripSaving = money(Math.min(Math.max(0, Number(item.tripDiscount) || 0), displayPrice));
     displayPrice = money(displayPrice - tripSaving);
-    if (promoEligible && promo?.discountType === 'multiplier') {
+    if (promoEligible && promo?.type === 'multiplier') {
       const saving = money(displayPrice * promo.discountValue);
       displayPrice = money(displayPrice - saving);
       promoSaving += saving;
@@ -107,7 +106,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date()) =>
       clubYearInfo, ...(kind ? { clubYear, clubYearPart: nextYear ? 'next' : 'this' } : {}),
       ...(monthlyBilling ? { monthlyAmount: monthlyRate, firstDebit: schedule.firstDebit, debits: schedule.debits, subscriptionEnd: schedule.subscriptionEnd || null } : {}) };
   });
-  let credit = promo?.discountType === 'credit' ? promo.discountValue : 0;
+  let credit = promo?.type === 'credit' ? promo.discountValue : 0;
   for (const item of items) {
     if (!item.promoEligible || credit <= 0) continue;
     const saving = money(Math.min(credit, item.displayPrice));

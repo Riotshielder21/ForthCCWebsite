@@ -7,11 +7,14 @@ import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { clubYearDates } from '../src/utils/clubYear.js';
 import { CURRENT_MEMBERSHIP_VERSION, CURRENT_ORDER_VERSION } from '../src/utils/schema.js';
+import { PRODUCTS } from '../src/constants/products.js';
 
 const PROJECT = 'demo-fcc-migration-tests';
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: PROJECT });
 const db = getFirestore(initializeApp({ projectId: PROJECT }, 'migration-tests'));
-const COLLECTIONS = ['memberships', 'households', 'orders', 'membershipTerms', 'counters'];
+const LEGACY_AUDITS = ['adminSubscriptionAudit', 'adminItemAudit', 'adminDeletionAudit', 'adminAccessAudit'];
+const COLLECTIONS = ['memberships', 'households', 'orders', 'membershipTerms', 'counters', 'customers', 'discountCodes', 'products',
+  'stripeSubscriptions', 'stripeCustomers', 'auditLog', ...LEGACY_AUDITS];
 
 const clear = async () => {
   for (const name of COLLECTIONS) {
@@ -89,6 +92,30 @@ try {
   await db.collection('memberships').doc('NEW-M2').set({ schemaVersion: CURRENT_MEMBERSHIP_VERSION, householdId: 'H-OLD', firstName: 'New', lastName: 'Shape',
     dob: '1982-02-02', source: 'website', status: 'active' });
 
+
+  // Other collections in their old shapes.
+  await db.collection('customers').doc('old@example.test').set({ email: 'old@example.test', membershipIds: ['OLD-M1'], vouchers: ['VOUCH'] });
+  await db.collection('discountCodes').doc('OLD10').set({ code: 'OLD10', label: 'Ten', discountType: 'multiplier', discountValue: 0.1, active: true, used: false });
+  await db.collection('discountCodes').doc('OLDOFF').set({ code: 'OLDOFF', label: 'Off', discountType: 'flat', discountValue: 5, active: false });
+  await db.collection('discountCodes').doc('VOUCH').set({ code: 'VOUCH', label: 'Gift', discountType: 'credit', discountValue: 30, active: true, used: true,
+    singleUse: true, orderRef: 'OLD-1', email: 'old@example.test', voucherProductId: 'vouchers', usedByOrder: 'OLD-3' });
+  const current = { code: 'NEW20', label: 'New', type: 'multiplier', discountValue: 0.2, status: 'active' };
+  await db.collection('discountCodes').doc('NEW20').set(current);
+  await db.collection('products').doc('boat-hire').set({ deleted: true });
+  await db.collection('products').doc('custom-b').set({ name: 'Monthly thing', category: 'SUBSCRIPTIONS', type: 'subscription', basePrice: 5, hidden: true });
+  await db.collection('products').doc('custom-a').set({ name: 'Locker', category: 'SERVICES', type: 'yearly-service', basePrice: 20, deleted: false });
+  await db.collection('stripeSubscriptions').doc('FCC-test-sub_old').set({ id: 'sub_old', clubSubscriptionId: 'FCC-test-sub_old',
+    clubCustomerId: 'FCC-test-cus_old', stripeCustomerId: 'cus_old', name: 'Old Shape', email: 'old@example.test', status: 'Active' });
+  await db.collection('stripeCustomers').doc('FCC-test-cus_old').set({ clubCustomerId: 'FCC-test-cus_old', stripeCustomerId: 'cus_old',
+    name: 'Old Shape', email: 'old@example.test' });
+  await db.collection('adminSubscriptionAudit').doc('a1').set({ action: 'cancel-items', reason: 'Moved away', adminUid: 'u1', adminEmail: 'staff@example.test',
+    at: at('2026-04-05T10:00:00Z'), orderRef: 'OLD-2', stripeSubscriptionId: 'sub_old' });
+  await db.collection('adminItemAudit').doc('op1').set({ action: 'revoke', status: 'completed', reason: 'Refunded in person', adminEmail: 'staff@example.test',
+    adminUid: 'u1', createdAt: at('2026-04-06T10:00:00Z'), orderRef: 'OLD-3', lineId: 't1' });
+  await db.collection('adminDeletionAudit').doc('d1').set({ kind: 'orders', recordId: 'GONE-1', adminUid: 'u1', at: at('2026-04-07T10:00:00Z'), lookupKeys: ['email:gone@example.test'] });
+  await db.collection('adminDeletionAudit').doc('d2').set({ kind: 'gdpr-erasure', adminUid: 'u1', at: at('2026-04-08T10:00:00Z'), erased: 1 });
+  await db.collection('adminAccessAudit').doc('g1').set({ action: 'grant', email: 'helper@example.test', adminEmail: 'staff@example.test', at: '2026-04-09T10:00:00.000Z' });
+
   const dry = await migrate();
   assert.match(dry, /member records read, 1 would be upgraded/);
   assert.match(dry, /5 orders read, 5 would be upgraded/);
@@ -97,6 +124,17 @@ try {
   assert.ok((await db.collection('memberships').doc('OLD-M1').get()).data().privileges, 'a dry run keeps the old fields');
   const untouched = (await db.collection('orders').doc('OLD-3').get()).data();
   assert.ok(untouched.accessTokenHash && untouched.receipt && untouched.people[0].dob && !('schemaVersion' in untouched), 'a dry run leaves orders alone');
+  assert.match(dry, /Customer records \(removed\): 1 read, 1 changes would be made/);
+  assert.match(dry, /Discount codes: 4 read, 3 changes would be made/);
+  assert.match(dry, /Products: 3 read, 3 changes would be made/);
+  assert.match(dry, /Stripe mirror: 2 read, 2 changes would be made/);
+  assert.match(dry, /Audit log: 5 read, 5 changes would be made/);
+  assert.equal((await db.collection('customers').get()).size, 1, 'a dry run deletes no customers');
+  assert.equal((await db.collection('discountCodes').doc('OLD10').get()).data().discountType, 'multiplier', 'a dry run leaves discount codes alone');
+  assert.equal((await db.collection('products').doc('boat-hire').get()).data().deleted, true, 'a dry run leaves products alone');
+  assert.equal((await db.collection('stripeCustomers').doc('FCC-test-cus_old').get()).data().email, 'old@example.test', 'a dry run leaves the mirror alone');
+  assert.equal((await db.collection('auditLog').get()).size, 0, 'a dry run writes no audit entries');
+  for (const name of LEGACY_AUDITS) assert.ok((await db.collection(name).get()).size, `a dry run keeps ${name}`);
 
   await migrate('--apply');
   const member = (await db.collection('memberships').doc('OLD-M1').get()).data();
@@ -152,11 +190,57 @@ try {
   assert.equal(failedOrder.paymentFailure.at.toMillis(), new Date('2026-04-04T10:00:00Z').getTime());
   assert.equal(Object.keys(failedOrder).some((key) => key.startsWith('lastPaymentFailure')), false);
 
+
+  assert.equal((await db.collection('customers').get()).size, 0, 'the customers collection is removed');
+  const codes = new Map((await db.collection('discountCodes').get()).docs.map((document) => [document.id, document.data()]));
+  assert.deepEqual(codes.get('OLD10'), { code: 'OLD10', label: 'Ten', type: 'multiplier', discountValue: 0.1, status: 'active' });
+  assert.deepEqual(codes.get('OLDOFF'), { code: 'OLDOFF', label: 'Off', type: 'flat', discountValue: 5, status: 'disabled' });
+  assert.deepEqual(codes.get('VOUCH'), { code: 'VOUCH', label: 'Gift', type: 'credit', discountValue: 30, status: 'used', singleUse: true,
+    orderRef: 'OLD-1', email: 'old@example.test', sourceProductId: 'vouchers', usedByOrder: 'OLD-3' });
+  assert.deepEqual(codes.get('NEW20'), current, 'a code already in the current shape is unchanged');
+
+  const products = new Map((await db.collection('products').get()).docs.map((document) => [document.id, document.data()]));
+  const boatHireOrder = (PRODUCTS.findIndex((product) => product.id === 'boat-hire') + 1) * 10;
+  assert.deepEqual(products.get('boat-hire'), { active: false, sortOrder: boatHireOrder }, 'a removed starter product keeps the starter terms');
+  assert.deepEqual(products.get('custom-a'), { name: 'Locker', category: 'SERVICES', type: 'yearly-service', basePrice: 20, active: true,
+    sortOrder: (PRODUCTS.length + 1) * 10, pricingMode: 'prorated', allowMonthly: false });
+  assert.deepEqual(products.get('custom-b'), { name: 'Monthly thing', category: 'SUBSCRIPTIONS', type: 'subscription', basePrice: 5, active: false,
+    sortOrder: (PRODUCTS.length + 2) * 10, pricingMode: 'subscription', allowMonthly: true }, 'saved-only products follow in id order');
+
+  const mirroredSubscription = (await db.collection('stripeSubscriptions').doc('FCC-test-sub_old').get()).data();
+  const mirroredCustomer = (await db.collection('stripeCustomers').doc('FCC-test-cus_old').get()).data();
+  for (const mirrored of [mirroredSubscription, mirroredCustomer]) {
+    assert.deepEqual(mirrored.membershipIds, ['OLD-M1'], 'the mirror names the members the payer\'s orders cover');
+    assert.equal('name' in mirrored || 'email' in mirrored, false, 'names and emails are no longer copied');
+  }
+
+  for (const name of LEGACY_AUDITS) assert.equal((await db.collection(name).get()).size, 0, `${name} is emptied`);
+  const audit = new Map((await db.collection('auditLog').get()).docs.map((document) => [document.id, document.data()]));
+  assert.deepEqual([...audit.keys()].sort(), ['access_g1', 'deletion_d1', 'deletion_d2', 'item_op1', 'subscription_a1']);
+  const subscriptionEntry = audit.get('subscription_a1');
+  assert.deepEqual([subscriptionEntry.kind, subscriptionEntry.action, subscriptionEntry.reason, subscriptionEntry.by, subscriptionEntry.byUid, subscriptionEntry.orderRef],
+    ['subscription', 'cancel-items', 'Moved away', 'staff@example.test', 'u1', 'OLD-2']);
+  assert.equal(subscriptionEntry.at.toMillis(), new Date('2026-04-05T10:00:00Z').getTime());
+  const itemEntry = audit.get('item_op1');
+  assert.deepEqual([itemEntry.kind, itemEntry.action, itemEntry.reason, itemEntry.status, itemEntry.lineId], ['item', 'revoke', 'Refunded in person', 'completed', 't1']);
+  assert.equal(itemEntry.at.toMillis(), new Date('2026-04-06T10:00:00Z').getTime(), 'createdAt becomes at');
+  const deletion = audit.get('deletion_d1');
+  assert.deepEqual([deletion.kind, deletion.action, deletion.recordKind, deletion.reason, deletion.by, deletion.lookupKeys],
+    ['deletion', 'delete-record', 'orders', 'Recorded before reasons were required', 'u1', ['email:gone@example.test']]);
+  assert.deepEqual([audit.get('deletion_d2').action, audit.get('deletion_d2').erased], ['gdpr-erasure', 1]);
+  const access = audit.get('access_g1');
+  assert.deepEqual([access.kind, access.action, access.reason, access.email, access.by], ['access', 'grant-admin', 'Granted admin access', 'helper@example.test', 'staff@example.test']);
+  assert.equal(access.at.toMillis(), new Date('2026-04-09T10:00:00Z').getTime(), 'ISO dates become timestamps');
+
   const repeat = await migrate('--apply');
   assert.match(repeat, /member records read, 0 upgraded/, 'a repeat run finds nothing to do');
   assert.match(repeat, /5 orders read, 0 upgraded/, 'a repeat run upgrades no orders');
   assert.equal((await db.collection('membershipTerms').doc('OLD-M1_2025').get()).data().items.length, 1, 'no duplicate entitlements');
-  console.log('PASS: schema migration converts old-shape members to membership terms, links orders, upgrades orders, and is safe to repeat.');
+  for (const pass of ['Customer records \\(removed\\): 0', 'Discount codes: 4', 'Products: 3', 'Stripe mirror: 2', 'Audit log: 0']) {
+    assert.match(repeat, new RegExp(`${pass} read, 0 changes made`), `a repeat run changes nothing (${pass})`);
+  }
+  assert.equal((await db.collection('auditLog').get()).size, 5, 'a repeat run duplicates no audit entries');
+  console.log('PASS: schema migration converts old-shape members to membership terms, links orders, upgrades orders, removes customers, converts discount codes, products, the Stripe mirror and audits, and is safe to repeat.');
 } finally {
   await clear();
 }

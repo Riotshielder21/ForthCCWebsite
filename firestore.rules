@@ -13,7 +13,7 @@ service cloud.firestore {
       allow read: if true;
       // The trip discount relies on these products, so they cannot be deleted.
       allow write: if isClubAdmin()
-        && !(productId in ['boat-hire', 'blue-sub', 'gold-sub'] && (request.resource == null || request.resource.data.get('deleted', false) == true));
+        && !(productId in ['boat-hire', 'blue-sub', 'gold-sub'] && (request.resource == null || request.resource.data.get('active', true) == false));
     }
 
     match /{document=**} {

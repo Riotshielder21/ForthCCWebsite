@@ -78,7 +78,7 @@ const put = async (path, data) => { created.add(path); await db.doc(path).set(da
 const run = Date.now().toString(36);
 const action = (reason = 'Test reason') => {
   const operationId = randomUUID();
-  created.add(`adminItemAudit/${operationId}`);
+  created.add(`auditLog/item_${operationId}`);
   return { action: 'revoke', reason, operationId };
 };
 const refund = (amount, paymentIntent, revoke = false) => ({ ...action(), action: 'refund', amount, paymentIntent, revoke });
@@ -135,13 +135,14 @@ const checkMainServer = async () => {
     assert.equal((await holder.get()).data().subscriptionItems[0].status, 'cancelled');
     assert.ok((await purchase.get()).data().items[0].monthlyCancelledAt);
     assert.ok((await purchase.get()).data().items[0].revokedAt);
-    const audit = await db.collection('adminSubscriptionAudit').where('orderRefs', 'array-contains', purchase.id).get();
+    const audit = await db.collection('auditLog').where('orderRefs', 'array-contains', purchase.id).get();
     for (const document of audit.docs) created.add(document.ref.path);
     assert.equal(audit.size, 1);
+    assert.equal(audit.docs[0].data().kind, 'subscription');
     assert.equal(audit.docs[0].data().reason, 'Stop monthly hire');
     await purchase.update({ itemActionPending: { request: { operationId: randomUUID() } } });
     const deletion = await fetch(`http://127.0.0.1:${port}/api/admin/records/orders/${purchase.id}`, {
-      method: 'DELETE', headers, body: JSON.stringify({ confirmId: purchase.id, acknowledgeStripe: true })
+      method: 'DELETE', headers, body: JSON.stringify({ confirmId: purchase.id, acknowledgeStripe: true, reason: 'Test order' })
     });
     assert.equal(deletion.status, 409, 'unfinished item actions block order deletion');
     assert.equal((await purchase.get()).exists, true);
@@ -217,7 +218,8 @@ try {
   const rejection = await call(`${path(rejectedOrder)}/actions`, 'POST', rejectedAction);
   assert.equal(rejection.body.unfinished, false);
   assert.equal((await rejectedOrder.get()).data().itemActionPending, null);
-  assert.equal((await db.doc(`adminItemAudit/${rejectedAction.operationId}`).get()).data().status, 'rejected');
+  const rejectedAudit = (await db.doc(`auditLog/item_${rejectedAction.operationId}`).get()).data();
+  assert.deepEqual([rejectedAudit.kind, rejectedAudit.action, rejectedAudit.reason, rejectedAudit.status], ['item', 'refund', 'Test reason', 'rejected']);
   rejectRefund = false;
   assert.equal((await call(`${path(rejectedOrder)}/actions`, 'POST', refund(500, 'pi_rejected'))).status, 200);
 
@@ -232,12 +234,12 @@ try {
 
   const voucherOrder = await order('voucher', [{ id: 'voucher', lineId: 'line', type: 'voucher', pricePence: 6000 }], [],
     { vouchers: [{ code: `V-${run}` }], stripe: { paymentIntentId: 'pi_voucher' } });
-  const voucher = await put(`discountCodes/V-${run}`, { used: true });
+  const voucher = await put(`discountCodes/V-${run}`, { status: 'used', type: 'credit', discountValue: 60 });
   charge('pi_voucher', 6000);
   assert.equal((await call(`${path(voucherOrder)}/actions`, 'POST', refund(6000, 'pi_voucher', true))).status, 409, 'used voucher cannot be revoked');
-  await voucher.update({ used: false });
+  await voucher.update({ status: 'active' });
   assert.equal((await call(`${path(voucherOrder)}/actions`, 'POST', action())).status, 200);
-  assert.equal((await voucher.get()).data().active, false);
+  assert.equal((await voucher.get()).data().status, 'disabled');
 
   const monthly = await order('monthly', [{ id: 'coaching', lineId: 'line', category: 'SERVICES', pricePence: 0, monthly: true }]);
   await monthly.update({ subscriptionPlan: { status: 'failed' } });
@@ -290,9 +292,10 @@ try {
   assert.equal(await keyAccess.settleKeyAccess(member), 'not-active');
   assert.equal((await call(memberPath, 'POST', { action: 'grant', reason: 'New key issued' })).body.delivery, 'sent');
   assert.equal((await member.get()).data().keyAccess.revokedAt, null);
-  const accessAudit = await db.collection('adminItemAudit').where('membershipId', '==', member.id).get();
+  const accessAudit = await db.collection('auditLog').where('membershipId', '==', member.id).get();
   for (const document of accessAudit.docs) created.add(document.ref.path);
-  assert.equal(accessAudit.size, 2, 'key grants and revocations retain reasons in the audit trail');
+  assert.deepEqual(accessAudit.docs.map((document) => document.data()).filter((entry) => entry.kind === 'item').map((entry) => entry.reason).sort(),
+    ['Key returned', 'New key issued'], 'key grants and revocations retain reasons in the audit trail');
   await checkMainServer();
   console.log('Item action checks passed: key access, revocation override, refunds, pending refunds, retry reconciliation, vouchers, stock, membership and invoice allocation.');
 } finally {

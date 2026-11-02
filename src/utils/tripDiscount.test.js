@@ -54,7 +54,7 @@ test('the trip discount comes off the ticket price before promo codes and never 
   assert.equal(priced.items[1].displayPrice, 0);
   assert.equal(priced.tripDiscountValue, 35);
   assert.equal(priced.total, 20);
-  const promo = calculateCart([{ ...trip, tripDiscount: 10 }], true, { discountType: 'multiplier', discountValue: 0.5, productIds: [] }, now);
+  const promo = calculateCart([{ ...trip, tripDiscount: 10 }], true, { type: 'multiplier', discountValue: 0.5, productIds: [] }, now);
   assert.equal(promo.items[0].displayPrice, 15);
   assert.equal(calculateCart([trip], true, null, now).tripDiscountValue, 0);
 });
@@ -63,6 +63,6 @@ test('the trip discount products cannot be deleted from the shop', () => {
   assert.equal(isLockedProduct('boat-hire'), true);
   assert.equal(isLockedProduct('keyhire'), false);
   const defaults = [{ id: 'boat-hire', name: 'Hire', basePrice: 85 }, { id: 'keyhire', name: 'Key', basePrice: 50 }];
-  const catalogue = resolveCatalogue(defaults, [{ id: 'boat-hire', deleted: true, basePrice: 90 }, { id: 'keyhire', deleted: true }]);
-  assert.deepEqual(catalogue, [normaliseProduct({ id: 'boat-hire', name: 'Hire', basePrice: 90 })]);
+  const catalogue = resolveCatalogue(defaults, [{ id: 'boat-hire', active: false, basePrice: 90 }, { id: 'keyhire', active: false }]);
+  assert.deepEqual(catalogue, [normaliseProduct({ id: 'boat-hire', name: 'Hire', basePrice: 90, active: true })]);
 });

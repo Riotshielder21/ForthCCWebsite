@@ -47,11 +47,11 @@ registerGdprRoutes(app, {
     return { uid: 'gdpr-admin', email: 'admin@example.test' };
   },
   stripeReportRequest: () => request,
-  customerId: (email) => email.replace(/[^a-z0-9]/g, '_'),
   normalizeEmail: (email) => String(email || '').trim().toLowerCase(),
   isValidEmail: (email) => /^[^@]+@[^@]+$/.test(email),
-  stopSubscriptionItems: async (id, items, admin, stripeRequest) => {
+  stopSubscriptionItems: async (id, items, admin, stripeRequest, reason) => {
     assert.equal(stripeRequest, request);
+    assert.equal(reason, 'Requested by the member');
     assert.equal(admin.uid, 'gdpr-admin');
     const reference = db.collection('subscriptions').doc(id);
     const data = (await reference.get()).data();
@@ -103,13 +103,21 @@ const make = async (suffix, { shared = false, historical = false } = {}) => {
 try {
   assert.equal((await call('preview', {}, false)).status, 401);
   const sole = await make('sole');
-  const erased = await call('erase', { membershipId: sole.id, scope: 'person', confirm: 'ERASE' });
+  await put(`stripeSubscriptions/FCC-test-${sole.sub}`, { id: sole.sub, stripeMode: 'test', clubCustomerId: `FCC-test-${sole.customer}`, membershipIds: [sole.id, `M_${run}_kept`] });
+  await put(`stripeCustomers/FCC-test-${sole.customer}`, { stripeCustomerId: sole.customer, stripeMode: 'test', membershipIds: [sole.id] });
+  const unexplained = await call('erase', { membershipId: sole.id, scope: 'person', confirm: 'ERASE' });
+  assert.equal(unexplained.status, 400, 'erasure needs a reason');
+  assert.equal(customers.get(sole.customer).deleted, undefined, 'nothing is erased without a reason');
+  const erased = await call('erase', { membershipId: sole.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' });
   assert.equal(erased.status, 200, JSON.stringify(erased.data));
   assert.equal(subscriptions.get(sole.sub).status, 'canceled');
   assert.equal(customers.get(sole.customer).deleted, true);
   assert.equal(erased.data.stripeCustomersDeleted, 1);
   assert.ok(erased.data.manual.some((step) => /historical invoices/.test(step)));
   assert.equal((await db.doc(`memberships/${sole.id}`).get()).exists, false);
+  const mirrored = (await db.doc(`stripeSubscriptions/FCC-test-${sole.sub}`).get()).data();
+  assert.deepEqual([mirrored.membershipIds, mirrored.status], [[`M_${run}_kept`], 'Inactive'], 'the Stripe mirror forgets the erased member');
+  assert.deepEqual((await db.doc(`stripeCustomers/FCC-test-${sole.customer}`).get()).data().membershipIds, []);
   const stored = (await db.doc(`subscriptions/${sole.sub}`).get()).data();
   assert.equal(stored.email, '');
   assert.equal(stored.status, 'cancelled');
@@ -124,7 +132,7 @@ try {
   assert.deepEqual(alert.data, {});
 
   const shared = await make('shared', { shared: true });
-  const partial = await call('erase', { membershipId: shared.id, scope: 'person', confirm: 'ERASE' });
+  const partial = await call('erase', { membershipId: shared.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' });
   assert.equal(partial.status, 200, JSON.stringify(partial.data));
   assert.equal(partial.data.subscriptionItemsStopped, 1);
   assert.equal(subscriptions.get(shared.sub).status, 'active');
@@ -137,23 +145,23 @@ try {
   assert.equal(kept.email, shared.email, 'the contact address belongs to the remaining household');
 
   const old = await make('historical', { historical: true });
-  const historical = await call('erase', { membershipId: old.id, scope: 'person', confirm: 'ERASE' });
+  const historical = await call('erase', { membershipId: old.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' });
   assert.equal(historical.status, 200, JSON.stringify(historical.data));
   assert.equal((await db.doc(`subscriptions/${old.sub}`).get()).data().email, '', 'old subscriptions are found even without a member pointer');
 
   const retry = await make('retry');
   failCustomer = true;
-  const refused = await call('erase', { membershipId: retry.id, scope: 'person', confirm: 'ERASE' });
+  const refused = await call('erase', { membershipId: retry.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' });
   assert.equal(refused.status, 500);
   assert.match(refused.data.error, /member records were kept/);
   assert.equal((await db.doc(`memberships/${retry.id}`).get()).exists, true);
   assert.equal(subscriptions.get(retry.sub).status, 'canceled', 'billing stopped even though Stripe redaction failed');
   failCustomer = false;
   failDelete = true;
-  assert.equal((await call('erase', { membershipId: retry.id, scope: 'person', confirm: 'ERASE' })).status, 500);
+  assert.equal((await call('erase', { membershipId: retry.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' })).status, 500);
   assert.equal(customers.get(retry.customer).email, '', 'the failed deletion already cleared the search email');
   failDelete = false;
-  assert.equal((await call('erase', { membershipId: retry.id, scope: 'person', confirm: 'ERASE' })).status, 200);
+  assert.equal((await call('erase', { membershipId: retry.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' })).status, 200);
   assert.equal(customers.get(retry.customer).deleted, true);
   assert.ok(calls.some((entry) => entry.method === 'DELETE'));
   console.log('GDPR checks passed: immediate cancellation, shared-item isolation, historical redaction, customer deletion, retained-history warning and safe retry.');

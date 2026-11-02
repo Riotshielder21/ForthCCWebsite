@@ -7,6 +7,7 @@ import { checkLabel, checksManagedByJustgo, justgoCheckLabel } from './safeguard
 import { volunteerProfileLabels } from './volunteering.js';
 import { hasKeyAccess } from './keyAccess.js';
 import { orderLineId } from './itemActions.js';
+import { eventSessions } from './catalogue.js';
 
 export const reportDate = (value) => {
   if (!value) return null;
@@ -235,12 +236,33 @@ export const reportOptions = (records, values) => [...new Set(records.flatMap((r
 
 export const reportEventNames = (records) => reportOptions(records, (record) => (record.items || []).map((item) => item.name));
 
+const filterEventTickets = (records, matches) => records.flatMap((record) => {
+  const items = (record.items || []).filter(matches);
+  if (!items.length) return [];
+  return { ...record, items, total: items.reduce((sum, item) => sum + (item.price || 0), 0),
+    people: (record.people || []).map((person) => ({ ...person, events: (person.events || []).filter(matches) }))
+      .filter((person) => person.events.length) };
+});
+
 // Narrows event-ticket orders to one event, so totals, the table and the attendee export cover only that event.
-export const onlyEvent = (records, name) => name === 'all' ? records : records
-  .filter((record) => (record.items || []).some((item) => item.name === name))
-  .map((record) => {
-    const items = record.items.filter((item) => item.name === name);
-    return { ...record, items, total: items.reduce((sum, item) => sum + (item.price || 0), 0),
-      people: (record.people || []).map((person) => ({ ...person, events: (person.events || []).filter((event) => event.name === name) }))
-        .filter((person) => person.events.length) };
-  });
+export const onlyEvent = (records, name) => name === 'all' ? records : filterEventTickets(records, (item) => item.name === name);
+
+export const onlyEventPeriod = (records, period, now = new Date()) => {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(now).map(({ type, value }) => [type, value]));
+  const currentTime = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  const isPast = (item) => {
+    let sessions;
+    try {
+      sessions = eventSessions(item.eventSchedule);
+    } catch {
+      // Unusable schedules remain visible in Current events, with a notice in the report.
+      return false;
+    }
+    const last = sessions.at(-1);
+    return `${last.date}T${last.endTime}` <= currentTime;
+  };
+  return filterEventTickets(records, (item) => isPast(item) === (period === 'past'));
+};
