@@ -2,30 +2,36 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { apiUrl } from '../utils/api';
 import PurchaseReceipt from '../components/PurchaseReceipt';
-
-const RECEIPT_KEY = 'fcc-payment-receipt';
-
-// The receipt token is moved out of the address bar (history, bookmarks, screenshots) into this tab's storage.
-const takeReceiptParams = () => {
-  const query = new URLSearchParams(window.location.search);
-  let stored = {};
-  try { stored = JSON.parse(window.sessionStorage.getItem(RECEIPT_KEY) || '{}'); } catch { /* ignore */ }
-  const params = { sessionId: query.get('session_id') || stored.sessionId || '', receiptToken: query.get('receipt_token') || stored.receiptToken || '' };
-  if (query.has('receipt_token') || query.has('session_id')) {
-    try { window.sessionStorage.setItem(RECEIPT_KEY, JSON.stringify(params)); } catch { /* storage may be disabled */ }
-    window.history.replaceState(window.history.state, '', window.location.pathname);
-  }
-  return params;
-};
+import { takeReceiptParams } from '../utils/receiptSession';
 
 export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBasket }) {
-  const [{ sessionId, receiptToken }] = useState(takeReceiptParams);
+  const [{ sessionId, receiptToken, expiresAt, expired: savedReceiptExpired }] = useState(takeReceiptParams);
+  const [browserExpired, setBrowserExpired] = useState(Boolean(savedReceiptExpired));
   const [status, setStatus] = useState('checking');
   const [receipt, setReceipt] = useState(null);
   const [receiptUnavailable, setReceiptUnavailable] = useState(false);
   const notifiedPaid = useRef(false);
 
   useEffect(() => {
+    if (!expiresAt) return undefined;
+    const expire = () => {
+      if (Date.now() < expiresAt) return;
+      takeReceiptParams();
+      setReceipt(null);
+      setBrowserExpired(true);
+    };
+    const timer = setTimeout(expire, Math.max(0, expiresAt - Date.now()));
+    window.addEventListener('pageshow', expire);
+    document.addEventListener('visibilitychange', expire);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pageshow', expire);
+      document.removeEventListener('visibilitychange', expire);
+    };
+  }, [expiresAt]);
+
+  useEffect(() => {
+    if (browserExpired) return undefined;
     if (!sessionId) {
       setStatus('unavailable');
       return undefined;
@@ -75,7 +81,16 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
     };
     check();
     return () => { active = false; clearTimeout(timer); };
-  }, [sessionId, receiptToken, onPaymentConfirmed]);
+  }, [sessionId, receiptToken, onPaymentConfirmed, browserExpired]);
+
+  if (browserExpired) return (
+    <div className="SectionBottom PageFadeIn">
+      <div className="ReceiptWrapper">
+        <h2 className="tile_heading_bold_1">Browser receipt access expired</h2>
+        <p className="PageIntroCentered" role="status">For your privacy, this browser only remembers receipt access for one hour. Please use the receipt link in your confirmation email. This does not change your payment or booking.</p>
+      </div>
+    </div>
+  );
 
   const paid = status === 'paid';
   const failed = status === 'payment_failed' || status === 'failed';

@@ -22,7 +22,7 @@
 
 1. Add analytics consent controls.
 2. Switch the full Content-Security-Policy from report-only to enforced (Firebase Hosting and the API) once the browser console shows no violations on every page, including admin sign-in, image upload and Stripe checkout.
-3. HTTPS certificate
+
 
 ## Check-ins and My details (follow-ups)
 
