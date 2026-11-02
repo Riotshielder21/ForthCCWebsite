@@ -1117,7 +1117,7 @@ const attentionRetry = {
   }
 };
 
-app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: 'application/json', inflate: false }), async (req, res) => {
   try {
     const signature = req.headers['stripe-signature'];
     const secret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -1180,7 +1180,8 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
   }
 });
 
-app.use(express.json({ limit: '100kb' }));
+// Reject compressed bodies until a published body-parser release fixes GHSA-27r3-jxmh-p828.
+app.use(express.json({ limit: '100kb', inflate: false }));
 
 // Google Sheets API Setup
 let sheets;
@@ -2677,6 +2678,7 @@ app.get('*', (req, res) => {
 
 // Error handling
 app.use((err, req, res, next) => {
+  if (err.type === 'encoding.unsupported') return res.status(415).json({ error: 'Compressed request bodies are not supported. Send uncompressed JSON.' });
   console.error('Server error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });

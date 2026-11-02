@@ -19,13 +19,12 @@
     "@google-cloud/firestore": "9.3.1",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
-    "express": "^4.18.2",
+    "express": "^4.22.3",
     "express-rate-limit": "8.7.1",
     "firebase": "13.0.0",
     "firebase-admin": "14.5.0",
     "googleapis": "185.0.0",
     "lucide-react": "^0.294.0",
-    "multer": "^2.0.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -37,6 +36,10 @@
     "postcss": "^8.4.32",
     "tailwindcss": "4.3.3",
     "vite": "7.3.7"
+  },
+  "overrides": {
+    "@google-cloud/firestore-api": "0.7.1",
+    "@grpc/grpc-js": "1.14.6"
   },
   "allowScripts": {
     "@firebase/util@1.15.3": true,

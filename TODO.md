@@ -22,6 +22,7 @@
 
 1. Add analytics consent controls.
 2. Switch the full Content-Security-Policy from report-only to enforced (Firebase Hosting and the API) once the browser console shows no violations on every page, including admin sign-in, image upload and Stripe checkout.
+3. Recheck npm for patched body-parser, qs and ip-address releases (see **Dependency security** in DEVELOPMENT.md). Compressed request bodies are rejected as the body-parser workaround; the remaining qs comma-format and ip-address advisories are not fixed upstream in the available npm releases. Keep the alerts open until patched dependencies are installed and tested.
 
 
 ## Check-ins and My details (follow-ups)
