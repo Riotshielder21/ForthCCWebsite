@@ -27,14 +27,16 @@ SENSITIVE_KEYS = frozenset({
 })
 
 
-def redact_sensitive(value):
+def redact_sensitive(value, redact=False):
+    if redact:
+        return "[REDACTED]"
     if isinstance(value, dict):
         return {
-            key: "[REDACTED]" if str(key).lower() in SENSITIVE_KEYS else redact_sensitive(item)
+            key: redact_sensitive(item, redact or str(key).lower() in SENSITIVE_KEYS)
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [redact_sensitive(item) for item in value]
+        return [redact_sensitive(item, redact) for item in value]
     return value
 
 
