@@ -3,10 +3,11 @@ import { clubYearOf } from './clubYear.js';
 import { renewalLinkExpiresAt } from './renewals.js';
 import { itemLabel } from './inventory.js';
 import { memberIsJunior } from './households.js';
-import { checkLabel, checksManagedByJustgo } from './safeguarding.js';
+import { checkLabel, checksManagedByJustgo, justgoCheckLabel } from './safeguarding.js';
 import { volunteerProfileLabels } from './volunteering.js';
 import { hasKeyAccess } from './keyAccess.js';
 import { orderLineId } from './itemActions.js';
+import { eventSessions } from './catalogue.js';
 
 export const reportDate = (value) => {
   if (!value) return null;
@@ -35,7 +36,7 @@ const statusDate = (value) => {
   return iso ? new Date(iso) : null;
 };
 
-export const MEMBERSHIP_STATUSES = ['Active', 'Active (no expiry)', 'Awaiting renewal', 'Pending', 'Unavailable', 'Expired', 'Revoked', 'No'];
+export const MEMBERSHIP_STATUSES = ['Active', 'Active (no expiry)', 'Awaiting renewal', 'Pending', 'Unavailable', 'Expired', 'Suspended', 'No FCC membership', 'Revoked', 'No'];
 
 /**
  * The one membership status shown to admins, on event rosters and at check-ins. Active stays Active even after a renewal
@@ -66,8 +67,10 @@ export const membershipStatus = (fields, now = new Date(), justgoSync = { health
   return linkLive ? 'Awaiting renewal' : 'Expired';
 };
 
-export const subscriptionWarning = (fields) => Boolean(fields.stripeSubscriptionId
-  || (fields.items || []).some((item) => item.type === 'subscription'));
+// Anything that may have recurring Stripe billing: older single subscriptions, monthly items and members' payments.
+export const subscriptionWarning = (fields) => Boolean(fields.stripeSubscriptionId || fields.stripeSubscriptionIds?.length
+  || fields.stripeMembershipSubscriptionId || fields.subscriptionIds?.length || fields.subscriptionPlan
+  || (fields.items || []).some((item) => item.type === 'subscription' || item.monthly));
 
 // `member` is the person's current membership record: existing members only confirm a few details at checkout,
 // so the rest (contact, emergency, medical) is read from their record.
@@ -80,6 +83,7 @@ export const personReport = (person, items, member = {}) => {
   const contact = (own, guardianValue, fromRecord, householdValue) => householdValue || (junior ? guardianValue : own) || fromRecord || '';
   const householdEmergency = household.emergencyContact || {};
   const juniorEmergency = [household.contactName, household.contactRelationship, household.phone].filter(Boolean).join(', ');
+  const photoConsent = member.consents?.photoVideo?.accepted;
   return {
     name: `${person.firstName || ''} ${person.lastName || ''}`.trim(), dob: person.dob || member.dob || '',
     kind: junior ? 'Under 18' : 'Adult', returningMember: person.returning === true,
@@ -91,7 +95,7 @@ export const personReport = (person, items, member = {}) => {
         householdEmergency.relationship || emergency.relationship || memberEmergency.relationship,
         householdEmergency.phone || emergency.phone || memberEmergency.phone].filter(Boolean).join(', ')),
     medical: person.medical || member.medical || '', swimming: person.swimming || member.swimming || '',
-    photoConsent: person.photoConsent === true || member.photoConsent === true,
+    photoConsent: typeof photoConsent === 'boolean' ? photoConsent : person.photoConsent === true || member.photoConsent === true,
     membershipId: person.membershipId || '', existingMember: person.existingMember === true,
     events: (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId)).filter((item) => item?.category === 'EVENTS')
       .filter((item) => !item.revokedAt)
@@ -103,20 +107,20 @@ export const orderReport = (id, fields, members = new Map()) => ({
   id,
   email: fields.email || '',
   status: fields.status || 'unknown',
-  total: Number.isFinite(Number(fields.total)) ? Number(fields.total) : 0,
+  total: Number.isFinite(Number(fields.totalPence)) ? Number(fields.totalPence) / 100 : 0,
   createdAt: reportDate(fields.createdAt),
   paidAt: reportDate(fields.paidAt),
   // Orders for several people hold one Stripe subscription per person (or family).
   stripeSubscriptionId: [...new Set([fields.stripeSubscriptionId, ...(Array.isArray(fields.stripeSubscriptionIds) ? fields.stripeSubscriptionIds : [])].filter(Boolean))].join(', '),
   ...(fields.subscriptionSetupNeedsStaff === true ? { monthlyPaymentSetupFailed: true } : {}),
-  stripePaymentIntentId: fields.stripePaymentIntentId || '',
+  stripePaymentIntentId: fields.stripe?.paymentIntentId || '',
   subscriptionWarning: subscriptionWarning(fields),
   items: (Array.isArray(fields.items) ? fields.items : []).map((item, index) => ({
     lineId: orderLineId(item, index), productId: item.id || '',
     name: itemLabel(item), category: String(item.category || ''),
-    type: String(item.type || ''), price: Number.isFinite(Number(item.price)) ? Number(item.price) : null,
+    type: String(item.type || ''), price: Number.isFinite(Number(item.pricePence)) ? Number(item.pricePence) / 100 : null,
     revokedAt: reportDate(item.revokedAt), revokedBy: item.revokedBy || '', revokeReason: item.revokeReason || '',
-    refunds: (item.refunds || []).map((refund) => ({ ...refund, at: reportDate(refund.at) })),
+    refunds: (item.refunds || []).map(({ amountPence, ...refund }) => ({ ...refund, amount: amountPence, at: reportDate(refund.at) })),
     ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {})
   })),
   people: (Array.isArray(fields.people) ? fields.people : []).map((person) => personReport(person, Array.isArray(fields.items) ? fields.items : [], members.get(person.membershipId) || {}))
@@ -124,15 +128,22 @@ export const orderReport = (id, fields, members = new Map()) => ({
 
 
 // One register for JustGo-synced and website members; legacy register rows (name, expiry) map onto the same shape.
+export const JUSTGO_STATES = ['Awaiting upload', 'Submitted, awaiting sync', 'Needs staff upload', 'Added by staff, awaiting sync',
+  'Suspended in JustGo', 'Not linked to FCC in JustGo', 'In JustGo (email not verified)', 'In JustGo', 'Not in JustGo'];
+
 const justgoState = (fields) => {
   const upload = fields.justgoUpload || {};
+  const profile = fields.justgoProfile || {};
+  if (profile.suspended === true) return 'Suspended in JustGo';
   if (fields.justgoSyncStatus === 'pending') {
-    if (upload.needsStaff) return 'Needs staff upload';
-    if (upload.status === 'invited') return 'Invitation sent';
+    if (upload.needsStaff || upload.status === 'review' || upload.status === 'revoked') return 'Needs staff upload';
+    if (upload.status === 'submitted') return 'Submitted, awaiting sync';
     if (upload.status === 'manual') return 'Added by staff, awaiting sync';
     return 'Awaiting upload';
   }
-  return fields.justgoSyncStatus === 'synced' || fields.affiliationNumber ? 'In JustGo' : 'Not in JustGo';
+  if (profile.clubLinked === false) return 'Not linked to FCC in JustGo';
+  if (fields.justgoSyncStatus === 'synced' || fields.affiliationNumber) return profile.emailVerified === false ? 'In JustGo (email not verified)' : 'In JustGo';
+  return 'Not in JustGo';
 };
 
 export const membershipReport = (id, fields, now = new Date(), household = fields.household || {}, justgoSync) => {
@@ -145,7 +156,7 @@ export const membershipReport = (id, fields, now = new Date(), household = field
   const accessExpiry = reportDate(fields.membershipAccessEndsAt);
   const expiry = accessExpiry && (!storedExpiry || accessExpiry < storedExpiry) ? accessExpiry : storedExpiry;
   const check = (type) => checksManagedByJustgo(fields)
-    ? (fields.checks?.[type]?.source === 'justgo' ? fields.checks[type].label || 'Not supplied by JustGo' : 'Not supplied by JustGo')
+    ? justgoCheckLabel(fields.checks?.[type], now)
     : checkLabel(fields.checks?.[type]?.expiresOn, now);
   return {
     id, name: `${fields.firstName || ''} ${fields.lastName || ''}`.trim() || fields.name || '', email: household.email || fields.email || '',
@@ -158,7 +169,10 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     justgoSync: fields.justgoSyncStatus || '', renewalMethod: fields.renewalMethod || '',
     justgo: justgoState(fields),
     uploadAttempts: upload.attempts || 0, uploadFailures: upload.failures || 0, uploadError: upload.lastError || '',
-    inviteExpiresAt: reportDate(upload.inviteExpiresAt), lastUploadAttempt: reportDate(upload.lastAttemptAt),
+    lastUploadAttempt: reportDate(upload.lastAttemptAt), justgoMemberId: fields.justgoMemberId || '',
+    justgoMembership: [fields.justgoProfile?.membershipName, fields.justgoProfile?.membershipStatus].filter(Boolean).join(': '),
+    justgoAccount: [fields.justgoProfile?.accountStatus, fields.justgoProfile?.suspension && `suspension ${fields.justgoProfile.suspension}`].filter(Boolean).join(', '),
+    justgoClubRoles: fields.justgoProfile?.clubRoles || '', justgoReview: fields.justgoProfile?.reviewReason || '',
     firstName: fields.firstName || '', lastName: fields.lastName || '', postcode: household.postcode || fields.postcode || '',
     dob: fields.dob || '', phone: household.phone || fields.phone || '',
     address: [household.address || fields.address, household.postcode || fields.postcode].filter(Boolean).join(', '),
@@ -172,8 +186,8 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     photoConsent: fields.consents?.photoVideo?.accepted === true || fields.photoConsent === true,
     pvg: check('pvg'), safeguarding: check('safeguarding'),
     volunteer: volunteerProfileLabels(fields, now).join('; '),
-    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set([...(fields.privileges || []).filter((privilege) => !privilege.endedAt).map((privilege) => String(privilege.name || privilege.productId || '')), ...volunteerProfileLabels(fields, now)])],
-    history: (fields.history || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
+    familyGroup: fields.familyGroup || '', stripeSubscriptionIds: (Array.isArray(fields.subscriptionIds) ? fields.subscriptionIds : []).join(', '), privileges: [...new Set([...(fields.entitlements || []).filter((item) => !item.endedAt).map((item) => String(item.name || item.productId || '')), ...volunteerProfileLabels(fields, now)])],
+    history: (fields.purchases || []).map((entry) => ({ orderRef: entry.orderRef || '', paidAt: reportDate(entry.paidAt), items: (entry.items || []).map((item) => String(item.name || item.id || '')) }))
   };
 };
 export const memberReport = membershipReport;
@@ -222,12 +236,33 @@ export const reportOptions = (records, values) => [...new Set(records.flatMap((r
 
 export const reportEventNames = (records) => reportOptions(records, (record) => (record.items || []).map((item) => item.name));
 
+const filterEventTickets = (records, matches) => records.flatMap((record) => {
+  const items = (record.items || []).filter(matches);
+  if (!items.length) return [];
+  return { ...record, items, total: items.reduce((sum, item) => sum + (item.price || 0), 0),
+    people: (record.people || []).map((person) => ({ ...person, events: (person.events || []).filter(matches) }))
+      .filter((person) => person.events.length) };
+});
+
 // Narrows event-ticket orders to one event, so totals, the table and the attendee export cover only that event.
-export const onlyEvent = (records, name) => name === 'all' ? records : records
-  .filter((record) => (record.items || []).some((item) => item.name === name))
-  .map((record) => {
-    const items = record.items.filter((item) => item.name === name);
-    return { ...record, items, total: items.reduce((sum, item) => sum + (item.price || 0), 0),
-      people: (record.people || []).map((person) => ({ ...person, events: (person.events || []).filter((event) => event.name === name) }))
-        .filter((person) => person.events.length) };
-  });
+export const onlyEvent = (records, name) => name === 'all' ? records : filterEventTickets(records, (item) => item.name === name);
+
+export const onlyEventPeriod = (records, period, now = new Date()) => {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(now).map(({ type, value }) => [type, value]));
+  const currentTime = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  const isPast = (item) => {
+    let sessions;
+    try {
+      sessions = eventSessions(item.eventSchedule);
+    } catch {
+      // Unusable schedules remain visible in Current events, with a notice in the report.
+      return false;
+    }
+    const last = sessions.at(-1);
+    return `${last.date}T${last.endTime}` <= currentTime;
+  };
+  return filterEventTickets(records, (item) => isPast(item) === (period === 'past'));
+};

@@ -9,5 +9,4 @@ WorkingDirectory=/home/fcc-web/FCCWebsite
 ExecStart=/home/fcc-web/FCCWebsite/venv/bin/python /home/fcc-web/FCCWebsite/scripts/justgo-sync.py
 StandardOutput=journal
 StandardError=journal
-Environment="JUSTGO_USER=%i"
-Environment="JUSTGO_PASS=%i"
+EnvironmentFile=/home/fcc-web/FCCWebsite/.env

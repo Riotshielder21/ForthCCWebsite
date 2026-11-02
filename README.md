@@ -15,7 +15,7 @@ The React/Vite frontend runs on Firebase Hosting. An Express API runs on Cloud R
 | [src/utils/](src/utils/) | Firebase, catalogue, pricing and report logic/tests |
 | [src/assets/](src/assets/), [public/](public/) | Default assets and published page JSON |
 | [server.js](server.js) | Payments, webhooks, reports and admin API |
-| [scripts/](scripts/) | Local emulator fixtures/tests and JustGo sync |
+| [scripts/](scripts/) | Local emulator fixtures/tests and the guarded JustGo API jobs (sync, upload, operator commands) |
 | [firebase.json](firebase.json) | Hosting and emulator configuration |
 | [.github/workflows/firebase-hosting.yml](.github/workflows/firebase-hosting.yml) | API, website and Firebase-rules deployment |
 

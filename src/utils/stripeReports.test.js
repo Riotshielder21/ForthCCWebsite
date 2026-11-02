@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stripeSubscriberReport, loadStripeSubscribers, importedSubscriber, nextClubYearEnd, cancelStripeSubscription } from './stripeReports.js';
+import { stripeSubscriberReport, loadStripeSubscribers, importedSubscriber, importStripeSubscribers, nextClubYearEnd, cancelStripeSubscription, subscriberMembershipIds } from './stripeReports.js';
 
-const subscription = { id: 'sub_example', status: 'active', customer: { id: 'cus_example', name: 'Example Member', email: 'member@example.com' },
+const subscription = { id: 'sub_example', status: 'active', metadata: { order_ref: 'FCC-1' }, customer: { id: 'cus_example', name: 'Example Member', email: 'member@example.com' },
   latest_invoice: { payment_intent: { latest_charge: { refunded: false, amount_refunded: 0, disputed: false } } },
   items: { data: [{ price: { nickname: 'Monthly sessions', unit_amount: 2000, currency: 'gbp', recurring: { interval: 'month' } } }] } };
 
@@ -31,7 +31,7 @@ test('immediate cancellation deletes the entire subscription without invoicing o
   assert.equal(result.changed, true);
   assert.equal(result.record.stripeStatus, 'canceled');
   assert.equal(result.record.status, 'Inactive');
-  assert.equal(result.record.email, subscription.customer.email);
+  assert.equal('email' in result.record, false);
   assert.equal(calls.length, 2);
   assert.equal(calls[1].path, 'subscriptions/sub_example');
   assert.equal(calls[1].options.method, 'DELETE');
@@ -97,14 +97,15 @@ test('only active Stripe subscriptions qualify, including scheduled cancellation
   assert.equal(stripeSubscriberReport({ ...subscription, pause_collection: { behavior: 'void' } }).status, 'Inactive');
 });
 
-test('refunds and disputes override an active status and customer details are exposed', () => {
+test('refunds and disputes override an active status; payer names and emails are not copied', () => {
   for (const charge of [{ refunded: true }, { amount_refunded: 100 }, { disputed: true }]) {
     const record = stripeSubscriberReport({ ...subscription, latest_invoice: { payment_intent: { latest_charge: charge } } });
     assert.equal(record.status, 'Inactive');
     assert.equal(record.paymentReversed, true);
   }
   const record = stripeSubscriberReport(subscription);
-  assert.equal(record.email, 'member@example.com');
+  assert.equal(JSON.stringify(record).includes('member@example.com') || JSON.stringify(record).includes('Example Member'), false);
+  assert.equal(record.orderRef, 'FCC-1');
   assert.equal(record.items[0].amount, 20);
   assert.equal(stripeSubscriberReport({ ...subscription, latest_invoice: null }).refundCheckAvailable, false);
 });
@@ -119,4 +120,43 @@ test('each report request obtains a fresh paginated Stripe snapshot', async () =
   assert.ok(paths[0].includes('status=all'));
   assert.ok(paths[1].includes('starting_after=sub_example'));
   assert.ok(first.checkedAt);
+  assert.equal(first.payerEmails.get('sub_example'), 'member@example.com');
+});
+
+// A minimal Firestore stand-in: documents by path, equality queries and transactions.
+const fakeDb = (documents) => {
+  const snapshot = (path) => ({ exists: documents.has(path), data: () => documents.get(path), id: path.split('/').pop() });
+  const collection = (name) => ({
+    doc: (id) => ({ path: `${name}/${id}`, get: async () => snapshot(`${name}/${id}`) }),
+    where: (field, op, value) => ({ limit: () => ({ get: async () => ({ docs: [...documents.keys()]
+      .filter((path) => path.startsWith(`${name}/`) && documents.get(path)[field] === value).map(snapshot) }) }) })
+  });
+  return { collection, runTransaction: async (run) => run({
+    getAll: async (...refs) => refs.map((ref) => snapshot(ref.path)),
+    set: (ref, fields) => documents.set(ref.path, { ...documents.get(ref.path), ...fields })
+  }) };
+};
+
+test('mirrored subscribers record the members they pay for, found from the subscription, its order or the payer\'s orders', async () => {
+  const documents = new Map([
+    ['subscriptions/sub_own', { membershipIds: ['M1'] }],
+    ['orders/FCC-1', { email: 'payer@example.com', membershipIds: ['M2'] }],
+    ['orders/FCC-2', { email: 'payer@example.com', membershipIds: ['M3', 'M2'] }]
+  ]);
+  const db = fakeDb(documents);
+  assert.deepEqual(await subscriberMembershipIds(db, { id: 'sub_own', orderRef: 'FCC-1' }, 'payer@example.com'), ['M1']);
+  assert.deepEqual(await subscriberMembershipIds(db, { id: 'sub_other', orderRef: 'FCC-1' }), ['M2']);
+  assert.deepEqual(await subscriberMembershipIds(db, { id: 'sub_other', orderRef: '' }, 'payer@example.com'), ['M2', 'M3']);
+  assert.deepEqual(await subscriberMembershipIds(db, { id: 'sub_other', orderRef: '' }), []);
+
+  documents.set('stripeCustomers/FCC-test-cus_example', { membershipIds: ['M0'], firstImportedAt: 'earlier' });
+  const records = [stripeSubscriberReport(subscription), stripeSubscriberReport({ ...subscription, id: 'sub_own' })];
+  const imported = await importStripeSubscribers(db, records, 'test', 'now', new Map([['sub_example', 'payer@example.com']]));
+  assert.deepEqual(imported.map((record) => record.membershipIds), [['M2'], ['M1']]);
+  assert.deepEqual(documents.get('stripeCustomers/FCC-test-cus_example').membershipIds, ['M0', 'M2', 'M1']);
+  assert.equal(documents.get('stripeCustomers/FCC-test-cus_example').firstImportedAt, 'earlier');
+  const mirrored = documents.get('stripeSubscriptions/FCC-test-sub_example');
+  assert.deepEqual(mirrored.membershipIds, ['M2']);
+  assert.equal(mirrored.firstImportedAt, 'now');
+  assert.equal(JSON.stringify([...documents.entries()].filter(([path]) => path.startsWith('stripe'))).includes('@'), false, 'no emails are stored');
 });

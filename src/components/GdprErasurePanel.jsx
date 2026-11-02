@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ShieldX, X } from 'lucide-react';
 import { apiUrl } from '../utils/api';
+import ReasonInput from './ReasonInput';
 import { sharedDetailsErrors } from '../utils/erasure';
 
 const EMPTY_LOOKUP = { email: '', firstName: '', lastName: '', dob: '', affiliationNumber: '' };
@@ -19,6 +20,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
   const [preview, setPreview] = useState(null);
   const [shared, setShared] = useState(EMPTY_SHARED);
   const [confirmation, setConfirmation] = useState('');
+  const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -57,7 +59,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
   const sharedProblems = needsShared ? sharedDetailsErrors(shared) : [];
   const nothingFound = preview && !preview.people.length && !preview.deletedRecords.length;
   const familyChoiceMissing = hasFamily && !scope;
-  const ready = preview && !nothingFound && !familyChoiceMissing && !sharedProblems.length && confirmation === 'ERASE' && !busy;
+  const ready = preview && !nothingFound && !familyChoiceMissing && !sharedProblems.length && confirmation === 'ERASE' && Boolean(reason.trim()) && !busy;
 
   const submit = async (event) => {
     event.preventDefault();
@@ -65,7 +67,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
     setBusy(true);
     setError('');
     try {
-      const data = await post('/api/admin/gdpr/erase', { ...query, scope: scope || 'person', confirm: 'ERASE', ...(scope === 'person' && preview.remaining.length ? { sharedDetails: shared } : {}) });
+      const data = await post('/api/admin/gdpr/erase', { ...query, scope: scope || 'person', confirm: 'ERASE', reason, ...(scope === 'person' && preview.remaining.length ? { sharedDetails: shared } : {}) });
       setResult(data);
       onErased?.();
     } catch (eraseError) {
@@ -84,7 +86,8 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
 
     {result ? <>
       <p className="StatusText StatusTextSuccess" role="status">Erased {result.erased} member {result.erased === 1 ? 'record' : 'records'}, redacted {result.ordersRedacted} {result.ordersRedacted === 1 ? 'order' : 'orders'},
-        cancelled {result.subscriptionsCancelled} Stripe {result.subscriptionsCancelled === 1 ? 'subscription' : 'subscriptions'} and purged {result.earlierDeletionsPurged} earlier deleted {result.earlierDeletionsPurged === 1 ? 'record' : 'records'}.</p>
+        cancelled {result.subscriptionsCancelled} Stripe {result.subscriptionsCancelled === 1 ? 'subscription' : 'subscriptions'}, stopped {result.subscriptionItemsStopped || 0} shared-subscription items,
+        deleted {result.stripeCustomersDeleted || 0} Stripe customers and purged {result.earlierDeletionsPurged} earlier deleted {result.earlierDeletionsPurged === 1 ? 'record' : 'records'}.</p>
       <p className="ReportNotice">Still to do by hand:</p>
       <ul className="ReportItems">{[...result.warnings, ...result.manual].map((step) => <li key={step}>{step}</li>)}</ul>
       <button className="EditorCommand" type="button" onClick={onClose}>Close</button>
@@ -107,7 +110,8 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
 
       {preview && !nothingFound && <form onSubmit={submit}>
         <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>This cannot be undone.</strong>
-          <p>Names, contact details, medical and emergency details are removed everywhere. Orders stay for the accounts with the person's details removed. Any Stripe subscription is cancelled. Services end.</p></div></div>
+          <p>Member details are removed from club records; anonymised financial records stay for the accounts. Their monthly items stop immediately, without stopping other members' payments.
+            Stripe customer details are cleared and unused customers deleted. Stripe can retain historical invoices, payments and mandates; review these separately before treating the erasure as complete.</p></div></div>
 
         <h4 className="CartItemTitle">Member records to erase</h4>
         {preview.people.length ? <ul className="ReportItems">{preview.people.map((person) => <li key={person.id}>{person.name} ({person.junior ? 'junior' : person.tier || 'member'}, {person.status || 'no status'})</li>)}</ul> : <p className="text_container">None on the register.</p>}
@@ -129,6 +133,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
         <ul className="ReportItems">
           <li>{preview.ordersRedacted} {preview.ordersRedacted === 1 ? 'order' : 'orders'} will have personal details removed (amounts and items are kept).</li>
           <li>{preview.subscriptionsToCancel.length} Stripe {preview.subscriptionsToCancel.length === 1 ? 'subscription' : 'subscriptions'} will be cancelled.</li>
+          {(preview.subscriptionItemsToStop || []).map((stop) => <li key={stop.id}>Monthly payments stop for {stop.itemNames.join(', ')} on {stop.id}; the payer keeps paying for everyone else.</li>)}
           <li>{preview.related.discountCodes} voucher or discount {preview.related.discountCodes === 1 ? 'code' : 'codes'}, {preview.related.lists} form {preview.related.lists === 1 ? 'submission' : 'submissions'} and {preview.related.stripeRecords} Stripe mirror {preview.related.stripeRecords === 1 ? 'record' : 'records'} will be cleared.</li>
           <li>{preview.deletedRecords.length} earlier deleted {preview.deletedRecords.length === 1 ? 'record' : 'records'} will be permanently purged{preview.deletedRecords.length ? `: ${preview.deletedRecords.map((entry) => entry.summary?.label).join(', ')}` : ''}.</li>
           {preview.people.some((person) => person.justgo) && <li>They are in JustGo; remove them there too or the weekly sync recreates the record.</li>}
@@ -136,6 +141,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
         </ul>
 
         <label className="FormLabel SpaceT4">Type ERASE to confirm<input className="FormInput" autoComplete="off" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy || familyChoiceMissing} /></label>
+        <ReasonInput value={reason} onChange={setReason} disabled={busy || familyChoiceMissing} />
         {familyChoiceMissing && <p className="StatusText" role="status">Choose how to handle the family first.</p>}
         <button className="EditorCommand TileRemove" type="submit" disabled={!ready}><ShieldX size={18} /> {busy ? 'Working…' : 'Erase personal data'}</button>
       </form>}

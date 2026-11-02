@@ -1,0 +1,49 @@
+name: Build and tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: python -m pip install -r requirements.txt
+      - name: Unit tests and build
+        run: |
+          npm test
+          npm run build
+          node --check server.js
+      - name: Emulator integration tests (no production credentials)
+        run: |
+          set -a
+          source .env.emulator.example
+          set +a
+          npx --yes firebase-tools@14.22.0 emulators:exec \
+            --only auth,firestore,storage --project demo-fcc \
+            'node scripts/test-local.mjs'

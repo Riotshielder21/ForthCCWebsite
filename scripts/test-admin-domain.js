@@ -63,9 +63,15 @@ try {
           assert.equal(grant.status, 400, email);
           assert.match((await grant.json()).error, /Only @forthcanoeclub\.co\.uk accounts can be admins/);
         }
+        const revoke = await fetch(`http://127.0.0.1:${port}/api/admin/admins`, {
+          method: 'POST', headers, body: JSON.stringify({ action: 'revoke', email: `${fixture}-other@forthcanoeclub.co.uk`, reason: ' ' })
+        });
+        assert.equal(revoke.status, 400, 'removing admin access needs a reason');
+        assert.match((await revoke.json()).error, /reason/i);
       }
       const write = () => setDoc(doc(db, 'products', fixture), { name: 'Domain test' });
       if (allowed) await write();
+      if (allowed) await assert.rejects(setDoc(doc(db, 'products', 'boat-hire'), { active: false }, { merge: true }), { code: 'permission-denied' }, 'the trip discount products stay active');
       else await assert.rejects(write(), { code: 'permission-denied' }, domain);
       for (const path of images) {
         const upload = () => uploadBytes(ref(storage, path), Buffer.from('test'), { contentType: 'image/png' });

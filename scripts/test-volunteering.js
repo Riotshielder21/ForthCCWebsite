@@ -88,7 +88,9 @@ try {
   assert.match(responses.docs[0].id, /^R\d{5,}$/);
   await coordinatorSettings.set({ email: `coordinator-${run}@example.test` });
   await member.set({ firstName: 'Volunteer', lastName: 'Tester', email, dob: '1989-04-03', status: 'active', renewalMethod: 'website',
-    validUntil: Timestamp.fromDate(clubYearDates(year).end), clubYears: [year], privileges: [{ productId: 'boat-hire', clubYear: year }] });
+    validUntil: Timestamp.fromDate(clubYearDates(year).end), clubYears: [year] });
+  const term = db.collection('membershipTerms').doc(`${memberId}_${year}`);
+  await term.set({ membershipId: memberId, clubYear: year, items: [{ productId: 'boat-hire' }] });
   await db.collection('lists').doc(`equipment-${run}`).set({ memberId, listType: 'Equipment Needed', clubYear: year });
   const signup = { name: 'Volunteer Tester', email, listType: 'Volunteer Sign-ups', tier: '40',
     items: ['Activities: Coaching', 'Availability: Weekends'], notes: 'Please email before calling.\nAvailable after 6pm.' };
@@ -116,7 +118,7 @@ try {
   assert.equal(data.volunteer.inducted, true);
   assert.equal(data.volunteer.years[year].tier, '40');
   assert.equal(data.volunteer.years[year].active, true);
-  assert.deepEqual(data.privileges, [{ productId: 'boat-hire', clubYear: year }], 'already paid benefit is not changed');
+  assert.deepEqual((await term.get()).data().items, [{ productId: 'boat-hire' }], 'already paid benefit is not changed');
   assert.equal(sent.filter((message) => message.record.kind === 'volunteer-benefits').length, 1);
   assert.equal((await call('/api/admin/volunteer-coordinator')).data.email, `coordinator-${run}@example.test`);
   assert.equal((await call('/api/admin/volunteer-coordinator', 'PUT', { email: 'not-an-email' })).status, 400);

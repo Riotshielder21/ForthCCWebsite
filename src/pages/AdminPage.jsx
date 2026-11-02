@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
 import { removeProduct, reserveProductId, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
 import { isLockedProduct } from '../utils/tripDiscount';
@@ -26,7 +26,7 @@ const EMPTY_PRODUCT = {
   capacity: '',
   variants: [{ size: '', stock: 0 }],
   eventSchedule: { mode: 'single', startDate: '', startTime: '15:00', endTime: '17:00', days: 1, weeks: 1, timeZone: 'Europe/London' },
-  leaderName: '', leaderEmail: '', closeDate: '', membershipRule: 'required'
+  leaderName: '', leaderEmail: '', closeDate: '', membershipRule: 'required', sortOrder: 0
 };
 
 const MEMBERSHIP_RULE_LABELS = { required: 'Club members only', none: 'Open to non-members', included: 'Club membership included' };
@@ -42,6 +42,16 @@ const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorate
 export default function AdminPage({ products, onNavigate }) {
   const editor = usePageEditor();
   const { adminUser, authReady } = editor;
+  const [attentionCount, setAttentionCount] = useState(0);
+  useEffect(() => {
+    if (!adminUser) return undefined;
+    let current = true;
+    adminUser.getIdToken().then((token) => fetch(apiUrl('/api/admin/attention'), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }))
+      .then((response) => response.ok ? response.json() : { count: 0 })
+      .then((result) => { if (current) setAttentionCount(result.count || 0); })
+      .catch(() => {});
+    return () => { current = false; };
+  }, [adminUser]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [draft, setDraft] = useState(EMPTY_PRODUCT);
   const [message, setMessage] = useState('');
@@ -119,7 +129,7 @@ export default function AdminPage({ products, onNavigate }) {
     try {
       const id = await reserveProductId(await adminUser.getIdToken());
       setSelectedProduct(null);
-      setDraft({ ...EMPTY_PRODUCT, id });
+      setDraft({ ...EMPTY_PRODUCT, id, sortOrder: Math.max(0, ...products.map((product) => product.sortOrder)) + 10 });
       setMessage('');
       resetImageInput();
     } catch (idError) {
@@ -139,6 +149,7 @@ export default function AdminPage({ products, onNavigate }) {
         ...draft,
         ...normaliseProduct(draft),
         basePrice: Number(draft.basePrice),
+        sortOrder: Number(draft.sortOrder),
         hasAnnualDiscount: Boolean(draft.hasAnnualDiscount) && normaliseProduct(draft).pricingMode === 'subscription'
       };
       if (product.category === 'MERCHANDISE') {
@@ -233,7 +244,7 @@ export default function AdminPage({ products, onNavigate }) {
           <div className="AdminPreviewActions">
             <span className="StatusText StatusTextSuccess" role="status">Signed in as {adminUser.email}.</span>
             <div className="AdminHeaderButtons">
-              <button className="EditorCommand" onClick={() => onNavigate('admin-reports')}><FileText size={18} /> Reports & records</button>
+              <button className="EditorCommand" onClick={() => onNavigate('admin-reports')}><FileText size={18} /> Reports & records{attentionCount > 0 && <span className="NeedsAttentionCount" title={`${attentionCount} need attention`} aria-label={`${attentionCount} need attention`}>{attentionCount}</span>}</button>
               <button className="MobileMenuButton AdminSignOut" onClick={() => editor.logout().catch((logoutError) => setError(logoutError.message))}><LogOut className="IconMd" /> Sign out</button>
             </div>
           </div>
@@ -289,6 +300,7 @@ export default function AdminPage({ products, onNavigate }) {
               <button type="button" className="EditorCommand" onClick={addVariant}>Add size</button>
               <p className="text_container text_container_note">Customers choose a size and quantity. A size that sells out is greyed out, and the item leaves the shop when every size is gone. Delete a refunded order in Reports to return its stock.</p>
             </fieldset>}
+            <label className="FormLabel">Shop position (lower numbers show first)<input className="FormInput" type="number" required step="1" value={draft.sortOrder} onChange={(event) => updateDraft('sortOrder', event.target.value)} /></label>
             {draft.category === 'SERVICES'
               ? <label className="FormLabel">Pricing<select className="FormInput" value={draft.pricingMode} onChange={(event) => updateDraft('pricingMode', event.target.value)}>{Object.entries(PRICING_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               : <p className="text_container text_container_note">{{ MEMBERSHIP: draft.type === 'external' ? 'External link: bought through JustGo, not this shop.' : 'Membership is a fixed club-year price. It is never prorated or paid monthly.', SUBSCRIPTIONS: 'Subscription: monthly price for each month left to 1 March.', VOUCHERS: 'Voucher: a fixed price that issues a credit code.', EVENTS: 'Event ticket: a fixed price for the whole event or course.', MERCHANDISE: 'Merchandise: a fixed price per item.' }[draft.category]}</p>}

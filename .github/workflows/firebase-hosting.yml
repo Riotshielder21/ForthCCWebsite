@@ -62,7 +62,7 @@ jobs:
             GOOGLE_SHARED_DRIVE_ID=0APxBZiGs6yEGUk9PVA
             GOOGLE_FORMS_ROOT_FOLDER_ID=1_ptxNQkgpJdogsjDZ4Wbqb310LCEJI4Z
             PUBLIC_SITE_URL=https://new.forthcanoeclub.co.uk
-            PUBLIC_SITE_URLS=https://new.forthcanoeclub.co.uk,https://fccwebsite-23cfc.web.app,https://fccwebsite-23cfc.firebaseapp.com
+            PUBLIC_SITE_URLS=https://new.forthcanoeclub.co.uk\,https://fccwebsite-23cfc.web.app\,https://fccwebsite-23cfc.firebaseapp.com
             WEBSITE_ISLIVE=${{ secrets.WEBSITE_ISLIVE || 'false' }}
           secrets: |-
             GITHUB_CONTENT_TOKEN=github-content-token:latest
@@ -71,6 +71,41 @@ jobs:
             STRIPE_WEBHOOK_SECRET=stripe-test-webhook-secret:latest
             AUDIT_LOOKUP_SECRET=audit-lookup-secret:latest
             STRIPE_SUBSCRIPTION_ADMIN_KEY=stripe-subscription-admin-key:latest
+
+      - name: Verify API browser access
+        env:
+          API_URL: ${{ steps.deploy-api.outputs.url }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          const origins = [
+            'https://new.forthcanoeclub.co.uk',
+            'https://fccwebsite-23cfc.web.app',
+            'https://fccwebsite-23cfc.firebaseapp.com'
+          ];
+          for (const origin of origins) {
+            const response = await fetch(new URL('/api/admin/memberships', process.env.API_URL), {
+              method: 'OPTIONS',
+              headers: {
+                Origin: origin,
+                'Access-Control-Request-Method': 'PUT',
+                'Access-Control-Request-Headers': 'authorization,content-type'
+              },
+              signal: AbortSignal.timeout(30000)
+            });
+            assert.equal(response.status, 204, `Preflight failed for ${origin}`);
+            assert.equal(response.headers.get('access-control-allow-origin'), origin, `Origin rejected: ${origin}`);
+            const methods = (response.headers.get('access-control-allow-methods') || '').split(',').map(value => value.trim());
+            for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+              assert.ok(methods.includes(method), `${method} is not allowed for ${origin}`);
+            }
+            const headers = (response.headers.get('access-control-allow-headers') || '').toLowerCase().split(',').map(value => value.trim());
+            for (const header of ['authorization', 'content-type']) {
+              assert.ok(headers.includes(header), `${header} is not allowed for ${origin}`);
+            }
+            console.log(`API browser access verified: ${origin}`);
+          }
+          NODE
 
       - name: Build website
         run: |

@@ -43,7 +43,7 @@ test('benefits require induction, activation and the correct year; shared lines 
 });
 
 test('yearly volunteer renewal is independent of next-year membership and paid benefits', () => {
-  const current = { ...member('40'), clubYears: [2027, 2028], privileges: [{ productId: 'boat-hire', clubYear: 2028 }] };
+  const current = { ...member('40'), clubYears: [2027, 2028], entitlements: [{ productId: 'boat-hire', clubYear: 2028 }] };
   assert.equal(needsVolunteerRenewal(current, 2028), true);
   current.volunteer.years[2028] = { active: true, tier: '20' };
   assert.equal(needsVolunteerRenewal(current, 2028), false);

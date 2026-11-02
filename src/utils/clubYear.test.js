@@ -97,9 +97,9 @@ test('older records take their club year from when they were granted', () => {
   assert.equal(recordClubYear({}), null);
 });
 
-test('an item already held for a club year is recognised from privileges and monthly items', () => {
+test('an item already held for a club year is recognised from term entitlements and monthly items', () => {
   const member = {
-    privileges: [{ productId: 'hire', grantedAt: new Date(2026, 5, 1) }, { productId: 'old', clubYear: 2026, endedAt: new Date(2026, 6, 1) }],
+    entitlements: [{ productId: 'hire', grantedAt: new Date(2026, 5, 1) }, { productId: 'old', clubYear: 2026, endedAt: new Date(2026, 6, 1) }],
     subscriptionItems: [{ productId: 'coach', clubYear: 2027, status: 'active' }, { productId: 'gone', clubYear: 2026, status: 'cancelled' }]
   };
   assert.equal(holdsForClubYear(member, 'hire', 2026), true);

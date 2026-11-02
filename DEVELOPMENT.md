@@ -65,6 +65,19 @@ node --check server.js
 git diff --check
 ```
 
+Pull requests run **Build and tests / Build and test** on a GitHub-hosted Ubuntu runner with Node 22, Python 3.12 and Java 21. The workflow installs locked npm dependencies and the Python requirements, runs all unit tests and the production build, then runs the local integration suites against fresh Firebase emulators. No repository secrets or production services are used. Select this check in the branch protection/ruleset if merging must wait for it.
+
+To run the same integration checks locally:
+
+```bash
+set -a; source .env.emulator.example; set +a
+npx --yes firebase-tools@14.22.0 emulators:exec \
+  --only auth,firestore,storage --project demo-fcc \
+  'npm run test:integration'
+```
+
+Install `requirements.txt` in the Python environment first. If using the repository virtual environment, set `PYTHON="$PWD/bin/python"` before running the command. The runner seeds synthetic fixtures, runs the API/rules, check-in, volunteering, purchased-item, GDPR and JustGo suites, and starts/stops a mock-Stripe API for checkout tests. Each failed suite remains a failing check; the runner continues so all failures are reported. Do not use imported emulator data for this run. The real Stripe Test Clock script is retained as a separate manual test requiring an explicit sandbox key; it is not run on pull requests.
+
 ## Google sign-in domain
 
 The domain in Google's "to continue to" prompt comes from Firebase's `authDomain`, not the Workspace `hd` account hint. Use `new.forthcanoeclub.co.uk`: it is served by this project's Firebase Hosting, so `https://new.forthcanoeclub.co.uk/__/auth/handler` already serves Firebase's auth helper (checked 28 October 2026). The bare `forthcanoeclub.co.uk` is hosted elsewhere and returns 404 for that path, so it cannot be used unless it moves to Firebase Hosting or proxies `/__/auth/**`.
@@ -90,11 +103,52 @@ The volunteer table shows the name and membership status. Its row-end details bu
 - Existing API rate limits reduce repeated requests per IP, but are per server instance and do not protect Firebase's static pages. Enforced bot filtering/challenges need an edge service (for example Cloudflare); Cloud Armor needs a supported load balancer and restricted direct-origin access. Do not blanket-challenge API routes or Stripe webhooks. User-agent blocking alone is easily spoofed.
 - After deployment, check `/robots.txt` on both the public site and the API hostname, and check `X-Robots-Tag` on `/my-details`, `/admin/reports`, `/order/example` and an API response. Public `/` must not have `noindex`.
 
-## Household Data Migration
+## Data Migrations
+
+`node scripts/migrate-schema.js` brings stored records up to the current schema. It is a dry run by default (it prints what would change and writes nothing); add `--apply` to write. It is repeatable: records already converted are skipped. Take a Firestore export first. `scripts/test-migrate-schema.js` runs it against old-shape records in the emulator (part of `scripts/test-local.mjs`).
+
+### Households
 
 Member contact details are stored once in `households`; membership documents keep a `householdId` and personal membership/safety information. A family shares one household. For a junior, the parent or guardian is the household contact and no separate emergency contact is saved; adult-led households keep the external emergency contact there.
 
 Before migrating existing data, take a Firestore export. Run `node scripts/migrate-schema.js` for a dry run, inspect the household groups and counts, then run `node scripts/migrate-schema.js --apply` to create household documents and remove contact/checkout fields from member records. The migration is repeatable and stops if an under-18 record cannot be linked to complete parent/guardian details, so correct those records and rerun it. The JustGo sync also creates household records for new imports; under-18 imports without complete parent/guardian details are skipped and logged for staff follow-up.
+
+### Membership terms
+
+Each person has one `membershipTerms/{membershipId}_{clubYear}` document per club year: `tier`, `start`, `end`, `orderRef` and `source` (`website`, `included` with `includedWith`, `justgo` or `imported`) for the membership, and `items` for the entitlements bought for that year (boat hire, key hire, subscriptions), each with `productId`, `orderRef`, `lineId`, `grantedAt` and, once stopped or revoked, `endedAt` (and `revokeReason`/`revokedBy`). A term with no `source` holds entitlements only. The member record keeps `status`, `validUntil`, `clubYears` and `membershipTier` as the current term. Purchase history is the member's orders: a paid order lists everyone it covers in `membershipIds`. Server code reads entitlements with `loadEntitlements` in `src/server/membershipTerms.js`, which attaches them as `entitlements` for `holdsForClubYear`, `renewalBasket`, rosters and trip discounts.
+
+Version 4 of the member schema moves the old `privileges[]` and `history[]` into terms: each privilege goes onto its club year's term, each club year in `clubYears` becomes a membership term matched to the order that bought it, those orders get `membershipIds`, and the recurring membership subscription (`stripeMembershipSubscriptionId`) and key access are recorded from the old orders when missing.
+
+### Orders
+
+Orders carry `schemaVersion` (`CURRENT_ORDER_VERSION` in `src/utils/schema.js`; orders without one are version 1). A version 2 order holds:
+
+- **Money in whole pence:** `totalPence` (charged), `subtotalPence` (line amounts before the discount code), `discountPence` and `discountCode` (the `discountCodes` document ID, `''` if none). Each line has `pricePence` (after any code discount) and, where relevant, `monthlyPence` and `tripDiscountPence`; item refunds are recorded as `refunds[].amountPence`. Product prices, discount code values and `vouchers[].value` stay in pounds; `toPence`/`toPounds` in `src/utils/orders.js` convert at the boundary. API responses keep their previous units.
+- **One receipt token:** `receiptTokenHash` (SHA-256). The token is created with the checkout session, carried in the Stripe `success_url` as `receipt_token`, and the receipt email links with the same token (recovered from the session's `success_url`). If it cannot be recovered, or staff resend the receipt, a new token is issued and the old link stops working.
+- **Grouped fields:** `stripe` (`sessionId`, `mode`, `paymentIntentId`, `setupIntentId`, `processing`, `processingSince`, `reconciledAt`; looked up with `where('stripe.sessionId', '==', id)`), `fulfilment` (`recordsWritten`, `emailSent`, `emailSentAt`, `emailSendingUntil`) and `paymentFailure` (`at`, `code`, `declineCode`, `message`, or `null`). `status`, `paidAt`, `expiredAt`, `expiresAt`, `paymentMethod`, `subscriptionPlan`, `vouchers`, `membershipIds` and the other checkout fields stay top level.
+- **People as references:** unpaid, failed and expired orders keep the full checkout `people` needed to fulfil them. Once the purchase is recorded each person becomes `{ id, membershipId, householdId, lineIds }` plus non-personal fulfilment flags (`junior`, `existingMember`, `grantMembership`, `grantMembershipYears`, `ownKitLineIds`…). Anything shown to staff or customers (receipts and resends, reports, rosters, customer lookup, My details, GDPR) resolves names and contacts from `memberships` and `households` with `resolveOrderPeople` in `src/server/orderPeople.js`; erased or missing records show "Name not held".
+
+Order version 2 (`orderVersion2` in `src/utils/orders.js`) converts pounds to pence (deriving `discountPence` from the lines and total, and `discountCode` from `discountCodeId`), keeps one token hash (`accessTokenHash`, the one already emailed, else `receiptViewTokenHash`), groups the old `stripe*`, `paymentProcessing`, `processingSince`, `reconciledAt`, `recordsWritten`, `emailSent*`, `emailSendingUntil`, `lastPaymentFailure*`, `paymentFailedAt`, `failedAt` and `failure` fields, drops the legacy `receipt` field and `total`, and reduces the people on recorded orders to references (people with no member record keep only their first and last name). The script migrates members first, then orders.
+
+### Customer records
+
+The `customers` collection is gone. A customer's purchases are their orders (`email`, `membershipIds`, `vouchers`) and the vouchers they bought are `discountCodes` with `orderRef` and `email`. The migration deletes every `customers` document.
+
+### Discount codes
+
+A discount code has `type` (`percent`, `fixed` or `credit`, previously `discountType`), `discountValue` and one `status`: `active`, `used` (single-use code or voucher redeemed; `usedByOrder`, `usedAt`) or `disabled` (turned off by staff, or a revoked voucher, which also has `revokedAt`). Expiry is derived from `expiresAt`, and the checkout hold stays in `reservedByOrder`/`reservedUntil`. Staff can only switch a code between `active` and `disabled`. Vouchers record the product that created them in `sourceProductId`. The migration maps the old `used`, `active`, `disabled` and `enabled` flags to `status`, renames `discountType`, and moves `voucherProductId` (or a voucher's `productId`) to `sourceProductId`.
+
+### Products
+
+Products have `active` (replacing `deleted`; inactive products are hidden from the shop) and `sortOrder` (ascending; new products are added at the end). Every product stores `pricingMode` and `allowMonthly`, so the code no longer guesses them from `type` or category. The migration sets `active`, backfills `sortOrder` from the previous display order (starter products first, then saved products by ID, in steps of 10) and fills `pricingMode`/`allowMonthly` with the old defaults (yearly services prorated except key hire, subscriptions monthly, everything else fixed).
+
+### Stripe mirror
+
+`stripeSubscriptions` and `stripeCustomers` hold `membershipIds` instead of copied names and emails. The import resolves them from the subscription record, the `order_ref` metadata order, or orders paid with the Stripe customer's email; the email is used only during the import. The subscribers report shows member names resolved from `memberships`. GDPR erasure removes the erased IDs from these lists. The migration resolves `membershipIds` the same way from the stored email, then deletes the `name` and `email` fields.
+
+### Audit log
+
+All staff audit entries are in `auditLog`, replacing `adminSubscriptionAudit`, `adminItemAudit`, `adminDeletionAudit` and `adminAccessAudit`. Each entry has `kind` (`subscription`, `item`, `deletion` or `access`), `action`, `reason`, `by`/`byUid`, `at`, the target IDs (`orderRef`/`orderRefs`, `membershipId`, `recordId`…) and the kind-specific details. A reason is required (the API answers 400 `REASON_REQUIRED`) for cancelling subscription items, members or whole subscriptions, stopping billing immediately, deleting records, GDPR erasure, revoking or refunding purchased items, granting or revoking key access, and removing admin access; the admin pages ask for it. Routine actions (granting admin access, volunteer benefit changes) get a generated reason. The migration copies each old entry to `auditLog/{kind}_{oldId}` (reason from the old entry, or "Recorded before reasons were required") and deletes the original.
 
 Stop manually running emulators before this isolated API/Storage smoke test:
 
@@ -146,16 +200,18 @@ Subscriptions now end at 1 March so the final 1 February debit covers a full Feb
 For a real sandbox checkout, run the local stack above and forward webhooks:
 
 ```bash
-stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired,payment_intent.payment_failed,customer.subscription.deleted --forward-to localhost:3002/api/stripe/webhook
+stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired,payment_intent.payment_failed,customer.subscription.deleted,invoice.payment_failed,invoice.paid --forward-to localhost:3002/api/stripe/webhook
 ```
 
-For a Dashboard webhook endpoint, subscribe to those same six events. The `reporting.*` events are unrelated to checkout and are not needed. One endpoint handles all of these events; its signing secret is specific to that endpoint and mode, so use the test secret for sandbox and the live secret only for a live deployment.
+For a Dashboard webhook endpoint, subscribe to those same eight events. The `reporting.*` events are unrelated to checkout and are not needed. One endpoint handles all of these events; its signing secret is specific to that endpoint and mode, so use the test secret for sandbox and the live secret only for a live deployment.
 
 `PUBLIC_SITE_URL` is the canonical frontend origin. If the same API serves other approved frontend domains, list their origins in `PUBLIC_SITE_URLS` separated by commas. Stripe returns and receipt links use the checkout origin only when it is on this allowlist; other origins fall back to the canonical site.
 
 CORS follows the same list: browsers may call the API only from `PUBLIC_SITE_URL`, `PUBLIC_SITE_URLS`, and any extra origins in `CORS_ORIGINS` (comma separated). `http://localhost` and `http://127.0.0.1` origins are also allowed while `WEBSITE_ISLIVE` is false or the emulators are in use. On Cloud Run the API trusts one proxy hop so rate limits apply per visitor; set `TRUST_PROXY_HOPS` if it runs behind a different number of proxies. Every request other than static files counts towards a per-visitor ceiling (300 a minute, or `BASELINE_RATE_LIMIT`), and each route adds its own tighter per-path limit through `rateLimit` in `src/server/rateLimit.js`; new routes should use that helper.
 
-The API and Firebase Hosting send `nosniff`, `X-Frame-Options: DENY`, a referrer policy, HSTS and a framing-only Content-Security-Policy. The full script/connect policy is sent as `Content-Security-Policy-Report-Only`; check the browser console for violations before enforcing it. Receipt links (`/order/...`, `/payment-success`, `/api/orders/...`, `/api/checkout-receipt`) are sent with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, and the payment success page removes the receipt token from the address bar.
+In the Hosting workflow's Cloud Run `env_vars` input, escape commas inside values as `\,`: the action treats unescaped commas as separators between environment variables, even in a multiline YAML block. Keep all three frontend origins (`new.forthcanoeclub.co.uk`, `fccwebsite-23cfc.web.app`, and `fccwebsite-23cfc.firebaseapp.com`) in `PUBLIC_SITE_URLS`. After deploying the API, the workflow checks browser preflight responses for each origin, including `PUT` and admin authentication headers, before building/deploying Hosting. A missing CORS origin produces a browser NetworkError even when `/health` is healthy. This is separate from the Firebase `authDomain`: changing the Google sign-in prompt does not repair API CORS. Firebase popup sign-in returns to the initiating page; authentication persistence is separate for each frontend origin, so opening another domain may require signing in again.
+
+The API and Firebase Hosting send `nosniff`, `X-Frame-Options: DENY`, a referrer policy, HSTS and a framing-only Content-Security-Policy. The full script/connect policy is sent as `Content-Security-Policy-Report-Only`; check the browser console for violations before enforcing it. Receipt links (`/order/...`, `/payment-success`, `/api/orders/...`, `/api/checkout-receipt`) are sent with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, and the payment success page removes the receipt token from the address bar. Its browser-saved access uses tab-scoped `sessionStorage`, not a cookie, and expires one hour after the checkout redirect (refreshing does not extend it). Expired credentials, including older entries without an expiry, are discarded; an open payment-success page also clears its displayed receipt at expiry. This is browser storage expiry, not server-side token revocation: emailed receipt links remain valid for 90 days.
 
 In the API terminal, set `STRIPE_SECRET_KEY` to a test key and `STRIPE_WEBHOOK_SECRET` to the CLI's signing secret, then restart the API. Use card `4242 4242 4242 4242`, a future expiry and any CVC. Failed attempts remain retryable; expired sessions retain their saved order contents, and the basket is cleared only after the webhook confirms payment. Cancel sandbox subscriptions after testing. Do not send secrets through chat or commit them.
 
@@ -186,12 +242,80 @@ The server reserves numbers transactionally through `counters/<type>`, skips IDs
 
 Purchase IDs, Stripe IDs, voucher/redemption codes, private tokens, audit/idempotency keys, and internal deterministic document keys are unchanged. IDs identify records; they are not access credentials.
 
+### Event ticket archive
+
+**Reports & records → Event tickets** defaults to **Current events**, with a **Past events** sub-tab for tickets whose final scheduled session has ended in Europe/London (including BST/GMT). Courses remain current until their last session ends. Classification uses the schedule saved at purchase, not the current catalogue. Tickets with missing or invalid schedules remain in Current events for staff review.
+
+An order containing both current and past tickets appears in both sub-tabs with only the relevant tickets, totals and attendees. The event selector, report CSV and email export follow the selected period and filters. Purchases remain unchanged; archiving is a report view, not deletion or a database migration. Reports still load in pages: load further pages even if the current page has no matching events, and load all pages for a complete export.
+
+## JustGo API
+
+JustGo (Paddle Scotland's membership system) is reached only through its v2.2 API from the scheduled Python jobs; there is no browser automation. The contract is saved in [docs/justgo/justgo-api-v2.2.json](docs/justgo/justgo-api-v2.2.json) (from <https://api.justgo.com/index.html>). All the code is in `scripts/justgo_api.py`.
+
+**Guards.** Nothing is sent to JustGo, not even Auth, unless `JUSTGO_API_ENABLED=true` and `JUSTGO_API_SECRET` is set. Writes (`POST`/`PUT`/`DELETE`) also need `JUSTGO_API_WRITES_ENABLED=true`, checked before Auth. Both are off by default, so a secret alone does nothing. The jobs run on the VM through systemd with `EnvironmentFile=.env`. Store the secret in Secret Manager as `justgo-api-secret` and copy it into that `.env` when deploying, e.g. `gcloud secrets versions access latest --secret=justgo-api-secret`. Never commit it.
+
+**Setting it up**
+
+1. Set `JUSTGO_API_SECRET`, `JUSTGO_ORGANISATION_ID` (FCC's JustGo organisation UUID) and `JUSTGO_API_ENABLED=true`. Leave writes off.
+2. Run `venv/bin/python scripts/justgo-admin.py discover`. It is read-only and lists FCC's organisation, club roles, membership definitions, credential definitions and the member/credential schemas.
+3. From that output, fill in:
+   - `JUSTGO_MEMBERSHIP_DEFINITIONS`, e.g. `{"adult":"<uuid>","junior":"<uuid>"}`. These are FCC's own membership definitions. Paddle Scotland and other clubs' memberships are ignored.
+   - `JUSTGO_CREDENTIAL_DEFINITIONS`, e.g. `{"pvg":"<uuid>","safeguarding":"<uuid>"}`.
+   - `JUSTGO_ACTIVE_MEMBERSHIP_STATUSES` and `JUSTGO_ACTIVE_MEMBER_STATUSES`, e.g. `Active`.
+   - `JUSTGO_CLUB_MEMBER_ROLE`, the role given when linking someone to FCC.
+   - Optionally `JUSTGO_UNSUSPENDED_LEVELS`. These are the `suspensionLevel` values that mean "not suspended". Empty and `none` already count.
+4. Run `scripts/justgo-admin.py snapshot`, also read-only, and check the statuses, credentials and reported problems.
+5. Only then start the `fcc-sync` timer. Set `JUSTGO_API_WRITES_ENABLED=true` and start `fcc-upload` once the snapshot looks right.
+
+**Sync** (`scripts/justgo-sync.py`, read-only towards JustGo) lists everyone linked to FCC and reads each person's full record. One request returns their memberships, club links, credentials and suspension level. The sync then works out each person's state:
+
+- **FCC membership status.**
+  - `active` when an FCC membership is current.
+  - `JustGo <status>`, e.g. `JustGo Pending`, when someone has asked to join FCC on JustGo but it is not active yet.
+  - `expired` when their FCC membership has ended.
+  - `No FCC membership` when they have none.
+  - `JustGo account <status>` when their account is not active.
+- **Suspension.** A Paddle Scotland suspension sets the status to **Suspended**, which blocks club activity. It applies even while a website renewal waits for upload.
+- **Coverage.** `validUntil` is the day after JustGo's end date. Website-only data is never overwritten.
+- **JustGo profile.** `justgoProfile` holds club link and roles, account status, `emailVerified`, suspension, and FCC membership name and status. Staff see this in the register (the JustGo column and filter, and record details).
+- **PVG and safeguarding.** `checks.pvg` and `checks.safeguarding` are copied from JustGo credentials, including expiry dates. Credentials are matched by definition ID, so qualifications can be added the same way later.
+- **Unlinks.** Someone previously synced who is no longer linked to FCC is marked *Not linked to FCC in JustGo* for staff review. Their status is not changed automatically.
+- **Problems.** A JustGo record that cannot be used (no number yet, missing name or date of birth) is listed in `settings/justgoSync.problems`. It does not stop the run.
+
+**Upload** (`scripts/justgo-upload.py`) handles each paid website membership:
+
+1. Finds the person in JustGo by Paddle Scotland number, or by email and surname, matching name and date of birth.
+2. Creates an account only if nobody matches. It never sends `forcedCreate`.
+3. Links the account to FCC with `Organisations/AddMember`.
+4. Assigns the FCC membership for each paid club year (1 March to the end of February).
+
+JustGo sends its own account and club emails. The club-link reference and membership IDs are stored on `justgoUpload`, and the record is `submitted` until the sync confirms it. These cases go to `review` for staff and are never retried automatically:
+
+- an ambiguous identity
+- a suspended or inactive account
+- an overlapping or pending FCC membership
+- family memberships
+- a junior whose guardian name is not exactly two words
+- a 5xx/timeout on a write
+- an upload that stopped part-way
+
+**Operator commands** (`scripts/justgo-admin.py`). The reads are `discover`, `find-member`, `member` and `snapshot`. Printed JSON recursively replaces known personal fields (names, dates of birth, contact and guardian details) with `[REDACTED]`; record IDs, membership definitions and operational statuses remain available for reconciliation. This is field-based redaction, not anonymisation: treat IDs and any free-text API fields as private and do not publish command output. The writes need `JUSTGO_API_WRITES_ENABLED=true` and `--confirm-write`:
+
+- `create-member` refuses if an email/surname match exists.
+- `update-member`, `add-to-club` and `update-club-role`.
+- `remove-from-club` only unlinks FCC; the person's JustGo account and other clubs are untouched.
+- `add-membership --tier --club-year` and `update-membership`; the membership must be owned by FCC.
+
+Nothing deletes or suspends a JustGo account. Paddle Scotland membership itself is only read, as part of the suspension check. Coaching qualification checks are future work.
+
+Run the offline client checks with `bin/python scripts/test-justgo-api.py`; they need no network or Firestore. The Firestore checks are `scripts/test-justgo-sync.py` and `scripts/test-justgo-upload.py`; they need `FIRESTORE_EMULATOR_HOST`.
+
 ## Club Years
 
 The club year runs from 1 March and is named by the year it starts (1 March 2027 – 28/29 February 2028 is **2027**). Dates and sale windows are in `src/utils/clubYear.js` and use London time.
 
 - **Sale windows:** before 1 January only this club year is sold. From 1 January the basket asks, for each membership, service and subscription, whether it is for **this club year**, **next club year** or **both** (`clubYearChoice` on each basket line; `both` is one line that the server splits into this year's line and a next-year line). This year's membership stops on 8 February and everything else for this year on 15 February; after that only next year is offered. Events, merchandise and vouchers have no club year.
-- **Records:** order lines and privileges record `clubYear`, and members record every club year they hold in `clubYears` (for example `[2027, 2028]` for someone who renewed early), with `validUntil` the end of the latest. Older privileges without `clubYear` use the year they were granted. A member who holds only next year is not covered for this year, except that from 8 February a next-year membership also covers the rest of this year.
+- **Records:** order lines and membership terms record `clubYear`, and members record every club year they hold in `clubYears` (for example `[2027, 2028]` for someone who renewed early), with `validUntil` the end of the latest. A member who holds only next year is not covered for this year, except that from 8 February a next-year membership also covers the rest of this year.
 - A held service or subscription cannot be bought again for the same club year (`already_held`), and an active member cannot buy a membership for a year they already hold (`membership_active`).
 
 ## Monthly Subscriptions
@@ -204,9 +328,38 @@ Every direct debit is on the 1st of the month and everything monthly ends with t
 - **This year's monthly items** are first debited on the next 1st. Bought from 1 to 14 February, the joining-month charge is the only payment and no subscription is made. **Next year's** monthly items are first debited on 1 March.
 - **February sales cut-off and subscription end are separate:** current-year sales close on 15 February, but every subscription ends at the start of 1 March (`cancel_at`, no proration). The last full monthly debit is 1 February, giving 12 full payments for a full club year. Failed February payments may retry until 1 March; an invoice still open at cancellation is voided and flagged for staff. When Stripe sends `customer.subscription.deleted`, the `subscriptions` record becomes `ended`; it is flagged `needsStaff` if money was left unpaid or it ended before the scheduled boundary (`endedAtCutoff: false`).
 - Existing subscriptions created before this change keep their earlier Stripe cancellation date unless reused by a new order. Review and reschedule any existing club-year subscriptions from 15 February to 1 March separately; this change does not bulk-update Stripe records.
-- In **Admin → Reports → Stripe subscribers**, the document button opens information-only details with no cancellation control. The stop button (active subscriptions linked to a club customer only) opens **Stop billing immediately**, requiring the exact subscription ID and explicit approval. It cancels the entire Stripe subscription now using `DELETE /v1/subscriptions/:id` with `invoice_now=false` and `prorate=false`, not the existing club-year cutoff. No refund, prorated credit or final invoice is created; existing unpaid invoices and processing payments may still be collected. The server verifies the imported customer and Stripe mode, confirms Stripe's cancelled status, refreshes the registry, and records the administrator in `adminSubscriptionAudit`. The bank mandate and other subscriptions are unaffected. This requires the server-only `STRIPE_SUBSCRIPTION_ADMIN_KEY` with subscription cancellation access.
+- In **Admin → Reports → Stripe subscribers**, the document button opens information-only details with no cancellation control. The stop button (active subscriptions linked to a club customer only) opens **Stop billing immediately**, requiring the exact subscription ID and explicit approval. It cancels the entire Stripe subscription now using `DELETE /v1/subscriptions/:id` with `invoice_now=false` and `prorate=false`, not the existing club-year cutoff. No refund, prorated credit or final invoice is created; existing unpaid invoices and processing payments may still be collected. The server verifies the imported customer and Stripe mode, confirms Stripe's cancelled status, refreshes the registry, and records the administrator and the required reason in `auditLog`. The bank mandate and other subscriptions are unaffected. This requires the server-only `STRIPE_SUBSCRIPTION_ADMIN_KEY` with subscription cancellation access.
 
-Stripe calls use idempotency keys, so a replayed webhook changes nothing. If Stripe refuses a change, the order's `subscriptionPlan` is marked `failed` with the error and the order gets `subscriptionSetupNeedsStaff`; staff see which item and member it was on the order.
+Stripe calls use idempotency keys, so a replayed webhook changes nothing. Each group's subscription id is saved on the order as soon as Stripe creates it, and its records are written straight away, so a crash or retry carries on where it stopped instead of creating a second subscription. A short lease (`subscriptionPlan.runningUntil`) stops two webhooks setting up the same order at once. A temporary Stripe fault (network error, 429, 5xx, lock timeout) leaves the plan `pending` and the webhook returns 500, so Stripe resends it; after three attempts, or when Stripe refuses a change, the plan is marked `failed` with the error, the order gets `subscriptionSetupNeedsStaff`, and any subscription already created is still recorded (`partialSubscriptionIds`) so it can be cancelled from the website. Revoking an item waits until set-up has finished. Staff see which item and member it was on the order and in **Needs attention**.
+
+The receipt email is sent after the monthly set-up, and a failure to send it does not stop the set-up. Volunteer cancellations that use a Stripe subscription schedule are cancelled by editing the schedule's phases (`scheduleWithoutPrices`), so a later phase cannot add the item back. Items are never added to a subscription that has a schedule; a new subscription is made instead.
+
+### Payment problems and Needs attention
+
+Problems that could cost a member money or leave them without what they paid for are written to the `attention` collection and listed at the top of **Reports & records → Needs attention**; the admin menu shows how many are open. The first time each problem appears the club is emailed at `STAFF_ALERT_EMAIL` (default: the club reply-to address). Raising the same problem again updates the entry rather than adding another.
+
+| Kind | When | Retry button |
+| --- | --- | --- |
+| Paid order not recorded | The webhook could not record a paid checkout | Yes: reads the session from Stripe and records it |
+| Monthly payments not set up | Set-up failed after retries | Yes: runs the set-up again |
+| Receipt email not sent | Sending failed | Yes |
+| Payment did not clear | A Bacs or other delayed payment failed (the customer is also emailed) | No |
+| Monthly debit failed | `invoice.payment_failed`; settled by `invoice.paid` | No |
+| Monthly payments ended unexpectedly | `customer.subscription.deleted` flagged for staff | No |
+| Member asked to cancel monthly payments | Sent from My details | No: cancel under Monthly payments, then resolve |
+| Single-use code used twice | Two orders paid with the same code | No |
+
+Entries are resolved with a note, or automatically when a retry succeeds or the problem clears. In Stripe, also turn on the customer emails for failed card and bank payments.
+
+Other protections against paying twice or paying for nothing:
+
+- Starting a checkout closes the same email's older unpaid Checkout sessions (and records them `expired`), so an old tab cannot be paid as well. This runs before the overlap checks: an older session that turns out to be paid already (the webhook is late) is recorded from Stripe, and a new checkout for the same person and item is refused with `already_paid`; one still clearing is refused with `payment_processing`.
+- A retried monthly set-up never adds back an item staff revoked, and stops with a staff flag rather than add items to a subscription that was cancelled meanwhile.
+- A Bacs payment that is still clearing (`checkout.session.completed` with `payment_status: unpaid`) marks the order `stripe.processing`; the payment page says so and tells the member not to pay again. Its stock and single-use code are held until it clears, and a new checkout for the same person and item is refused with `payment_processing`. If it fails, the order becomes `payment_failed`, the hold and code are released and the customer is emailed to try again.
+- If checkout fails after Stripe created the session, the session is expired and the order marked `failed`, so it cannot be paid later.
+- The payment page asks Stripe directly (at most every 15 seconds) if the webhook is late.
+- A record with active monthly payments cannot be deleted; the delete dialog lists them with a **Cancel them now** button.
+- GDPR erasure stops only the erased person's items on a subscription others are still on; the whole subscription is cancelled only when everyone on it is erased.
 
 Stripe settings to check in the Dashboard (test mode first): turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st), and confirm that cancellation at 1 March stops retries and creates no credit or March invoice.
 
@@ -225,7 +378,7 @@ In Reports, purchases and member records show **Monthly payments**: each subscri
 
 Removals take effect in Stripe straight away with no refund or proration, so the payer's debit drops from the next payment; removing the last active item cancels the subscription. Cancelled items keep their purchase history. Their privilege gets `endedAt` (so it no longer counts for trip discounts or the register's Includes column), the member's `subscriptionItems` entry becomes `cancelled`, and the order line gets `monthlyCancelledAt`. Each cancellation is written to `adminSubscriptionAudit`.
 
-The flow test's Stripe mock (`scripts/mock-stripe.mjs`) keeps subscriptions in memory and checks the parameters above (trial or backdate, `cancel_at`, proration, club-year metadata). Payer emails starting `new-card.` use a different card at every checkout, `sub-fail.` makes creating a subscription fail, and `unpaid-feb.` gives the subscription an open invoice. The mock rejects any change to an existing subscription's payment details.
+The flow test's Stripe mock (`scripts/mock-stripe.mjs`) keeps subscriptions in memory and checks the parameters above (trial or backdate, `cancel_at`, proration, club-year metadata). Payer emails starting `new-card.` use a different card at every checkout, `sub-fail.` makes creating a subscription fail, `flaky.` gives a temporary Stripe error the first time each order's subscription is created, `paid-late.` has each Checkout session paid in Stripe at once with no webhook sent, and `unpaid-feb.` gives the subscription an open invoice. It also keeps Checkout sessions so they can be read and expired. The mock rejects any change to an existing subscription's payment details.
 
 When the API runs against the emulators, a request header `X-Test-Now: <ISO date>` makes checkout, renewal and job routes act as if it were that time, so the flow test can check January, February and autumn rules on any day. It is ignored otherwise. Subscription setup in the webhook always uses the real time.
 
@@ -241,15 +394,28 @@ The configuration sections are **Page**, **Ways to volunteer**, **Levels** and *
 
 **History** lists every volunteering version as *Version N · date · editor*, newest first (up to 100). Version 1 is created on the server the first time history is opened or a volunteering save is made, from the live state at that moment (editor *Server (initial version)*). Every successful content or levels save then stores a full snapshot of page content **and** levels in `volunteerVersions/v000NNN`, numbered by `settings/volunteerVersions.latest` in a transaction, with the editor's email and time; rejected saves are not recorded. **Restore version N** (admin-only `POST /api/admin/volunteering/versions/:version/restore`, listed by `GET /api/admin/volunteering/versions`) re-validates the snapshot against current rules, applies its levels through the same in-use check, catalogue check and member update as a levels save, then its content, and records a new *Restored from version N* version, so a restore can itself be undone. A restore that would remove a level still used by this or next club year's volunteers is refused (409) with nothing changed. Version documents are server-only (Firestore rules deny client access).
 
-In **Reports & records → Volunteers**, each sign-up is a row. Select the level and use the single induction/activation control. Deactivation preserves induction history. Legacy sign-ups need a bracket selected before activation; no hours commitment is assumed. Opening the volunteer table reconciles older inducted sign-ups into their matched membership records without sending emails; no bracket or benefits are invented for legacy rows. Confirming a volunteer renewal reuses an existing sign-up for that member and year, retaining their answers. `memberships.volunteer` holds induction and `years.<clubYear>` holds active status, bracket and benefit descriptions, shown in the member register's Includes and record details. Existing purchases and payments are never removed or refunded. Old thank-you codes are left intact; new sign-ups receive automatic benefits instead of new generic 25% codes.
+In **Reports & records → Volunteers**, each sign-up is a row. Select the level and use the single induction/activation control. Deactivation preserves induction history. Legacy sign-ups need a bracket selected before activation; no hours commitment is assumed. Opening the volunteer table reconciles older inducted sign-ups into their matched membership records without sending emails; no bracket or benefits are invented for legacy rows. Confirming a volunteer renewal reuses an existing sign-up for that member and year, retaining their answers. `memberships.volunteer` holds induction and `years.<clubYear>` holds active status, bracket and benefit descriptions, shown in the member register's Includes and record details. Existing purchases are adjusted as described under *Existing payments* below. Volunteers get no discount codes: benefits apply automatically at checkout, like annual key hire. Old `VOL-` thank-you codes from earlier versions are left intact and can be disabled under discount codes.
 
-PVG and safeguarding are editable expiry dates before the first JustGo sync. Afterwards they are read-only JustGo text statuses, including when a future-year membership purchase is still pending upload. The CSV sync imports optional `PVG Status` and `Safeguarding Status` columns; missing columns mean “Not supplied by JustGo”, never assumed clearance.
+A volunteer form sent in February (the last monthly payment of the club year has been taken) counts as a sign-up for the next club year, so its benefits start with the renewal.
+
+PVG and safeguarding are editable expiry dates before the first JustGo sync. Afterwards they are read-only and come from the member's JustGo credentials (see *JustGo API*), including when a future-year membership purchase is still pending upload. They show JustGo's own status with our expiry warning, e.g. “Approved, Due to expire (31/12/2026)”. A credential JustGo does not hold is “Not supplied by JustGo”, never assumed clearance.
 
 Set the induction contact email in **Reports & records → Volunteers**. New volunteer forms notify that coordinator so they can arrange induction. Failed or unconfigured notifications are shown on the volunteer row and can be retried after setting the address.
 
 At membership renewal, volunteers who have not opted in for next year also get links to keep or change their hours commitment. Members who have already renewed membership receive **only a volunteer reminder**, on the same two February rounds, while they still need to opt in. Paid benefits do not imply a volunteer opt-in. Links are hashed in `volunteerRenewals`, expire after March, and only update volunteering after an explicit form POST; opening an email link does not activate benefits. `volunteerRenewalSentFor` deduplicates each round. GDPR erasure removes these links and contact-form submissions.
 
-For an already-paid monthly item that is now completely free for every holder, the member's **Monthly payments** view offers a manual cancellation schedule. Staff must confirm it; Stripe retains the paid phase, removes only that item at its end, and preserves other items and the club-year cutoff. Existing Stripe schedules or additional billing settings require staff to manage the change in Stripe rather than overwrite them. No payment is changed by volunteer activation itself.
+**Existing payments.** When a volunteer is activated (and is an active member), their monthly subscriptions for that club year are adjusted automatically (`adjustVolunteerSubscriptions` in `server.js`, rules in `src/utils/volunteerAdjustments.js`):
+
+- A monthly item that becomes cheaper is repriced in Stripe with no proration, so the lower amount applies from the next debit. The subscription record keeps `volunteerAdjustment: {from, to, at}` and an `auditLog` entry (kind `subscription`, with a generated reason) is written.
+- A monthly item that becomes free is removed at the end of the paid period, using the same schedule as the member's **Monthly payments** cancellation. Stripe retains the paid phase and preserves other items and the club-year cutoff.
+- Prices are never raised, and nothing is reversed if the volunteer is later deactivated or moved to a lower level. Nothing is changed once the last monthly payment of the year has been taken. Subscriptions that already have a Stripe schedule (including a second free item on the same subscription) are left for staff to change in Stripe.
+
+Results are stored on the sign-up (`monthlyAdjustments`). The volunteer's details popup has an **Existing payments** section showing each monthly item's state with **Retry monthly adjustment**, and each item paid in full this club year with a suggested pro-rata refund. Refunds are never automatic: an admin clicks **Refund £X** then confirms, which uses the normal per-item refund with `purpose: 'volunteer-adjustment'` (only one such refund per item). Refunds are for full months left after the current one:
+
+- Blue/Gold paid annually: (monthly saving) × months left × 0.8, because the annual price already had 20% off.
+- Services that become free (key hire, boat hire): price paid ÷ months covered × months left. Months covered is 5 for a late-year pro-rated purchase, otherwise 12. For example, boat hire bought in October for £51 with 2 months left gives £20.40.
+
+No refunds are offered in the last month of the club year.
 
 Validation: `npm test`; with `.env.emulator` loaded, `node scripts/test-volunteering.js` runs an isolated `demo-fcc-volunteer-tests` project and cleans up its fixtures.
 
@@ -271,7 +437,7 @@ Set the weekly check-in sessions in **Reports & records → Volunteers → Check
 
 ### Email codes and My details
 
-`/my-details` (footer link) lets a household's contact see this club year's paid receipts (orders since renewals opened, in the same limited form as the receipt link) and change phone, address, postcode, emergency contact and contact email. They enter the email plus their own date of birth or an attendee's (any member of the household, so a parent can use a child's), and receive a 6-digit code. A new email is confirmed by a code sent to it, and the old address is told. Name and date of birth changes go through the secretary. Households with a JustGo member are read-only and told to update JustGo. Changed field names (not values) are logged in `selfServiceChanges`. The Stripe customer email is not changed.
+`/my-details` (footer link) lets a household's contact see this club year's paid receipts (orders since renewals opened, in the same limited form as the receipt link) and change phone, address, postcode, emergency contact and contact email. **Monthly payments** lists the active monthly items the email pays for, or that people in its households receive; the member can choose items and send a cancellation request. The request is stored on `subscriptions/{id}.cancelRequests`, emailed to the club as a Needs attention entry and confirmed to the member; staff then cancel the items as usual. Nothing is cancelled automatically. They enter the email plus their own date of birth or an attendee's (any member of the household, so a parent can use a child's), and receive a 6-digit code. A new email is confirmed by a code sent to it, and the old address is told. Name and date of birth changes go through the secretary. Households with a JustGo member are read-only and told to update JustGo. Changed field names (not values) are logged in `selfServiceChanges`. The Stripe customer email is not changed.
 
 Codes (`emailCodes`, hashed) expire after 10 minutes, allow 5 attempts and 5 sends an hour, and the form gives the same reply whether or not an address is held. My details is the exception: a wrong email or date of birth gets "The email address and/or date of birth do not match a membership or purchase record", which tells someone who already knows the email and a household date of birth that a record exists. A verified code gives a session in `emailSessions`: 30 minutes for My details, 12 hours for club-night volunteers. Sessions are tied to their purpose. GDPR erasure removes a person's check-ins, access-log entries, self-service log, codes and sessions.
 
@@ -287,7 +453,7 @@ Paid order and event report details expose actions for each purchased line:
 
 - **Revoke item:** removes its entitlement, stops the matching future monthly payments, releases its ticket/merchandise stock or disables an unused voucher. Key hire revocation also revokes the holder's key access.
 - **Refund:** issues a real Stripe refund in integer pence against the selected checkout or attributable subscription payment, bounded by the item's allocation and the charge's remaining balance. Refund alone leaves access and future billing unchanged; select the separate revoke option to stop them too.
-- Every action requires a reason and records the admin, timestamp and operation ID in `adminItemAudit`. Orders, original totals and purchase lines remain intact with refund/revocation history. Pending Stripe refunds reserve their amounts; a pending status is not confirmation that funds have reached the customer.
+- Every action requires a reason and records the admin, timestamp and operation ID in `auditLog` (kind `item`). Orders, original totals and purchase lines remain intact with refund/revocation history. Pending Stripe refunds reserve their amounts; a pending status is not confirmation that funds have reached the customer.
 
 Uncertain Stripe responses keep a persisted unfinished action. Use **Refund / retry unfinished action** on the order and retry the exact recorded request; never create a replacement refund. Stripe idempotency keys and refund metadata reconcile lost responses. The order cannot be deleted while an action is unfinished. Legacy person-level entitlements without line IDs, imported memberships without saved pre-purchase coverage, unfinished monthly setup and used/reserved vouchers require staff reconciliation rather than guessing. Multi-payment invoices also require review in Stripe. Membership revocation preserves reconstructable independent cover and marks JustGo for staff review; it does not automatically delete a JustGo membership.
 
@@ -314,7 +480,11 @@ FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199 node scripts/test-item-actions.js
 When live, personal data can only leave through:
 
 1. **Admin delete** (Reports page). The record is removed, and the back-end audit entry keeps a full hidden copy so a mistaken delete can be recovered, plus a masked summary.
-2. **GDPR erasure** (member register). Removes the person everywhere, keeps orders for the accounts without their details, cancels their Stripe subscriptions, and leaves only a masked audit entry. It also purges the hidden copies from earlier admin deletes. It cannot be undone.
+2. **GDPR erasure** (member register). Removes the person's club record and identifying details from retained orders, subscriptions, cancellation requests and related staff alerts. Financial amounts and anonymised history stay; aggregate statistics remain a separate design. Billing stops immediately for items solely covering erased people; shared items still covering other people remain. The whole subscription is cancelled when all its beneficiaries are erased. Historical subscriptions are found by membership and payer as well as saved pointers. Earlier admin-delete snapshots are purged. This cannot be undone.
+
+Stripe erasure uses `STRIPE_SUBSCRIPTION_ADMIN_KEY` in the matching test/live mode, including for partial item stops. It clears supported customer contact fields and personal subscription metadata. Customers with no remaining subscriptions are deleted; a customer still funding other members is anonymised but not deleted, because Stripe customer deletion would cancel all their payments. An unlinked active Stripe subscription blocks erasure until staff import/reconcile it. Stripe failures are reported, not treated as a completed erasure: local member records remain available for retry, although billing may already have stopped. The private `gdprStripeErasure` journal remembers discovered customer IDs before clearing their email, allowing a failed customer deletion to be retried; it is removed with the final local erasure batch.
+
+**Stripe history is not fully deletable through the API.** Deleting a customer does not remove historical payments, invoices or mandates. The preview and result explain this limitation and require a Stripe/dashboard/privacy-support review for anything Stripe retains, including a payment mandate still used for other beneficiaries. Do not describe the automated operation as a complete purge of Stripe financial history. Google Sheets and JustGo cleanup remain separate manual steps.
 
 Policy versions and audit entries have no delete route.
 
@@ -328,7 +498,7 @@ Before switching to live:
 - Replace the Stripe test keys with live ones; checkout currently refuses anything but test keys.
 - Create Secret Manager secrets and grant the Cloud Run service account `Secret Manager Secret Accessor` on each; the deploy maps them to the API. Until set, deletion and subscription scheduling are refused:
   - `audit-lookup-secret` → `AUDIT_LOOKUP_SECRET`: a long random value (`openssl rand -hex 32`). Never change it without migrating existing audit lookups.
-  - `stripe-subscription-admin-key` → `STRIPE_SUBSCRIPTION_ADMIN_KEY`: a Stripe restricted key (same mode as the report key) with subscription read/write and customer, invoice, payment-intent and charge read access.
+  - `stripe-subscription-admin-key` → `STRIPE_SUBSCRIPTION_ADMIN_KEY`: a Stripe restricted key (same mode as the report key) with subscription, subscription-item, schedule and customer read/write (including customer deletion), plus invoice, payment-intent and charge read access.
 
 ## API Outage Alerts
 
@@ -349,7 +519,7 @@ The deployment workflow runs on the first of each month at 18:00 UTC, on pushes/
 - Orders fail: start the API and Firestore, not only Vite. Check `curl --fail http://localhost:3002/health`.
 - Payment stays pending: check Stripe CLI delivery and the API signing secret. Stripe and Firebase emulators are separate services.
 - API returns HTML: check `VITE_API_BASE_URL` and restart Vite.
-- Admin denied: reseed the local admin, then sign out/in. Real accounts need the Firebase `admin: true` claim and an address on the exact `forthcanoeclub.co.uk` domain: the person signs in once at `/admin` with their verified club Google account, then an existing admin approves them under **Website admins** (or a developer runs `node scripts/grant-admin.js name@forthcanoeclub.co.uk`). The API, editor and Firebase write rules also enforce the club domain; an admin claim alone does not permit another domain. Password accounts are accepted for approval only in local emulators, still on the club domain. Changes are logged in `adminAccessAudit`; removed admins are signed out.
+- Admin denied: reseed the local admin, then sign out/in. Real accounts need the Firebase `admin: true` claim and an address on the exact `forthcanoeclub.co.uk` domain: the person signs in once at `/admin` with their verified club Google account, then an existing admin approves them under **Website admins** (or a developer runs `node scripts/grant-admin.js name@forthcanoeclub.co.uk`). The API, editor and Firebase write rules also enforce the club domain; an admin claim alone does not permit another domain. Password accounts are accepted for approval only in local emulators, still on the club domain. Changes are logged in `auditLog` (kind `access`); removing an admin needs a reason (`--revoke --reason "…"` for the script), and removed admins are signed out.
 - Image upload fails: check Storage emulator/rules and port `9199`.
 - Stripe subscribers unavailable: reporting and live subscription validation need a server-only `STRIPE_REPORT_SECRET_KEY` with read access in the matching Stripe mode; local Stripe is not emulated. Use test mode only.
 - Port occupied: choose another frontend port and update `PUBLIC_SITE_URL`.

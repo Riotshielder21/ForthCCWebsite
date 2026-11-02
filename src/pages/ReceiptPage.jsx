@@ -75,7 +75,7 @@ export default function ReceiptPage({ cart, calculations, voucherCodes, activePr
               {activePromo && calculations.promoDiscountValue > 0 && (
                 <div className="ReceiptSummaryRow">
                   <span className="ReceiptSavingLabel">
-                    {activePromo.discountType === 'flat'
+                    {activePromo.type === 'flat'
                       ? `${activePromo.label} (${activePromo.code})`
                       : `${activePromo.label} (${(activePromo.discountValue * 100).toFixed(0)}%)`}
                   </span>

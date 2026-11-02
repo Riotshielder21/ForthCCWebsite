@@ -136,7 +136,7 @@ export const recordClubYear = (record) => {
   return granted ? clubYearOf(granted) : null;
 };
 
-/** Whether a member already holds a product for a club year, from a privilege or an active monthly item. */
-export const holdsForClubYear = ({ privileges = [], subscriptionItems = [] } = {}, productId, clubYear) =>
-  privileges.some((privilege) => privilege.productId === productId && !privilege.endedAt && recordClubYear(privilege) === clubYear)
+/** Whether a member already holds a product for a club year, from a term entitlement or an active monthly item. */
+export const holdsForClubYear = ({ entitlements = [], subscriptionItems = [] } = {}, productId, clubYear) =>
+  entitlements.some((item) => item.productId === productId && !item.endedAt && recordClubYear(item) === clubYear)
   || subscriptionItems.some((item) => item.productId === productId && item.status === 'active' && recordClubYear(item) === clubYear);

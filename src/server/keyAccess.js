@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { hasKeyAccess } from '../utils/keyAccess.js';
 import { BOATHOUSE_ACCESS_POINTS, boathouseAccessFromSettings } from '../utils/boathouse.js';
 import { rateLimit } from './rateLimit.js';
+import { auditEntry } from '../utils/auditLog.js';
 
 export const registerKeyAccessRoutes = (app, { requireAdmin, db, sendEmail }) => {
   const settleKeyAccess = async (reference, code = null) => {
@@ -97,8 +98,8 @@ export const registerKeyAccessRoutes = (app, { requireAdmin, db, sendEmail }) =>
         transaction.update(reference, { keyAccess: { ...document.data().keyAccess,
           ...(action === 'grant' ? { grantedAt: at, source: 'admin', revokedAt: null, sentVersion: 0 }
             : { revokedAt: at }), reason: reason.trim(), by } });
-        transaction.set(db().collection('adminItemAudit').doc(), { action: `key-access-${action}`,
-          membershipId: document.id, reason: reason.trim(), by, at });
+        transaction.set(db().collection('auditLog').doc(), auditEntry({ kind: 'item', action: `key-access-${action}`, reason, actor: admin, at,
+          membershipId: document.id }));
       });
       res.set('Cache-Control', 'no-store');
       res.json({ success: true, delivery: action === 'grant' ? await settleKeyAccess(reference) : 'revoked' });

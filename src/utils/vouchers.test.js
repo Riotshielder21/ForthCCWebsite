@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { scopeLabel, summariseVoucherCodes, voucherRows, voucherScope } from './vouchers.js';
 
 const now = 1_000_000;
-const code = (fields) => ({ orderRef: 'FCC-1', label: 'Gift voucher', discountValue: 60, used: false, expiresAt: now + 1, ...fields });
+const code = (fields) => ({ orderRef: 'FCC-1', label: 'Gift voucher', discountValue: 60, status: 'active', expiresAt: now + 1, ...fields });
 
 test('generated voucher codes are totalled per shop item; custom codes are left out', () => {
   const summaries = summariseVoucherCodes([
     code({ sourceProductId: 'vouchers' }),
-    code({ sourceProductId: 'vouchers', used: true }),
+    code({ sourceProductId: 'vouchers', status: 'used' }),
     code({ sourceProductId: 'vouchers', expiresAt: now - 1 }),
     code({ sourceProductId: 'vouchers', discountValue: 25.5 }),
     code({}),

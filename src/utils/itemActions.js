@@ -13,14 +13,18 @@ export const validateItemAction = (body = {}) => {
     || typeof body.paymentIntent !== 'string' || !/^pi_[\w]+$/.test(body.paymentIntent) || typeof body.revoke !== 'boolean')) {
     return { error: 'Select a payment, enter a positive refund amount and choose whether to revoke access.' };
   }
+  if (body.purpose !== undefined && (body.purpose !== 'volunteer-adjustment' || body.action !== 'refund' || body.revoke !== false)) {
+    return { error: 'A volunteer adjustment is a refund that keeps access.' };
+  }
   return { value: { action: body.action, reason, operationId: body.operationId,
-    ...(body.action === 'refund' ? { amount: body.amount, paymentIntent: body.paymentIntent, revoke: body.revoke } : {}) } };
+    ...(body.action === 'refund' ? { amount: body.amount, paymentIntent: body.paymentIntent, revoke: body.revoke } : {}),
+    ...(body.purpose ? { purpose: body.purpose } : {}) } };
 };
 
 /** Amounts reserved by submitted refunds, including pending bank refunds, must not be refunded twice. */
 export const refundedForPayment = (item, paymentIntent) => (item.refunds || [])
   .filter((refund) => refund.paymentIntent === paymentIntent && !['failed', 'canceled'].includes(refund.status))
-  .reduce((sum, refund) => sum + refund.amount, 0);
+  .reduce((sum, refund) => sum + refund.amountPence, 0);
 
 export const refundAvailable = (item, paymentIntent, allocation, charge) => Math.max(0, Math.min(
   allocation - refundedForPayment(item, paymentIntent),

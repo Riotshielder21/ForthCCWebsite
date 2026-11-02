@@ -4,21 +4,26 @@ const originalFetch = globalThis.fetch;
 let counter = 0;
 // Ids differ between API runs because the emulator keeps earlier runs' records.
 const runId = Date.now().toString(36);
-const customers = new Set();
+const customers = new Map();
 const subscriptions = new Map();
 const invoices = new Map();
 const replies = new Map();
 const checkoutPayments = new Map();
+const checkoutSessions = new Map();
+const flakyFailures = new Set();
 const emailOf = (customer) => Buffer.from(String(customer).slice('cus_e2e_'.length), 'base64url').toString();
 const now = () => Math.floor(Date.now() / 1000);
 const live = (subscription) => ['active', 'trialing'].includes(subscription.status);
-const fail = (message, status = 400) => Response.json({ error: { message } }, { status });
+const fail = (message, status = 400) => Response.json({ error: { message, ...(status === 404 ? { code: 'resource_missing' } : {}) } }, { status });
 // Payer email prefixes: `new-card.` uses different card details at every checkout; `sub-fail.` has every subscription
-// change declined; `unpaid-feb.` has an unpaid invoice left open on each subscription (voided at the cut-off).
+// change declined; `unpaid-feb.` has an unpaid invoice left open on each subscription (voided at the cut-off);
+// `flaky.` has Stripe fail with a temporary error the first time each order's subscription is created;
+// `paid-late.` has every Checkout Session paid straight away in Stripe, with the webhook never sent.
 const paymentMethodFor = (email) => email.startsWith('new-card.') ? `pm_e2e_${counter}` : 'pm_e2e';
 const itemsFrom = (params) => [...params.keys()].map((name) => /^items\[(\d+)\]\[price_data\]\[product\]$/.exec(name)?.[1]).filter(Boolean).map((index) => ({
   id: `si_e2e_${runId}_${counter}_${index}`,
-  metadata: { line_id: params.get(`items[${index}][metadata][line_id]`), club_year: params.get(`items[${index}][metadata][club_year]`) },
+  metadata: { line_id: params.get(`items[${index}][metadata][line_id]`), order_ref: params.get(`items[${index}][metadata][order_ref]`),
+    club_year: params.get(`items[${index}][metadata][club_year]`) },
   price: { product: params.get(`items[${index}][price_data][product]`), unit_amount: Number(params.get(`items[${index}][price_data][unit_amount]`)),
     recurring: { interval: params.get(`items[${index}][price_data][recurring][interval]`) } }
 }));
@@ -31,7 +36,24 @@ globalThis.fetch = async (url, options) => {
     const email = method === 'GET' ? parsed.searchParams.get('email') : new URLSearchParams(options.body).get('email');
     if (!email) throw new Error('Stripe customer requests must include the checkout email.');
     const id = `cus_e2e_${Buffer.from(email).toString('base64url')}`;
-    return Response.json(method === 'GET' ? { data: customers.has(id) ? [{ id, email }] : [] } : (customers.add(id), { id, email }));
+    if (method === 'GET') return Response.json({ data: [...customers.values()].filter((customer) => !customer.deleted && customer.email === email), has_more: false });
+    const customer = { id, email };
+    customers.set(id, customer);
+    return Response.json(customer);
+  }
+  if (parsed.pathname.startsWith('/v1/customers/')) {
+    const id = parsed.pathname.split('/').at(-1);
+    const customer = customers.get(id);
+    if (!customer) return fail('No such customer.', 404);
+    if (method === 'POST') {
+      for (const [key, value] of new URLSearchParams(options.body)) customer[key] = value;
+    } else if (method === 'DELETE') {
+      if ([...subscriptions.values()].some((subscription) => subscription.customer === id && !['canceled', 'incomplete_expired'].includes(subscription.status))) {
+        return fail('Deleting this customer would cancel another subscription.');
+      }
+      customers.set(id, { id, deleted: true });
+    }
+    return Response.json(customers.get(id));
   }
   if (parsed.pathname === '/v1/checkout/sessions') {
     counter += 1;
@@ -46,8 +68,25 @@ globalThis.fetch = async (url, options) => {
     checkoutPayments.set(orderRef, { customer: params.get('customer'), paymentMethod: paymentMethodFor(emailOf(params.get('customer'))),
       saved: mode === 'setup' || params.get('payment_intent_data[setup_future_usage]') === 'off_session' });
     const returnUrl = encodeURIComponent(params.get('success_url') || '');
-    return Response.json({ id: `cs_e2e_${Date.now()}_${counter}`, url: `https://checkout.stripe.com/e2e?return_url=${returnUrl}`, mode,
-      ...(mode === 'setup' ? { setup_intent: `seti_${orderRef}` } : {}) });
+    const session = { id: `cs_e2e_${Date.now()}_${counter}`, url: `https://checkout.stripe.com/e2e?return_url=${returnUrl}`, mode, status: 'open',
+      success_url: params.get('success_url') || '',
+      payment_status: 'unpaid', metadata: { order_ref: orderRef }, ...(mode === 'setup' ? { setup_intent: `seti_${orderRef}` } : {}) };
+    if (emailOf(params.get('customer')).startsWith('paid-late.')) {
+      const amount = [...params.keys()].map((name) => /^line_items\[(\d+)\]\[price_data\]\[unit_amount\]$/.exec(name)?.[1]).filter(Boolean)
+        .reduce((sum, index) => sum + Number(params.get(`line_items[${index}][price_data][unit_amount]`)) * Number(params.get(`line_items[${index}][quantity]`) || 1), 0);
+      Object.assign(session, { status: 'complete', payment_status: 'paid', amount_total: amount, payment_intent: `pi_${orderRef}` });
+    }
+    checkoutSessions.set(session.id, session);
+    return Response.json(session);
+  }
+  const checkoutSession = /^\/v1\/checkout\/sessions\/([^/]+)(\/expire)?$/.exec(parsed.pathname);
+  if (checkoutSession) {
+    const session = checkoutSessions.get(checkoutSession[1]);
+    if (!session) return fail('No such checkout session.', 404);
+    if (!checkoutSession[2]) return Response.json(session);
+    if (session.status !== 'open') return fail('Only an open checkout session can be expired.');
+    session.status = 'expired';
+    return Response.json(session);
   }
   if (/^\/v1\/(payment|setup)_intents\//.test(parsed.pathname)) {
     const id = parsed.pathname.split('/').at(-1);
@@ -77,11 +116,19 @@ globalThis.fetch = async (url, options) => {
     counter += 1;
     return remember({ id: `prod_e2e_${runId}_${counter}`, metadata: { line_id: new URLSearchParams(options.body).get('metadata[line_id]') } });
   }
+  if (parsed.pathname === '/v1/subscriptions' && method === 'GET') {
+    const customer = parsed.searchParams.get('customer');
+    return Response.json({ data: [...subscriptions.values()].filter((subscription) => !customer || subscription.customer === customer), has_more: false });
+  }
   if (parsed.pathname === '/v1/subscriptions' && method === 'POST') {
     counter += 1;
     const params = new URLSearchParams(options.body);
     const email = emailOf(params.get('customer'));
     if (email.startsWith('sub-fail.')) return fail('Your card was declined.', 402);
+    if (email.startsWith('flaky.') && !flakyFailures.has(params.get('metadata[order_ref]'))) {
+      flakyFailures.add(params.get('metadata[order_ref]'));
+      return fail('Stripe is temporarily unavailable.', 500);
+    }
     const clubYear = params.get('metadata[club_year]');
     const cutoff = Number(params.get('metadata[cutoff_at]'));
     const paymentMethod = params.get('default_payment_method');
@@ -131,9 +178,26 @@ globalThis.fetch = async (url, options) => {
       || params.get('metadata[club_year]') !== owner.metadata.club_year) {
       return fail(`Added items must be monthly, in the subscription's club year, with proration ${expected}.`);
     }
-    const item = { id: `si_e2e_${runId}_${counter}`, metadata: { line_id: params.get('metadata[line_id]'), club_year: params.get('metadata[club_year]') },
+    const item = { id: `si_e2e_${runId}_${counter}`, metadata: { line_id: params.get('metadata[line_id]'), order_ref: params.get('metadata[order_ref]'), club_year: params.get('metadata[club_year]') },
       price: { product: params.get('price_data[product]'), unit_amount: Number(params.get('price_data[unit_amount]')), recurring: { interval: 'month' } } };
     owner.items.data.push(item);
+    return remember(item);
+  }
+  if (parsed.pathname.startsWith('/v1/subscription_items/') && method === 'POST') {
+    const id = parsed.pathname.split('/').at(-1);
+    const params = new URLSearchParams(options.body);
+    const item = [...subscriptions.values()].flatMap((subscription) => subscription.items.data).find((entry) => entry.id === id);
+    if (!item) return fail('No such subscription item.', 404);
+    if ([...params.keys()].every((key) => key.startsWith('metadata['))) {
+      for (const [key, value] of params) item.metadata[key.slice(9, -1)] = value;
+      return remember(item);
+    }
+    // Volunteer prices apply from the next debit: the same product, monthly, with no proration.
+    if (params.get('proration_behavior') !== 'none' || params.get('price_data[product]') !== item.price.product
+      || params.get('price_data[recurring][interval]') !== 'month' || !(Number(params.get('price_data[unit_amount]')) > 0)) {
+      return fail('A price change keeps the product and monthly interval, without prorations.');
+    }
+    item.price = { ...item.price, unit_amount: Number(params.get('price_data[unit_amount]')) };
     return remember(item);
   }
   if (parsed.pathname.startsWith('/v1/subscription_items/') && method === 'DELETE') {
@@ -150,6 +214,13 @@ globalThis.fetch = async (url, options) => {
     if (method === 'POST') {
       const params = new URLSearchParams(options.body);
       if (!known) return fail('No such subscription.', 404);
+      if ([...params.keys()].every((key) => key.startsWith('metadata[') || key === 'description')) {
+        for (const [key, value] of params) {
+          if (key === 'description') known.description = value;
+          else known.metadata[key.slice(9, -1)] = value;
+        }
+        return remember(known);
+      }
       if ([...params.keys()].sort().join() !== 'cancel_at,proration_behavior' || params.get('proration_behavior') !== 'none'
         || Number(params.get('cancel_at')) !== Number(known.metadata.cutoff_at)) {
         return fail('An existing subscription is only ever given its cut-off, without prorations.');

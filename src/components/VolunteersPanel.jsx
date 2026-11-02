@@ -8,6 +8,62 @@ import { uniqueReportEmails } from '../utils/adminReports';
 const blankSession = () => ({ key: Math.random().toString(36).slice(2), id: '', name: '', weekday: '', start: '', end: '', boatHire: false, subscriptions: [] });
 const withKeys = (sessions) => sessions.map((session) => ({ ...session, key: session.id, weekday: String(session.weekday), subscriptions: session.subscriptions.map((entry) => entry.id) }));
 
+const pounds = (value) => `£${Number(value).toFixed(2)}`;
+const dayLabel = (value) => new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/London' });
+
+/** Monthly payments are adjusted automatically; refunds for items already paid in full wait for an admin. */
+function ExistingPayments({ volunteer, request }) {
+  const [data, setData] = useState(null);
+  const [status, setStatus] = useState('');
+  const [busy, setBusy] = useState('');
+  const [confirming, setConfirming] = useState('');
+  const load = useCallback(() => request(`/api/admin/volunteers/${volunteer.id}/adjustments`).then(setData)
+    .catch((error) => setStatus(error.message)), [request, volunteer.id]);
+  useEffect(() => { load(); }, [load]);
+  const retryMonthly = async () => {
+    setBusy('monthly'); setStatus('');
+    try { setData(await request(`/api/admin/volunteers/${volunteer.id}/adjust-monthly`, { method: 'POST' })); setStatus('Monthly payments checked.'); }
+    catch (error) { setStatus(error.message); }
+    finally { setBusy(''); }
+  };
+  const refund = async (entry) => {
+    const key = `${entry.orderRef}/${entry.lineId}`;
+    if (confirming !== key) { setConfirming(key); return; }
+    setBusy(key); setStatus(''); setConfirming('');
+    try {
+      await request(`/api/admin/orders/${entry.orderRef}/items/${entry.lineId}/actions`, { method: 'POST', body: JSON.stringify({
+        action: 'refund', amount: entry.amount, paymentIntent: entry.paymentIntent, revoke: false, purpose: 'volunteer-adjustment',
+        operationId: crypto.randomUUID(), reason: `Volunteer benefit pro-rata adjustment for club year ${data.clubYear}/${data.clubYear + 1}: ${entry.basis}` }) });
+      setStatus(`${entry.name}: ${pounds(entry.amount / 100)} refunded.`);
+      await load();
+    } catch (error) { setStatus(error.message); }
+    finally { setBusy(''); }
+  };
+  if (!data) return <p className="text_container">{status || 'Checking existing payments…'}</p>;
+  if (!data.linked) return <p className="text_container">Not linked to a membership yet, so there are no existing payments to adjust.</p>;
+  const monthlyPending = data.monthly.some((entry) => entry.pending);
+  return <>
+    <h4 className="FormLabel">Monthly payments (adjusted automatically)</h4>
+    {data.monthly.length ? <ul className="ReportItems">{data.monthly.map((entry) => <li key={`${entry.subscriptionId}/${entry.lineId}`}>
+      <strong>{entry.name}</strong>: {entry.cancelScheduledAt ? `free as a volunteer benefit; removed from the debit after ${dayLabel(entry.cancelScheduledAt)}`
+        : entry.pending ? `not adjusted yet (${entry.pending.action === 'remove' ? 'to be removed as free' : `${pounds(entry.pending.from)} → ${pounds(entry.pending.to)} a month`})`
+          : `${pounds(entry.adjustedFrom)} → ${pounds(entry.monthlyAmount)} a month from the next payment`}
+      {entry.error && <><br /><span className="StatusTextError">{entry.error}</span></>}
+    </li>)}</ul> : <p className="text_container">{data.monthsLeft ? 'No monthly payments to adjust.' : 'The last monthly payment of this club year has been taken; nothing to adjust.'}</p>}
+    {monthlyPending && <button type="button" className="EditorCommand" disabled={Boolean(busy)} onClick={retryMonthly}>{busy === 'monthly' ? 'Adjusting…' : 'Retry monthly adjustment'}</button>}
+    <h4 className="FormLabel">Paid in full (admin refund)</h4>
+    {data.annual.length ? <ul className="ReportItems">{data.annual.map((entry) => {
+      const key = `${entry.orderRef}/${entry.lineId}`;
+      return <li key={key}><strong>{entry.name}</strong> ({entry.orderRef}): {entry.adjusted ? `${pounds(entry.amount / 100)} volunteer adjustment refunded.`
+        : <>{pounds(entry.amount / 100)} pro-rata refund: {entry.basis}.{' '}
+          {entry.paymentIntent ? <button type="button" className="EditorCommand" disabled={Boolean(busy)} onClick={() => refund(entry)}>
+            {busy === key ? 'Refunding…' : confirming === key ? `Confirm refund of ${pounds(entry.amount / 100)}` : `Refund ${pounds(entry.amount / 100)}`}
+          </button> : 'No card payment is recorded; arrange this in Stripe.'}</>}</li>;
+    })}</ul> : <p className="text_container">{data.monthsLeft ? 'Nothing paid in full needs a refund.' : 'No refunds are offered in the last month of the club year.'}</p>}
+    {status && <p role="status">{status}</p>}
+  </>;
+}
+
 function CheckinSessions({ request }) {
   const [sessions, setSessions] = useState([]);
   const [products, setProducts] = useState([]);
@@ -152,7 +208,7 @@ export default function VolunteersPanel({ adminUser }) {
   };
   return <section className="main_tile SpaceT6">
     <h3 className="tile_heading_bold_2">Volunteer sign-ups</h3>
-    <p className="text_container SpaceB4">Activate once induction is complete. Deactivation keeps their induction history. Benefits and yearly volunteer status are recorded on their membership; existing payments are unchanged. PVG and safeguarding become read-only statuses after JustGo synchronisation.</p>
+    <p className="text_container SpaceB4">Activate once induction is complete. Deactivation keeps their induction history. Benefits and yearly volunteer status are recorded on their membership and apply automatically at checkout. Existing monthly payments are lowered from the next debit (or removed at the end of the paid month when free); refunds for anything paid in full are under each volunteer's details. PVG and safeguarding become read-only statuses after JustGo synchronisation.</p>
     <form className="SpaceB4" onSubmit={saveCoordinator}>
       <label className="FormLabel">Induction coordinator email
         <input className="FormInput" type="email" maxLength="254" value={coordinatorEmail}
@@ -222,6 +278,7 @@ export default function VolunteersPanel({ adminUser }) {
       <h4 className="FormLabel">Sign-up answers</h4>
       {selected.items.length ? <ul className="ReportItems">{selected.items.map((item, index) => <li className="whitespace-pre-line" key={index}>{item}</li>)}</ul>
         : <p className="text_container">No answers recorded.</p>}
+      <ExistingPayments key={selected.id} volunteer={selected} request={request} />
     </section></div>}
   </section>;
 }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiUrl } from '../utils/api';
 import { monthlyTotal, activeSubscriptionItems } from '../utils/subscriptions';
+import ReasonInput from './ReasonInput';
 
 const date = (iso) => iso ? new Date(iso).toLocaleDateString('en-GB') : '';
 const money = (value) => `£${Number(value || 0).toFixed(2)}`;
@@ -12,12 +13,14 @@ export default function MonthlyPayments({ adminUser, query }) {
   const [busy, setBusy] = useState('');
   const [confirming, setConfirming] = useState(null);
   const [message, setMessage] = useState('');
+  const [reason, setReason] = useState('');
   const [volunteerCancellable, setVolunteerCancellable] = useState([]);
   const membershipId = new URLSearchParams(query).get('membershipId') || '';
 
-  const request = useCallback(async (path, method = 'GET') => {
+  const request = useCallback(async (path, method = 'GET', body) => {
     const token = await adminUser.getIdToken(true);
-    const response = await fetch(apiUrl(path), { method, headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    const response = await fetch(apiUrl(path), { method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      cache: 'no-store', ...(body ? { body: JSON.stringify(body) } : {}) });
     const result = await response.json().catch(() => null);
     if (!result) throw new Error('The API server did not respond. For local development set VITE_API_BASE_URL (see DEVELOPMENT.md).');
     if (!response.ok) throw new Error(result.error || 'The monthly payments request failed.');
@@ -41,7 +44,7 @@ export default function MonthlyPayments({ adminUser, query }) {
     setBusy(subscription.id);
     setMessage('');
     try {
-      const result = await request(`/api/admin/subscriptions/${encodeURIComponent(subscription.id)}/${path}`, 'POST');
+      const result = await request(`/api/admin/subscriptions/${encodeURIComponent(subscription.id)}/${path}`, 'POST', confirming.needsReason ? { reason } : undefined);
       setState((current) => ({ ...current, subscriptions: current.subscriptions.map((entry) => entry.id === result.subscription.id ? result.subscription : entry) }));
       setMessage(result.cancelScheduledAt ? `Cancellation scheduled for ${date(result.cancelScheduledAt)}. No refund or other payment changes.`
         : result.cancelledWholeSubscription
@@ -56,8 +59,8 @@ export default function MonthlyPayments({ adminUser, query }) {
     }
   };
 
-  const ask = (subscription, items, path, done) => setConfirming({ subscription, path, done,
-    text: `Stop ${money(items.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0))} a month for ${items.map((item) => `${item.name}${item.names?.length ? ` (${item.names.join(', ')})` : ''}`).join(', ')} on ${subscription.email}'s subscription ${subscription.id}? This takes effect in Stripe now, with no refund for the current month.${items.length === activeSubscriptionItems(subscription).length ? ' Nothing else is on it, so the whole subscription is cancelled.' : ' Everything else on it carries on.'}` });
+  const ask = (subscription, items, path, done) => { setReason(''); setConfirming({ subscription, path, done, needsReason: true,
+    text: `Stop ${money(items.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0))} a month for ${items.map((item) => `${item.name}${item.names?.length ? ` (${item.names.join(', ')})` : ''}`).join(', ')} on ${subscription.email}'s subscription ${subscription.id}? This takes effect in Stripe now, with no refund for the current month.${items.length === activeSubscriptionItems(subscription).length ? ' Nothing else is on it, so the whole subscription is cancelled.' : ' Everything else on it carries on.'}` }); };
 
   if (state.loading) return <p className="ReportNotice">Loading monthly payments…</p>;
   if (!state.subscriptions.length && !state.failed.length) return state.error ? <p className="StatusTextError" role="alert">{state.error}</p> : null;
@@ -112,7 +115,8 @@ export default function MonthlyPayments({ adminUser, query }) {
       {confirming && (
         <div className="ReportsRowActions SpaceT4" role="group" aria-label="Confirm cancellation">
           <p className="ReportNotice">{confirming.text}</p>
-          <button className="EditorCommand" type="button" disabled={Boolean(busy)} onClick={cancel}>{busy ? 'Cancelling…' : 'Confirm cancellation'}</button>
+          {confirming.needsReason && <ReasonInput value={reason} onChange={setReason} disabled={Boolean(busy)} />}
+          <button className="EditorCommand" type="button" disabled={Boolean(busy) || (confirming.needsReason && !reason.trim())} onClick={cancel}>{busy ? 'Cancelling…' : 'Confirm cancellation'}</button>
           <button className="EditorCommand" type="button" disabled={Boolean(busy)} onClick={() => setConfirming(null)}>Keep paying</button>
         </div>
       )}

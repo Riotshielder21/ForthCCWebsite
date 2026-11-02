@@ -72,9 +72,9 @@ export const renewalBasket = (unordered, catalog, clubYear, makeId) => {
   });
   let monthly = false;
   people.forEach((person, index) => {
-    const { privileges = [], subscriptionItems = [] } = members[index];
+    const { entitlements = [], subscriptionItems = [] } = members[index];
     const held = [
-      ...privileges.filter((privilege) => !privilege.endedAt && recordClubYear(privilege) === clubYear).map((privilege) => privilege.productId),
+      ...entitlements.filter((item) => !item.endedAt && recordClubYear(item) === clubYear).map((item) => item.productId),
       ...subscriptionItems.filter((item) => item.status === 'active' && recordClubYear(item) === clubYear).map((item) => item.productId)
     ];
     for (const productId of new Set(held)) {

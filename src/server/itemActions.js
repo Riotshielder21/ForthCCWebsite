@@ -1,9 +1,11 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { rateLimit } from './rateLimit.js';
-import { orderLineId, minorUnits, validateItemAction, refundAvailable } from '../utils/itemActions.js';
+import { auditEntry } from '../utils/auditLog.js';
+import { orderLineId, validateItemAction, refundAvailable } from '../utils/itemActions.js';
 import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
 import { isMembership, grantsMembership } from '../utils/checkout.js';
 import { wantedQuantities } from '../utils/inventory.js';
+import { endTermItems, loadTerms, memberOrders } from './membershipTerms.js';
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const stripeId = (value) => typeof value === 'string' ? value : value?.id || '';
@@ -67,8 +69,8 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
     }
     item = { ...item, refunds: updatedRefunds };
     const allocations = new Map();
-    if (order.stripePaymentIntentId && minorUnits(item.price) > 0) {
-      allocations.set(order.stripePaymentIntentId, { allocation: minorUnits(item.price), label: 'Checkout payment' });
+    if (order.stripe?.paymentIntentId && item.pricePence > 0) {
+      allocations.set(order.stripe.paymentIntentId, { allocation: item.pricePence, label: 'Checkout payment' });
     }
     const subscriptions = await orderSubscriptions(db(), order.id);
     for (const document of subscriptions) {
@@ -122,28 +124,29 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
     const target = order.items[index];
     const memberIds = [...new Set((order.people || []).filter((person) => person.lineIds?.includes(target.lineId)).map((person) => person.membershipId).filter(Boolean))];
     const members = memberIds.length ? await transaction.getAll(...memberIds.map((id) => db().collection('memberships').doc(id))) : [];
-    const previousOrderIds = [...new Set(members.flatMap((member) => (member.data()?.history || []).map((entry) => entry.orderRef)).filter((id) => id && id !== reference.id))];
-    const previousOrders = previousOrderIds.length ? await transaction.getAll(...previousOrderIds.map((id) => db().collection('orders').doc(id))) : [];
+    const terms = await loadTerms(db(), memberIds, transaction);
+    const previousOrders = new Map();
+    for (const id of memberIds) {
+      (await memberOrders(db(), id, transaction)).filter((entry) => entry.id !== reference.id).forEach((entry) => previousOrders.set(entry.id, entry));
+    }
     const stocks = await transaction.get(db().collection('stock').doc(target.id));
     const voucherIndex = order.items.slice(0, index).filter((item) => item.type === 'voucher').length;
     const voucher = target.type === 'voucher' ? order.vouchers?.[voucherIndex] : null;
     const voucherDoc = voucher ? await transaction.get(db().collection('discountCodes').doc(voucher.code)) : null;
-    if (voucherDoc?.data()?.used || voucherDoc?.data()?.reservedUntil?.toMillis() > at.toMillis()) {
+    if (voucherDoc?.data()?.status === 'used' || voucherDoc?.data()?.reservedUntil?.toMillis() > at.toMillis()) {
       throw fail(409, 'This voucher is redeemed or in checkout. It cannot be revoked while it is in use.');
     }
     const changedItems = order.items.map((item, itemIndex) => itemIndex === index ? { ...item, revokedAt: at, revokedBy: by, revokeReason: reason } : item);
     for (const document of members.filter((document) => document.exists)) {
       const member = document.data();
-      const update = {
-        privileges: (member.privileges || []).map((privilege) => privilege.orderRef === reference.id
-          && (target.lineId ? privilege.lineId === target.lineId : privilege.productId === target.id)
-          ? { ...privilege, endedAt: at, revokeReason: reason, revokedBy: by } : privilege),
-        updatedAt: at
-      };
+      const memberTerms = terms.get(document.id) || [];
+      endTermItems(transaction, memberTerms, (item) => item.orderRef === reference.id
+        && (target.lineId ? item.lineId === target.lineId : item.productId === target.id), at, { revokeReason: reason, revokedBy: by });
+      const update = { updatedAt: at };
       if (target.id === 'keyhire') update.keyAccess = { ...member.keyAccess, revokedAt: at, reason, by };
       if (isMembership(target) || (grantsMembership(target) && member.membershipIncludedWith?.orderRef === reference.id)) {
         const orders = [{ id: reference.id, ...order, items: changedItems },
-          ...previousOrders.filter((entry) => entry.exists && entry.data().status === 'paid').map((entry) => ({ id: entry.id, ...entry.data() }))];
+          ...[...previousOrders.values()].filter((entry) => entry.data().status === 'paid').map((entry) => ({ id: entry.id, ...entry.data() }))];
         const years = new Set();
         for (const purchase of orders) {
           const person = purchase.people?.find((person) => person.membershipId === document.id);
@@ -166,6 +169,10 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
         update.justgoSyncStatus = 'pending';
         update.justgoUpload = { status: 'revoked', needsStaff: true, lastError: 'Admin revoked a purchased membership. Review the matching JustGo record.' };
         update.membershipRevokedAt = at;
+        // Club years no longer bought are marked revoked on their terms; the year's entitlements stay as they are.
+        for (const term of memberTerms.filter((entry) => entry.data().orderRef === reference.id && !years.has(entry.data().clubYear) && !entry.data().revokedAt)) {
+          transaction.update(term.ref, { revokedAt: at, revokeReason: reason, revokedBy: by, end: term.data().start?.toMillis() > at.toMillis() ? term.data().start : at, updatedAt: at });
+        }
       }
       transaction.update(document.ref, update);
     }
@@ -176,7 +183,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       else delete holds[reference.id];
       transaction.update(stocks.ref, { holds });
     }
-    if (voucherDoc?.exists) transaction.update(voucherDoc.ref, { active: false, revokedAt: at, revokeReason: reason, revokedBy: by });
+    if (voucherDoc?.exists) transaction.update(voucherDoc.ref, { status: 'disabled', revokedAt: at, revokeReason: reason, revokedBy: by });
     return changedItems;
   };
 
@@ -190,7 +197,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       if (error) throw fail(400, error);
       const loaded = await load(req);
       const { reference, index } = loaded;
-      const operation = db().collection('adminItemAudit').doc(value.operationId);
+      const operation = db().collection('auditLog').doc(`item_${value.operationId}`);
       const by = admin.email || admin.uid;
       const stored = (await operation.get()).data();
       if (stored && (stored.orderRef !== reference.id || stored.lineId !== req.params.lineId
@@ -203,6 +210,9 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       const wantsRevoke = value.action === 'revoke' || value.revoke;
       if (!loaded.order.itemActionPending) {
         if (wantsRevoke && loaded.item.revokedAt) throw fail(409, 'This item is already revoked. A refund without another revocation is still available.');
+        if (value.purpose && (loaded.item.refunds || []).some((refund) => refund.purpose === value.purpose && !['failed', 'canceled'].includes(refund.status))) {
+          throw fail(409, 'The volunteer adjustment for this item has already been refunded.');
+        }
         if (value.action === 'refund') {
           const payments = await paymentsFor({ ...loaded, order: { ...loaded.order, id: reference.id } });
           const payment = payments.find((payment) => payment.paymentIntent === value.paymentIntent);
@@ -217,8 +227,14 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
         if (prior.exists && prior.data().status === 'complete') throw fail(409, 'Action already completed. Refresh the order.');
         if (wantsRevoke) {
           const item = current.items[index];
-          if (item.monthly && current.subscriptionPlan && !current.subscriptionPlan.recordedAt) {
+          const plan = current.subscriptionPlan;
+          if (item.monthly && plan && !plan.recordedAt) {
             throw fail(409, 'Monthly payment setup is unfinished. Reconcile that setup before revoking this item so billing cannot restart later.');
+          }
+          // A failed setup may have left this item live in Stripe without a record the website could stop.
+          const group = (plan?.groups || []).find((candidate) => candidate.lineIds?.includes(item.lineId));
+          if (item.monthly && plan?.status === 'failed' && group?.stripeSubscriptionId && !group.recorded && !group.partialLineIds?.includes(item.lineId)) {
+            throw fail(409, `Monthly payments for this item may be live in Stripe (${group.stripeSubscriptionId}) but are not recorded. Retry the setup under Needs attention, or cancel it in Stripe, before revoking.`);
           }
           if (!item.lineId && (isMembership(item) || item.category === 'SERVICES')) {
             throw fail(409, 'This legacy item has no person-level line ID. Reconcile its entitlement on the member record before revoking it.');
@@ -236,7 +252,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
             const code = current.vouchers?.[voucherIndex]?.code;
             if (!code) throw fail(409, 'This voucher has no recorded code. Reconcile its entitlement before revoking it.');
             const voucher = await transaction.get(db().collection('discountCodes').doc(code));
-            if (!voucher.exists || voucher.data().used || voucher.data().reservedUntil?.toMillis() > Date.now()) {
+            if (!voucher.exists || voucher.data().status === 'used' || voucher.data().reservedUntil?.toMillis() > Date.now()) {
               throw fail(409, 'The voucher is missing, redeemed or in checkout; it cannot be revoked.');
             }
           }
@@ -250,7 +266,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
           // Recheck local allocations inside the lock: another admin may just have completed a refund.
           if (JSON.stringify(current.items[index]) !== JSON.stringify(loaded.item)) throw fail(409, 'The item changed. Reload before continuing.');
           transaction.update(reference, { itemActionPending: { lineId: req.params.lineId, request: value, by, at: Timestamp.now() } });
-          transaction.set(operation, { orderRef: reference.id, lineId: req.params.lineId, ...value, by, status: 'pending', at: Timestamp.now() });
+          transaction.set(operation, auditEntry({ kind: 'item', ...value, actor: admin, at: Timestamp.now(), orderRef: reference.id, lineId: req.params.lineId, status: 'pending' }));
         }
       });
       claimed = true;
@@ -287,8 +303,8 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
         const at = Timestamp.now();
         let items = wantsRevoke ? await revokeEntitlements(transaction, reference, current, index, by, value.reason, at) : current.items;
         items = items.map((item, itemIndex) => index !== itemIndex || !refund ? item : { ...item,
-          refunds: [...(item.refunds || []), { id: refund.id, status: refund.status, amount: value.amount,
-            paymentIntent: value.paymentIntent, by, reason: value.reason, at }] });
+          refunds: [...(item.refunds || []), { id: refund.id, status: refund.status, amountPence: value.amount,
+            paymentIntent: value.paymentIntent, by, reason: value.reason, at, ...(value.purpose ? { purpose: value.purpose } : {}) }] });
         transaction.update(reference, { items, itemActionPending: null });
         transaction.update(operation, { status: 'complete', completedAt: at, ...(refund ? { refundId: refund.id, refundStatus: refund.status } : {}) });
       });
@@ -298,7 +314,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       if (claimed && freshRefundRequest && error.stripeStatus >= 400 && error.stripeStatus < 500 && error.stripeCode !== 'idempotency_key_in_use') {
         // A definite Stripe rejection has no refund to reconcile. Network/5xx failures keep the claim.
         try {
-          const operation = db().collection('adminItemAudit').doc(req.body.operationId);
+          const operation = db().collection('auditLog').doc(`item_${req.body.operationId}`);
           const released = await db().runTransaction(async (transaction) => {
             const reference = db().collection('orders').doc(req.params.id);
             const current = (await transaction.get(reference)).data();

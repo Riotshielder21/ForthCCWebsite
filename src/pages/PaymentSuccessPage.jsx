@@ -2,30 +2,36 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { apiUrl } from '../utils/api';
 import PurchaseReceipt from '../components/PurchaseReceipt';
-
-const RECEIPT_KEY = 'fcc-payment-receipt';
-
-// The receipt token is moved out of the address bar (history, bookmarks, screenshots) into this tab's storage.
-const takeReceiptParams = () => {
-  const query = new URLSearchParams(window.location.search);
-  let stored = {};
-  try { stored = JSON.parse(window.sessionStorage.getItem(RECEIPT_KEY) || '{}'); } catch { /* ignore */ }
-  const params = { sessionId: query.get('session_id') || stored.sessionId || '', receiptToken: query.get('receipt_token') || stored.receiptToken || '' };
-  if (query.has('receipt_token') || query.has('session_id')) {
-    try { window.sessionStorage.setItem(RECEIPT_KEY, JSON.stringify(params)); } catch { /* storage may be disabled */ }
-    window.history.replaceState(window.history.state, '', window.location.pathname);
-  }
-  return params;
-};
+import { takeReceiptParams } from '../utils/receiptSession';
 
 export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBasket }) {
-  const [{ sessionId, receiptToken }] = useState(takeReceiptParams);
+  const [{ sessionId, receiptToken, expiresAt, expired: savedReceiptExpired }] = useState(takeReceiptParams);
+  const [browserExpired, setBrowserExpired] = useState(Boolean(savedReceiptExpired));
   const [status, setStatus] = useState('checking');
   const [receipt, setReceipt] = useState(null);
   const [receiptUnavailable, setReceiptUnavailable] = useState(false);
   const notifiedPaid = useRef(false);
 
   useEffect(() => {
+    if (!expiresAt) return undefined;
+    const expire = () => {
+      if (Date.now() < expiresAt) return;
+      takeReceiptParams();
+      setReceipt(null);
+      setBrowserExpired(true);
+    };
+    const timer = setTimeout(expire, Math.max(0, expiresAt - Date.now()));
+    window.addEventListener('pageshow', expire);
+    document.addEventListener('visibilitychange', expire);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pageshow', expire);
+      document.removeEventListener('visibilitychange', expire);
+    };
+  }, [expiresAt]);
+
+  useEffect(() => {
+    if (browserExpired) return undefined;
     if (!sessionId) {
       setStatus('unavailable');
       return undefined;
@@ -44,7 +50,7 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
           setStatus('paid');
           if (!notifiedPaid.current) {
             notifiedPaid.current = true;
-            onPaymentConfirmed(true);
+            onPaymentConfirmed?.(true);
           }
           if (!receiptToken) {
             setReceiptUnavailable(true);
@@ -61,7 +67,12 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
           return;
         }
         setStatus(result.status);
-        if (['expired', 'payment_failed'].includes(result.status)) return;
+        // A bank payment clears over days; the order is placed, so the basket is cleared to stop it being paid twice.
+        if (result.status === 'processing' && !notifiedPaid.current) {
+          notifiedPaid.current = true;
+          onPaymentConfirmed?.(true);
+        }
+        if (['expired', 'payment_failed', 'failed', 'processing'].includes(result.status)) return;
       } catch {
         if (active) setStatus(attempts < 30 ? 'checking' : 'unavailable');
       }
@@ -70,22 +81,34 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
     };
     check();
     return () => { active = false; clearTimeout(timer); };
-  }, [sessionId, receiptToken, onPaymentConfirmed]);
+  }, [sessionId, receiptToken, onPaymentConfirmed, browserExpired]);
+
+  if (browserExpired) return (
+    <div className="SectionBottom PageFadeIn">
+      <div className="ReceiptWrapper">
+        <h2 className="tile_heading_bold_1">Browser receipt access expired</h2>
+        <p className="PageIntroCentered" role="status">For your privacy, this browser only remembers receipt access for one hour. Please use the receipt link in your confirmation email. This does not change your payment or booking.</p>
+      </div>
+    </div>
+  );
 
   const paid = status === 'paid';
-  const failed = status === 'payment_failed';
+  const failed = status === 'payment_failed' || status === 'failed';
   const expired = status === 'expired';
+  const processing = status === 'processing';
   const free = sessionId.startsWith('cs_free_');
-  const Icon = paid ? CheckCircle2 : failed || expired || status === 'unavailable' ? AlertCircle : Loader2;
-  const title = paid ? (free ? 'Booking confirmed' : 'Payment confirmed') : failed ? 'Payment not completed' : expired ? 'Checkout expired' : 'Checking payment';
+  const Icon = paid || processing ? CheckCircle2 : failed || expired || status === 'unavailable' ? AlertCircle : Loader2;
+  const title = paid ? (free ? 'Booking confirmed' : 'Payment confirmed') : processing ? 'Payment processing' : failed ? 'Payment not completed' : expired ? 'Checkout expired' : 'Checking payment';
   const message = paid
     ? `${free ? 'Your discounts cover the whole order, so there is nothing to pay and your booking is confirmed.' : 'Your payment is confirmed.'} A copy of this receipt and a secure order link will be sent to ${receipt?.receipt.payerEmail || 'the checkout email address'}.`
+    : processing
+      ? 'Your order is placed and your bank payment is being processed. Bank payments take a few working days to clear; we will email your receipt when it does, or tell you if it fails. Please do not pay again.'
     : failed
       ? 'Stripe could not complete this payment. Your basket and checkout details are saved; return to your basket to try again or choose another payment method.'
       : expired
         ? 'This checkout session has expired. Your basket and checkout details are saved; return to your basket to start a new checkout.'
         : status === 'unavailable'
-          ? 'We could not confirm the payment status yet. Your basket and checkout details are still saved. Check your email before trying again.'
+          ? 'We could not confirm the payment status yet. Your basket and checkout details are still saved. Check your email for a receipt before trying again; starting a new checkout cancels this one, so you cannot be charged twice.'
           : 'Waiting for Stripe to confirm your payment. Your basket and checkout details are being kept while we check.';
 
   return (

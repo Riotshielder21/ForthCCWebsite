@@ -1,6 +1,6 @@
 // Grants or removes the website `admin` claim using the Firebase Admin SDK.
 //   node scripts/grant-admin.js name@forthcanoeclub.co.uk          # approve
-//   node scripts/grant-admin.js name@forthcanoeclub.co.uk --revoke # remove
+//   node scripts/grant-admin.js name@forthcanoeclub.co.uk --revoke --reason "Left the committee" # remove
 //   node scripts/grant-admin.js --list                             # show current admins
 // Uses FIREBASE_SERVICE_ACCOUNT_PATH or ./google-service-account.json, the same credentials as server.js.
 // With LOCAL_FIREBASE_EMULATORS=true (load .env.emulator) it talks to the local emulators instead.
@@ -12,13 +12,16 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { adminCandidateProblem, isClubEmail } from '../src/utils/adminAccess.js';
+import { auditEntry } from '../src/utils/auditLog.js';
 
 const args = process.argv.slice(2);
 const revoke = args.includes('--revoke');
 const list = args.includes('--list');
-const email = args.find((arg) => !arg.startsWith('--'))?.trim().toLowerCase();
-if (!list && !email) {
-  console.error('Usage: node scripts/grant-admin.js <email> [--revoke] | --list');
+const reasonAt = args.indexOf('--reason');
+const reason = reasonAt >= 0 ? String(args[reasonAt + 1] || '').trim() : '';
+const email = args.find((arg, index) => !arg.startsWith('--') && index !== reasonAt + 1)?.trim().toLowerCase();
+if ((!list && !email) || (revoke && !reason)) {
+  console.error('Usage: node scripts/grant-admin.js <email> [--revoke --reason "why"] | --list');
   process.exit(1);
 }
 
@@ -61,7 +64,6 @@ if (!revoke) {
 const { admin: _previous, ...otherClaims } = user.customClaims || {};
 await auth.setCustomUserClaims(user.uid, revoke ? otherClaims : { ...otherClaims, admin: true });
 if (revoke) await auth.revokeRefreshTokens(user.uid);
-await getFirestore().collection('adminAccessAudit').add({
-  action: revoke ? 'revoke' : 'grant', email, uid: user.uid, by: 'scripts/grant-admin.js', at: Timestamp.now()
-});
+await getFirestore().collection('auditLog').add(auditEntry({ kind: 'access', action: revoke ? 'revoke-admin' : 'grant-admin', ...(revoke ? { reason } : {}),
+  actor: 'scripts/grant-admin.js', at: Timestamp.now(), email, uid: user.uid }));
 console.log(revoke ? `${email} is no longer an admin and has been signed out.` : `${email} is now an admin. They need to sign out and in again.`);

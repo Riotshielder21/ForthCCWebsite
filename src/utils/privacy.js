@@ -28,27 +28,28 @@ export const personLookupKeys = (secret, { email, firstName, lastName, dob, affi
   affiliationNumber && lookupKey(secret, 'affiliation', affiliationNumber)
 ].filter(Boolean);
 
-const orderPeople = (fields) => (Array.isArray(fields.people) ? fields.people : []).map((person) => ({
+const orderPeople = (people) => (Array.isArray(people) ? people : []).map((person) => ({
   email: person.junior ? person.guardian?.email : person.email, firstName: person.firstName, lastName: person.lastName, dob: person.dob
 }));
 
 /**
- * The audit record for a deleted order or member: a masked summary for display, keyed lookups for erasure requests,
- * and a hidden snapshot so the delete can be reversed until the person asks for GDPR erasure.
+ * The `auditLog` details for a deleted order or member (`recordKind`): a masked summary for display, keyed lookups for erasure requests,
+ * and a hidden snapshot so the delete can be reversed until the person asks for GDPR erasure. A recorded order keeps
+ * only references to its people, so `orderPeople` gives them resolved from their member records.
  */
-export const deletionAuditEntry = ({ kind, id, fields, secret, adminUid, stripeAcknowledged = false }) => {
+export const deletionAuditEntry = ({ kind, id, fields, orderPeople: resolvedPeople = fields.people, secret, stripeAcknowledged = false }) => {
   const isOrder = kind === 'orders';
-  const people = isOrder ? orderPeople(fields) : [{
+  const people = isOrder ? orderPeople(resolvedPeople) : [{
     email: fields.junior ? fields.guardian?.email : fields.email, firstName: fields.firstName, lastName: fields.lastName, dob: fields.dob, affiliationNumber: fields.affiliationNumber
   }];
   const emails = [...new Set([fields.email, ...people.map((person) => person.email)].filter(Boolean))];
   const summary = isOrder
     ? { label: 'Order', maskedEmail: maskEmail(fields.email), people: people.map((person) => ({ name: maskName(`${person.firstName || ''} ${person.lastName || ''}`), email: maskEmail(person.email) })),
-        total: Number(fields.total) || 0, status: fields.status || '', items: (fields.items || []).map(itemLabel), paidAt: fields.paidAt ?? null, createdAt: fields.createdAt ?? null }
+        total: (Number(fields.totalPence) || 0) / 100, status: fields.status || '', items: (fields.items || []).map(itemLabel), paidAt: fields.paidAt ?? null, createdAt: fields.createdAt ?? null }
     : { label: 'Member', maskedName: maskName(`${fields.firstName || ''} ${fields.lastName || ''}`) || maskName(fields.name), maskedEmail: maskEmail(fields.email),
         membershipNumber: maskMembershipNumber(fields.affiliationNumber), tier: fields.membershipTier || '', status: fields.status || '', validUntil: fields.validUntil ?? null };
   return {
-    kind, adminUid, stripeAcknowledged,
+    recordKind: kind, stripeAcknowledged,
     recordId: isOrder ? id : null,
     recordIdHash: createHash('sha256').update(id).digest('hex'),
     summary,

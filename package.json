@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src/utils/*.test.js",
+    "test": "node --test src/utils/*.test.js src/server/*.test.js",
+    "test:integration": "node scripts/test-local.mjs",
     "preview": "vite preview",
     "server": "node server.js",
     "start": "npm run build && node server.js"

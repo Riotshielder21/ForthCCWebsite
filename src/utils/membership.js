@@ -24,6 +24,8 @@ export const justgoSyncHealth = (settings, now = new Date()) => {
   return { lastSuccessAt, healthy: Boolean(lastSuccessAt) && now.getTime() - lastSuccessAt < JUSTGO_SYNC_STALE_DAYS * 24 * 60 * 60 * 1000 };
 };
 
+export const justgoUploadCanRetry = (upload) => !['submitted', 'processing', 'review', 'revoked'].includes(upload?.status);
+
 // 'active' | 'expired' | 'awaiting-renewal' | 'inactive'
 export const membershipActivity = (fields, now = new Date()) => {
   if (fields.membershipAccessEndsAt !== undefined && fields.membershipAccessEndsAt !== null && millis(fields.membershipAccessEndsAt) <= now.getTime()) return 'inactive';

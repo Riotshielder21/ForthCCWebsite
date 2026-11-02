@@ -15,7 +15,7 @@ import { allocateRecordIds } from '../src/utils/recordIds.js';
 const PROJECT = 'demo-fcc-club-night-tests';
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: PROJECT });
 const db = getFirestore(initializeApp({ projectId: PROJECT }, 'club-night-tests'));
-const COLLECTIONS = ['households', 'memberships', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'customers', 'adminDeletionAudit', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals'];
+const COLLECTIONS = ['households', 'memberships', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'auditLog', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals', 'membershipTerms'];
 const clear = async () => {
   for (const name of COLLECTIONS) {
     const snapshot = await db.collection(name).get();
@@ -38,8 +38,14 @@ registerMyDetailsRoutes(app, { db: () => db, sendEmail, emailCodes });
 registerClubNightRoutes(app, { requireAdmin, db: () => db, emailCodes, requestNow,
   loadCatalogue: async () => [{ id: 'gold-sub', name: 'Gold subscription', category: 'SUBSCRIPTIONS' }, { id: 'boat-hire', name: 'Boat hire', category: 'ADDONS' }] });
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY = 'rk_test_club_night_fixture';
 registerGdprRoutes(app, { requireAdmin, db: () => db, localFirebase: true, normalizeEmail, isValidEmail: (value) => /^[^@\s]+@[^@\s]+$/.test(value),
-  customerId: (email) => crypto.createHash('sha256').update(normalizeEmail(email)).digest('hex'), stripeReportRequest: async () => ({}) });
+  customerId: (email) => crypto.createHash('sha256').update(normalizeEmail(email)).digest('hex'),
+  stripeReportRequest: (key) => async (path) => {
+    assert.equal(key, 'rk_test_club_night_fixture');
+    assert.ok(path.startsWith('customers?'), `Unexpected Stripe request: ${path}`);
+    return { data: [], has_more: false };
+  } });
 const server = app.listen(0, '127.0.0.1');
 await new Promise((resolve) => server.on('listening', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -78,7 +84,8 @@ try {
   await db.collection('households').doc('HH-MEMBER').set({ contactName: 'Casey Member', contactRelationship: 'Member', email: member.email, phone: '0700 000001',
     address: '1 Quay', postcode: 'EH1 1AA', emergencyContact: { name: 'Robin Member', relationship: 'Partner', phone: '0700 000002' } });
   await db.collection('memberships').doc('M0001').set({ firstName: member.firstName, lastName: member.lastName, dob: member.dob, householdId: 'HH-MEMBER',
-    status: 'active', renewalMethod: 'website', validUntil: Timestamp.fromDate(clubYearDates(year).end), privileges: [{ productId: 'boat-hire', clubYear: year }] });
+    status: 'active', renewalMethod: 'website', validUntil: Timestamp.fromDate(clubYearDates(year).end) });
+  await db.collection('membershipTerms').doc(`M0001_${year}`).set({ membershipId: 'M0001', clubYear: year, items: [{ productId: 'boat-hire' }] });
   await db.collection('households').doc('HH-JUSTGO').set({ contactName: 'Jo Go', email: 'jo@example.test', phone: '1', address: 'a', postcode: 'b', emergencyContact: null });
   await db.collection('memberships').doc('M0002').set({ firstName: 'Jo', lastName: 'Go', dob: '1970-01-01', householdId: 'HH-JUSTGO', status: 'active', justgoSyncStatus: 'synced' });
   await db.collection('counters').doc('memberships').set({ next: 3 });
@@ -211,7 +218,7 @@ try {
   assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: member, at: week3 })).status, 400, 'attendees choose a session when there are several');
   const noSub = await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: 'gold-sub-session' }, at: week3 });
   assert.match(noSub.data.message, /see the volunteer/, 'no Gold subscription');
-  await db.collection('memberships').doc('M0001').update({ privileges: [{ productId: 'boat-hire', clubYear: year }, { productId: 'gold-sub', clubYear: year }] });
+  await db.collection('membershipTerms').doc(`M0001_${year}`).update({ items: [{ productId: 'boat-hire' }, { productId: 'gold-sub' }] });
   const withSub = await call('/api/club-night/checkins', { method: 'POST', body: { ...member, sessionId: 'gold-sub-session' }, at: week3 });
   assert.match(withSub.data.message, /Enjoy Gold sub session/);
   const goldList = await call('/api/club-night/checkins?sessionId=gold-sub-session', { at: week3, session: volunteerSession });
@@ -229,16 +236,19 @@ try {
   assert.equal((await call('/api/email-codes', { method: 'POST', body: { email: 'nobody@example.test', purpose: 'details', dob: member.dob } })).status, 404);
   assert.equal(sent.length, sentBefore, 'a date of birth outside the household sends no code');
   const lastYear = Timestamp.fromDate(new Date(clubYearDates(year - 1).start.getTime() + 86400000));
-  await db.collection('orders').doc('FCC-OLD').set({ email: member.email, status: 'paid', total: '10', items: [{ name: 'Old item', price: 10 }], people: [], createdAt: lastYear });
-  await db.collection('orders').doc('FCC-NOW').set({ email: member.email, status: 'paid', total: '45', items: [{ name: 'Adult membership', category: 'MEMBERSHIP', price: 45 }],
-    people: [{ firstName: 'Casey', lastName: 'Member', phone: 'secret' }], createdAt: Timestamp.fromDate(new Date(`${year}-03-05T12:00Z`)) });
-  await db.collection('orders').doc('FCC-OPEN').set({ email: member.email, status: 'pending', total: '5', items: [], people: [], createdAt: Timestamp.fromDate(new Date(`${year}-03-06T12:00Z`)) });
+  await db.collection('orders').doc('FCC-OLD').set({ schemaVersion: 2, email: member.email, status: 'paid', totalPence: 1000, items: [{ name: 'Old item', pricePence: 1000 }], people: [], createdAt: lastYear });
+  await db.collection('orders').doc('FCC-NOW').set({ schemaVersion: 2, email: member.email, status: 'paid', totalPence: 4500,
+    items: [{ lineId: 'now', name: 'Adult membership', category: 'MEMBERSHIP', pricePence: 4500 }],
+    people: [{ membershipId: 'M0001', householdId: 'HH-MEMBER', lineIds: ['now'] }], membershipIds: ['M0001'], createdAt: Timestamp.fromDate(new Date(`${year}-03-05T12:00Z`)) });
+  await db.collection('orders').doc('FCC-OPEN').set({ schemaVersion: 2, email: member.email, status: 'pending', totalPence: 500, items: [], people: [], createdAt: Timestamp.fromDate(new Date(`${year}-03-06T12:00Z`)) });
   const detailsSession = await signIn(member.email, 'details', member.dob);
   const mine = await call('/api/my-details', { session: detailsSession });
   assert.equal(mine.data.households.length, 1);
   assert.equal(mine.data.households[0].people[0].membership, 'Active member');
   assert.deepEqual(mine.data.purchases.map((order) => order.orderRef), ['FCC-NOW'], 'only paid orders since renewals opened');
-  assert.equal(JSON.stringify(mine.data.purchases).includes('secret'), false, 'receipts hold no personal details');
+  assert.deepEqual(mine.data.purchases[0].items[0].personNames, ['Casey Member'], 'order people resolve from the member record');
+  assert.equal(mine.data.purchases[0].items[0].price, 45);
+  for (const detail of ['0700 000001', member.dob]) assert.equal(JSON.stringify(mine.data.purchases).includes(detail), false, 'receipts hold no personal details');
   const update = { phone: '0700 999999', address: '9 New Street', postcode: 'EH9 9ZZ', emergencyContact: { name: 'Robin Member', relationship: 'Partner', phone: '0700 888888' } };
   const saved = await call('/api/my-details/HH-MEMBER', { method: 'PATCH', session: detailsSession, body: update });
   assert.deepEqual(saved.data.changed.sort(), ['address', 'emergencyContact', 'phone', 'postcode']);
@@ -263,14 +273,14 @@ try {
   const guestId = guestRecord.id;
   await signIn(guest.email, 'details', guest.dob);
   assert.ok((await db.collection('clubNightCheckins').where('memberId', '==', guestId).get()).size >= 2);
-  const erased = await call('/api/admin/gdpr/erase', { method: 'POST', admin: true, body: { ...guest, scope: 'person', confirm: 'ERASE' } });
+  const erased = await call('/api/admin/gdpr/erase', { method: 'POST', admin: true, body: { ...guest, scope: 'person', confirm: 'ERASE', reason: 'Guest asked to be forgotten' } });
   assert.equal(erased.status, 200, JSON.stringify(erased.data));
   assert.equal((await db.collection('clubNightCheckins').where('memberId', '==', guestId).get()).size, 0, 'check-ins erased');
   assert.equal((await db.collection('emailSessions').where('email', '==', guest.email).get()).size, 0, 'email sessions erased');
   assert.equal((await db.collection('memberships').doc(guestId).get()).exists, false);
   const memberId = (await db.collection('memberships').where('householdId', '==', 'HH-MEMBER').get()).docs[0].id;
   assert.ok((await db.collection('clubNightAccessLog').where('memberId', '==', memberId).get()).size >= 1);
-  const memberErased = await call('/api/admin/gdpr/erase', { method: 'POST', admin: true, body: { ...member, email: newEmail, scope: 'person', confirm: 'ERASE' } });
+  const memberErased = await call('/api/admin/gdpr/erase', { method: 'POST', admin: true, body: { ...member, email: newEmail, scope: 'person', confirm: 'ERASE', reason: 'Member asked to be forgotten' } });
   assert.equal(memberErased.status, 200, JSON.stringify(memberErased.data));
   assert.equal((await db.collection('clubNightAccessLog').where('memberId', '==', memberId).get()).size, 0, 'emergency-contact access log erased');
   assert.equal((await db.collection('selfServiceChanges').where('householdId', '==', 'HH-MEMBER').get()).size, 0, 'self-service log erased');

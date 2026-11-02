@@ -7,14 +7,17 @@ import { checkSummary, checksManagedByJustgo } from '../utils/safeguarding.js';
 import { rateLimit } from './rateLimit.js';
 import { clubYearOf, clubYearDates } from '../utils/clubYear.js';
 import { normaliseVolunteerLevels, validateVolunteerBenefits, volunteerBenefitText, volunteerLevelLabel, volunteerYear, needsVolunteerRenewal } from '../utils/volunteering.js';
+import { annualAdjustment, monthlyAdjustment, monthsLeftIn, volunteerPriceFor, volunteerSignupYear } from '../utils/volunteerAdjustments.js';
 import { needsRenewal } from '../utils/renewals.js';
 import { allocateRecordIds, reserveRecordIds } from '../utils/recordIds.js';
 import { validateVolunteerPage, volunteerPageFromLegacy } from '../utils/volunteerPage.js';
 import { normaliseName } from '../utils/checkout.js';
+import { memberOrders } from './membershipTerms.js';
 
 
 /** Public forms, yearly volunteer membership entitlements and privately emailed boathouse access codes. */
-export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail, loadCatalogue, settleKeyAccess, requestNow = () => new Date() }) => {
+export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail, loadCatalogue, settleKeyAccess, requestNow = () => new Date(),
+  adjustVolunteerSubscriptions = async () => [] }) => {
   const lists = () => db().collection('lists');
   const signupYear = (signup) => Number.isInteger(signup.clubYear) ? signup.clubYear : clubYearOf(signup.createdAt?.toDate() || new Date());
   const benefitsReference = () => db().collection('settings').doc('volunteerBenefits');
@@ -477,6 +480,24 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
     });
   };
 
+  /** Applies the benefit to existing monthly payments, keeping the latest outcome for each item on the sign-up. */
+  const settleMonthlyAdjustments = async (signupReference, membershipId) => {
+    let results;
+    try {
+      results = await adjustVolunteerSubscriptions(membershipId);
+    } catch (error) {
+      console.error('Could not adjust volunteer monthly payments:', error.message);
+      results = [{ status: 'failed', error: 'Monthly payments could not be checked. Retry the adjustment.' }];
+    }
+    if (!results.length) return results;
+    const previous = (await signupReference.get()).data()?.monthlyAdjustments || [];
+    const key = (entry) => `${entry.subscriptionId || ''}/${entry.lineId || ''}`;
+    const merged = new Map(previous.map((entry) => [key(entry), entry]));
+    results.forEach((entry) => merged.set(key(entry), { ...entry, at: new Date().toISOString() }));
+    await signupReference.update({ monthlyAdjustments: [...merged.values()].slice(-20) });
+    return results;
+  };
+
   const settleVolunteer = async (signupReference) => {
     let signup = (await signupReference.get()).data();
     if (!signup || signup.listType !== VOLUNTEER_LIST) return 'not-volunteer';
@@ -492,9 +513,10 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       if (!tier) return 'needs-bracket';
       if (!signup.active) return 'inactive';
       if (!await memberIsActive(memberDocument)) return 'awaiting-membership';
+      await settleMonthlyAdjustments(signupReference, memberDocument.id);
       if (signup.benefitsEmailedFor === `${year}:${tier.id}`) return 'up-to-date';
       const sent = await sendEmail({ to: signup.email, subject: 'Your Forth Canoe Club volunteer benefits',
-        body: `Hi ${signup.name},\n\nThank you for volunteering ${tier.hours}+ hours for club year ${year}/${year + 1}.\n${benefits.join('\n')}\n\nYour benefits are recorded on your membership and apply automatically at checkout when you use your membership details. Existing purchases and payments are unchanged. Contact the club if you want staff to arrange stopping payments for a benefit you already pay for.`,
+        body: `Hi ${signup.name},\n\nThank you for volunteering ${tier.hours}+ hours for club year ${year}/${year + 1}.\n${benefits.join('\n')}\n\nYour benefits are recorded on your membership and apply automatically at checkout when you use your membership details. Monthly payments you already have are lowered from your next payment, or stopped at the end of the month you have paid for when the benefit makes them free. For anything you have already paid for in full, the club will check whether a part refund is due.`,
         record: { kind: 'volunteer-benefits', signupId: signupReference.id, membershipIds: [memberDocument.id] } });
       if (!sent) throw new Error('Volunteer benefits saved, but the email could not be sent. Try activation again.');
       await signupReference.update({ benefitsEmailedFor: `${year}:${tier.id}` });
@@ -516,7 +538,7 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
         const previous = await lists().where('email', '==', value.email).get();
         if (previous.docs.some((document) => document.data().listType === VOLUNTEER_LIST
           && normaliseName(document.data().name) === normaliseName(value.name)
-          && signupYear(document.data()) === clubYearOf(requestNow(req)))) {
+          && signupYear(document.data()) === volunteerSignupYear(requestNow(req)))) {
           return res.status(409).json({ error: 'A volunteer sign-up already exists for these details this club year. If you have signed up before, contact the club to check or change your hours and notes.' });
         }
       }
@@ -526,12 +548,12 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       await reference.create({
         ...value, status: 'pending', createdAt: Timestamp.now(),
         ...(volunteer ? { memberId: member?.id || null, inducted: member?.data().volunteer?.inducted === true,
-          clubYear: clubYearOf(requestNow(req)), active: false, discountCode: null,
+          clubYear: volunteerSignupYear(requestNow(req)), active: false, discountCode: null,
           inductionNotificationStatus: 'pending' } : {})
       });
       if (member) await member.ref.set({ volunteer: { signupId: reference.id,
         inducted: member.data().volunteer?.inducted === true } }, { merge: true });
-      if (volunteer) await sendInductionNotification(reference, { ...value, clubYear: clubYearOf(requestNow(req)) });
+      if (volunteer) await sendInductionNotification(reference, { ...value, clubYear: volunteerSignupYear(requestNow(req)) });
 
       const spreadsheetId = process.env.GOOGLE_SHEET_ID;
       if (sheets() && spreadsheetId) {
@@ -630,6 +652,92 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
     } catch (error) {
       console.error('Could not update volunteer:', error.message);
       res.status(500).json({ error: 'Could not update the volunteer.' });
+    }
+  });
+
+  /** Existing payments affected by the volunteer's benefit for their sign-up's club year. */
+  const adjustmentsFor = async (signup, now) => {
+    const year = signupYear(signup);
+    const base = { clubYear: year, monthsLeft: monthsLeftIn(year, now), monthly: [], annual: [] };
+    const member = signup.memberId ? await db().collection('memberships').doc(signup.memberId).get() : null;
+    if (!member?.exists) return { ...base, linked: false };
+    const [tiers, catalogue] = await Promise.all([loadVolunteerBenefits(), loadCatalogue()]);
+    const members = new Map([[member.id, member.data()]]);
+    const membersFor = async (ids) => {
+      const missing = ids.filter((id) => !members.has(id));
+      if (missing.length) (await db().getAll(...missing.map((id) => db().collection('memberships').doc(id))))
+        .forEach((document) => members.set(document.id, document.exists ? document.data() : null));
+      return new Map(ids.filter((id) => members.get(id)).map((id) => [id, members.get(id)]));
+    };
+    const priceFor = async (productId, membershipIds, clubYear) => {
+      const product = catalogue.find((entry) => entry.id === productId);
+      return { product, price: product ? volunteerPriceFor({ productId, basePrice: Number(product.basePrice), membershipIds, clubYear,
+        members: await membersFor(membershipIds), tiers, now }) : null };
+    };
+    const monthly = [];
+    const subscriptions = await db().collection('subscriptions').where('membershipIds', 'array-contains', member.id).limit(20).get();
+    for (const document of subscriptions.docs) {
+      for (const item of document.data().items || []) {
+        if (!item.membershipIds?.includes(member.id) || item.clubYear !== year) continue;
+        const { price } = await priceFor(item.productId, item.membershipIds, item.clubYear);
+        const pending = document.data().status === 'active' ? monthlyAdjustment({ item, volunteerPrice: price, now }) : null;
+        const last = (signup.monthlyAdjustments || []).find((entry) => entry.subscriptionId === document.id && entry.lineId === item.lineId);
+        if (!pending && !item.volunteerAdjustment && !(item.cancelScheduledAt && last)) continue;
+        monthly.push({ subscriptionId: document.id, lineId: item.lineId, name: item.name, monthlyAmount: item.monthlyAmount, status: item.status,
+          adjustedFrom: item.volunteerAdjustment?.from ?? null, cancelScheduledAt: item.cancelScheduledAt?.toDate?.().toISOString() || '',
+          pending, error: pending && last?.status === 'failed' ? last.error : '' });
+      }
+    }
+    const orders = (await memberOrders(db(), member.id)).slice(0, 50);
+    const paidAt = new Map(orders.map((document) => [document.id, document.data().paidAt?.toDate?.() || null]));
+    const annual = [];
+    for (const order of orders.filter((document) => document.data().status === 'paid')) {
+      const data = order.data();
+      for (const item of data.items || []) {
+        if (!item.lineId || item.clubYear !== year || item.monthly) continue;
+        const holders = [...new Set((data.people || []).filter((person) => person.lineIds?.includes(item.lineId)).map((person) => person.membershipId).filter(Boolean))];
+        if (!holders.includes(member.id)) continue;
+        const { product, price } = await priceFor(item.id, holders, item.clubYear);
+        const result = annualAdjustment({ item, product, volunteerPrice: price, paidAt: paidAt.get(order.id), now });
+        if (result) annual.push({ orderRef: order.id, lineId: item.lineId, name: item.name, paid: (Number(item.pricePence) || 0) / 100, paymentIntent: data.stripe?.paymentIntentId || '', ...result });
+      }
+    }
+    return { ...base, linked: true, monthly, annual };
+  };
+
+  const loadSignup = async (req, res) => {
+    if (!db()) { res.status(503).json({ error: 'Volunteer storage is not configured.' }); return null; }
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(req.params.id)) { res.status(400).json({ error: 'Choose a volunteer.' }); return null; }
+    const reference = lists().doc(req.params.id);
+    const document = await reference.get();
+    if (!document.exists || document.data().listType !== VOLUNTEER_LIST) { res.status(404).json({ error: 'Volunteer not found.' }); return null; }
+    return { reference, signup: document.data() };
+  };
+
+  app.get('/api/admin/volunteers/:id/adjustments', rateLimit(30, 60 * 1000), async (req, res) => {
+    try {
+      if (!await requireAdmin(req, res)) return;
+      const loaded = await loadSignup(req, res);
+      if (!loaded) return;
+      res.set('Cache-Control', 'no-store');
+      res.json(await adjustmentsFor(loaded.signup, requestNow(req)));
+    } catch (error) {
+      console.error('Could not load volunteer adjustments:', error.message);
+      res.status(500).json({ error: 'Could not load existing payments for this volunteer.' });
+    }
+  });
+
+  app.post('/api/admin/volunteers/:id/adjust-monthly', rateLimit(10, 60 * 1000), async (req, res) => {
+    try {
+      if (!await requireAdmin(req, res)) return;
+      const loaded = await loadSignup(req, res);
+      if (!loaded) return;
+      const outcome = await settleVolunteer(loaded.reference);
+      if (!['benefits-added', 'up-to-date'].includes(outcome)) return res.status(409).json({ error: 'Monthly payments are adjusted once the volunteer is inducted, active, has a level and an active membership.', outcome });
+      res.json(await adjustmentsFor((await loaded.reference.get()).data(), requestNow(req)));
+    } catch (error) {
+      console.error('Could not adjust volunteer monthly payments:', error.message);
+      res.status(500).json({ error: 'Could not adjust the monthly payments.' });
     }
   });
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders } from './adminReports.js';
+import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders, onlyEventPeriod, onlyEvent, reportEventNames } from './adminReports.js';
 
 test('membership status is one of No, Active, Awaiting renewal, Expired or Revoked, or a raw imported status', () => {
   const now = new Date('2026-10-10T12:00:00Z');
@@ -23,14 +23,23 @@ test('membership status is one of No, Active, Awaiting renewal, Expired or Revok
 });
 
 test('order reports expose purchases but not receipt access credentials', () => {
-  const fields = { email: 'test@example.com', accessTokenHash: 'private', total: '25', status: 'paid',
-    createdAt: { toDate: () => new Date('2026-10-10') }, items: [{ name: 'Gold', type: 'subscription', price: '25' }] };
+  const fields = { email: 'test@example.com', receiptTokenHash: 'private', totalPence: 2500, status: 'paid', stripe: { paymentIntentId: 'pi_1' },
+    createdAt: { toDate: () => new Date('2026-10-10') }, items: [{ name: 'Gold', type: 'subscription', pricePence: 2500,
+      refunds: [{ id: 're_1', amountPence: 500 }] }] };
   const report = orderReport('order-1', fields);
   assert.equal(report.total, 25);
   assert.equal(report.subscriptionWarning, true);
-  assert.equal(Object.hasOwn(report, 'accessTokenHash'), false);
+  assert.equal(Object.hasOwn(report, 'receiptTokenHash'), false);
+  assert.equal(report.stripePaymentIntentId, 'pi_1');
+  assert.equal(report.items[0].price, 25, 'line prices are reported in pounds');
+  assert.equal(report.items[0].refunds[0].amount, 500, 'refunds are reported in pence');
   assert.equal(subscriptionWarning({ stripeSubscriptionId: 'sub_123' }), true);
   assert.equal(subscriptionWarning({ items: [{ type: 'annual-oneoff' }] }), false);
+  assert.equal(subscriptionWarning({ items: [{ type: 'annual-oneoff', monthly: true }] }), true);
+  assert.equal(subscriptionWarning({ stripeSubscriptionIds: ['sub_1'] }), true);
+  assert.equal(subscriptionWarning({ stripeMembershipSubscriptionId: 'sub_2' }), true);
+  assert.equal(subscriptionWarning({ subscriptionIds: ['sub_3'] }), true);
+  assert.equal(subscriptionWarning({ stripeSubscriptionIds: [] }), false);
 });
 
 test('CSV quotes values and neutralizes spreadsheet formulas; emails deduplicate', () => {
@@ -60,6 +69,22 @@ test('event export lists every attendee with the details a leader needs', () => 
     items: [{ lineId: 'ticket', name: 'Course', category: 'EVENTS', revokedAt: '2026-10-01' }] });
   assert.deepEqual(eventAttendeeRows([revoked], () => ''), [], 'revoked attendees must not reappear as legacy fallback rows');
   assert.deepEqual(eventAttendeeRows([{ ...revoked, people: [] }], () => ''), [], 'revoked legacy tickets are omitted too');
+});
+
+test('attendee reports use versioned photo consent with legacy and checkout fallbacks', () => {
+  const items = [{ lineId: 'ticket', name: 'Course', category: 'EVENTS', price: 20 }];
+  const person = { firstName: 'Returning', lastName: 'Member', membershipId: 'M1', returning: true, lineIds: ['ticket'], photoConsent: false };
+  for (const [member, checkoutConsent, expected] of [
+    [{ consents: { photoVideo: { accepted: true } } }, false, true],
+    [{ consents: { photoVideo: { accepted: false } }, photoConsent: true }, true, false],
+    [{ photoConsent: true }, false, true],
+    [{}, true, true],
+    [{}, false, false]
+  ]) {
+    const report = orderReport('O1', { items, people: [{ ...person, photoConsent: checkoutConsent }] }, new Map([['M1', member]]));
+    assert.equal(report.people[0].photoConsent, expected);
+    assert.equal(eventAttendeeRows([report], () => '')[0][9], expected ? 'Yes' : 'No');
+  }
 });
 
 test('one membership report covers JustGo and website records', () => {
@@ -113,11 +138,11 @@ test('event attendee exports use the linked household as the canonical source of
 
 test('mixed shop orders retain individual prices, sizes, quantities, and event schedules in reports', () => {
   const report = orderReport('MIXED-1', {
-    email: 'buyer@example.test', status: 'paid', total: '155',
+    email: 'buyer@example.test', status: 'paid', totalPence: 15500,
     items: [
-      { lineId: 'tee-s', name: 'Club shirt', category: 'MERCHANDISE', type: 'merchandise', size: 'S', price: 20 },
-      { lineId: 'tee-m', name: 'Club shirt', category: 'MERCHANDISE', type: 'merchandise', size: 'M', price: 20 },
-      { lineId: 'course-1', name: 'Week-long course', category: 'EVENTS', type: 'event-ticket', price: 115,
+      { lineId: 'tee-s', name: 'Club shirt', category: 'MERCHANDISE', type: 'merchandise', size: 'S', pricePence: 2000 },
+      { lineId: 'tee-m', name: 'Club shirt', category: 'MERCHANDISE', type: 'merchandise', size: 'M', pricePence: 2000 },
+      { lineId: 'course-1', name: 'Week-long course', category: 'EVENTS', type: 'event-ticket', pricePence: 11500,
         eventSchedule: { mode: 'consecutive', startDate: '2027-07-12', days: 5 } }
     ],
     people: [{ firstName: 'Alex', lastName: 'Example', lineIds: ['course-1'], events: [{ name: 'Week-long course',
@@ -185,18 +210,35 @@ test('separate households may share an external emergency contact without sharin
 test('JustGo status follows the upload attempts, and the staff list holds only members needing staff', () => {
   const base = { firstName: 'Ann', lastName: 'Web', dob: '1990-01-01', email: 'a@example.com', phone: '1', address: '1 Road', postcode: 'EH1', membershipTier: 'adult', justgoSyncStatus: 'pending', validUntil: '2099-03-01', status: 'active', medical: 'Asthma' };
   const waiting = membershipReport('M1', { ...base, justgoUpload: { status: 'queued' } });
-  const invited = membershipReport('M2', { ...base, justgoUpload: { status: 'invited', inviteExpiresAt: '2026-10-20' } });
-  const failed = membershipReport('M3', { ...base, affiliationNumber: 'PS123', justgoUpload: { status: 'failed', needsStaff: true, failures: 3, lastError: 'Invitation expired' } });
+  const submitted = membershipReport('M2', { ...base, justgoUpload: { status: 'submitted', clubLinkReference: 'R1' } });
+  const failed = membershipReport('M3', { ...base, affiliationNumber: 'PS123', justgoUpload: { status: 'failed', needsStaff: true, failures: 3, lastError: 'JustGo said no' } });
   const manual = membershipReport('M4', { ...base, justgoUpload: { status: 'manual' } });
   const synced = membershipReport('sca-1', { affiliationNumber: '1', firstName: 'Jo', lastName: 'Sync', justgoSyncStatus: 'synced', status: 'active', validUntil: '2099-03-01' });
-  assert.deepEqual([waiting, invited, failed, manual, synced].map((record) => record.justgo),
-    ['Awaiting upload', 'Invitation sent', 'Needs staff upload', 'Added by staff, awaiting sync', 'In JustGo']);
+  const review = membershipReport('M5', { ...base, justgoUpload: { status: 'review' } });
+  assert.deepEqual([waiting, submitted, failed, manual, review, synced].map((record) => record.justgo),
+    ['Awaiting upload', 'Submitted, awaiting sync', 'Needs staff upload', 'Added by staff, awaiting sync', 'Needs staff upload', 'In JustGo']);
   assert.equal(failed.uploadFailures, 3);
-  assert.equal(failed.uploadError, 'Invitation expired');
-  const rows = justgoUploadRows([waiting, invited, failed, manual, synced]);
+  assert.equal(failed.uploadError, 'JustGo said no');
+  const rows = justgoUploadRows([waiting, submitted, failed, manual, synced]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].length, justgoUploadHeaders.length);
-  assert.deepEqual([rows[0][0], rows[0][1], rows[0][10], rows[0][11], rows[0][12]], ['M3', 'Ann', 'PS123', 3, 'Invitation expired']);
+  assert.deepEqual([rows[0][0], rows[0][1], rows[0][10], rows[0][11], rows[0][12]], ['M3', 'Ann', 'PS123', 3, 'JustGo said no']);
+});
+
+test('the JustGo profile shows suspensions, unlinks and unverified emails', () => {
+  const synced = { affiliationNumber: '1', firstName: 'Jo', lastName: 'Sync', justgoSyncStatus: 'synced', status: 'active', validUntil: '2099-03-01' };
+  const suspended = membershipReport('s1', { ...synced, status: 'Suspended', justgoProfile: { suspended: true, suspension: 'Full', accountStatus: 'Active' } });
+  assert.equal(suspended.justgo, 'Suspended in JustGo');
+  assert.equal(suspended.status, 'Suspended');
+  assert.equal(suspended.justgoAccount, 'Active, suspension Full');
+  assert.ok(MEMBERSHIP_STATUSES.includes('Suspended'));
+  const pendingWithSuspension = membershipReport('s2', { ...synced, justgoSyncStatus: 'pending', justgoProfile: { suspended: true } });
+  assert.equal(pendingWithSuspension.justgo, 'Suspended in JustGo', 'a suspension outranks a website renewal awaiting upload');
+  const unlinked = membershipReport('u1', { ...synced, justgoProfile: { clubLinked: false, reviewReason: 'No longer linked' } });
+  assert.deepEqual([unlinked.justgo, unlinked.justgoReview], ['Not linked to FCC in JustGo', 'No longer linked']);
+  assert.equal(membershipReport('e1', { ...synced, justgoProfile: { clubLinked: true, emailVerified: false } }).justgo, 'In JustGo (email not verified)');
+  const pending = membershipReport('p1', { ...synced, status: 'JustGo Pending', justgoProfile: { membershipName: 'FCC Adult', membershipStatus: 'Pending' } });
+  assert.deepEqual([pending.status, pending.justgoMembership], ['JustGo Pending', 'FCC Adult: Pending'], 'a join request made on JustGo is visible');
 });
 
 test('the member register shows PVG and safeguarding status with expiry dates', () => {
@@ -232,9 +274,100 @@ test('report filters narrow purchases, events, and options', async () => {
 });
 
 
+const ticketSchedule = (startDate, extra = {}) => ({
+  mode: 'single', startDate, startTime: '15:00', endTime: '17:00', timeZone: 'Europe/London', ...extra
+});
+
+test('event periods archive single events and courses only when their final session ends', () => {
+  const records = [{
+    id: 'mixed', items: [
+      { name: 'Past day', price: 10, eventSchedule: ticketSchedule('2026-10-30') },
+      { name: 'Ongoing weekly course', price: 60, eventSchedule: ticketSchedule('2026-10-19', { mode: 'weekly', weeks: 6 }) },
+      { name: 'Completed daily course', price: 30, eventSchedule: ticketSchedule('2026-10-29', { mode: 'consecutive', days: 3 }) },
+      { name: 'Future day', price: 20, eventSchedule: ticketSchedule('2026-11-03') }
+    ]
+  }];
+  const now = new Date('2026-11-02T10:25:00Z');
+  assert.deepEqual(onlyEventPeriod(records, 'current', now)[0].items.map((item) => item.name), ['Ongoing weekly course', 'Future day']);
+  assert.deepEqual(onlyEventPeriod(records, 'past', now)[0].items.map((item) => item.name), ['Past day', 'Completed daily course']);
+
+  const course = [{ id: 'course', items: [records[0].items[1]] }];
+  assert.equal(onlyEventPeriod(course, 'past', new Date('2026-11-23T16:59:59Z')).length, 0);
+  assert.equal(onlyEventPeriod(course, 'past', new Date('2026-11-23T17:00:00Z')).length, 1);
+  assert.equal(onlyEventPeriod(course, 'current', new Date('2026-11-23T17:00:00Z')).length, 0);
+});
+
+test('event periods use London time across BST, GMT, midnight and course clock changes', () => {
+  for (const [schedule, end] of [
+    [ticketSchedule('2026-07-01'), '2026-07-01T16:00:00Z'],
+    [ticketSchedule('2026-11-02'), '2026-11-02T17:00:00Z'],
+    [ticketSchedule('2026-07-01', { startTime: '00:00', endTime: '00:30' }), '2026-06-30T23:30:00Z'],
+    [ticketSchedule('2026-10-18', { mode: 'weekly', weeks: 2 }), '2026-10-25T17:00:00Z'],
+    [ticketSchedule('2026-03-28', { mode: 'consecutive', days: 2 }), '2026-03-29T16:00:00Z']
+  ]) {
+    const records = [{ items: [{ eventSchedule: schedule }] }];
+    assert.equal(onlyEventPeriod(records, 'past', new Date(new Date(end).getTime() - 1)).length, 0);
+    assert.equal(onlyEventPeriod(records, 'past', new Date(end)).length, 1);
+  }
+});
+
+test('event periods scope totals, attendee exports, emails and event options without changing purchases', () => {
+  const old = ticketSchedule('2026-10-30');
+  const upcoming = ticketSchedule('2026-11-10');
+  const report = orderReport('mixed', {
+    email: 'buyer@example.com', status: 'paid', totalPence: 9000,
+    items: [
+      { lineId: 'old', name: 'Course', category: 'EVENTS', pricePence: 1000, eventSchedule: old },
+      { lineId: 'new', name: 'Course', category: 'EVENTS', pricePence: 5000, eventSchedule: upcoming },
+      { lineId: 'other', name: 'Future trip', category: 'EVENTS', pricePence: 3000, eventSchedule: upcoming }
+    ],
+    people: [
+      { firstName: 'Past', lastName: 'Attendee', lineIds: ['old'] },
+      { firstName: 'Current', lastName: 'Attendee', lineIds: ['new', 'other'] }
+    ]
+  });
+  const records = [report, { id: 'old-only', email: 'past@example.com', items: [report.items[0]] }];
+  const before = structuredClone(records);
+  const now = new Date('2026-11-02T10:25:00Z');
+  const current = onlyEventPeriod(records, 'current', now);
+  const past = onlyEventPeriod(records, 'past', now);
+  assert.deepEqual(current.map((record) => [record.id, record.total]), [['mixed', 80]]);
+  assert.deepEqual(past.map((record) => [record.id, record.total]), [['mixed', 10], ['old-only', 10]]);
+  assert.deepEqual(reportEventNames(current), ['Course', 'Future trip']);
+  assert.deepEqual(reportEventNames(past), ['Course']);
+  assert.deepEqual(uniqueReportEmails(current), ['buyer@example.com']);
+  const selectedCourse = onlyEvent(current, 'Course');
+  assert.equal(selectedCourse[0].total, 50);
+  const rows = eventAttendeeRows(selectedCourse, (schedule) => schedule.startDate);
+  assert.deepEqual(rows.map((row) => row.slice(0, 3)), [['Course', '2026-11-10', 'Current Attendee']]);
+  assert.deepEqual(eventAttendeeRows(past, (schedule) => schedule.startDate).map((row) => row[2]), ['Past Attendee', 'Attendee details not recorded']);
+  assert.deepEqual(records, before);
+});
+
+test('missing and invalid event schedules stay visible for staff review, never silently archived', () => {
+  const records = [{ items: [
+    { name: 'Legacy ticket', price: 10 },
+    { name: 'Invalid ticket', price: 20, eventSchedule: ticketSchedule('2026-02-30') },
+    { name: 'Incomplete ticket', eventSchedule: { startDate: '2020-01-01' } }
+  ] }];
+  const now = new Date('2026-11-02T10:25:00Z');
+  assert.equal(onlyEventPeriod(records, 'current', now)[0].items.length, 3);
+  assert.deepEqual(onlyEventPeriod(records, 'past', now), []);
+  assert.deepEqual(onlyEventPeriod([], 'past', now), []);
+});
+
 test('JustGo check statuses remain authoritative while a future membership awaits upload', () => {
   const fields = { justgoSyncStatus: 'pending', lastJustgoSync: 1, checks: { pvg: { source: 'justgo', label: 'Current' }, safeguarding: { expiresOn: '2030-01-01' } } };
   const report = membershipReport('pending-volunteer', fields);
   assert.equal(report.pvg, 'Current');
   assert.equal(report.safeguarding, 'Not supplied by JustGo');
+});
+
+test('JustGo credentials show their own status with our expiry warning', () => {
+  const now = new Date('2026-06-15T12:00:00Z');
+  const fields = { justgoSyncStatus: 'synced', checks: {
+    pvg: { source: 'justgo', status: 'Approved', expiresOn: '2026-08-01' }, safeguarding: { source: 'justgo', status: 'Completed', expiresOn: '2026-01-01' } } };
+  const report = membershipReport('cred-1', fields, now);
+  assert.equal(report.pvg, 'Approved, Due to expire (01/08/2026)');
+  assert.equal(report.safeguarding, 'Completed, Expired (01/01/2026)');
 });

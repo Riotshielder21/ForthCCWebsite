@@ -1,5 +1,6 @@
 import { eventScheduleLabel } from './catalogue.js';
 import { itemLabel } from './inventory.js';
+import { toPounds } from './orders.js';
 
 const money = (value) => `£${Number(value || 0).toFixed(2)}`;
 
@@ -97,7 +98,7 @@ const receiptBilling = (item, order) => {
   const monthly = typeof item.monthly === 'boolean' ? item.monthly : order.billingMode === 'monthly' && item.type === 'subscription';
   if (item.label && item.clubYear) {
     // Older orders' labels did not state the monthly amount.
-    return monthly && item.debits > 0 && !item.label.includes(' a month') ? `${item.label} at £${Number(item.monthlyAmount || 0).toFixed(2)} a month` : item.label;
+    return monthly && item.debits > 0 && !item.label.includes(' a month') ? `${item.label} at £${toPounds(item.monthlyPence).toFixed(2)} a month` : item.label;
   }
   return monthly ? 'per month' : '';
 };
@@ -105,7 +106,7 @@ const receiptBilling = (item, order) => {
 const receiptItems = (items, order) => items.map((item) => ({
   name: itemLabel(item) || 'Item',
   personNames: receiptItemNames(item, Array.isArray(order.people) ? order.people : []),
-  price: Number(item.price || 0),
+  price: toPounds(item.pricePence),
   billing: receiptBilling(item, order),
   schedule: item.eventSchedule ? eventScheduleLabel(item.eventSchedule) : '',
   ...(item.category === 'EVENTS' && item.imageUrl ? { imageUrl: item.imageUrl } : {})
@@ -134,7 +135,7 @@ export const buildReceiptSummary = (orderRef, order, { personFields = [] } = {})
     code: String(voucher.code || ''), name: String(voucher.name || 'Voucher'), value: Number(voucher.value || 0),
     expiresAt: voucher.expiresAt?.toDate?.().toISOString() || (voucher.expiresAt ? new Date(voucher.expiresAt).toISOString() : '')
   }));
-  return { orderRef, payerEmail: order.email || '', total: Number(order.total || 0), people, otherItems, vouchers };
+  return { orderRef, payerEmail: order.email || '', total: toPounds(order.totalPence), people, otherItems, vouchers };
 };
 
 const itemLines = (label, items) => items.length
@@ -172,15 +173,15 @@ export const buildLinkedReceipt = (orderRef, order) => {
   const people = (Array.isArray(order.people) ? order.people : []).map((person) => ({
     firstName: person.firstName, lastName: person.lastName, lineIds: person.lineIds
   }));
-  const itemFields = ['id', 'lineId', 'name', 'category', 'type', 'price', 'size', 'monthly', 'eventSchedule', 'imageUrl'];
-  const items = (Array.isArray(order.items) ? order.items : []).map((item) => ({
-    ...Object.fromEntries(itemFields.filter((field) => item[field] !== undefined).map((field) => [field, item[field]])),
-    personNames: receiptItemNames(item, people)
+  const itemFields = ['id', 'lineId', 'name', 'category', 'type', 'pricePence', 'size', 'monthly', 'eventSchedule', 'imageUrl'];
+  const linked = (Array.isArray(order.items) ? order.items : [])
+    .map((item) => Object.fromEntries(itemFields.filter((field) => item[field] !== undefined).map((field) => [field, item[field]])));
+  const items = linked.map(({ pricePence, ...item }) => ({
+    ...item, ...(pricePence !== undefined ? { price: toPounds(pricePence) } : {}), personNames: receiptItemNames(item, people)
   }));
-  const total = order.total || '0';
   return {
-    orderRef, items, total,
-    copy: receiptEmailCopy(buildReceiptSummary(orderRef, { items, people, total, billingMode: order.billingMode }))
+    orderRef, items, total: toPounds(order.totalPence),
+    copy: receiptEmailCopy(buildReceiptSummary(orderRef, { items: linked, people, totalPence: order.totalPence, billingMode: order.billingMode }))
   };
 };
 

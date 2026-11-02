@@ -29,13 +29,14 @@ export default function AdminAccessPanel({ adminUser }) {
   const change = async (action, target) => {
     const prompt = action === 'grant'
       ? `Make ${target} a website admin? They will be able to see member data, cancel subscriptions, erase records and change the boathouse access codes.`
-      : `Remove admin access from ${target}? They will be signed out.`;
-    if (!window.confirm(prompt)) return;
+      : `Remove admin access from ${target}? They will be signed out. Give the reason, which is kept in the audit log.`;
+    const reason = action === 'grant' ? (window.confirm(prompt) ? '' : null) : window.prompt(prompt, '')?.trim();
+    if (reason === null || reason === undefined || (action === 'revoke' && !reason)) return;
     setError('');
     setMessage('');
     setBusy(true);
     try {
-      await request({ method: 'POST', body: JSON.stringify({ action, email: target }) });
+      await request({ method: 'POST', body: JSON.stringify({ action, email: target, ...(reason ? { reason } : {}) }) });
       setMessage(action === 'grant' ? `${target} is now an admin. They need to sign out and in again.` : `${target} is no longer an admin.`);
       if (action === 'grant') setEmail('');
       await load();

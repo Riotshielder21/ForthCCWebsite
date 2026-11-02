@@ -17,7 +17,7 @@ test('legacy scaId is used when scaNumber is missing and an existing affiliation
 test('household migration removes person-level contact and checkout-only fields', () => {
   const plan = planUpgrade({ schemaVersion: 2, email: 'parent@example.com', phone: '1', guardian: {}, emergencyContact: {},
     emergencyNote: 'Parents', photoConsent: true, familyGroup: 'f1', junior: true, returning: true, disclaimerAccepted: true });
-  assert.equal(plan.to, 3);
+  assert.equal(plan.to, CURRENT_MEMBERSHIP_VERSION);
   assert.deepEqual(plan.set.consents.photoVideo, { accepted: true, legacyUnversioned: true, recordedAt: null, by: 'guardian' });
   assert.deepEqual(plan.remove, ['email', 'phone', 'guardian', 'emergencyContact', 'emergencyNote', 'photoConsent', 'familyGroup', 'junior', 'returning', 'disclaimerAccepted']);
 });

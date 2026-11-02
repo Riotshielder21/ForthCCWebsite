@@ -1,6 +1,7 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { validateAdminChange, adminCandidateProblem, isClubEmail } from '../utils/adminAccess.js';
 import { rateLimit } from './rateLimit.js';
+import { auditEntry } from '../utils/auditLog.js';
 
 /** Lets existing admins approve or remove other admins by setting the Firebase `admin` custom claim. */
 export const registerAdminAccessRoutes = (app, { requireAdmin, auth, db, localFirebase = false }) => {
@@ -54,9 +55,9 @@ export const registerAdminAccessRoutes = (app, { requireAdmin, auth, db, localFi
       if (value.action === 'revoke') await auth().revokeRefreshTokens(user.uid);
 
       if (db()) {
-        await db().collection('adminAccessAudit').add({
-          action: value.action, email: value.email, uid: user.uid, by: admin.email || admin.uid, at: Timestamp.now()
-        }).catch((auditError) => console.error('Admin access changed but not audited:', auditError.message));
+        await db().collection('auditLog').add(auditEntry({ kind: 'access', action: `${value.action}-admin`, reason: value.reason, actor: admin,
+          at: Timestamp.now(), email: value.email, uid: user.uid
+        })).catch((auditError) => console.error('Admin access changed but not audited:', auditError.message));
       }
       res.json({ success: true, action: value.action, admin: summary(user) });
     } catch (error) {

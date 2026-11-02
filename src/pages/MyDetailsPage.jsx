@@ -75,34 +75,81 @@ function HouseholdEditor({ household, onSaved, onEmailChanged }) {
   </section>;
 }
 
+function MonthlyPayment({ subscription, onRequested }) {
+  const [chosen, setChosen] = useState([]);
+  const [reason, setReason] = useState('');
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const requestable = subscription.items.filter((item) => !item.cancelRequested);
+  const toggle = (key) => setChosen((current) => current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key]);
+  const submit = async (event) => {
+    event.preventDefault(); setBusy(true); setError('');
+    try {
+      const result = await sessionRequest('details', `/api/my-details/monthly/${encodeURIComponent(subscription.subscriptionId)}/cancel-request`,
+        { method: 'POST', body: { itemKeys: chosen, reason } });
+      setMessage(result.message); setOpen(false); onRequested(subscription.subscriptionId, chosen); setChosen([]); setReason('');
+    } catch (requestError) { setError(requestError.message); } finally { setBusy(false); }
+  };
+  return <section className="main_tile SpaceT4">
+    {!subscription.paidByYou && <p className="text_container">Paid by someone else for people in your household.</p>}
+    <ul className="text_container">{subscription.items.map((item) => <li key={item.key}>
+      {item.name}{item.names.length ? ` for ${item.names.join(', ')}` : ''} · £{item.monthlyAmount.toFixed(2)} a month
+      {item.cancelRequested && <strong> · Cancellation requested</strong>}
+    </li>)}</ul>
+    {requestable.length > 0 && !open && <button className="EditorCommand" type="button" onClick={() => { setOpen(true); setMessage(''); setChosen(requestable.map((item) => item.key)); }}>Request cancellation</button>}
+    {open && <form className="FormContainer FormBody" onSubmit={submit}>
+      <p className="text_container">Choose what to stop. The club makes the change and emails you to confirm; payments continue until then.</p>
+      {requestable.map((item) => <label key={item.key} className="FormLabel">
+        <input type="checkbox" checked={chosen.includes(item.key)} onChange={() => toggle(item.key)} /> {item.name}{item.names.length ? ` for ${item.names.join(', ')}` : ''}
+      </label>)}
+      <label className="FormLabel">Reason (optional)<textarea className="FormInput" maxLength="500" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+      <div className="SpaceY2">
+        <button className="FormSubmitButton" type="submit" disabled={busy || !chosen.length}>Send request</button>
+        <button className="EditorCommand" type="button" disabled={busy} onClick={() => setOpen(false)}>Keep paying</button>
+      </div>
+    </form>}
+    {error && <p className="StatusTextError" role="alert">{error}</p>}
+    {message && <p role="status">{message}</p>}
+  </section>;
+}
+
 export default function MyDetailsPage() {
   const [session, setSession] = useState(() => loadEmailSession('details'));
   const [households, setHouseholds] = useState(null);
   const [purchases, setPurchases] = useState([]);
+  const [monthly, setMonthly] = useState([]);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!session) return;
-    sessionRequest('details', '/api/my-details').then((result) => { setHouseholds(result.households); setPurchases(result.purchases || []); }).catch((loadError) => {
+    sessionRequest('details', '/api/my-details').then((result) => { setHouseholds(result.households); setPurchases(result.purchases || []); setMonthly(result.monthlyPayments || []); }).catch((loadError) => {
       if (loadError.sessionExpired) setSession(null);
       setError(loadError.message);
     });
   }, [session]);
 
-  const signOut = (message = '') => { clearEmailSession('details'); setSession(null); setHouseholds(null); setPurchases([]); setNotice(message); };
+  const signOut = (message = '') => { clearEmailSession('details'); setSession(null); setHouseholds(null); setPurchases([]); setMonthly([]); setNotice(message); };
 
   return <div className="SectionContent PageFadeIn">
     <h2 className="page_heading_bold_1">My details</h2>
     {notice && <p role="status">{notice}</p>}
     {!session ? <EmailCodeSignIn purpose="details" askDob onVerified={(verified) => { setNotice(''); setError(''); setSession(verified); }}
-      intro="See your current purchases and update the phone number, address, emergency contact or email address we hold for your membership. Enter the email you joined or bought with and your date of birth, and we will send you a 6-digit code. Booking for a child or family member? Use their date of birth instead. Name and date of birth changes: contact secretary@forthcanoeclub.co.uk." />
+      intro="See your current purchases, ask to stop monthly payments, and update the phone number, address, emergency contact or email address we hold for your membership. Enter the email you joined or bought with and your date of birth, and we will send you a 6-digit code. Booking for a child or family member? Use their date of birth instead. Name and date of birth changes: contact secretary@forthcanoeclub.co.uk." />
       : <>
         <p className="text_container">Signed in as {session.email}. <button className="EditorCommand" type="button" onClick={() => signOut()}>Sign out</button></p>
         {error && <p className="StatusTextError" role="alert">{error}</p>}
         {households?.map((household) => <HouseholdEditor key={household.id} household={household}
           onSaved={(saved) => setHouseholds((current) => current.map((entry) => entry.id === saved.id ? saved : entry))}
           onEmailChanged={signOut} />)}
+        {monthly.length > 0 && <section className="SpaceT4">
+          <h3 className="tile_heading_bold_1">Monthly payments</h3>
+          {monthly.map((subscription) => <MonthlyPayment key={subscription.subscriptionId} subscription={subscription}
+            onRequested={(id, keys) => setMonthly((current) => current.map((entry) => entry.subscriptionId !== id ? entry
+              : { ...entry, items: entry.items.map((item) => keys.includes(item.key) ? { ...item, cancelRequested: true } : item) }))} />)}
+        </section>}
         {households && <section className="SpaceT4">
           <h3 className="tile_heading_bold_1">Current purchases</h3>
           {purchases.length ? purchases.map((order) => <PurchaseReceipt key={order.orderRef} order={order} />)

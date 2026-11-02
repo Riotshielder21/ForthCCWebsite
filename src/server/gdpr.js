@@ -1,9 +1,12 @@
 import crypto from 'node:crypto';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
-import { identityEmails, matchesIdentity, redactOrder, sharedDetailsErrors, sharedDetailsUpdate } from '../utils/erasure.js';
+import { identityEmails, matchesIdentity, redactOrder, redactSubscription, sharedDetailsErrors, sharedDetailsUpdate } from '../utils/erasure.js';
+import { eraseStripeDetails } from './stripeErasure.js';
+import { memberOrders } from './membershipTerms.js';
 import { lookupKey, maskEmail, maskMembershipNumber, maskName, personLookupKeys } from '../utils/privacy.js';
 import { memberIsJunior } from '../utils/households.js';
 import { rateLimit } from './rateLimit.js';
+import { REASON_REQUIRED, auditEntry, requiredReason } from '../utils/auditLog.js';
 import { EMAIL_CODE_PURPOSES, codeDocumentId } from '../utils/emailCodes.js';
 
 const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -21,7 +24,7 @@ const leftHouseholdIds = (records, targets) => {
  * GDPR erasure. Starts from the member register, follows the person into every other collection, keeps orders for the
  * accounts with identifying details removed, and leaves only a masked audit entry.
  */
-export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, customerId, normalizeEmail, isValidEmail }) => {
+export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail, stopSubscriptionItems }) => {
   const auditSecret = () => process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
 
   /** Everything an erasure for this request would touch. `scope` is 'person' or 'family'. */
@@ -84,8 +87,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
 
     // An email that still belongs to someone staying on the register is not erased.
     const orders = new Map();
-    const orderRefs = [...new Set(targets.flatMap((record) => (record.history || []).map((entry) => entry.orderRef)).filter((id) => typeof id === 'string' && id && !id.includes('/')))].slice(0, 300);
-    if (orderRefs.length) (await adminDb.getAll(...orderRefs.map((id) => adminDb.collection('orders').doc(id)))).forEach((document) => document.exists && orders.set(document.id, document.data()));
+    for (const record of targets) (await memberOrders(adminDb, record.id)).forEach((document) => orders.set(document.id, document.data()));
     const fullyErased = (order) => (order.people || []).length > 0 && order.people.every((person) => targetIds.has(person.membershipId) || person.erased);
     const candidateEmails = new Set([...subjects.map((subject) => normalizeEmail(subject.email)), ...targets.flatMap((record) => identityEmails(record, record.household)),
       ...[...orders.values()].filter(fullyErased).map((order) => normalizeEmail(order.email))].filter((email) => email && email !== '***'));
@@ -104,37 +106,76 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
     for (const email of erasedEmails) (await adminDb.collection('orders').where('email', '==', email).limit(200).get()).docs.forEach((document) => orders.set(document.id, document.data()));
     const orderUpdates = [...orders].map(([id, order]) => ({ id, update: redactOrder(order, targetIds, erasedEmails, replaceHouseholdIds) })).filter((entry) => entry.update);
 
+    const emailList = [...erasedEmails];
+    const byEmail = async (collection) => (await Promise.all(emailList.map((email) => adminDb.collection(collection).where('email', '==', email).get()))).flatMap((snapshot) => snapshot.docs);
+    // The Stripe mirror records which members each payer and subscription covers, not their names or emails.
+    const byMembers = async (collection) => {
+      const ids = [...targetIds];
+      const found = new Map();
+      for (let index = 0; index < ids.length; index += 30) {
+        (await adminDb.collection(collection).where('membershipIds', 'array-contains-any', ids.slice(index, index + 30)).get()).docs.forEach((document) => found.set(document.id, document));
+      }
+      return [...found.values()];
+    };
+    const [discountCodes, lists, mirrorCustomers, mirrorSubscriptions] = await Promise.all([byEmail('discountCodes'), byEmail('lists'), byMembers('stripeCustomers'), byMembers('stripeSubscriptions')]);
     const subscriptions = new Map();
     const warnings = [];
-    for (const record of targets) if (record.stripeMembershipSubscriptionId) subscriptions.set(record.stripeMembershipSubscriptionId, record.stripeMembershipMode || 'test');
+    // Items to stop on subscriptions that keep paying for someone staying: only those held by erased people alone.
+    const itemStops = [];
     // Monthly payments are recorded per club year in `subscriptions`, which lists the members each one pays for.
     const candidates = new Map();
+    const subscriptionRecords = new Map();
+    const modes = new Map(targets.filter((record) => record.stripeMembershipSubscriptionId).map((record) => [record.stripeMembershipSubscriptionId, record.stripeMembershipMode || 'test']));
+    for (const id of modes.keys()) candidates.set(id, null);
+    for (const document of mirrorSubscriptions) {
+      const record = document.data();
+      const id = record.id || record.stripeSubscriptionId;
+      if (id) {
+        candidates.set(id, { people: (record.membershipIds || []).map((membershipId) => ({ membershipId })) });
+        modes.set(id, record.stripeMode || 'test');
+      }
+    }
     for (const order of orders.values()) {
       for (const id of new Set([order.stripeSubscriptionId, ...(Array.isArray(order.stripeSubscriptionIds) ? order.stripeSubscriptionIds : [])].filter(Boolean))) {
         if (!candidates.has(id)) candidates.set(id, order);
       }
     }
     for (const record of targets) for (const id of Array.isArray(record.subscriptionIds) ? record.subscriptionIds : []) if (!candidates.has(id)) candidates.set(id, null);
+    for (const record of targets) {
+      const linked = await adminDb.collection('subscriptions').where('membershipIds', 'array-contains', record.id).get();
+      linked.docs.forEach((document) => { subscriptionRecords.set(document.id, document); candidates.set(document.id, candidates.get(document.id) || null); });
+    }
+    for (const email of erasedEmails) {
+      const linked = await adminDb.collection('subscriptions').where('email', '==', email).get();
+      linked.docs.forEach((document) => { subscriptionRecords.set(document.id, document); candidates.set(document.id, candidates.get(document.id) || null); });
+    }
     for (const [id, order] of candidates) {
       const stored = await adminDb.collection('subscriptions').doc(id).get();
-      const covered = stored.exists ? stored.data().membershipIds || [] : (order?.people || []).map((person) => person.membershipId);
+      if (stored.exists) subscriptionRecords.set(id, stored);
+      // An older membership subscription with no record here covers whoever on the register points at it.
+      const covered = stored.exists ? stored.data().membershipIds || []
+        : order ? (order.people || []).map((person) => person.membershipId)
+          : [...new Map([...familyRecords, ...targets].map((record) => [record.id, record])).values()]
+            .filter((record) => record.stripeMembershipSubscriptionId === id).map((record) => record.id);
       const payer = normalizeEmail(stored.exists ? stored.data().email : order?.email || '');
       const everyoneErased = covered.length ? covered.every((membershipId) => targetIds.has(membershipId)) : erasedEmails.has(payer);
-      if (everyoneErased) subscriptions.set(id, (stored.exists ? stored.data().stripeMode : order?.stripeMode) || 'test');
-      else if (!subscriptions.has(id)) warnings.push(`Subscription ${id} also covers people who are staying, so it was not cancelled. Review it in Stripe.`);
+      const mode = (stored.exists ? stored.data().stripeMode : order?.stripe?.mode) || modes.get(id) || 'test';
+      if (everyoneErased) { subscriptions.set(id, mode); continue; }
+      const active = stored.exists && stored.data().status === 'active'
+        ? (stored.data().items || []).filter((item) => item.status === 'active' && (item.membershipIds || []).some((membershipId) => targetIds.has(membershipId))) : [];
+      const own = active.filter((item) => item.membershipIds.every((membershipId) => targetIds.has(membershipId)));
+      const sharedItems = active.filter((item) => !own.includes(item));
+      if (own.length) itemStops.push({ id, mode, items: own.map((item) => ({ orderRef: item.orderRef || stored.data().orderRef || '', lineId: item.lineId, name: item.name })) });
+      if (sharedItems.length) warnings.push(`Subscription ${id} keeps paying for ${sharedItems.map((item) => item.name).join(', ')}, which also covers people who are staying. Review it with the payer.`);
+      else if (!stored.exists) warnings.push(`Subscription ${id} also covers people who are staying, so it was not cancelled. Review it in Stripe.`);
     }
-
-    const emailList = [...erasedEmails];
-    const byEmail = async (collection) => (await Promise.all(emailList.map((email) => adminDb.collection(collection).where('email', '==', email).limit(100).get()))).flatMap((snapshot) => snapshot.docs);
-    const [discountCodes, lists, mirrorCustomers, mirrorSubscriptions] = await Promise.all([byEmail('discountCodes'), byEmail('lists'), byEmail('stripeCustomers'), byEmail('stripeSubscriptions')]);
-    const customerDocs = candidateEmails.size ? (await adminDb.getAll(...[...candidateEmails].map((email) => adminDb.collection('customers').doc(customerId(email))))).filter((document) => document.exists) : [];
 
     const auditDocs = new Map();
     for (const subject of subjects) {
       const [nameKey] = personLookupKeys(secret, { ...subject, email: '' });
       if (!nameKey) continue;
       const emailKeys = [...new Set([subject.email, ...targets.filter((record) => matchesIdentity(record, subject, record.household)).flatMap((record) => identityEmails(record, record.household))].filter(Boolean))].map((email) => lookupKey(secret, 'email', email));
-      (await adminDb.collection('adminDeletionAudit').where('lookupKeys', 'array-contains', nameKey).limit(50).get()).docs
+      (await adminDb.collection('auditLog').where('lookupKeys', 'array-contains', nameKey).limit(50).get()).docs
         .filter((document) => !document.data().personalDataErased && emailKeys.some((key) => document.data().lookupKeys.includes(key)))
         .forEach((document) => auditDocs.set(document.id, document));
     }
@@ -144,7 +185,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       const members = familyRecords.filter((record) => record.householdId === id);
       return members.length && members.every((record) => targetIds.has(record.id));
     }).map((document) => document.id);
-    return { targets, remaining, family: familyRecords, households: householdRecords, erasedHouseholdIds, subjects, erasedEmails, orderUpdates, subscriptions, warnings, discountCodes, lists, mirrorCustomers, mirrorSubscriptions, customerDocs, auditDocs };
+    return { targets, remaining, family: familyRecords, households: householdRecords, erasedHouseholdIds, subjects, erasedEmails, orderUpdates, subscriptions, subscriptionRecords, itemStops, warnings, discountCodes, lists, mirrorCustomers, mirrorSubscriptions, auditDocs };
   };
 
   const describe = (scope) => ({
@@ -152,9 +193,10 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       justgo: record.justgoSyncStatus === 'synced' || record.renewalMethod === 'justgo' || Boolean(record.affiliationNumber) })),
     family: scope.family.map((record) => ({ id: record.id, name: fullName(record), junior: juniorRecord(record), erased: scope.targets.some((target) => target.id === record.id) })),
     remaining: scope.remaining.map((record) => ({ id: record.id, name: fullName(record), junior: juniorRecord(record) })),
-    ordersRedacted: scope.orderUpdates.length, subscriptionsToCancel: [...scope.subscriptions.keys()], warnings: scope.warnings,
+    ordersRedacted: scope.orderUpdates.length, subscriptionsToCancel: [...scope.subscriptions.keys()],
+    subscriptionItemsToStop: scope.itemStops.map((stop) => ({ id: stop.id, itemNames: stop.items.map((item) => item.name) })), warnings: scope.warnings,
     related: { discountCodes: scope.discountCodes.length, lists: scope.lists.length, stripeRecords: scope.mirrorCustomers.length + scope.mirrorSubscriptions.length },
-    deletedRecords: [...scope.auditDocs].map(([id, document]) => ({ id, summary: document.data().summary, deletedAt: document.data().createdAt?.toDate?.() || null }))
+    deletedRecords: [...scope.auditDocs].map(([id, document]) => ({ id, summary: document.data().summary, deletedAt: document.data().at?.toDate?.() || null }))
   });
 
   app.post('/api/admin/gdpr/preview', rateLimit(30, 60 * 1000), async (req, res) => {
@@ -183,6 +225,8 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       const secret = auditSecret();
       if (!secret) return res.status(503).json({ error: 'Deletion audit is not configured. Set AUDIT_LOOKUP_SECRET.' });
       if (req.body?.confirm !== 'ERASE') return res.status(400).json({ error: 'Type ERASE to confirm.' });
+      const reason = requiredReason(req.body);
+      if (!reason) return res.status(400).json({ error: REASON_REQUIRED });
       const scopeName = ['family', 'person'].includes(req.body.scope) ? req.body.scope : '';
       const scope = await loadScope(req.body, scopeName || 'person', secret);
       if (scope.error) return res.status(scope.status).json({ error: scope.error });
@@ -197,28 +241,57 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       }
 
       const cancellations = [...scope.subscriptions];
-      if (cancellations.length) {
+      const stripeIds = new Set([...scope.subscriptionRecords.keys(), ...scope.subscriptions.keys(),
+        ...scope.mirrorSubscriptions.map((document) => document.data().id || document.data().stripeSubscriptionId).filter(Boolean)]);
+      let stripeErasure = { deleted: 0, retained: 0 };
+      const stripeJournal = adminDb.collection('gdprStripeErasure').doc(lookupKey(secret, 'stripe-erasure',
+        [...scope.erasedEmails].sort().join('|') || [...scope.targets.map((record) => record.id)].sort().join('|')));
+      if (stripeIds.size || scope.erasedEmails.size) {
         const writeKey = process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY || '';
-        if (!/^(sk|rk)_(test|live)_/.test(writeKey)) return res.status(503).json({ error: 'Stripe subscriptions must be cancelled, but STRIPE_SUBSCRIPTION_ADMIN_KEY is not set. Nothing was erased.' });
+        if (!/^(sk|rk)_(test|live)_/.test(writeKey)) return res.status(503).json({ error: 'Stripe erasure requires STRIPE_SUBSCRIPTION_ADMIN_KEY. Nothing was erased.' });
         const keyMode = writeKey.includes('_live_') ? 'live' : 'test';
-        if (cancellations.some(([id, mode]) => !/^sub_[a-zA-Z0-9_]+$/.test(id) || mode !== keyMode)) {
+        const linkedModes = [...cancellations, ...[...scope.subscriptionRecords].map(([id, document]) => [id, document.data().stripeMode || 'test']),
+          ...scope.mirrorSubscriptions.map((document) => [document.data().id || document.data().stripeSubscriptionId, document.data().stripeMode || 'test'])];
+        if (linkedModes.some(([id, mode]) => !/^sub_[a-zA-Z0-9_]+$/.test(id) || mode !== keyMode)) {
           return res.status(400).json({ error: 'A linked subscription cannot be cancelled with the configured Stripe key. Nothing was erased.' });
         }
         const request = stripeReportRequest(writeKey);
         for (const [id] of cancellations) {
           let current = null;
           try { current = await request(`subscriptions/${encodeURIComponent(id)}`); }
-          catch (error) { if (!/No such subscription/i.test(error.message)) throw error; }
-          if (current && current.status !== 'canceled') await request(`subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          catch (error) { if (error.stripeCode !== 'resource_missing') throw error; }
+          if (current && !['canceled', 'incomplete_expired'].includes(current.status)) {
+            const schedule = typeof current.schedule === 'string' ? current.schedule : current.schedule?.id;
+            if (schedule) await request(`subscription_schedules/${encodeURIComponent(schedule)}/cancel`, {
+              method: 'POST', body: new URLSearchParams({ invoice_now: 'false', prorate: 'false' })
+            });
+            else await request(`subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          }
         }
+        // Stop billing before removing either the Stripe customer or the local records needed for a retry.
+        for (const stop of scope.itemStops) await stopSubscriptionItems(stop.id, stop.items, admin, request, reason);
+        const journal = await stripeJournal.get();
+        stripeErasure = await eraseStripeDetails(request, {
+          subscriptionIds: stripeIds, emails: scope.erasedEmails, customerIds: journal.data()?.customerIds || [],
+          erasedPayerSubscriptionIds: new Set([...scope.subscriptionRecords].filter(([, document]) => document.data().payerErased === true
+            || scope.erasedEmails.has(normalizeEmail(document.data().email))).map(([id]) => id)),
+          rememberCustomer: (id) => stripeJournal.set({ customerIds: FieldValue.arrayUnion(id), updatedAt: Timestamp.now() }, { merge: true })
+        });
       }
 
       const targetIds = new Set(scope.targets.map((record) => record.id));
       const linkedRecords = [];
+      const attentionRecords = new Map();
+      const attentionFor = async (field, value) => (await adminDb.collection('attention').where(field, '==', value).get()).docs
+        .forEach((document) => attentionRecords.set(document.id, document));
+      for (const id of stripeIds) await attentionFor('subscriptionId', id);
+      for (const { id } of scope.orderUpdates) await attentionFor('orderRef', id);
+      for (const email of scope.erasedEmails) await attentionFor('email', email);
       for (let index = 0; index < scope.targets.length; index += 30) {
         const ids = scope.targets.slice(index, index + 30).map((record) => record.id);
         linkedRecords.push(...(await adminDb.collection('renewalInvites').where('membershipIds', 'array-contains-any', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('volunteerRenewals').where('memberId', 'in', ids).get()).docs);
+        linkedRecords.push(...(await adminDb.collection('membershipTerms').where('membershipId', 'in', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('clubNightCheckins').where('memberId', 'in', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('clubNightAccessLog').where('memberId', 'in', ids).get()).docs);
       }
@@ -229,6 +302,11 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
         linkedRecords.push(...codes.filter((document) => document.exists));
       }
       const batch = adminDb.batch();
+      batch.delete(stripeJournal);
+      attentionRecords.forEach((document) => batch.update(document.ref, {
+        email: '', detail: 'Personal details removed during GDPR erasure.', data: {}, resolutionNote: '',
+        personalDataErasedAt: Timestamp.now()
+      }));
       new Map(linkedRecords.map((document) => [document.ref.path, document])).forEach((document) => batch.delete(document.ref));
       const replaceHouseholds = new Set(leftHouseholdIds(scope.family, scope.targets));
       scope.targets.forEach((record) => batch.delete(adminDb.collection('memberships').doc(record.id)));
@@ -246,39 +324,55 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       }
       scope.erasedHouseholdIds.forEach((id) => batch.delete(adminDb.collection('households').doc(id)));
       scope.orderUpdates.forEach(({ id, update }) => batch.update(adminDb.collection('orders').doc(id), { ...update, personalDataErasedAt: Timestamp.now() }));
+      // Partial stops write billing state first; read it again so redaction never restores an active item.
+      for (const id of scope.subscriptionRecords.keys()) {
+        const document = await adminDb.collection('subscriptions').doc(id).get();
+        if (document.exists) {
+          const redacted = redactSubscription(document.data(), scope.targets, scope.erasedEmails);
+          batch.update(document.ref, {
+            ...redacted,
+            ...(scope.subscriptions.has(id) ? { status: 'cancelled', items: redacted.items
+              .map((item) => item.status === 'active' ? { ...item, status: 'cancelled' } : item) } : {}),
+            personalDataErasedAt: Timestamp.now()
+          });
+        }
+        const recipients = await adminDb.collection('memberships').where('subscriptionIds', 'array-contains', id).get();
+        recipients.docs.filter((recipient) => !targetIds.has(recipient.id)).forEach((recipient) => batch.update(recipient.ref, {
+          subscriptionItems: (recipient.data().subscriptionItems || []).map((item) => scope.erasedEmails.has(normalizeEmail(item.payerEmail))
+            ? { ...item, payerEmail: '' } : item)
+        }));
+      }
       scope.discountCodes.forEach((document) => batch.update(document.ref, { email: '***', name: '***' }));
       scope.lists.forEach((document) => batch.delete(document.ref));
       for (const email of scope.erasedEmails) {
         const forms = await adminDb.collection('formSubmissions').where('email', '==', email).get();
         forms.docs.forEach((document) => batch.delete(document.ref));
       }
-      [...scope.mirrorCustomers, ...scope.mirrorSubscriptions].forEach((document) => batch.update(document.ref, { name: '', email: '' }));
+      [...scope.mirrorCustomers, ...scope.mirrorSubscriptions].forEach((document) => batch.update(document.ref, { membershipIds: FieldValue.arrayRemove(...targetIds) }));
       for (const [id, mode] of cancellations) {
-        batch.set(adminDb.collection('stripeSubscriptions').doc(`FCC-${mode}-${id}`), { status: 'Inactive', stripeStatus: 'canceled', reason: 'Cancelled for GDPR erasure', name: '', email: '' }, { merge: true });
+        batch.set(adminDb.collection('stripeSubscriptions').doc(`FCC-${mode}-${id}`), { status: 'Inactive', stripeStatus: 'canceled', reason: 'Cancelled for GDPR erasure' }, { merge: true });
       }
-      scope.customerDocs.forEach((document) => {
-        if (scope.erasedEmails.has(normalizeEmail(document.data().email))) batch.delete(document.ref);
-        else batch.update(document.ref, { membershipIds: FieldValue.arrayRemove(...targetIds) });
-      });
       scope.auditDocs.forEach((document) => batch.update(document.ref, { snapshot: null, personalDataErased: true, personalDataErasedAt: Timestamp.now() }));
       const people = scope.targets.map((record) => ({ name: maskName(fullName(record)), email: maskEmail(identityEmails(record, record.household)[0]), membershipNumber: maskMembershipNumber(record.affiliationNumber), tier: record.membershipTier || '' }));
-      batch.create(adminDb.collection('adminDeletionAudit').doc(), {
-        kind: 'gdpr-erasure', adminUid: admin.uid, createdAt: Timestamp.now(), personalDataErased: true, snapshot: null,
+      batch.create(adminDb.collection('auditLog').doc(), auditEntry({ kind: 'deletion', action: 'gdpr-erasure', reason, actor: admin, at: Timestamp.now(), personalDataErased: true, snapshot: null,
         recordIdHash: crypto.createHash('sha256').update([...targetIds].sort().join(',') || 'lookup').digest('hex'),
         summary: { label: 'GDPR erasure', scope: left.length ? 'person' : scope.family.length > 1 ? 'family' : 'person', people, ordersRedacted: scope.orderUpdates.map(({ id }) => id),
           subscriptionsCancelled: cancellations.map(([id]) => id), earlierDeletionsPurged: scope.auditDocs.size },
         lookupKeys: [...new Set(scope.subjects.flatMap((subject) => [...personLookupKeys(secret, subject), ...(subject.email ? [lookupKey(secret, 'email', subject.email)] : [])]))]
-      });
+      }));
       await batch.commit();
 
       const manual = [];
       if (scope.targets.some((record) => record.justgoSyncStatus === 'synced' || record.renewalMethod === 'justgo' || record.affiliationNumber)) manual.push('Remove them from JustGo, or the weekly sync will recreate the record.');
-      if (cancellations.length) manual.push('Delete the customer in the Stripe dashboard so its name and email are removed there.');
+      if (stripeIds.size || scope.erasedEmails.size) manual.push('Stripe retains historical invoices, payments and mandate records that its API cannot fully erase. Review these in Stripe and use Stripe privacy support for any further erasure required; this is not a complete purge of Stripe financial history.');
+      if (stripeErasure.retained) manual.push('A Stripe customer still pays for other people. Its contact details were cleared, but its payment method was retained to avoid cancelling their payments. Arrange a replacement payer and review the retained mandate in Stripe.');
       manual.push('Remove any rows about them from Google Sheets and form responses.');
-      res.json({ success: true, erased: people.length, ordersRedacted: scope.orderUpdates.length, subscriptionsCancelled: cancellations.length, earlierDeletionsPurged: scope.auditDocs.size, warnings: scope.warnings, manual });
+      res.json({ success: true, erased: people.length, ordersRedacted: scope.orderUpdates.length, subscriptionsCancelled: cancellations.length,
+        subscriptionItemsStopped: scope.itemStops.reduce((sum, stop) => sum + stop.items.length, 0), stripeCustomersDeleted: stripeErasure.deleted,
+        earlierDeletionsPurged: scope.auditDocs.size, warnings: scope.warnings, manual });
     } catch (error) {
       console.error('GDPR erasure failed:', error.message);
-      res.status(500).json({ error: 'Erasure could not be completed. Check the record and try again.' });
+      res.status(500).json({ error: 'Erasure could not be completed. Some payments may already have stopped, but member records were kept so you can retry. Check Stripe and try again.' });
     }
   });
 };
