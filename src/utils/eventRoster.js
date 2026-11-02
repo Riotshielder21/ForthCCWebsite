@@ -1,6 +1,7 @@
 import { personReport, membershipStatus } from './adminReports.js';
-import { eventScheduleLabel } from './catalogue.js';
+import { eventScheduleLabel, eventSessions } from './catalogue.js';
 import { currentPrivilegeIds } from './tripDiscount.js';
+import { visitSummary } from './visits.js';
 
 /**
  * Event leaders: each event can name a leader (shown publicly), a booking close date, and whether attendees must be
@@ -21,6 +22,26 @@ export const bookingsClosed = (product, now = new Date()) => DATE.test(product?.
 /** The automatic send: bookings have closed, there is a leader to send to, and the event has not already happened. */
 export const rosterDue = (product, now = new Date()) => product?.category === 'EVENTS' && Boolean(product.leaderEmail)
   && bookingsClosed(product, now) && (product.eventSchedule?.startDate || '') >= londonDate(now);
+
+/** The last scheduled London date of an event, or '' when the schedule is missing or invalid. */
+export const lastEventDate = (product) => {
+  try { return eventSessions(product?.eventSchedule).at(-1).date; } catch { return ''; }
+};
+
+/** Leaders and named viewers can open the attendee list while the event is in the shop, until the end of its last day. */
+export const rosterViewable = (product, now = new Date()) => product?.category === 'EVENTS' && product.active !== false
+  && Boolean(lastEventDate(product)) && londonDate(now) <= lastEventDate(product);
+
+export const MAX_ROSTER_VIEWERS = 10;
+
+/** Extra people allowed to view an event's attendee list, as unique lower-case emails. Throws on an invalid address. */
+export const cleanRosterViewers = (values) => {
+  const emails = [...new Set((Array.isArray(values) ? values : []).map((value) => text(value, 254).toLowerCase()).filter(Boolean))];
+  const invalid = emails.find((email) => !EMAIL.test(email));
+  if (invalid) throw new Error(`${invalid} is not a valid email address.`);
+  if (emails.length > MAX_ROSTER_VIEWERS) throw new Error(`Add up to ${MAX_ROSTER_VIEWERS} people who can view the attendee list.`);
+  return emails;
+};
 
 export const formatDate = (value) => (DATE.test(value || '')
   ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`))
@@ -49,7 +70,7 @@ export const kitStatus = ({ ownKit = false, heldIds = [] }) => {
  * One row per paid ticket for the event. `orders` are `{ id, ...fields }`; `members` maps a membership id to its record
  * (with `household` merged in) so details existing members did not re-enter at checkout still appear.
  */
-export const buildRoster = (productId, orders, members = new Map(), now = new Date(), justgoSync) => orders
+export const buildRoster = (productId, orders, members = new Map(), now = new Date(), justgoSync, visits = new Map(), checkedIn = null) => orders
   .filter((order) => order.status === 'paid')
   .flatMap((order) => {
     const items = Array.isArray(order.items) ? order.items : [];
@@ -60,11 +81,14 @@ export const buildRoster = (productId, orders, members = new Map(), now = new Da
       const report = personReport(person, items, member);
       const ownLineIds = (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId && !item.revokedAt)?.id).filter(Boolean);
       const heldIds = [...currentPrivilegeIds(member.entitlements, now), ...ownLineIds];
+      const membership = membershipStatus(person.membershipId ? member : null, now, justgoSync);
       return {
         name: report.name, kind: report.kind, dob: report.dob, phone: report.phone, email: report.email,
         emergencyContact: report.emergencyContact, medical: report.medical, swimming: report.swimming,
         kit: kitStatus({ ownKit: ticket.ownKit === true, heldIds }),
-        membership: membershipStatus(person.membershipId ? member : null, now, justgoSync),
+        membership,
+        ...(!membership.startsWith('Active') && visits.has(person.membershipId) ? { nonMemberVisits: visitSummary(visits.get(person.membershipId)).label } : {}),
+        ...(checkedIn && person.membershipId ? { firstClubNight: !checkedIn.has(person.membershipId) } : {}),
         orderRef: order.id, bookedBy: order.email || ''
       };
     });
@@ -82,6 +106,8 @@ export const rosterEmail = (product, roster) => {
     `   Swimming: ${row.swimming || 'not given'}`,
     `   Kit: ${row.kit}`,
     ...(row.membership ? [`   Membership: ${row.membership}`] : []),
+    ...(row.nonMemberVisits ? [`   Non-member visits: ${row.nonMemberVisits}`] : []),
+    ...(typeof row.firstClubNight === 'boolean' ? [`   First club night: ${row.firstClubNight ? 'Yes' : 'No'}`] : []),
     `   Order: ${row.orderRef}${row.bookedBy ? `, booked by ${row.bookedBy}` : ''}`
   ].join('\n'));
   return {

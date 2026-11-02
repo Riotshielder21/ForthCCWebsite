@@ -19,9 +19,11 @@ function Field({ label, children }) {
 }
 
 /** Admins signed in with Google use their ID token, so they skip the volunteer email code. */
-const adminRequest = async (adminUser, path, { method = 'GET' } = {}) => {
+const adminRequest = async (adminUser, path, { method = 'GET', body } = {}) => {
   const response = await fetch(apiUrl(path), {
-    method, cache: 'no-store', headers: { Authorization: `Bearer ${await adminUser.getIdToken()}` }
+    method, cache: 'no-store',
+    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), Authorization: `Bearer ${await adminUser.getIdToken()}` },
+    ...(body ? { body: JSON.stringify(body) } : {})
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(result.error || 'Something went wrong. Please try again.'), { status: response.status, ...result });
@@ -35,6 +37,74 @@ function SessionPicker({ label, sessions, value, onChange }) {
     {sessions.map((session) => <button key={session.id} type="button" className="EditorCommand" aria-pressed={value === session.id}
       onClick={() => onChange(session.id)}>{session.name}<span className="CheckinsSessionTime">{session.start}–{session.end}</span></button>)}
   </fieldset>;
+}
+
+/** Ticked once someone has passed the self-assessment checklist; it carries forward until a volunteer unticks it with a reason. */
+function SelfAssessment({ checkin, request, onChanged, onError }) {
+  const [busy, setBusy] = useState(false);
+  const change = async (passed) => {
+    let note = '';
+    if (!passed) {
+      note = (window.prompt(`Why is ${checkin.name} not safe to go by themselves? For example, needs instruction or advice. This is recorded.`) || '').trim();
+      if (note.length < 3) return onError('Add a short reason to untick the self-assessment.');
+    }
+    setBusy(true);
+    try {
+      const result = await request(`/api/club-night/checkins/${encodeURIComponent(checkin.id)}/self-assessment`, { method: 'POST', body: { passed, note } });
+      onChanged(result.selfAssessment);
+    } catch (changeError) { onError(changeError.message); } finally { setBusy(false); }
+  };
+  const { passed, note } = checkin.selfAssessment;
+  return <div className="CheckinsSelfAssessment">
+    <label><input type="checkbox" checked={passed} disabled={busy} onChange={(event) => change(event.target.checked)} /> Passed Self-Assessment / Safe</label>
+    {passed && checkin.junior && <p className="StatusTextError">Under 18: check their buoyancy aid and that they are safe before they go by themselves.</p>}
+    {!passed && note && <p className="text_container_note">Unticked: {note}</p>}
+  </div>;
+}
+
+/** Attendee lists for events this person leads or was named on; admins see every event currently open. */
+function EventAttendeeLists({ request, onEvents }) {
+  const [events, setEvents] = useState([]);
+  const [open, setOpen] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    request('/api/event-rosters').then((result) => { setEvents(result.events); onEvents(result.events.length); })
+      .catch((loadError) => { setEvents([]); onEvents(0); if (loadError.status !== 401) setError(loadError.message); });
+  }, [request, onEvents]);
+  const show = async (event) => {
+    if (open?.event.id === event.id) return setOpen(null);
+    setError('');
+    try { setOpen(await request(`/api/event-rosters/${encodeURIComponent(event.id)}`)); } catch (showError) { setError(showError.message); }
+  };
+  if (!events.length && !error) return null;
+  return <section className="SpaceY2">
+    <h4 className="tile_heading_bold_2">Event attendee lists</h4>
+    <p className="text_container_note">These lists contain medical and emergency details. Each view is recorded.</p>
+    {error && <p className="StatusTextError" role="alert">{error}</p>}
+    {events.map((event) => <div key={event.id}>
+      <button className="EditorCommand" type="button" aria-expanded={open?.event.id === event.id} onClick={() => show(event)}>
+        {event.name}{event.schedule ? ` · ${event.schedule}` : ''}
+      </button>
+      {open?.event.id === event.id && <>
+        <p className="text_container" role="status">{open.attendees.length} booked</p>
+        <ul className="CheckinsList" aria-label={`${event.name} attendees`}>
+          {open.attendees.map((person, index) => <li className="CheckinsCard" key={`${person.name}-${index}`}>
+            <h4 className="CheckinsName">{person.name}{person.kind === 'Under 18' ? ' (under 18)' : ''}</h4>
+            <dl className="CheckinsFacts">
+              <div><dt>Membership</dt><dd>{person.membership || 'No'}</dd></div>
+              {person.nonMemberVisits && <div><dt>Non-member visits</dt><dd>{person.nonMemberVisits}</dd></div>}
+              {typeof person.firstClubNight === 'boolean' && <div><dt>First club night</dt><dd>{person.firstClubNight ? 'Yes' : 'No'}</dd></div>}
+              <div><dt>Kit</dt><dd>{person.kit}</dd></div>
+              <div><dt>Swimming</dt><dd>{person.swimming || 'Not given'}</dd></div>
+              <div><dt>Medical</dt><dd>{person.medical || 'None given'}</dd></div>
+              <div><dt>Emergency contact</dt><dd>{person.emergencyContact || 'Not given'}</dd></div>
+            </dl>
+          </li>)}
+        </ul>
+        {!open.attendees.length && <p className="text_container">Nobody has booked yet.</p>}
+      </>}
+    </div>)}
+  </section>;
 }
 
 function VolunteerPanel() {
@@ -52,9 +122,11 @@ function VolunteerPanel() {
   const [chosen, setChosen] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notVolunteer, setNotVolunteer] = useState(false);
+  const [eventCount, setEventCount] = useState(0);
 
   const load = useCallback(async () => {
-    setError(''); setLoading(true);
+    setError(''); setNotVolunteer(false); setLoading(true);
     try {
       const result = await request(`/api/club-night/checkins${chosen ? `?sessionId=${encodeURIComponent(chosen)}` : ''}`);
       setCheckins(result.checkins); setDate(result.date); setAccessEndsAt(result.accessEndsAt);
@@ -62,6 +134,7 @@ function VolunteerPanel() {
     } catch (loadError) {
       if (loadError.sessionExpired) setSession(null);
       setCheckins([]); setContacts({}); setDate(''); setAccessEndsAt(0); setError(loadError.message);
+      setNotVolunteer(loadError.status === 403 && !loadError.closed);
     } finally { setLoading(false); }
   }, [request, chosen]);
 
@@ -116,7 +189,8 @@ function VolunteerPanel() {
           <button className="EditorCommand" type="button" disabled={loading} onClick={load}>{loading ? 'Loading…' : 'Refresh check-ins'}</button>
           {!adminUser && <button className="EditorCommand" type="button" onClick={signOut}>Sign out</button>}
         </div>
-        {error && <p className="StatusTextError" role="alert">{error}</p>}
+        {error && !(notVolunteer && eventCount) && <p className="StatusTextError" role="alert">{error}</p>}
+        <EventAttendeeLists request={request} onEvents={setEventCount} />
         {sessions.length > 1 && <SessionPicker label="Session" sessions={sessions} value={current?.id || ''} onChange={(id) => { setContacts({}); setChosen(id); }} />}
         {date && <>
           <p className="text_container" role="status">{checkins.length} checked in{current ? ` to ${current.name}` : ''} today</p>
@@ -127,11 +201,15 @@ function VolunteerPanel() {
                 <h4 className="CheckinsName">{checkin.name}{checkin.junior ? ' (under 18)' : ''}</h4>
                 <dl className="CheckinsFacts">
                   <div><dt>Membership</dt><dd>{membershipLabel(checkin)}</dd></div>
-                  {current?.subscriptions?.length > 0 && <div><dt>Subscription</dt><dd>{checkin.subscription || 'No'}</dd></div>}
+                  {checkin.nonMemberVisits && <div><dt>Non-member visits</dt>
+                    <dd className={checkin.nonMemberVisits.overLimit ? 'StatusTextError' : undefined}>{checkin.nonMemberVisits.label}</dd></div>}
+                  {current?.subscriptions === true && <div><dt>Subscription</dt><dd>{checkin.subscription || 'No'}</dd></div>}
                   {current?.boatHire !== false && <div><dt>Boat hire</dt><dd>{boatHireLabel(checkin)}</dd></div>}
                   <div><dt>Attendance</dt><dd>{checkin.previouslyAttended ? 'Been before' : 'First visit'}</dd></div>
                   <div><dt>Checked in</dt><dd>{localTime(checkin.checkedInAt)}</dd></div>
                 </dl>
+                {current?.selfAssessment && checkin.selfAssessment && <SelfAssessment checkin={checkin} request={request} onError={setError}
+                  onChanged={(selfAssessment) => setCheckins((list) => list.map((entry) => entry.id === checkin.id ? { ...entry, selfAssessment } : entry))} />}
                 {contact ? <div className="CheckinsContact">{contact.missing ? 'No emergency contact recorded' : <>
                   <strong>{contact.name}</strong> ({contact.relationship})<br />
                   <a href={`tel:${contact.phone.replace(/[^+\d]/g, '')}`}>{contact.phone}</a>

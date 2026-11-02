@@ -1680,7 +1680,10 @@ registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: n
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
 registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes,
   raiseAttention: (kind, key, details) => attention.raise(kind, key, details) });
-registerClubNightRoutes(app, { requireAdmin, db: () => adminDb, emailCodes, requestNow, live: () => isLive(),
+const { sendDueRosters, canViewEventRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
+  emailCodes, requestNow,
+  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+registerClubNightRoutes(app, { requireAdmin, db: () => adminDb, emailCodes, requestNow, live: () => isLive(), canViewEventRosters,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerAttentionRoutes(app, { requireAdmin, db: () => adminDb, retry: attentionRetry });
 registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
@@ -1693,8 +1696,6 @@ registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
     }
   } });
 registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });
-const { sendDueRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
-  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadReceiptPersonFields, receiptPeopleWithRecords } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),

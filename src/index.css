@@ -1372,6 +1372,9 @@
   .CheckinsFacts dt { color: #52657b; }
   .CheckinsFacts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
   .CheckinsContactButton { width: 100%; justify-content: center; }
+  .CheckinsSelfAssessment { margin: 8px 0; }
+  .CheckinsSelfAssessment label { display: flex; align-items: center; gap: 8px; min-height: 48px; font-weight: 600; }
+  .CheckinsSelfAssessment input { width: 24px; height: 24px; }
   .CheckinsAdminSignIn { width: 100%; justify-content: center; margin-top: 0.75rem; }
   .CheckinsContact a { display: inline-flex; align-items: center; text-decoration: underline; }
   .ReportsTableWrap { overflow-x: auto; width: 100%; border-top: 1px solid #ccd5dc; }
