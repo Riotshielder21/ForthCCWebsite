@@ -1659,6 +1659,7 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
 });
 
 registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail,
+  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   stopSubscriptionItems: async (subscriptionId, items, admin, stripeAdminRequest, reason) => {
     const reference = adminDb.collection('subscriptions').doc(subscriptionId);
     const record = (await reference.get()).data();

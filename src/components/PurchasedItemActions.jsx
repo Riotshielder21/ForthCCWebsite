@@ -53,6 +53,7 @@ export default function PurchasedItemActions({ order, adminUser, onChanged }) {
     <p className="text_container">Refunds return money through Stripe. Revocation removes the benefit and stops this item's future monthly payments; neither action deletes the order. A refund on its own does not revoke access or stop billing.</p>
     {order.items.map((item) => <div key={item.lineId} className="SpaceT4">
       <strong>{item.name}</strong>
+      {item.attendeeErased && <p className="text_container">Attendee's personal data erased: removed from the attendee list and their place freed. Kept as a record of what was paid.</p>}
       {item.revokedAt && <p className="text_container">Revoked {new Date(item.revokedAt).toLocaleString('en-GB')} by {item.revokedBy}: {item.revokeReason}</p>}
       {item.refunds.map((refund) => <p key={refund.id} className="text_container">{money(refund.amount)} refund ({refund.status}), {refund.id}, by {refund.by}: {refund.reason}</p>)}
       <div className="ReportsRowActions">

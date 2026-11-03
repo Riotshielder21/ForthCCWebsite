@@ -373,6 +373,7 @@ Other protections against paying twice or paying for nothing:
 - The payment page asks Stripe directly (at most every 15 seconds) if the webhook is late.
 - A record with active monthly payments cannot be deleted; the delete dialog lists them with a **Cancel them now** button.
 - GDPR erasure stops only the erased person's items on a subscription others are still on; the whole subscription is cancelled only when everyone on it is erased.
+- GDPR erasure takes the erased person off event attendee lists and check-in, and frees their place: their event tickets are marked `attendeeErased` on the order (price and refunds kept as the financial record) and the event's stock hold is reduced. The preview lists their paid tickets for events not yet finished under **Check refunds first**, because refunds should be made while their details are still held; it does not block erasure.
 
 Stripe settings to check in the Dashboard (test mode first): turn off Stripe's trial-ending reminder emails (new subscriptions are *trialing* until their first 1st), and confirm that cancellation at 1 March stops retries and creates no credit or March invoice.
 

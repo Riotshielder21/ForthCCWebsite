@@ -4,7 +4,7 @@ import { auditEntry } from '../utils/auditLog.js';
 import { orderLineId, validateItemAction, refundAvailable } from '../utils/itemActions.js';
 import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
 import { isMembership, grantsMembership } from '../utils/checkout.js';
-import { wantedQuantities } from '../utils/inventory.js';
+import { holdsPlace, wantedQuantities } from '../utils/inventory.js';
 import { endTermItems, loadTerms, memberOrders } from './membershipTerms.js';
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
@@ -177,7 +177,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       transaction.update(document.ref, update);
     }
     if (stocks.exists) {
-      const remaining = changedItems.filter((item) => item.id === target.id && !item.revokedAt);
+      const remaining = changedItems.filter((item) => item.id === target.id && holdsPlace(item));
       const holds = { ...stocks.data().holds };
       if (remaining.length) holds[reference.id] = { until: null, lines: wantedQuantities(remaining) };
       else delete holds[reference.id];

@@ -98,7 +98,7 @@ export const personReport = (person, items, member = {}) => {
     photoConsent: typeof photoConsent === 'boolean' ? photoConsent : person.photoConsent === true || member.photoConsent === true,
     membershipId: person.membershipId || '', existingMember: person.existingMember === true,
     events: (person.lineIds || []).map((lineId) => items.find((item) => item.lineId === lineId)).filter((item) => item?.category === 'EVENTS')
-      .filter((item) => !item.revokedAt)
+      .filter((item) => !person.erased && !item.revokedAt && !item.attendeeErased)
       .map((item) => ({ name: String(item.name || item.id || ''), ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {}) }))
   };
 };
@@ -120,6 +120,7 @@ export const orderReport = (id, fields, members = new Map()) => ({
     name: itemLabel(item), category: String(item.category || ''),
     type: String(item.type || ''), price: Number.isFinite(Number(item.pricePence)) ? Number(item.pricePence) / 100 : null,
     revokedAt: reportDate(item.revokedAt), revokedBy: item.revokedBy || '', revokeReason: item.revokeReason || '',
+    ...(item.attendeeErased ? { attendeeErased: true } : {}),
     refunds: (item.refunds || []).map(({ amountPence, ...refund }) => ({ ...refund, amount: amountPence, at: reportDate(refund.at) })),
     ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {})
   })),
@@ -200,7 +201,7 @@ export const eventAttendeeRows = (records, scheduleLabel) => records.flatMap((re
     event.name, event.eventSchedule ? scheduleLabel(event.eventSchedule) : '', person.name, person.dob, person.phone, person.email,
     person.emergencyContact, person.medical, person.swimming, person.photoConsent ? 'Yes' : 'No', record.id, record.status, record.paidAt
   ]));
-  return attendees.length || record.people?.length ? attendees : (record.items || []).filter((item) => !item.revokedAt && item.category === 'EVENTS').map((item) => [
+  return attendees.length || record.people?.length ? attendees : (record.items || []).filter((item) => !item.revokedAt && !item.attendeeErased && item.category === 'EVENTS').map((item) => [
     item.name, item.eventSchedule ? scheduleLabel(item.eventSchedule) : '', 'Attendee details not recorded', '', '', record.email, '', '', '', '', record.id, record.status, record.paidAt
   ]);
 });

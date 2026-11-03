@@ -1006,6 +1006,16 @@ await test('deleted orders keep a masked audit entry and GDPR erasure removes a 
   const details = adultDetails({ firstName: 'Gail', lastName: 'Erase', dob: yearsAgo(41, 3, 3), email: gdpr });
   const membershipOrder = await buy(gdpr, build(['membership-adult'], [details]));
   const addOnOrder = await buy(gdpr, build(['keyhire'], [{ returning: true, firstName: 'Gail', lastName: 'Erase', dob: details.dob, disclaimerAccepted: true }]));
+  const tripId = `E2E-GDPR-TRIP-${run}`;
+  await db.collection('products').doc(tripId).set({ name: 'GDPR trip', category: 'EVENTS', type: 'event-ticket', basePrice: 15, capacity: 1,
+    eventSchedule: { mode: 'single', startDate: '2099-06-01', startTime: '10:00', endTime: '12:00', timeZone: 'Europe/London' } });
+  const tripLine = { id: tripId, lineId: `${tripId}-1`, name: 'GDPR trip', category: 'EVENTS', type: 'event-ticket', basePrice: 15 };
+  const tripOrder = await buy(gdpr, { lines: [tripLine], people: assignLines([], [tripLine], makeId)
+    .map((person) => ({ ...person, returning: true, firstName: 'Gail', lastName: 'Erase', dob: details.dob, disclaimerAccepted: true })) });
+  const tripStock = async () => (await call('GET', '/api/availability')).json.availability[tripId];
+  const tripRoster = async () => (await call('GET', `/api/event-rosters/${tripId}`, { headers: admin })).json.attendees.map((row) => row.name);
+  assert.equal((await tripStock()).soldOut, true, 'the erased person\'s ticket holds the only place');
+  assert.deepEqual(await tripRoster(), ['Gail Erase']);
   const unexplained = await remove(addOnOrder, '  ');
   assert.equal(unexplained.status, 400, 'deleting a record needs a reason');
   assert.match(unexplained.json.error, /reason/i);
@@ -1024,6 +1034,8 @@ await test('deleted orders keep a masked audit entry and GDPR erasure removes a 
   assert.equal(found.status, 200, found.text);
   assert.equal(found.json.people.length, 1);
   assert.equal(found.json.deletedRecords.length, 1, 'already-deleted records are found by email, name and date of birth');
+  assert.deepEqual(found.json.refundChecks.map((check) => [check.orderRef, check.name, check.attendee, check.lastDate, check.pricePence]),
+    [[tripOrder, 'GDPR trip', 'Gail Erase', '2099-06-01', 1500]], 'upcoming event tickets are listed for a refund check first');
   const wrong = await preview({ ...identity, dob: yearsAgo(40, 3, 3) });
   assert.deepEqual([wrong.json.people.length, wrong.json.deletedRecords.length], [0, 0]);
   assert.equal((await erase(identity)).status, 400, 'confirmation is required');
@@ -1042,6 +1054,11 @@ await test('deleted orders keep a masked audit entry and GDPR erasure removes a 
   const kept = (await db.collection('orders').doc(membershipOrder).get()).data();
   assert.deepEqual([kept.email, kept.totalPence, kept.items.length, kept.people[0].erased, kept.people[0].firstName, kept.receiptTokenHash], ['***', total, 1, true, undefined, '']);
   assert.equal('receipt' in kept, false);
+  assert.equal(erased.json.eventTicketsReleased, 1);
+  const keptTrip = (await db.collection('orders').doc(tripOrder).get()).data();
+  assert.deepEqual([keptTrip.status, keptTrip.items[0].attendeeErased, keptTrip.items[0].pricePence], ['paid', true, 1500], 'the ticket stays as a financial record');
+  assert.deepEqual(await tripRoster(), [], 'the erased person leaves the attendee list');
+  assert.equal((await tripStock()).soldOut, false, 'their place is freed');
   const purged = (await db.collection('auditLog').where('recordId', '==', addOnOrder).get()).docs[0].data();
   assert.deepEqual([purged.snapshot, purged.personalDataErased], [null, true]);
   const trail = (await db.collection('auditLog').where('action', '==', 'gdpr-erasure').get()).docs.map((document) => document.data()).find((entry) => entry.summary.ordersRedacted.includes(membershipOrder));

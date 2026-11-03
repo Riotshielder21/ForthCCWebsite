@@ -25,6 +25,8 @@ export const familyOf = (records, record) => record.householdId
 /** The order entry for an erased person keeps only references, never identifying details. */
 export const redactOrderPerson = (person) => ({ ...(person.id ? { id: person.id } : {}), lineIds: person.lineIds || [], membershipId: person.membershipId || '', erased: true });
 
+const isEventTicket = (item) => item?.category === 'EVENTS';
+
 /**
  * Field updates that strip an order of the erased people's details. The order itself, its items and its amount stay for the accounts.
  * The payer email goes too once it belongs only to erased people.
@@ -43,8 +45,14 @@ export const redactOrder = (order, erasedMembershipIds, erasedEmails, erasedHous
   const payer = normaliseEmail(order.email);
   const emailErased = order.email !== '***' && gone.has(payer) && !stillUsed.has(payer);
   const changed = people.some((person, index) => person !== order.people[index]);
-  if (!changed && !emailErased) return null;
-  return { people, ...(emailErased ? { email: '***', receiptTokenHash: '' } : {}), personalDataErasedAt: true };
+  // Erased people no longer attend: their event tickets leave rosters and free their place, but keep the price for the accounts.
+  const erasedLines = new Set(people.filter((person) => person.erased).flatMap((person) => person.lineIds || []));
+  const items = Array.isArray(order.items) ? order.items : [];
+  const ticketsErased = items.some((item) => isEventTicket(item) && erasedLines.has(item.lineId) && !item.attendeeErased);
+  if (!changed && !emailErased && !ticketsErased) return null;
+  return { people, ...(emailErased ? { email: '***', receiptTokenHash: '' } : {}),
+    ...(ticketsErased ? { items: items.map((item) => isEventTicket(item) && erasedLines.has(item.lineId) && !item.attendeeErased ? { ...item, attendeeErased: true } : item) } : {}),
+    personalDataErasedAt: true };
 };
 
 /** Keep financial amounts and billing state, not the erased beneficiaries or cancellation free text. */
@@ -83,3 +91,25 @@ export const sharedDetailsUpdate = (details) => ({
   postcode: details.postcode.trim(),
   emergencyContact: { name: details.emergencyName.trim(), phone: details.emergencyPhone.trim(), relationship: details.emergencyRelationship.trim() }
 });
+
+/**
+ * Paid event tickets held by the people being erased for events that have not finished. Refunds need their details, so
+ * these are offered for review before erasure; tickets for past events stay only as a record of what was paid.
+ * `lastDateOf(item)` returns the event's last London date (YYYY-MM-DD) and `today` is today's London date.
+ */
+export const ticketsToReview = (orders, erasedMembershipIds, lastDateOf, today) => {
+  const erased = new Set(erasedMembershipIds);
+  return [...orders].flatMap(([orderRef, order]) => {
+    if (order.status !== 'paid') return [];
+    const items = Array.isArray(order.items) ? order.items : [];
+    return (order.people || []).filter((person) => erased.has(person.membershipId)).flatMap((person) => items
+      .filter((item) => isEventTicket(item) && (person.lineIds || []).includes(item.lineId) && !item.revokedAt && !item.attendeeErased)
+      .map((item) => ({ item, lastDate: lastDateOf(item) || '' }))
+      .filter(({ lastDate }) => !lastDate || lastDate >= today)
+      .map(({ item, lastDate }) => ({
+        orderRef, lineId: item.lineId, membershipId: person.membershipId, name: String(item.name || item.id || ''), lastDate,
+        pricePence: Number(item.pricePence) || 0,
+        refundedPence: (item.refunds || []).filter((refund) => !['failed', 'canceled'].includes(refund.status)).reduce((sum, refund) => sum + (Number(refund.amountPence) || 0), 0)
+      })));
+  });
+};
