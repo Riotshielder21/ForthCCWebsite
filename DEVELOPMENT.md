@@ -519,7 +519,7 @@ The wording the club must be able to prove it showed (disclaimer, photo and vide
 Before switching to live:
 
 - Write and publish the privacy notice, data retention policy and first aid and safety statement, and confirm the disclaimer and photo consent wording.
-- Decide retention periods and long-term statistics together (see `TODO.md`), and finish the outstanding items in the security review there, including analytics consent.
+- Decide retention periods and long-term statistics together (GitHub issue #48), and finish the outstanding security review issues (label `security`), including analytics consent (#49).
 - Use the purchased-item refund/revoke actions rather than deleting an order to refund it; keep the original financial history.
 - Replace the Stripe test keys with live ones; checkout currently refuses anything but test keys.
 - Create Secret Manager secrets and grant the Cloud Run service account `Secret Manager Secret Accessor` on each; the deploy maps them to the API. Until set, deletion and subscription scheduling are refused:
