@@ -1363,6 +1363,11 @@
   .CheckinsPage button, .CheckinsContact a { min-height: 48px; }
   .CheckinsPage .FormSubmitButton { width: 100%; height: auto; white-space: normal; }
   .CheckinsPage .EditorCommand { white-space: normal; }
+  .CheckinsPage .CheckinsEventToggle { display: flex; flex-wrap: wrap; width: 100%; gap: 12px; padding: 12px 16px; text-align: left; justify-content: space-between; align-items: center; }
+  .CheckinsEventDetails { flex: 1 1 240px; min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
+  .CheckinsEventName { font-size: 16px; font-weight: 800; }
+  .CheckinsEventSchedule { font-size: 14px; font-weight: 400; line-height: 1.5; }
+  .CheckinsEventAction { flex: 0 0 auto; font-size: 14px; text-decoration: underline; }
   .CheckinsPage .FormLabel, .CheckinsIdentity, .CheckinsContact { overflow-wrap: anywhere; }
   .CheckinsList { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; margin: 16px 0; }
   .CheckinsCard { min-width: 0; padding: 16px; border: 1px solid #ccd5dc; border-radius: 12px; background: #fff; }
