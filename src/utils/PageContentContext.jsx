@@ -130,8 +130,10 @@ export function PageContentProvider({ value, children }) {
         if (!response.ok) throw new Error(pullRequest.error || 'Could not create review PR.');
         setReview(pullRequest);
         setMessage(`Pull request #${pullRequest.number} is ready. Merging it publishes the saved changes.`);
+        if (pullRequest.warning) setError(pullRequest.warning);
       } else {
         setMessage(`Draft saved on ${result.branch}. Not published yet.`);
+        if (result.warning) setError(result.warning);
       }
     } catch (saveError) {
       setError(saveError.message);

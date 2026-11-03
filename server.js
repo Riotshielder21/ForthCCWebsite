@@ -39,6 +39,7 @@ import { resolveOrderPeople } from './src/server/orderPeople.js';
 import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from './src/utils/households.js';
 import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive, endedAtCutoff, clubYearEndUpdate } from './src/utils/subscriptions.js';
 import { registerGdprRoutes } from './src/server/gdpr.js';
+import { rebaseBranch, rebaseWarning } from './src/server/githubRebase.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
@@ -1747,6 +1748,9 @@ app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) =
 
     const github = createGitHubClient(repository, token);
     await ensureGitHubBranch(github, branch);
+    const base = process.env.GITHUB_BRANCH || 'main';
+    const rebase = await rebaseBranch(github, branch, base, CONTENT_COMMITTER());
+    if (rebase.status === 'failed') console.warn('Content branch rebase failed:', rebase.reason);
     const path = `public/content/pages/${pageId}.json`;
     const endpoint = github.url(`/contents/${path}`);
     const currentResponse = await github.request(`${endpoint}?ref=${encodeURIComponent(branch)}`);
@@ -1765,16 +1769,13 @@ app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) =
         content: Buffer.from(`${JSON.stringify(publishedContent, null, 2)}\n`).toString('base64'),
         branch,
         ...(sha ? { sha } : {}),
-        committer: {
-          name: 'FCC Website Content Manager',
-          email: process.env.GITHUB_COMMIT_EMAIL || 'website@forthcanoeclub.co.uk'
-        }
+        committer: CONTENT_COMMITTER()
       })
     });
     const result = await update.json();
     if (!update.ok) throw new Error(result.message || 'GitHub could not save the page file.');
 
-    res.json({ success: true, branch, commit: result.commit.sha, url: result.content.html_url });
+    res.json({ success: true, branch, commit: result.commit.sha, url: result.content.html_url, rebase: rebase.status, warning: rebaseWarning(rebase, branch, base) });
   } catch (error) {
     console.error('GitHub page draft save failed:', error.message);
     res.status(500).json({ error: error.message || 'Could not save page draft.' });
@@ -1793,6 +1794,8 @@ app.post('/api/admin/create-content-pr', rateLimit(5, 60 * 1000), async (req, re
     if (!token) return res.status(503).json({ error: 'GitHub publishing is not configured on the API server.' });
 
     const github = createGitHubClient(repository, token);
+    const rebase = await rebaseBranch(github, head, base, CONTENT_COMMITTER());
+    if (rebase.status === 'failed') console.warn('Content branch rebase failed:', rebase.reason);
     const compareResponse = await github.request(github.url(`/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`));
     const comparison = await compareResponse.json();
     if (!compareResponse.ok) throw new Error(comparison.message || 'Could not compare the draft branch with main.');
@@ -1837,7 +1840,7 @@ app.post('/api/admin/create-content-pr', rateLimit(5, 60 * 1000), async (req, re
     }
 
     const notificationSent = await sendContentPrNotification(pullRequest, admin.email);
-    res.json({ success: true, number: pullRequest.number, url: pullRequest.html_url, branch: head, assignee, notificationSent });
+    res.json({ success: true, number: pullRequest.number, url: pullRequest.html_url, branch: head, assignee, notificationSent, rebase: rebase.status, warning: rebaseWarning(rebase, head, base) });
   } catch (error) {
     console.error('GitHub content PR failed:', error.message);
     res.status(500).json({ error: error.message || 'Could not create content review request.' });
@@ -1864,6 +1867,8 @@ const sendContentPrNotification = async (pullRequest, requestedBy) => {
     return false;
   }
 };
+
+const CONTENT_COMMITTER = () => ({ name: 'FCC Website Content Manager', email: process.env.GITHUB_COMMIT_EMAIL || 'website@forthcanoeclub.co.uk' });
 
 const createGitHubClient = (repository, token) => {
   const encodedRepository = repository.split('/').map(encodeURIComponent).join('/');

@@ -91,6 +91,10 @@ The domain in Google's "to continue to" prompt comes from Firebase's `authDomain
 
 Do not switch the build before the handler and OAuth configuration are ready: it would break admin sign-in. See [Firebase's custom redirect domain instructions](https://firebase.google.com/docs/auth/web/google-signin#customizing-the-redirect-domain-for-google-sign-in).
 
+## Admin page edits
+
+Page edits are committed through the GitHub API to `GITHUB_CONTENT_BRANCH` (default `live/web-admin-edit`) and published by merging the review pull request into `GITHUB_BRANCH` (default `main`). Before each save and before opening the review PR, the API rebases the content branch onto the base branch (`src/server/githubRebase.js`): it replays each content commit on top of the base, dropping commits already merged, and moves the branch only if nobody saved in the meantime. A file changed on both branches, a merge commit or any API error stops the rebase with the branch left as it was; the save still goes ahead and the editor sees a warning to rebase the branch by hand (`git fetch && git checkout live/web-admin-edit && git rebase origin/main && git push --force-with-lease`).
+
 ## Volunteer sign-ups
 
 The public form sends the selected level as `tier`; it is stored with the sign-up and returned to the admin hours selector. Older sign-ups without a level remain unselected: staff must choose their agreed hours rather than inferring a commitment. Repeat submissions for the same name and email in the same club year report a conflict instead of claiming success while discarding the new hours or answers; changes to an existing commitment need staff follow-up. Duplicate handling is the same for members and non-members, without revealing whether a membership matched.
