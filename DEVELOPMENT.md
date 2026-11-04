@@ -175,6 +175,8 @@ Set `JUSTGO_API_SECRET`, `JUSTGO_ORGANISATION_ID` and `JUSTGO_API_ENABLED=true`;
 git fetch && git checkout live/web-admin-edit && git rebase origin/main && git push --force-with-lease
 ```
 
+In Edit Mode, select words in a description and use its link icon to add a link. Put the cursor inside an existing link to edit or remove it. Links are stored as `[link text](destination)` in the existing text fields, not HTML; ordinary text and existing template links remain unchanged. Home's legacy split paragraphs migrate to whole editable paragraphs, retaining saved wording and destinations. Destinations may be HTTPS (opens a new tab), website-relative (for example `/?page=beginners`), or `mailto:`. Tile settings allow a custom button on text, image, link, or existing tiles, with editable text and destination; choose "No button" to remove a template button, or "Keep original button" to restore it. Save draft still saves only the current page (see #70).
+
 Volunteering configuration is saved directly to Firestore, not through GitHub publishing; its History panel restores previous versions.
 
 ### Live mode and sensitive operations

@@ -6,40 +6,75 @@ import { GripVertical, Minus, Plus, Settings, Type, ImagePlus, Link, Save, Send,
 import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { PAGE_TILE_GROUPS, moveTile, safeTileUrl, TILE_APPEARANCES, TILE_WIDTHS, tileAppearanceClass, tileIsWide } from '../utils/pageTiles';
 import { uploadPageImage } from '../utils/content';
+import { ContentText, ContentLinkEditor } from './ContentText';
+
+function EditableContentText({ value, label, onChange, multiline = true }) {
+  return <ContentLinkEditor label={label} onChange={onChange}>
+    <InlineText value={value} label={label} onChange={onChange} multiline={multiline} />
+  </ContentLinkEditor>;
+}
+
+function TileButton({ button }) {
+  if (!button || !safeTileUrl(button.url)) return null;
+  return <a className="PrimaryActionButton PushBottom" href={button.url}>{button.label} <ExternalLink size={16} /></a>;
+}
+
+function TileButtonSettings({ tile, onChange }) {
+  const mode = tile.button === undefined ? 'template' : tile.button === null ? 'none' : 'custom';
+  return <fieldset className="tile_button_settings">
+    <legend>Tile button</legend>
+    <label className="FormLabel">Button<select className="FormInput" value={mode} onChange={(event) => onChange(
+      event.target.value === 'template' ? undefined : event.target.value === 'none' ? null : { label: 'Open link', url: '' }
+    )}>
+      <option value="template">Keep original button (if any)</option>
+      <option value="none">No button</option>
+      <option value="custom">Custom button</option>
+    </select></label>
+    {mode === 'custom' && <>
+      <label className="FormLabel">Button text<input className="FormInput" value={tile.button.label} onChange={(event) => onChange({ ...tile.button, label: event.target.value })} /></label>
+      <label className="FormLabel">Button destination<input className="FormInput" placeholder="/?page=beginners or https://…" value={tile.button.url} onChange={(event) => onChange({ ...tile.button, url: event.target.value })} /></label>
+    </>}
+  </fieldset>;
+}
 
 const fieldName = (key) => /title|heading/i.test(key) ? 'title'
   : /eyebrow/i.test(key) ? 'label'
     : /url/i.test(key) ? 'link URL'
       : /action|link|label$/i.test(key) ? 'link text' : 'description';
 
+function insertEditableText(text) {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+  const node = document.createTextNode(text);
+  range.insertNode(node);
+  range.setStartAfter(node);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 export function InlineText({ value, label, onChange, multiline = true }) {
   return (
     <span className="text_inline_editor" role="textbox" aria-label={label} aria-multiline={multiline}
       contentEditable suppressContentEditableWarning tabIndex={0} data-placeholder={label}
       onBlur={(event) => {
-        const previousTransform = event.currentTarget.style.textTransform;
-        event.currentTarget.style.textTransform = 'none';
-        const next = event.currentTarget.innerText.replace(/\r\n/g, '\n').replace(/\u00a0/g, ' ').replace(/\n$/, '');
-        event.currentTarget.style.textTransform = previousTransform;
+        const next = event.currentTarget.textContent.replace(/\r\n/g, '\n').replace(/\u00a0/g, ' ').replace(/\n$/, '');
         if (next !== value) onChange(next);
       }}
       onKeyDown={(event) => {
-        if (event.key === 'Enter' && !multiline) { event.preventDefault(); event.currentTarget.blur(); }
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          if (multiline) insertEditableText('\n');
+          else event.currentTarget.blur();
+        }
         if (event.key === 'Escape') { event.currentTarget.textContent = value; event.currentTarget.blur(); }
       }}
       onPaste={(event) => {
         event.preventDefault();
-        const selection = window.getSelection();
-        if (!selection?.rangeCount) return;
-        const range = selection.getRangeAt(0);
-        range.deleteContents();
         const text = event.clipboardData.getData('text/plain');
-        const node = document.createTextNode(multiline ? text : text.replace(/\n/g, ' '));
-        range.insertNode(node);
-        range.setStartAfter(node);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
+        insertEditableText(multiline ? text : text.replace(/\n/g, ' '));
       }}
     >{value}</span>
   );
@@ -190,9 +225,12 @@ function CustomTile({ pageId, tile, number, updateTile, onDelete }) {
   const [uploadError, setUploadError] = useState('');
   const [uploading, setUploading] = useState(false);
   const text = (key) => editor.editMode
-    ? <InlineText value={tile[key] || ''} label={`Tile ${number} ${fieldName(key)}`} multiline={key === 'description'} onChange={(value) => updateTile(key, value)} />
-    : tile[key];
+    ? (key === 'description'
+      ? <EditableContentText value={tile[key] || ''} label={`Tile ${number} description`} onChange={(value) => updateTile(key, value)} />
+      : <InlineText value={tile[key] || ''} label={`Tile ${number} ${fieldName(key)}`} multiline={false} onChange={(value) => updateTile(key, value)} />)
+    : key === 'description' ? <ContentText value={tile[key] || ''} /> : tile[key];
   const settings = <>
+    <TileButtonSettings tile={tile} onChange={(value) => updateTile('button', value)} />
     <label className="FormLabel">Tile {number} type<select className="FormInput" value={tile.type} onChange={(event) => updateTile('type', event.target.value)}>{['text', 'image', 'link'].map((type) => <option key={type}>{type}</option>)}</select></label>
     {tile.type === 'image' && <>
       <label className="FormLabel">Image URL<input className="FormInput" type="url" value={tile.imageUrl || ''} onChange={(event) => updateTile('imageUrl', event.target.value)} /></label>
@@ -221,7 +259,8 @@ function CustomTile({ pageId, tile, number, updateTile, onDelete }) {
       ? <img className="main_tile_image SpaceT4" src={safeTileUrl(tile.imageUrl, true)} alt={tile.alt || ''} />
       : editor.editMode && <button className="tile_image_placeholder" data-editor-control="true" onClick={() => document.querySelector(`[data-tile-id="${tile.id}"] .tile_editor_controls button[aria-expanded]`)?.click()} aria-label={`Configure Tile ${number} image`}><ImagePlus size={36} /></button>)}
     <p className="text_container AdminPreserveLines SpaceT4 SpaceB4">{text('description')}</p>
-    {tile.type === 'link' && <a className="PrimaryActionButton PushBottom" href={safeTileUrl(tile.url) || undefined}>{text('action')} <ExternalLink size={16} /></a>}
+    {tile.button !== undefined ? <TileButton button={tile.button} />
+      : tile.type === 'link' && <a className="PrimaryActionButton PushBottom" href={safeTileUrl(tile.url) || undefined}>{text('action')} <ExternalLink size={16} /></a>}
   </div></SortableTile>;
 }
 
@@ -242,17 +281,27 @@ export default function EditablePage({ pageId, children }) {
   const numbers = new Map(ordered.map((tile, index) => [tile.id, index + 1]));
   const updateLayout = (next) => editor.updatePage(pageId, { ...copy, tileLayout: next });
   const updateField = (key, value) => editor.updatePage(pageId, (current) => ({ ...current, [key]: value }));
-  const inline = (node, number, fields) => {
+  const inline = (node, number, fields, tile, inLink = false) => {
     if (!React.isValidElement(node)) return node;
+    const isLink = inLink || node.type === 'a' || node.type === 'button';
+    if (node.props.className?.split(' ').includes('PrimaryActionButton') && tile.button !== undefined) {
+      return <TileButton button={tile.button} />;
+    }
     if (node.props['data-link-field']) fields.add(node.props['data-link-field']);
     const key = node.props['data-content-field'];
     if (key) {
       fields.add(key);
       const label = /^h[1-6]$/.test(node.type) ? 'title' : fieldName(key);
-      if (editing) return React.cloneElement(node, node.props.href ? { href: safeTileUrl(node.props.href) || undefined } : {}, <InlineText value={copy[key] || ''} label={`Tile ${number} ${label}`} multiline={label === 'description'} onChange={(value) => updateField(key, value)} />);
+      const rich = !isLink && label === 'description';
+      if (editing) {
+        const TextEditor = rich ? EditableContentText : InlineText;
+        return React.cloneElement(node, node.props.href ? { href: safeTileUrl(node.props.href) || undefined } : {},
+          <TextEditor value={copy[key] || ''} label={`Tile ${number} ${label}`} multiline={label === 'description'} onChange={(value) => updateField(key, value)} />);
+      }
+      if (rich) return React.cloneElement(node, {}, <ContentText value={copy[key] || ''} />);
     }
     if (typeof node.type !== 'string' && node.type !== React.Fragment) return node;
-    return React.cloneElement(node, node.props.href ? { href: safeTileUrl(node.props.href) || undefined } : {}, React.Children.map(node.props.children, (child) => inline(child, number, fields)));
+    return React.cloneElement(node, node.props.href ? { href: safeTileUrl(node.props.href) || undefined } : {}, React.Children.map(node.props.children, (child) => inline(child, number, fields, tile, isLink)));
   };
   const renderTile = (tile) => {
     const number = numbers.get(tile.id);
@@ -266,15 +315,20 @@ export default function EditablePage({ pageId, children }) {
       }))} />;
     const original = originals.get(tile.id);
     if (!original) return null;
+    const updateTile = (key, value) => editor.updatePage(pageId, (current) => ({ ...current,
+      tileLayout: current.tileLayout.map((item) => item.id === tile.id ? { ...item, [key]: value } : item)
+    }));
+    const hasButton = (node) => React.isValidElement(node) && (node.props.className?.split(' ').includes('PrimaryActionButton')
+      || React.Children.toArray(node.props.children).some(hasButton));
     const fields = new Set();
-    const content = inline(original, number, fields);
+    let content = inline(original, number, fields, tile);
+    if (tile.button && !hasButton(original)) content = React.cloneElement(content, {}, content.props.children, <TileButton button={tile.button} />);
     const settings = <>
+      <TileButtonSettings tile={tile} onChange={(value) => updateTile('button', value)} />
       {[...fields].filter((key) => /url$/i.test(key)).map((key) => <label key={key} className="FormLabel">Tile {number} {fieldName(key)}<input className="FormInput" value={copy[key]} onChange={(event) => updateField(key, event.target.value)} /></label>)}
     </>;
     return <SortableTile key={tile.id} tile={tile} number={number} onDelete={onDelete} settings={settings} fullSpan={original.props.className?.includes('tile_width_full')}
-      onPresentationChange={(key, value) => editor.updatePage(pageId, (current) => ({ ...current,
-        tileLayout: current.tileLayout.map((item) => item.id === tile.id ? { ...item, [key]: value } : item)
-      }))}>{content}</SortableTile>;
+      onPresentationChange={updateTile}>{content}</SortableTile>;
   };
   const render = (node) => {
     if (!React.isValidElement(node)) return node;

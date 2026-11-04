@@ -1,4 +1,5 @@
 import { currentTileLayout, getSupporterTiles } from '../utils/pageTiles.js';
+import { validateContentLinks } from '../utils/contentLinks.js';
 
 const field = (label, value, multiline = false) => ({ label, value, multiline });
 
@@ -18,6 +19,9 @@ export const PAGE_CONTENT = {
       welcome5Before: field('Welcome paragraph 5 before link', 'Any questions,'),
       welcome5Link: field('Welcome paragraph 5 link text', 'get in touch'),
       welcome5After: field('Welcome paragraph 5 after link', '.'),
+      welcome3Text: field('Welcome paragraph 3', '', true),
+      welcome4Text: field('Welcome paragraph 4', '', true),
+      welcome5Text: field('Welcome paragraph 5', '', true),
       startTitle: field('Where to Start heading', 'Where to Start'),
       startIntro: field('Where to Start intro', 'Here are a few useful details:'),
       start1: field('Where to Start item 1 after map link', "marks our clubhouse on Edinburgh's Union Canal, where many of our activities take place.", true),
@@ -31,6 +35,9 @@ export const PAGE_CONTENT = {
       start5Before: field('Where to Start item 5 before link', 'Information about our classes is on the'),
       start5Link: field('Disciplines link text', 'disciplines page'),
       start5After: field('Where to Start item 5 after link', '.'),
+      start1Text: field('Where to Start item 1', '', true),
+      start2Text: field('Where to Start item 2', '', true),
+      start5Text: field('Where to Start item 5', '', true),
       charityEyebrow: field('Mission charity label', 'Registered Scottish Charity SC050275'),
       missionTitle: field('Mission heading', 'Our Mission'),
       missionIntro: field('Mission introduction', 'Forth Canoe Club is a registered Scottish Charity (SC050275) and is set up for the advancement of public participation in sport. In particular we seek to do the following:', true),
@@ -197,9 +204,38 @@ export const PAGE_CONTENT = {
 export const getPageCopy = (pageId, saved = {}) => {
   saved = saved || {};
   const fields = PAGE_CONTENT[pageId]?.fields || {};
+  const copy = Object.fromEntries(Object.entries(fields).map(([key, definition]) => [key, saved[key] ?? definition.value]));
+  if (pageId === 'home') {
+    const link = (text, url) => text ? `[${text}](${String(url).replace(/\(/g, '%28').replace(/\)/g, '%29')})` : '';
+    const paragraphs = {
+      welcome3Text: `${copy.welcome3} ${link(copy.welcome3Link, '/?page=membership')}${copy.welcome3After}`,
+      welcome4Text: `${copy.welcome4Before} ${link(copy.welcome4Link, '/?page=beginners')} ${copy.welcome4After}`,
+      welcome5Text: `${copy.welcome5Before} ${link(copy.welcome5Link, '/?page=contact')}${copy.welcome5After}`,
+      start1Text: `${link(copy.start1Link, copy.start1Url)} ${copy.start1}`,
+      start2Text: `${copy.start2Before} ${link(copy.start2Link, '/?page=contact')}${copy.start2After}`,
+      start5Text: `${copy.start5Before} ${link(copy.start5Link, '/?page=disciplines')}${copy.start5After}`
+    };
+    for (const [key, value] of Object.entries(paragraphs)) copy[key] = saved[key] ?? value;
+  }
   return {
-    ...Object.fromEntries(Object.entries(fields).map(([key, definition]) => [key, saved[key] ?? definition.value])),
+    ...copy,
     ...(pageId === 'home' ? { supporterTiles: getSupporterTiles(saved.supporterTiles, saved.sponsors ?? fields.sponsors.value) } : {}),
     ...(pageId !== 'membership' ? { tileLayout: currentTileLayout(pageId, saved.tileLayout) } : {})
   };
 };
+
+export function validatePageFields(pageId, content) {
+  const page = PAGE_CONTENT[pageId];
+  if (!page || !content || typeof content !== 'object' || Array.isArray(content)) throw new Error('Unknown page or invalid content.');
+  const copy = getPageCopy(pageId, content);
+  return Object.fromEntries(Object.entries(page.fields).map(([key, definition]) => {
+    const value = copy[key];
+    if (typeof value !== 'string' || value.length > 20000) throw new Error(`Invalid value for ${definition.label}.`);
+    if (/url$/i.test(key)) {
+      if (value && !/^https:\/\//i.test(value)) throw new Error(`${definition.label} must be an https URL.`);
+    } else {
+      validateContentLinks(value);
+    }
+    return [key, value];
+  }));
+}

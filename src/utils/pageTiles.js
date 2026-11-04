@@ -1,3 +1,6 @@
+import { validateContentLinks, validateContentButton, safeTileUrl } from './contentLinks.js';
+export { safeTileUrl } from './contentLinks.js';
+
 export const TILE_TYPES = ['text', 'image', 'link'];
 export const TILE_APPEARANCES = ['default', 'white', 'grey'];
 export const TILE_WIDTHS = ['default', 'standard', 'wide'];
@@ -31,17 +34,6 @@ export const defaultTileLayout = (pageId) => Object.entries(PAGE_TILE_GROUPS[pag
   .flatMap(([group, ids]) => ids.map((id) => ({ id, group, type: 'existing' })));
 
 export const currentTileLayout = (pageId, saved) => Array.isArray(saved) ? saved : defaultTileLayout(pageId);
-
-export const safeTileUrl = (value, image = false) => {
-  if (!value) return '';
-  try {
-    const url = new URL(value, 'https://forthcanoeclub.co.uk');
-    if (url.protocol === 'https:' || (!image && url.protocol === 'mailto:')) return value;
-  } catch {
-    return '';
-  }
-  return '';
-};
 
 export const getSupporterTiles = (saved, legacy = '') => saved ?? legacy.split('\n').map((line, index) => {
   const [name, url = ''] = line.split('|').map((part) => part.trim());
@@ -84,11 +76,12 @@ export const validateTileLayout = (pageId, input) => {
       throw new Error('Invalid tile identity, group, or type.');
     }
     seen.add(tile.id);
+    const button = tile.button === undefined ? {} : { button: validateContentButton(tile.button) };
     if (tile.type === 'existing') {
       if (!existingIds.has(tile.id)) throw new Error('Unknown existing tile.');
-      return { id: tile.id, group: tile.group, type: tile.type, ...validatedPresentation(tile) };
+      return { id: tile.id, group: tile.group, type: tile.type, ...validatedPresentation(tile), ...button };
     }
-    const result = { id: tile.id, group: tile.group, type: tile.type, ...validatedPresentation(tile) };
+    const result = { id: tile.id, group: tile.group, type: tile.type, ...validatedPresentation(tile), ...button };
     for (const key of ['eyebrow', 'title', 'description', 'url', 'action', 'imageUrl', 'alt']) {
       const value = tile[key] ?? '';
       if (typeof value !== 'string' || value.length > 20000) throw new Error(`Invalid tile ${key}.`);
@@ -97,6 +90,7 @@ export const validateTileLayout = (pageId, input) => {
       }
       result[key] = value;
     }
+    validateContentLinks(result.description);
     return result;
   });
 };

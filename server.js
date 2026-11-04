@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
-import { PAGE_CONTENT } from './src/constants/pageContent.js';
+import { PAGE_CONTENT, validatePageFields } from './src/constants/pageContent.js';
 import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart, expandClubYearLines, expandPeopleLines, NEXT_YEAR_LINE_SUFFIX } from './src/utils/pricing.js';
@@ -1720,16 +1720,11 @@ app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) =
       return res.status(400).json({ error: 'Unknown page or invalid content.' });
     }
 
-    const publishedContent = {};
-    for (const [key, definition] of Object.entries(page.fields)) {
-      const value = content[key] ?? definition.value;
-      if (typeof value !== 'string' || value.length > 20000) {
-        return res.status(400).json({ error: `Invalid value for ${definition.label}.` });
-      }
-      if (/url$/i.test(key) && value && !/^https:\/\//i.test(value)) {
-        return res.status(400).json({ error: `${definition.label} must be an https URL.` });
-      }
-      publishedContent[key] = value;
+    let publishedContent;
+    try {
+      publishedContent = validatePageFields(pageId, content);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
     }
     if (content.tileLayout !== undefined) {
       try {
