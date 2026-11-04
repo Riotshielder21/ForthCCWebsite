@@ -1,0 +1,88 @@
+{
+  "title": "Contact Us",
+  "intro": "Got a question or want to book a session? Get in touch and we'll get back to you as soon as we can.",
+  "addressEyebrow": "Mailing Address",
+  "addressTitle": "Find Us",
+  "address": "Forth Canoe Club\nHarrison Park\nPolwarth\nEdinburgh EH11 1ED",
+  "mapAction": "View on maps",
+  "mapUrl": "https://maps.app.goo.gl/forthcanoeclub",
+  "emailEyebrow": "General Enquiries",
+  "emailTitle": "Get in Touch",
+  "emailAddress": "secretary@forthcanoeclub.co.uk",
+  "responseTime": "We aim to respond within 48 hours.",
+  "socialEyebrow": "Social Media",
+  "socialTitle": "Follow Us",
+  "facebookUrl": "https://www.facebook.com/forth.canoeclub",
+  "facebookLabel": "Facebook",
+  "instagramUrl": "https://www.instagram.com/forthcanoeclub",
+  "instagramLabel": "Instagram",
+  "supportTitle": "Need Special Support?",
+  "supportBody": "If you need additional support to get involved due to disability or long-term condition, contact our Supported Paddling coordinator.",
+  "supportEmail": "supported.paddling@forthcanoeclub.co.uk",
+  "tileLayout": [
+    {
+      "id": "hero",
+      "group": "hero",
+      "type": "existing"
+    },
+    {
+      "id": "address",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "email",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "social",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "support",
+      "group": "support",
+      "type": "existing",
+      "width": "wide"
+    },
+    {
+      "id": "new-1e1a58de-8905-46cf-92fe-50fe52c239f9",
+      "group": "tiles",
+      "type": "text",
+      "appearance": "grey",
+      "width": "wide",
+      "eyebrow": "For complaints and Other inquiries",
+      "title": "Commodore (Chair)",
+      "description": "",
+      "url": "mailto:commodore@forthcanoeclub.co.uk",
+      "action": "Email",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "new-2881d26b-9ae3-4511-abac-8e68d3d61dc7",
+      "group": "tiles",
+      "type": "text",
+      "eyebrow": "",
+      "title": "New tile",
+      "description": "Safeguarding\nsafeguarding@ㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤforthcanoeclub.co.uk\nCatherine\n\nTreasurer\ntreasurer@ㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤforthcanoeclub.co.uk\nAndy\n\nSafety Officer\nsafety@ㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤforthcanoeclub.co.uk",
+      "url": "",
+      "action": "Open link",
+      "imageUrl": "",
+      "alt": ""
+    },
+    {
+      "id": "new-763b4492-de41-40d2-91b4-7d428aef6dc5",
+      "group": "tiles",
+      "type": "text",
+      "eyebrow": "",
+      "title": "New tile",
+      "description": "\nVolunteer Coordinator & Boathouse Custodian\njack.watt@ㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤforthcanoeclub.co.uk\n\nPoppy\nDiscipline and Performance Representative\ncomp.rep@ㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤforthcanoeclub.co.uk\n",
+      "url": "",
+      "action": "Open link",
+      "imageUrl": "",
+      "alt": ""
+    }
+  ]
+}
