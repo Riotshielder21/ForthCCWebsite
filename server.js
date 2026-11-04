@@ -11,7 +11,7 @@ import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-adm
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
 import { PAGE_CONTENT, validatePageFields } from './src/constants/pageContent.js';
-import { validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
+import { BANNER_PAGES, validateBanner, validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart, expandClubYearLines, expandPeopleLines, NEXT_YEAR_LINE_SUFFIX } from './src/utils/pricing.js';
 import { clubYearOf, clubYearDates, clubYearLabel, clubYearKind, resolveClubYearChoice, holdsForClubYear } from './src/utils/clubYear.js';
@@ -1736,6 +1736,13 @@ app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) =
     if (pageId === 'home' && content.supporterTiles !== undefined) {
       try {
         publishedContent.supporterTiles = validateSupporterTiles(content.supporterTiles);
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
+    }
+    if (BANNER_PAGES.includes(pageId) && content.banner !== undefined) {
+      try {
+        publishedContent.banner = validateBanner(pageId, content.banner);
       } catch (error) {
         return res.status(400).json({ error: error.message });
       }

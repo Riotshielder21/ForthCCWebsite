@@ -30,6 +30,38 @@ export const PAGE_TILE_GROUPS = {
   contact: { hero: ['hero'], tiles: ['address', 'email', 'social'], support: ['support'] }
 };
 
+// Pages that can show a photo banner under the navigation. The shop (membership) has none.
+export const BANNER_PAGES = ['home', 'beginners', 'disciplines', 'about', 'access-project', 'contact'];
+export const BANNER_FOCUS = { top: '25%', center: '50%', bottom: '78%' };
+const EMPTY_BANNER = { imageUrl: '', alt: '', credit: '', focus: 'center' };
+export const DEFAULT_BANNERS = {
+  home: {
+    imageUrl: '/images/banners/home-canal.webp',
+    alt: 'The canal on a summer day, with a green narrowboat, a red-roofed boathouse and a sandstone church tower',
+    credit: 'Forth Canoe Club',
+    focus: 'bottom'
+  }
+};
+
+export const getBanner = (pageId, saved) => BANNER_PAGES.includes(pageId)
+  ? { ...EMPTY_BANNER, ...(saved ?? DEFAULT_BANNERS[pageId]) }
+  : undefined;
+
+export const validateBanner = (pageId, banner) => {
+  if (!BANNER_PAGES.includes(pageId)) throw new Error('This page cannot have a banner.');
+  if (!banner || typeof banner !== 'object' || Array.isArray(banner)) throw new Error('Invalid banner.');
+  const limits = { imageUrl: 2000, alt: 300, credit: 120 };
+  const result = Object.fromEntries(Object.entries(limits).map(([key, limit]) => {
+    const value = banner[key] ?? '';
+    if (typeof value !== 'string' || value.length > limit) throw new Error(`Invalid banner ${key}.`);
+    if (key === 'imageUrl' && value && !safeTileUrl(value, true)) throw new Error('The banner image must be a secure URL.');
+    return [key, value.trim()];
+  }));
+  const focus = banner.focus ?? 'center';
+  if (!Object.hasOwn(BANNER_FOCUS, focus)) throw new Error('Invalid banner focus.');
+  return { ...result, focus };
+};
+
 export const defaultTileLayout = (pageId) => Object.entries(PAGE_TILE_GROUPS[pageId] || {})
   .flatMap(([group, ids]) => ids.map((id) => ({ id, group, type: 'existing' })));
 

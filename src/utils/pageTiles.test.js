@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultTileLayout, moveTile, safeTileUrl, validateTileLayout, getSupporterTiles, validateSupporterTiles, tileAppearanceClass, tileIsWide } from './pageTiles.js';
+import { DEFAULT_BANNERS, getBanner, validateBanner, defaultTileLayout, moveTile, safeTileUrl, validateTileLayout, getSupporterTiles, validateSupporterTiles, tileAppearanceClass, tileIsWide } from './pageTiles.js';
 import { getPageCopy, PAGE_CONTENT } from '../constants/pageContent.js';
 
 test('controlled appearances and widths round-trip for existing and new tiles', () => {
@@ -95,4 +95,26 @@ test('volunteering has no generic page content or configurable tiles', () => {
   assert.equal(Object.hasOwn(PAGE_CONTENT, 'volunteering'), false);
   assert.deepEqual(defaultTileLayout('volunteering'), []);
   assert.throws(() => validateTileLayout('volunteering', [{ id: 'custom', group: 'ways', type: 'text' }]));
+});
+
+test('page banners: the home photo is the default, other pages start empty and the shop has none', () => {
+  assert.equal(getPageCopy('home', {}).banner.imageUrl, DEFAULT_BANNERS.home.imageUrl);
+  assert.equal(getPageCopy('home', {}).banner.credit, 'Forth Canoe Club');
+  assert.deepEqual(getPageCopy('about', {}).banner, { imageUrl: '', alt: '', credit: '', focus: 'center' });
+  assert.equal(getPageCopy('home', {}).banner.focus, 'bottom');
+  assert.equal(getPageCopy('membership', {}).banner, undefined);
+  assert.equal(getPageCopy('home', { banner: { imageUrl: '' } }).banner.imageUrl, '', 'an admin can remove the home photo');
+  assert.equal(getBanner('membership', { imageUrl: 'https://example.com/a.webp' }), undefined);
+});
+
+test('page banners accept secure or site images and reject anything else', () => {
+  assert.deepEqual(validateBanner('home', DEFAULT_BANNERS.home), DEFAULT_BANNERS.home);
+  assert.deepEqual(validateBanner('contact', { imageUrl: 'https://firebasestorage.googleapis.com/x.webp', alt: ' Boats ', credit: 'Club' }),
+    { imageUrl: 'https://firebasestorage.googleapis.com/x.webp', alt: 'Boats', credit: 'Club', focus: 'center' });
+  assert.deepEqual(validateBanner('about', {}), { imageUrl: '', alt: '', credit: '', focus: 'center' });
+  for (const banner of [{ imageUrl: 'javascript:alert(1)' }, { imageUrl: 'http://example.com/a.jpg' }, { imageUrl: 'data:image/png;base64,AAAA' },
+    { alt: 'x'.repeat(301) }, { credit: 5 }, { focus: 'invalid' }, null, []]) {
+    assert.throws(() => validateBanner('home', banner));
+  }
+  assert.throws(() => validateBanner('membership', DEFAULT_BANNERS.home), /cannot have a banner/);
 });

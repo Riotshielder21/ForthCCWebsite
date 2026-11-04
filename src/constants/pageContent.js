@@ -1,4 +1,4 @@
-import { currentTileLayout, getSupporterTiles } from '../utils/pageTiles.js';
+import { BANNER_PAGES, currentTileLayout, getBanner, getSupporterTiles } from '../utils/pageTiles.js';
 import { validateContentLinks } from '../utils/contentLinks.js';
 
 const field = (label, value, multiline = false) => ({ label, value, multiline });
@@ -220,7 +220,8 @@ export const getPageCopy = (pageId, saved = {}) => {
   return {
     ...copy,
     ...(pageId === 'home' ? { supporterTiles: getSupporterTiles(saved.supporterTiles, saved.sponsors ?? fields.sponsors.value) } : {}),
-    ...(pageId !== 'membership' ? { tileLayout: currentTileLayout(pageId, saved.tileLayout) } : {})
+    ...(pageId !== 'membership' ? { tileLayout: currentTileLayout(pageId, saved.tileLayout) } : {}),
+    ...(BANNER_PAGES.includes(pageId) ? { banner: getBanner(pageId, saved.banner) } : {})
   };
 };
 
