@@ -22,7 +22,6 @@ The React/Vite frontend runs on Firebase Hosting. An Express API runs on Cloud R
 ## Working On It
 
 - [DEVELOPMENT.md](DEVELOPMENT.md): install, run locally, build and test.
-- [DEPLOYMENT.md](DEPLOYMENT.md): deploy and check a release.
 - [.env.example](.env.example): configuration names; keep real credentials out of Git.
 
 Page edits are reviewed through GitHub before publishing. Catalogue edits and image uploads save to Firebase directly. Stripe reports refresh on demand; scheduling a subscriber's club-year end requires explicit admin confirmation.
