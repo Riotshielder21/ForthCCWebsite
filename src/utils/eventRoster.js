@@ -2,6 +2,7 @@ import { personReport, membershipStatus } from './adminReports.js';
 import { eventScheduleLabel, eventSessions } from './catalogue.js';
 import { currentPrivilegeIds } from './tripDiscount.js';
 import { visitSummary } from './visits.js';
+import { holdsPlace } from './inventory.js';
 
 /**
  * Event leaders: each event can name a leader (shown publicly), a booking close date, and whether attendees must be
@@ -14,7 +15,7 @@ const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, 
 
 export const BOAT_HIRE_ID = 'boat-hire';
 
-const londonDate = (now) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+export const londonDate = (now) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 
 /** Bookings are taken up to the end of the close date (UK time). */
 export const bookingsClosed = (product, now = new Date()) => DATE.test(product?.closeDate || '') && londonDate(now) > product.closeDate;
@@ -74,8 +75,10 @@ export const buildRoster = (productId, orders, members = new Map(), now = new Da
   .filter((order) => order.status === 'paid')
   .flatMap((order) => {
     const items = Array.isArray(order.items) ? order.items : [];
-    return items.filter((item) => item.id === productId && !item.revokedAt).map((ticket) => {
+    return items.filter((item) => item.id === productId && holdsPlace(item)).flatMap((ticket) => {
       const person = (order.people || []).find((candidate) => (candidate.lineIds || []).includes(ticket.lineId));
+      // Erased people no longer attend; their order stays only as a record of what was paid.
+      if (person?.erased) return [];
       if (!person) return { name: 'Attendee details not recorded', orderRef: order.id, bookedBy: order.email || '', kit: KIT.needsHire, membership: '' };
       const member = members.get(person.membershipId) || {};
       const report = personReport(person, items, member);

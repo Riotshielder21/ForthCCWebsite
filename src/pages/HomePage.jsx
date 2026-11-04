@@ -15,22 +15,9 @@ export default function HomePage({ onNavigate }) {
             <div className="text_container text_container_spaced">
               <p data-content-field="welcome1">{copy.welcome1}</p>
               <p data-content-field="welcome2">{copy.welcome2}</p>
-              <p>
-                <span data-content-field="welcome3">{copy.welcome3}</span>{' '}
-                <button data-content-field="welcome3Link" onClick={() => onNavigate('membership')}>
-                  {copy.welcome3Link}
-                </button><span data-content-field="welcome3After">{copy.welcome3After}</span>
-              </p>
-              <p>
-                <span data-content-field="welcome4Before">{copy.welcome4Before}</span>{' '}
-                <button data-content-field="welcome4Link" onClick={() => onNavigate('beginners')}>
-                  {copy.welcome4Link}
-                </button>{' '}<span data-content-field="welcome4After">{copy.welcome4After}</span>
-              </p>
-              <p>
-                <span data-content-field="welcome5Before">{copy.welcome5Before}</span>{' '}
-                <button data-content-field="welcome5Link" onClick={() => onNavigate('contact-us')}>{copy.welcome5Link}</button><span data-content-field="welcome5After">{copy.welcome5After}</span>
-              </p>
+              <p data-content-field="welcome3Text">{copy.welcome3Text}</p>
+              <p data-content-field="welcome4Text">{copy.welcome4Text}</p>
+              <p data-content-field="welcome5Text">{copy.welcome5Text}</p>
             </div>
           </div>
 
@@ -40,20 +27,10 @@ export default function HomePage({ onNavigate }) {
               <p className="SpaceB3" data-content-field="startIntro">{copy.startIntro}</p>
               <ul>
                 <li>
-                  <span>
-                    <a data-content-field="start1Link" data-link-field="start1Url" href={copy.start1Url} target="_blank" rel="noreferrer">
-                      {copy.start1Link}
-                    </a>{' '}
-                    <span data-content-field="start1">{copy.start1}</span>
-                  </span>
+                  <span data-content-field="start1Text">{copy.start1Text}</span>
                 </li>
                 <li>
-                  <span>
-                    <span data-content-field="start2Before">{copy.start2Before}</span>{' '}
-                    <button data-content-field="start2Link" onClick={() => onNavigate('contact-us')}>
-                      {copy.start2Link}
-                    </button><span data-content-field="start2After">{copy.start2After}</span>
-                  </span>
+                  <span data-content-field="start2Text">{copy.start2Text}</span>
                 </li>
                 <li>
                     <span data-content-field="start3">{copy.start3}</span>
@@ -62,12 +39,7 @@ export default function HomePage({ onNavigate }) {
                     <span data-content-field="start4">{copy.start4}</span>
                 </li>
                 <li>
-                  <span>
-                    <span data-content-field="start5Before">{copy.start5Before}</span>{' '}
-                    <button data-content-field="start5Link" onClick={() => onNavigate('disciplines')}>
-                      {copy.start5Link}
-                    </button><span data-content-field="start5After">{copy.start5After}</span>
-                  </span>
+                  <span data-content-field="start5Text">{copy.start5Text}</span>
                 </li>
               </ul>
             </div>

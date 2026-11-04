@@ -82,8 +82,12 @@ function EventAttendeeLists({ request, onEvents }) {
     <p className="text_container_note">These lists contain medical and emergency details. Each view is recorded.</p>
     {error && <p className="StatusTextError" role="alert">{error}</p>}
     {events.map((event) => <div key={event.id}>
-      <button className="EditorCommand" type="button" aria-expanded={open?.event.id === event.id} onClick={() => show(event)}>
-        {event.name}{event.schedule ? ` · ${event.schedule}` : ''}
+      <button className="EditorCommand CheckinsEventToggle" type="button" aria-expanded={open?.event.id === event.id} onClick={() => show(event)}>
+        <span className="CheckinsEventDetails">
+          <span className="CheckinsEventName">{event.name}</span>
+          {event.schedule && <span className="CheckinsEventSchedule">{event.schedule}</span>}
+        </span>
+        <span className="CheckinsEventAction">{open?.event.id === event.id ? 'Hide attendees' : 'View attendees'}</span>
       </button>
       {open?.event.id === event.id && <>
         <p className="text_container" role="status">{open.attendees.length} booked</p>

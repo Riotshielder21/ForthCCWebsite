@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
-import { Timestamp, FieldValue } from 'firebase-admin/firestore';
-import { identityEmails, matchesIdentity, redactOrder, redactSubscription, sharedDetailsErrors, sharedDetailsUpdate } from '../utils/erasure.js';
+import { Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
+import { identityEmails, matchesIdentity, redactOrder, redactSubscription, sharedDetailsErrors, sharedDetailsUpdate, ticketsToReview } from '../utils/erasure.js';
+import { lastEventDate, londonDate } from '../utils/eventRoster.js';
+import { holdsPlace, wantedQuantities } from '../utils/inventory.js';
 import { eraseStripeDetails } from './stripeErasure.js';
 import { memberOrders } from './membershipTerms.js';
 import { lookupKey, maskEmail, maskMembershipNumber, maskName, personLookupKeys } from '../utils/privacy.js';
@@ -24,7 +26,7 @@ const leftHouseholdIds = (records, targets) => {
  * GDPR erasure. Starts from the member register, follows the person into every other collection, keeps orders for the
  * accounts with identifying details removed, and leaves only a masked audit entry.
  */
-export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail, stopSubscriptionItems }) => {
+export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail, stopSubscriptionItems, loadCatalogue = async () => [] }) => {
   const auditSecret = () => process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
 
   /** Everything an erasure for this request would touch. `scope` is 'person' or 'family'. */
@@ -185,14 +187,23 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       const members = familyRecords.filter((record) => record.householdId === id);
       return members.length && members.every((record) => targetIds.has(record.id));
     }).map((document) => document.id);
-    return { targets, remaining, family: familyRecords, households: householdRecords, erasedHouseholdIds, subjects, erasedEmails, orderUpdates, subscriptions, subscriptionRecords, itemStops, warnings, discountCodes, lists, mirrorCustomers, mirrorSubscriptions, auditDocs };
+    return { orders, targets, remaining, family: familyRecords, households: householdRecords, erasedHouseholdIds, subjects, erasedEmails, orderUpdates, subscriptions, subscriptionRecords, itemStops, warnings, discountCodes, lists, mirrorCustomers, mirrorSubscriptions, auditDocs };
   };
 
-  const describe = (scope) => ({
+  /** Tickets to consider refunding before erasure, with the event and attendee names an admin needs to find them. */
+  const refundChecks = async (scope, now = new Date()) => {
+    const catalogue = await loadCatalogue();
+    const names = new Map(scope.targets.map((record) => [record.id, fullName(record)]));
+    return ticketsToReview(scope.orders, names.keys(), (item) => lastEventDate(catalogue.find((product) => product.id === item.id) || item), londonDate(now))
+      .map((ticket) => ({ ...ticket, attendee: names.get(ticket.membershipId) || '' }));
+  };
+
+  const describe = (scope, refunds = []) => ({
     people: scope.targets.map((record) => ({ id: record.id, name: fullName(record), email: identityEmails(record, record.household)[0] || '', tier: record.membershipTier || '', junior: juniorRecord(record), status: record.status || '',
       justgo: record.justgoSyncStatus === 'synced' || record.renewalMethod === 'justgo' || Boolean(record.affiliationNumber) })),
     family: scope.family.map((record) => ({ id: record.id, name: fullName(record), junior: juniorRecord(record), erased: scope.targets.some((target) => target.id === record.id) })),
     remaining: scope.remaining.map((record) => ({ id: record.id, name: fullName(record), junior: juniorRecord(record) })),
+    refundChecks: refunds,
     ordersRedacted: scope.orderUpdates.length, subscriptionsToCancel: [...scope.subscriptions.keys()],
     subscriptionItemsToStop: scope.itemStops.map((stop) => ({ id: stop.id, itemNames: stop.items.map((item) => item.name) })), warnings: scope.warnings,
     related: { discountCodes: scope.discountCodes.length, lists: scope.lists.length, stripeRecords: scope.mirrorCustomers.length + scope.mirrorSubscriptions.length },
@@ -208,7 +219,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       if (!secret) return res.status(503).json({ error: 'Deletion audit is not configured. Set AUDIT_LOOKUP_SECRET.' });
       const scope = await loadScope(req.body || {}, req.body?.scope === 'family' ? 'family' : 'person', secret);
       if (scope.error) return res.status(scope.status).json({ error: scope.error });
-      res.json(describe(scope));
+      res.json(describe(scope, await refundChecks(scope)));
     } catch (error) {
       console.error('GDPR preview failed:', error.message);
       res.status(500).json({ error: 'Could not look up this person.' });
@@ -303,8 +314,17 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
         const codes = await adminDb.getAll(...Object.keys(EMAIL_CODE_PURPOSES).map((purpose) => adminDb.collection('emailCodes').doc(codeDocumentId(purpose, email))));
         linkedRecords.push(...codes.filter((document) => document.exists));
       }
+      // Erased attendees' tickets no longer take a place on the event.
+      const stockChanges = scope.orderUpdates.filter(({ update }) => update.items).flatMap(({ id, update }) =>
+        [...new Set(update.items.filter((item) => item.attendeeErased).map((item) => item.id))].map((productId) => ({ id, productId, items: update.items })));
+      const stockDocuments = stockChanges.length ? await adminDb.getAll(...stockChanges.map(({ productId }) => adminDb.collection('stock').doc(productId))) : [];
       const batch = adminDb.batch();
       batch.delete(stripeJournal);
+      stockChanges.forEach(({ id, productId, items }, index) => {
+        if (!stockDocuments[index].data()?.holds?.[id]) return;
+        const kept = items.filter((item) => item.id === productId && holdsPlace(item));
+        batch.update(stockDocuments[index].ref, new FieldPath('holds', id), kept.length ? { until: null, lines: wantedQuantities(kept) } : FieldValue.delete());
+      });
       attentionRecords.forEach((document) => batch.update(document.ref, {
         email: '', detail: 'Personal details removed during GDPR erasure.', data: {}, resolutionNote: '',
         personalDataErasedAt: Timestamp.now()
@@ -371,7 +391,9 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       manual.push('Remove any rows about them from Google Sheets and form responses.');
       res.json({ success: true, erased: people.length, ordersRedacted: scope.orderUpdates.length, subscriptionsCancelled: cancellations.length,
         subscriptionItemsStopped: scope.itemStops.reduce((sum, stop) => sum + stop.items.length, 0), stripeCustomersDeleted: stripeErasure.deleted,
-        earlierDeletionsPurged: scope.auditDocs.size, warnings: scope.warnings, manual });
+        earlierDeletionsPurged: scope.auditDocs.size,
+        eventTicketsReleased: scope.orderUpdates.reduce((sum, { id, update }) => sum + (update.items || []).filter((item, index) => item.attendeeErased && !scope.orders.get(id)?.items?.[index]?.attendeeErased).length, 0),
+        warnings: scope.warnings, manual });
     } catch (error) {
       console.error('GDPR erasure failed:', error.message);
       res.status(500).json({ error: 'Erasure could not be completed. Some payments may already have stopped, but member records were kept so you can retry. Check Stripe and try again.' });

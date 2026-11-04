@@ -90,6 +90,10 @@ test('the roster lists each paid ticket with contacts, medical details, membersh
   assert.match(body, /Membership: No\n {3}Non-member visits: 2 of 3 this club year\n {3}First club night: Yes\n/);
   assert.match(body, /Membership: Active\n {3}First club night: No\n/);
   assert.match(rosterEmail(event, []).body, /Nobody has booked\./);
+
+  const erased = [{ id: 'ORD-5', status: 'paid', items: [{ id: 'trip', lineId: 'e1', category: 'EVENTS', pricePence: 2000 }, { id: 'trip', lineId: 'e2', category: 'EVENTS', attendeeErased: true }],
+    people: [{ lineIds: ['e1'], membershipId: 'M9', erased: true }, { lineIds: ['e2'], firstName: 'Old' }] }];
+  assert.deepEqual(buildRoster('trip', erased, members, now), [], 'erased attendees and their tickets are left out');
 });
 
 test('leaders and named viewers can open the list while the event is in the shop, until the end of its last day', () => {

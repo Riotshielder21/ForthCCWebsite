@@ -56,6 +56,9 @@ export const remainingStock = (product, holds, now = Date.now()) => {
 
 export const isSoldOut = (remaining) => Boolean(remaining) && Object.values(remaining).every((quantity) => quantity <= 0);
 
+/** Whether an order line still takes a place: revoked lines and tickets of erased attendees do not. */
+export const holdsPlace = (item) => !item?.revokedAt && !item?.attendeeErased;
+
 /** Total wanted per stock key for one product's basket lines. */
 export const wantedQuantities = (lines) => {
   const wanted = {};

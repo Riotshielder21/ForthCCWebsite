@@ -4,6 +4,9 @@ import { apiUrl } from '../utils/api';
 import ReasonInput from './ReasonInput';
 import { sharedDetailsErrors } from '../utils/erasure';
 
+const money = (pence) => `£${(pence / 100).toFixed(2)}`;
+const formatDay = (date) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
 const EMPTY_LOOKUP = { email: '', firstName: '', lastName: '', dob: '', affiliationNumber: '' };
 const EMPTY_SHARED = { contactName: '', contactRelationship: 'Parent', phone: '', email: '', address: '', postcode: '', emergencyName: '', emergencyPhone: '', emergencyRelationship: '' };
 const SHARED_FIELDS = [['contactName', 'Contact name'], ['contactRelationship', 'Relationship to the children'], ['phone', 'Phone'], ['email', 'Email'], ['address', 'Address'], ['postcode', 'Postcode'],
@@ -87,7 +90,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
     {result ? <>
       <p className="StatusText StatusTextSuccess" role="status">Erased {result.erased} member {result.erased === 1 ? 'record' : 'records'}, redacted {result.ordersRedacted} {result.ordersRedacted === 1 ? 'order' : 'orders'},
         cancelled {result.subscriptionsCancelled} Stripe {result.subscriptionsCancelled === 1 ? 'subscription' : 'subscriptions'}, stopped {result.subscriptionItemsStopped || 0} shared-subscription items,
-        deleted {result.stripeCustomersDeleted || 0} Stripe customers and purged {result.earlierDeletionsPurged} earlier deleted {result.earlierDeletionsPurged === 1 ? 'record' : 'records'}.</p>
+        freed {result.eventTicketsReleased || 0} event {result.eventTicketsReleased === 1 ? 'place' : 'places'}, deleted {result.stripeCustomersDeleted || 0} Stripe customers and purged {result.earlierDeletionsPurged} earlier deleted {result.earlierDeletionsPurged === 1 ? 'record' : 'records'}.</p>
       <p className="ReportNotice">Still to do by hand:</p>
       <ul className="ReportItems">{[...result.warnings, ...result.manual].map((step) => <li key={step}>{step}</li>)}</ul>
       <button className="EditorCommand" type="button" onClick={onClose}>Close</button>
@@ -116,6 +119,14 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
         <h4 className="CartItemTitle">Member records to erase</h4>
         {preview.people.length ? <ul className="ReportItems">{preview.people.map((person) => <li key={person.id}>{person.name} ({person.junior ? 'junior' : person.tier || 'member'}, {person.status || 'no status'})</li>)}</ul> : <p className="text_container">None on the register.</p>}
 
+        {preview.refundChecks?.length > 0 && <fieldset className="CheckoutFieldset">
+          <legend>Check refunds first</legend>
+          <p className="text_container">These event tickets are for events that have not finished. Once erased, the person is removed from the attendee list and their place is freed, but the club can no longer contact them about a refund. If a refund is due, make it from the order's Purchased item actions before erasing. This does not stop the erasure.</p>
+          <ul className="ReportItems">{preview.refundChecks.map((ticket) => <li key={`${ticket.orderRef}-${ticket.lineId}`}>
+            {ticket.attendee || 'Attendee'}: {ticket.name}{ticket.lastDate ? ` (ends ${formatDay(ticket.lastDate)})` : ''}, paid {money(ticket.pricePence)}{ticket.refundedPence ? `, ${money(ticket.refundedPence)} already refunded` : ''}. Order {ticket.orderRef}.
+          </li>)}</ul>
+        </fieldset>}
+
         {hasFamily && <fieldset className="CheckoutFieldset">
           <legend>This person is part of a family membership</legend>
           <p className="text_container">{preview.family.map((member) => member.name).join(', ')}. Choose how to handle the family.</p>
@@ -132,6 +143,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
 
         <ul className="ReportItems">
           <li>{preview.ordersRedacted} {preview.ordersRedacted === 1 ? 'order' : 'orders'} will have personal details removed (amounts and items are kept).</li>
+          <li>Their event tickets are removed from attendee lists and check-in, and their places freed; what was paid stays on the order as a financial record.</li>
           <li>{preview.subscriptionsToCancel.length} Stripe {preview.subscriptionsToCancel.length === 1 ? 'subscription' : 'subscriptions'} will be cancelled.</li>
           {(preview.subscriptionItemsToStop || []).map((stop) => <li key={stop.id}>Monthly payments stop for {stop.itemNames.join(', ')} on {stop.id}; the payer keeps paying for everyone else.</li>)}
           <li>{preview.related.discountCodes} voucher or discount {preview.related.discountCodes === 1 ? 'code' : 'codes'}, {preview.related.lists} form {preview.related.lists === 1 ? 'submission' : 'submissions'} and {preview.related.stripeRecords} Stripe mirror {preview.related.stripeRecords === 1 ? 'record' : 'records'} will be cleared.</li>

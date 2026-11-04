@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { familyOf, identityEmails, matchesIdentity, redactOrder, redactSubscription, sharedDetailsErrors, sharedDetailsUpdate } from './erasure.js';
+import { familyOf, identityEmails, matchesIdentity, redactOrder, redactSubscription, sharedDetailsErrors, sharedDetailsUpdate, ticketsToReview } from './erasure.js';
 
 const member = { firstName: 'Jo', lastName: 'Lee', dob: '1990-01-02', email: 'Jo@Example.com', affiliationNumber: 'PS1' };
 
@@ -90,4 +90,33 @@ test('subscription erasure keeps billing amounts and other beneficiaries, but no
   assert.equal(result.items[1].status, 'active');
   assert.deepEqual(result.cancelRequests, [{ at: 123, lineKeys: ['o1/l1'] }]);
   assert.equal(redactSubscription({ ...record, email: 'other@example.com' }, [], new Set(['jo@example.com'])).email, 'other@example.com');
+});
+
+test('erased attendees lose their event tickets from rosters and capacity, keeping what was paid', () => {
+  const order = { email: 'payer@example.com', status: 'paid', items: [
+    { id: 'trip', lineId: 'l1', category: 'EVENTS', pricePence: 3000 },
+    { id: 'trip', lineId: 'l2', category: 'EVENTS', pricePence: 3000 },
+    { id: 'senior', lineId: 'l3', category: 'MEMBERSHIP', pricePence: 5000 }],
+  people: [{ membershipId: 'M1', lineIds: ['l1', 'l3'], firstName: 'Ann' }, { membershipId: 'M2', lineIds: ['l2'], firstName: 'Bob' }] };
+  const update = redactOrder(order, ['M1'], []);
+  assert.deepEqual(update.items.map((item) => item.attendeeErased === true), [true, false, false]);
+  assert.equal(update.items[0].pricePence, 3000);
+  assert.equal(redactOrder({ ...order, ...update }, ['M1'], [])?.items, undefined, 'tickets are only marked once');
+  assert.equal(redactOrder({ ...order, people: [{ membershipId: 'M1', lineIds: ['l3'] }, order.people[1]] }, ['M1'], []).items, undefined);
+});
+
+test('refund checks list unfinished, unrevoked event tickets of the erased people only', () => {
+  const orders = new Map([
+    ['FCC-1', { status: 'paid', items: [
+      { id: 'future', lineId: 'a', name: 'Future trip', category: 'EVENTS', pricePence: 2500, refunds: [{ amountPence: 500, status: 'succeeded' }, { amountPence: 900, status: 'failed' }] },
+      { id: 'past', lineId: 'b', name: 'Past trip', category: 'EVENTS', pricePence: 2000 },
+      { id: 'future', lineId: 'c', name: 'Future trip', category: 'EVENTS', pricePence: 2500, revokedAt: 'x' },
+      { id: 'future', lineId: 'd', name: 'Future trip', category: 'EVENTS', pricePence: 2500 }],
+    people: [{ membershipId: 'M1', lineIds: ['a', 'b', 'c'] }, { membershipId: 'M2', lineIds: ['d'] }] }],
+    ['FCC-2', { status: 'pending', items: [{ id: 'future', lineId: 'e', category: 'EVENTS' }], people: [{ membershipId: 'M1', lineIds: ['e'] }] }]
+  ]);
+  const dates = { future: '2026-12-01', past: '2026-01-01' };
+  const tickets = ticketsToReview(orders, ['M1'], (item) => dates[item.id], '2026-06-01');
+  assert.deepEqual(tickets, [{ orderRef: 'FCC-1', lineId: 'a', membershipId: 'M1', name: 'Future trip', lastDate: '2026-12-01', pricePence: 2500, refundedPence: 500 }]);
+  assert.equal(ticketsToReview(orders, ['M1'], () => '2026-06-01', '2026-06-01').length, 2, 'an event finishing today is still under way');
 });
