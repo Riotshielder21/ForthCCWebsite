@@ -570,6 +570,72 @@
     @apply max-w-7xl mx-auto px-6 pb-20;
   }
 
+  /* ─── Page Banner ───────────────────────────────── */
+
+  .PageBanner {
+    --banner-height: clamp(18rem, 62vh, 40rem);
+    position: relative;
+    height: var(--banner-height);
+    overflow: hidden;
+    background: var(--fcc-color-surface-subtle);
+  }
+
+  .PageBannerImage {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center var(--banner-focus, 50%);
+    opacity: calc(1 - var(--banner-progress, 0));
+    transform: translateY(calc(var(--banner-progress, 0) * 20%));
+    will-change: opacity, transform;
+  }
+
+  /* Blend the photo's lower edge into the page so the overlapping tiles sit on a calm background. */
+  .PageBanner::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(to bottom, rgb(0 33 71 / 0.25) 0%, transparent 20%, transparent 72%, var(--fcc-color-surface-subtle) 100%);
+  }
+
+  .PageBannerCredit {
+    position: absolute;
+    top: 0.75rem;
+    right: 1rem;
+    z-index: 1;
+    font-size: 0.75rem;
+    color: #fff;
+    text-shadow: 0 1px 3px rgb(0 0 0 / 0.6);
+    opacity: calc(0.9 - var(--banner-progress, 0));
+  }
+
+  .HasBanner .SectionHero {
+    position: relative;
+    z-index: 1;
+    margin-top: calc(var(--banner-overlap) * -1);
+    --banner-overlap: clamp(5rem, 15vh, 8.5rem);
+  }
+
+  .HasBanner .SectionHero .main_tile {
+    box-shadow: 0 12px 32px -12px rgb(0 33 71 / 0.25);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .PageBannerImage { transform: none; }
+  }
+
+  .PageBannerSettings {
+    @apply max-w-7xl mx-auto my-4 px-6 py-4 grid gap-3 md:grid-cols-2 rounded-xl;
+    border: 2px dashed #38bdf8;
+    background: #f0f9ff;
+  }
+
+  .PageBannerSettings legend { @apply flex items-center gap-2 px-2 font-semibold; }
+  .PageBannerSettingsActions { @apply flex flex-wrap gap-2 md:col-span-2; }
+
   /* ─── Grid Layouts ──────────────────────────────── */
 
   .tile_grid_two {

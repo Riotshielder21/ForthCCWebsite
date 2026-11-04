@@ -7,6 +7,7 @@ import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { PAGE_TILE_GROUPS, moveTile, safeTileUrl, TILE_APPEARANCES, TILE_WIDTHS, tileAppearanceClass, tileIsWide } from '../utils/pageTiles';
 import { uploadPageImage } from '../utils/content';
 import { ContentText, ContentLinkEditor } from './ContentText';
+import PageBanner from './PageBanner';
 
 function EditableContentText({ value, label, onChange, multiline = true }) {
   return <ContentLinkEditor label={label} onChange={onChange}>
@@ -339,8 +340,9 @@ export default function EditablePage({ pageId, children }) {
     if (typeof node.type !== 'string' && node.type !== React.Fragment) return node;
     return React.cloneElement(node, {}, React.Children.map(node.props.children, render));
   };
-  return <div className="PageFadeIn EditablePage">
+  return <div className={`PageFadeIn EditablePage ${safeTileUrl(copy.banner?.imageUrl, true) ? 'HasBanner' : ''}`}>
     <PageEditorToolbar pageId={pageId} />
+    <PageBanner pageId={pageId} />
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={({ active, over }) => {
       if (!editing || !over) return;
       if (String(over.id).startsWith('group:')) {
