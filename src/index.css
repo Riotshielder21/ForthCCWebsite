@@ -1168,6 +1168,29 @@
 
   .AdminEventSchedule { min-width: 0; border: 0; margin: 16px 0; padding: 0; }
   .AdminEventTimes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .CheckinSessionCard {
+    display: flex; flex-direction: column; gap: 16px; margin-top: 20px; padding: 16px;
+    border: 1px solid var(--fcc-color-border); border-radius: 12px; background: var(--fcc-color-surface-subtle);
+  }
+  .CheckinSessionCard legend { padding: 0 8px; }
+  .CheckinSessionFields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .CheckinSessionFields .FormLabel { min-width: 0; margin: 0; }
+  .CheckinSessionName, .CheckinSessionFields .AdminEventTimes { grid-column: 1 / -1; }
+  .CheckinSessionOptions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .CheckinSessionOption {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px;
+    border: 1px solid var(--fcc-color-border); border-radius: 8px; background: var(--fcc-color-surface);
+    font-weight: 600; cursor: pointer;
+  }
+  .CheckinSessionOption input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: #087c56; }
+  .CheckinSessionActions { display: flex; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--fcc-color-border); }
+  .CheckinSessionSaveActions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+  @media (max-width: 640px) {
+    .CheckinSessionFields, .CheckinSessionFields .AdminEventTimes { grid-template-columns: 1fr; }
+    .CheckinSessionOption { width: 100%; }
+    .CheckinSessionActions, .CheckinSessionSaveActions { flex-direction: column; }
+    .CheckinSessionActions .EditorCommand, .CheckinSessionSaveActions .EditorCommand { width: 100%; }
+  }
 
   .AdminFormBuilder {
     @apply max-w-3xl;
