@@ -4,7 +4,7 @@ import { getPageCopy, PAGE_CONTENT } from '../constants/pageContent';
 import { auth, signInWithWorkspace } from './firebase';
 import { savePageContent } from './content';
 import { apiUrl } from './api';
-import { isClubEmail } from './adminAccess.js';
+import { retryableAdminAuthMessage, verifyAdminSession } from './adminAccess.js';
 import { pageDraftFingerprint, savePageDraftBatch, unsavedPageIds } from './pageDrafts.js';
 
 const PageContentContext = createContext({});
@@ -13,6 +13,8 @@ const PageEditorContext = createContext(null);
 export function PageContentProvider({ value, children }) {
   const [adminUser, setAdminUser] = useState(null);
   const [authReady, setAuthReady] = useState(!auth);
+  const [authError, setAuthError] = useState('');
+  const [authRetrying, setAuthRetrying] = useState(false);
   const [editMode, updateEditMode] = useState(false);
   const [drafts, setDrafts] = useState({});
   const [savedFingerprints, setSavedFingerprints] = useState({});
@@ -26,18 +28,17 @@ export function PageContentProvider({ value, children }) {
     let revision = 0;
     return onIdTokenChanged(auth, async (user) => {
       const currentRevision = ++revision;
-      let approved = null;
-      try {
-        if (user && !user.isAnonymous) {
-          const token = await user.getIdTokenResult();
-          if (token.claims.admin === true && isClubEmail(user.email)) approved = user;
-        }
-      } catch {
-        approved = null;
-      }
+      // Firebase can restore a cached user before refreshing an expired token; a network failure here is retryable.
+      const result = await verifyAdminSession(user);
       if (revision !== currentRevision) return;
-      setAdminUser(approved);
       setAuthReady(true);
+      if (result.status === 'retry') {
+        setAuthError(result.message);
+        return;
+      }
+      const approved = result.status === 'approved' ? result.user : null;
+      setAuthError('');
+      setAdminUser(approved);
       if (!approved) {
         updateEditMode(false);
         setDrafts({});
@@ -101,13 +102,52 @@ export function PageContentProvider({ value, children }) {
   }, [drafts, adminUser]);
 
   const login = async () => {
-    const user = await signInWithWorkspace();
-    const token = await user.getIdTokenResult(true);
-    if (token.claims.admin !== true) {
+    setAuthError('');
+    let user;
+    try {
+      user = await signInWithWorkspace();
+    } catch (error) {
+      const retryMessage = retryableAdminAuthMessage(error);
+      if (retryMessage) {
+        setAuthError(retryMessage);
+        throw new Error(retryMessage);
+      }
+      throw error;
+    }
+    const result = await verifyAdminSession(user, true);
+    if (result.status !== 'approved') {
+      if (result.status === 'retry') {
+        setAuthError(result.message);
+        throw new Error(result.message);
+      }
       await signOut(auth);
-      throw new Error('This account is not an approved website editor.');
+      throw new Error(result.message);
     }
     setAdminUser(user);
+  };
+
+  const retryAuth = async () => {
+    if (authRetrying) return;
+    setAuthRetrying(true);
+    setAuthError('');
+    try {
+      const result = await verifyAdminSession(auth?.currentUser, true);
+      if (result.status === 'retry') {
+        setAuthError(result.message);
+        return;
+      }
+      if (result.status === 'approved') {
+        setAdminUser(result.user);
+        setAuthReady(true);
+        return;
+      }
+      setAdminUser(null);
+      updateEditMode(false);
+      setDrafts({});
+      setAuthError(result.message);
+    } finally {
+      setAuthRetrying(false);
+    }
   };
 
   const logout = async () => {
@@ -115,6 +155,7 @@ export function PageContentProvider({ value, children }) {
     setAdminUser(null);
     setEditMode(false);
     setDrafts({});
+    setAuthError('');
     setMessage('');
     setError('');
   };
@@ -192,7 +233,7 @@ export function PageContentProvider({ value, children }) {
   };
 
   return (
-    <PageEditorContext.Provider value={{ adminUser, authReady, editMode, setEditMode, updatePage, login, logout, save, discard, busy, message, error, review, drafts, unsavedPages }}>
+    <PageEditorContext.Provider value={{ adminUser, authReady, authError, authRetrying, retryAuth, editMode, setEditMode, updatePage, login, logout, save, discard, busy, message, error, review, drafts, unsavedPages }}>
       <PageContentContext.Provider value={adminUser ? { ...value, ...drafts } : value}>
         {children}
       </PageContentContext.Provider>

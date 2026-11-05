@@ -1228,6 +1228,11 @@
   .EditorUnsavedPages { flex-basis: 100%; font-weight: 700; overflow-wrap: anywhere; }
   .EditorStatus { flex-basis: 100%; overflow-wrap: anywhere; }
   .EditorError { color: #b42318; }
+  .EditorRetryButton { margin-left: 8px; text-decoration: underline; font-weight: 700; }
+  .AdminAuthWarning {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px;
+    padding: 12px 24px; color: #7a2e0e; background: #fff4e5; border-bottom: 1px solid #f5c27a;
+  }
   .tile_group_single { display: grid; grid-template-columns: 1fr; gap: 24px; }
   .tile_editor { position: relative; min-width: 0; display: flex; flex-direction: column; }
   .tile_editor > .main_tile, .tile_editor > .shop_product_tile, .tile_editor > .sponsor_subtile { flex: 1; height: auto; min-height: 0; min-width: 0; }
