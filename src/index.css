@@ -684,6 +684,16 @@
   }
 
   .PageBannerSettings legend { @apply flex items-center gap-2 px-2 font-semibold; }
+  .BannerUploadLabel { min-width: 0; }
+  .BannerFileInput { margin-top: 8px; padding: 6px; cursor: pointer; }
+  .BannerFileInput::file-selector-button {
+    min-height: 40px; margin-right: 12px; padding: 8px 12px; border: 1px solid #087c56;
+    border-radius: 6px; color: #fff; background: #087c56; font: inherit; font-weight: 700;
+    cursor: pointer;
+  }
+  .BannerFileInput:hover::file-selector-button { background: #066947; border-color: #066947; }
+  .BannerFileInput:focus-visible { outline: 3px solid #00a8e8; outline-offset: 2px; }
+  .BannerFileInput:disabled, .BannerFileInput:disabled::file-selector-button { cursor: wait; opacity: .65; }
   .PageBannerSettingsActions { @apply flex flex-wrap gap-2 md:col-span-2; }
 
   /* ─── Grid Layouts ──────────────────────────────── */
