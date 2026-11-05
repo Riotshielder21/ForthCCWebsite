@@ -49,6 +49,7 @@ Open `http://localhost:3000`. Use **Admin** in the footer, then **Sign in as loc
 - **Seed data:** synthetic households, orders, a course and a voucher; reseeding resets them.
 - **Mobile checks:** 390x844, 360x640, 320x568 portrait and 667x375, 844x390 landscape.
 - **Banner editor (#88):** Upload photo and Photo URL should have matching input heights and align on desktop; all four fields should fit on mobile.
+- **Key access (#26):** Grant, revoke, then restore access on a synthetic member. After each refresh, the record dialog must have exactly one key-access heading, reason field and action.
 
 ## Build And Test
 
