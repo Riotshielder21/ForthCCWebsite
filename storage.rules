@@ -21,5 +21,12 @@ service firebase.storage {
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)');
     }
+    match /safeguarding/{fileName} {
+      allow read: if true;
+      allow write: if isClubAdmin()
+        && request.resource != null
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf';
+    }
   }
 }

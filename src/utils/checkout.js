@@ -1,5 +1,8 @@
 import { productMembershipRule } from './catalogue.js';
 import { clubYearDates, clubYearOf } from './clubYear.js';
+import {
+  isValidPersonName, normaliseAffiliationNumber, normaliseName as normalisePersonName, normalisePhoneNumber, normaliseUkPostcode
+} from './personalDetails.js';
 // Placeholder wording: replace with the club's approved disclaimer; the new wording is recorded as the next policy version after release.
 export const DISCLAIMER_TEXT = 'I confirm the details given are correct and I accept the Forth Canoe Club participation and safety disclaimer. For under-18s, the parent/guardian accepts on their behalf.';
 export const PHOTO_CONSENT_TEXT = 'Photo and video consent';
@@ -109,17 +112,58 @@ export const sanitizePerson = (person) => ({
   id: text(person?.id, 64),
   lineIds: Array.isArray(person?.lineIds) ? person.lineIds.filter((id) => typeof id === 'string').map((id) => id.slice(0, 64)) : [],
   returning: person?.returning === true, junior: person?.junior === true,
-  firstName: text(person?.firstName, 80), lastName: text(person?.lastName, 80), dob: text(person?.dob, 10),
-  email: text(person?.email, 254).toLowerCase(), phone: text(person?.phone, 40),
-  address: text(person?.address, 300), postcode: text(person?.postcode, 12),
+  firstName: normalisePersonName(text(person?.firstName, 80)), lastName: normalisePersonName(text(person?.lastName, 80)), dob: text(person?.dob, 10),
+  email: text(person?.email, 254).toLowerCase(), phone: normalisePhoneNumber(text(person?.phone, 40)) || text(person?.phone, 40),
+  address: text(person?.address, 300), postcode: normaliseUkPostcode(text(person?.postcode, 12)) || text(person?.postcode, 12),
   affiliationNumber: text(person?.affiliationNumber, 40), swimming: text(person?.swimming, 20), medical: text(person?.medical, 1000),
   photoConsent: person?.photoConsent === true, disclaimerAccepted: person?.disclaimerAccepted === true,
   ownKitLineIds: Array.isArray(person?.ownKitLineIds) ? person.ownKitLineIds.filter((id) => typeof id === 'string').map((id) => id.slice(0, 64)).slice(0, 20) : [],
-  emergencyContact: { name: text(person?.emergencyContact?.name, 120), phone: text(person?.emergencyContact?.phone, 40), relationship: text(person?.emergencyContact?.relationship, 60) },
-  guardian: { name: text(person?.guardian?.name, 120), phone: text(person?.guardian?.phone, 40), email: text(person?.guardian?.email, 254).toLowerCase(), relationship: text(person?.guardian?.relationship, 60), address: text(person?.guardian?.address, 300), postcode: text(person?.guardian?.postcode, 12) }
+  emergencyContact: { name: normalisePersonName(text(person?.emergencyContact?.name, 120)), phone: normalisePhoneNumber(text(person?.emergencyContact?.phone, 40)) || text(person?.emergencyContact?.phone, 40), relationship: text(person?.emergencyContact?.relationship, 60) },
+  guardian: { name: normalisePersonName(text(person?.guardian?.name, 120)), phone: normalisePhoneNumber(text(person?.guardian?.phone, 40)) || text(person?.guardian?.phone, 40), email: text(person?.guardian?.email, 254).toLowerCase(), relationship: text(person?.guardian?.relationship, 60), address: text(person?.guardian?.address, 300), postcode: normaliseUkPostcode(text(person?.guardian?.postcode, 12)) || text(person?.guardian?.postcode, 12) }
 });
 
 const EMAIL = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+
+const PERSON_TEXT_FIELDS = {
+  firstName: ['first name', 80], lastName: ['last name', 80], dob: ['date of birth', 10],
+  email: ['email', 254], phone: ['phone number', 40], address: ['address', 300], postcode: ['postcode', 12],
+  affiliationNumber: ['Paddle Scotland / JustGo membership number', 40], swimming: ['swimming ability', 20], medical: ['medical notes', 1000]
+};
+const CONTACT_TEXT_FIELDS = {
+  name: ['name', 120], phone: ['phone number', 40], relationship: ['relationship', 60],
+  email: ['email', 254], address: ['address', 300], postcode: ['postcode', 12]
+};
+
+/** Reject malformed raw API values before sanitization can turn them into blanks or truncate them. */
+export const personInputErrors = (people) => {
+  if (!Array.isArray(people)) return ['Add the details for each person in your basket.'];
+  const errors = [];
+  people.forEach((person, index) => {
+    const label = `Person ${index + 1}`;
+    if (!person || typeof person !== 'object' || Array.isArray(person)) {
+      errors.push(`${label}: invalid details.`);
+      return;
+    }
+    for (const [field, [description, max]] of Object.entries(PERSON_TEXT_FIELDS)) {
+      if (person[field] === undefined) continue;
+      if (typeof person[field] !== 'string') errors.push(`${label}: ${description} must be text.`);
+      else if (person[field].length > max) errors.push(`${label}: ${description} must be ${max} characters or fewer.`);
+    }
+    for (const group of ['emergencyContact', 'guardian']) {
+      if (person[group] === undefined) continue;
+      if (!person[group] || typeof person[group] !== 'object' || Array.isArray(person[group])) {
+        errors.push(`${label}: ${group === 'guardian' ? 'parent/guardian' : 'emergency contact'} details are invalid.`);
+        continue;
+      }
+      for (const [field, [description, max]] of Object.entries(CONTACT_TEXT_FIELDS)) {
+        if (person[group][field] === undefined) continue;
+        if (typeof person[group][field] !== 'string') errors.push(`${label}: ${group === 'guardian' ? 'parent/guardian' : 'emergency contact'} ${description} must be text.`);
+        else if (person[group][field].length > max) errors.push(`${label}: ${group === 'guardian' ? 'parent/guardian' : 'emergency contact'} ${description} must be ${max} characters or fewer.`);
+      }
+    }
+  });
+  return errors;
+};
 
 // The first age-related problem for a person, or '' (also shown inline next to the date of birth).
 export const ageProblem = (person, lines, role = null, now = new Date()) => {
@@ -167,6 +211,11 @@ export const personDetailErrors = (person, label, lines, now = new Date(), role 
   const errors = [];
   const lineMap = new Map(lines.map((line) => [line.lineId, line]));
   if (!person.firstName || !person.lastName) errors.push(`${label}: first and last name are required.`);
+  else if (!person.returning && !isValidPersonName(person.firstName)) errors.push(`${label}: enter a valid first name using letters, spaces, apostrophes or hyphens.`);
+  else if (!person.returning && !isValidPersonName(person.lastName)) errors.push(`${label}: enter a valid last name using letters, spaces, apostrophes or hyphens.`);
+  if (person.affiliationNumber && normaliseAffiliationNumber(person.affiliationNumber) === null) {
+    errors.push(`${label}: Paddle Scotland / JustGo membership number must be a number from 1 to 999999.`);
+  }
   const age = ageOn(person.dob, now);
   if (age === null) errors.push(`${label}: enter a valid date of birth.`);
   if (!person.disclaimerAccepted) errors.push(`${label}: the disclaimer must be accepted.`);
@@ -178,11 +227,18 @@ export const personDetailErrors = (person, label, lines, now = new Date(), role 
     if (kind === 'junior') {
       const { name, phone, email, address, postcode } = person.guardian;
       if (!name || !person.guardian.relationship || !phone || !address || !postcode || !EMAIL.test(email)) errors.push(`${label}: parent/guardian name, relationship, phone, email, address and postcode are required.`);
+      if (name && !isValidPersonName(name)) errors.push(`${label}: enter a valid parent/guardian name.`);
+      if (phone && !normalisePhoneNumber(phone)) errors.push(`${label}: enter a valid parent/guardian phone number.`);
+      if (postcode && !normaliseUkPostcode(postcode)) errors.push(`${label}: enter a valid UK postcode for the parent/guardian.`);
     } else {
       if (!person.phone) errors.push(`${label}: phone number is required.`);
       if (!person.address || !person.postcode) errors.push(`${label}: address and postcode are required.`);
+      if (person.phone && !normalisePhoneNumber(person.phone)) errors.push(`${label}: enter a valid phone number.`);
+      if (person.postcode && !normaliseUkPostcode(person.postcode)) errors.push(`${label}: enter a valid UK postcode.`);
       if (!EMAIL.test(person.email)) errors.push(`${label}: a valid email is required.`);
       if (!person.emergencyContact.name || !person.emergencyContact.relationship || !person.emergencyContact.phone) errors.push(`${label}: emergency contact name, relationship and phone are required.`);
+      if (person.emergencyContact.name && !isValidPersonName(person.emergencyContact.name)) errors.push(`${label}: enter a valid emergency contact name.`);
+      if (person.emergencyContact.phone && !normalisePhoneNumber(person.emergencyContact.phone)) errors.push(`${label}: enter a valid emergency contact phone number.`);
     }
   }
   return errors;
@@ -191,6 +247,9 @@ export const personDetailErrors = (person, label, lines, now = new Date(), role 
 // Returns human-readable problems; an empty array means the details are complete.
 export const validateCheckout = ({ lines, people, now = new Date() }) => {
   const errors = [];
+  const inputErrors = personInputErrors(people);
+  errors.push(...inputErrors);
+  if (inputErrors.length) return errors;
   const personLines = lines.filter(needsPerson);
   const lineMap = new Map(lines.map((line) => [line.lineId, line]));
   const ids = new Set();

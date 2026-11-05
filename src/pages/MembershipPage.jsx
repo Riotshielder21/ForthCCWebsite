@@ -8,6 +8,7 @@ import { bookingsClosed, formatDate } from '../utils/eventRoster';
 import { productLimits } from '../utils/inventory';
 import { scopeLabel, voucherScope } from '../utils/vouchers';
 import fccBurgee from '../assets/fcc-burgee.png';
+import { safeTileUrl } from '../utils/contentLinks';
 
 // Matches .shop_catalogue_grid: one column, two from md (768px), three from lg (1024px).
 function useGridColumns() {
@@ -49,7 +50,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
     }
     return (
       <div className="QuantityControl" role="group" aria-label={`${product.name}${size ? ` (${size})` : ''}: ${count} in basket`}>
-        <button onClick={() => removeOneFromCart(product.id, size)} aria-label={`Remove one ${product.name}`} title="Remove one"><Minus className="IconLg" /></button>
+        <button onClick={() => removeOneFromCart({ id: product.id, size })} aria-label={`Remove one ${product.name}`} title="Remove one"><Minus className="IconLg" /></button>
         <span aria-hidden="true">{count}</span>
         <button onClick={onAdd} disabled={soldOut} aria-label={`Add another ${product.name}`} title={soldOut ? 'No more available' : 'Add another'}><Plus className="IconLg" /></button>
       </div>
@@ -147,7 +148,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                             {tier.membershipTier}
                           </span>
                           <span className="DropdownItemHint">
-                            {tier.description}
+                            {tier.description.replace(/\bSCA\b/g, 'Paddle Scotland')}
                           </span>
                         </div>
                         <span className="DropdownItemPrice">
@@ -171,6 +172,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
 
           {/* All other products */}
           {displayProducts.map((product, productIndex) => {
+            const externalLink = safeTileUrl(product.externalLink);
             const merchandise = product.category === 'MERCHANDISE';
             const remaining = availability[product.id]?.remaining;
             const sizes = merchandise ? Object.keys(productLimits(product) || {}) : [];
@@ -191,6 +193,9 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                 <h3 className="product_heading_bold">{product.name}</h3>
               </div>
               <p className="shop_product_description">{product.description}</p>
+              {product.pricingMode === 'subscription' && product.allowMonthly && (
+                <p className="KitHireMonthlyLabel">Choose annual or monthly payment in the basket.</p>
+              )}
               {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
               {isTripEvent(product) && <p className="text_container text_container_note">£10 off with annual boat hire, and £10 off with a coaching subscription.</p>}
               {product.category === 'EVENTS' && product.leaderName && <p className="text_container SpaceB4">Led by {product.leaderName}{product.leaderEmail && <> (<a className="ContentLink" href={`mailto:${product.leaderEmail}`}>{product.leaderEmail}</a>)</>}</p>}
@@ -234,7 +239,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                   )}
                 </div>
                 {product.type === 'external' ? (
-                  <a href={product.externalLink} target="_blank" rel="noreferrer" className="PrimaryActionButton">
+                  <a href={externalLink || undefined} target={externalLink.startsWith('/') ? undefined : '_blank'} rel="noreferrer" className="PrimaryActionButton">
                     {copy.externalAction} <ExternalLink className="IconSm" />
                   </a>
                 ) : closed ? <span className="shop_product_meta">Bookings closed</span> : purchaseControl(product, () => addToCart(product, size), size)}

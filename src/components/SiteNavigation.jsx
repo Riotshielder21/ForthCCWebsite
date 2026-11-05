@@ -1,12 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ShoppingCart, Menu, X, UserRound } from 'lucide-react';
 import fccCrest from '../assets/fcc-crest.png';
+import { pagePath } from '../utils/routes';
 
-const NAV_ITEMS = [
+const PRIMARY_NAV_ITEMS = [
   { id: 'home', label: 'Home' },
-  { id: 'membership', label: 'Membership & Events' },
+  { id: 'membership', label: 'Membership' },
   { id: 'beginners', label: 'Beginners' },
-  { id: 'disciplines', label: 'Disciplines' },
+  { id: 'disciplines', label: 'Disciplines' }
+];
+
+const MORE_NAV_ITEMS = [
   { id: 'volunteering', label: 'Volunteering' },
   { id: 'about', label: 'About' },
   { id: 'contact-us', label: 'Contact Us' },
@@ -14,35 +18,87 @@ const NAV_ITEMS = [
 ];
 
 export default function SiteNavigation({ currentPage, setCurrentPage, cartCount, onCartOpen }) {
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [desktop, setDesktop] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches);
+  const menuButton = useRef(null);
+
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1024px)');
+    const update = () => setDesktop(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false);
+        menuButton.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [menuOpen]);
 
   const handleNav = (item) => {
     setCurrentPage(item);
-    setMobileOpen(false);
+    setMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
+  const navLink = (item, bubble = true) => (
+    <a
+      key={item.id}
+      href={pagePath(item.id)}
+      onClick={(event) => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        handleNav(item.id);
+      }}
+      aria-current={currentPage === item.id ? 'page' : undefined}
+      className={`${bubble ? 'TopNavButton' : 'MenuNavLink'} ${currentPage === item.id ? 'TopNavButtonActive' : 'TopNavButtonIdle'}`}
+    >
+      {item.label}
+    </a>
+  );
+
   return (
-    <nav className="SiteHeader">
+    <>
+    <header className="SiteHeader">
       <div className="SiteHeaderInner">
-        <button className="BrandLockup" onClick={() => handleNav('home')} aria-label="Go to home page">
+        <a href="/" className="BrandLockup" onClick={() => setMenuOpen(false)} aria-label="Go to home page">
           <img src={fccCrest} alt="Forth Canoe Club crest" className="BrandMark" />
           <div>
             <h1 className="BrandTitle">Forth Canoe<br />Club SCIO</h1>
           </div>
-        </button>
+        </a>
 
-        <div className="TopNav">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleNav(item.id)}
-              className={`TopNavButton ${currentPage === item.id ? 'TopNavButtonActive' : 'TopNavButtonIdle'}`}
-            >
-              {item.label}
-            </button>
-          ))}
+        {desktop && <nav className="TopNav" aria-label="Primary navigation">
+          {PRIMARY_NAV_ITEMS.map((item) => navLink(item))}
+        </nav>}
+
+        <div className="NavControls">
+          <a
+            href="/my-details"
+            onClick={(event) => {
+              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              handleNav('my-details');
+            }}
+            className={`ProfileToggleButton ${currentPage === 'my-details' ? 'ProfileToggleButtonActive' : ''}`}
+            aria-label="My details"
+            aria-current={currentPage === 'my-details' ? 'page' : undefined}
+            title="My details"
+          >
+            <UserRound className="IconLg" aria-hidden="true" />
+          </a>
           <button
-            onClick={onCartOpen}
+            onClick={() => {
+              setMenuOpen(false);
+              onCartOpen();
+            }}
             className="CartToggleButton"
             aria-label={`Open basket${cartCount > 0 ? `, ${cartCount} item${cartCount === 1 ? '' : 's'}` : ''}`}
           >
@@ -53,52 +109,36 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
               </span>
             )}
           </button>
-        </div>
-
-        <div className="MobileNavControls">
-          {mobileOpen && (
-            <a href="/my-details" className="CartToggleButton" aria-label="My details" title="My details" onClick={(event) => {
-              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-              event.preventDefault();
-              handleNav('my-details');
-            }}>
-              <UserRound className="IconLg" />
-            </a>
-          )}
           <button
-            onClick={onCartOpen}
-            className="CartToggleButton"
-            aria-label={`Open basket${cartCount > 0 ? `, ${cartCount} item${cartCount === 1 ? '' : 's'}` : ''}`}
-          >
-            <ShoppingCart className="IconLg" />
-            {cartCount > 0 && (
-              <span className="CartToggleBadge">{cartCount}</span>
-            )}
-          </button>
-          <button
-            onClick={() => setMobileOpen(!mobileOpen)}
+            ref={menuButton}
+            onClick={() => setMenuOpen(!menuOpen)}
             className="MobileMenuButton"
-            aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
-            aria-expanded={mobileOpen}
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            aria-controls="site-menu"
           >
-            {mobileOpen ? <X className="IconXl" /> : <Menu className="IconXl" />}
+            {menuOpen ? <X className="IconXl" /> : <Menu className="IconXl" />}
+            <span className="MenuButtonLabel">More</span>
           </button>
         </div>
       </div>
 
-      {mobileOpen && (
-        <div className="MobileMenu">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleNav(item.id)}
-              className={`TopNavButton ${currentPage === item.id ? 'TopNavButtonActive' : 'TopNavButtonIdle'}`}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+      {menuOpen && (
+        <nav id="site-menu" className="MobileMenu" aria-label="Site menu">
+          {!desktop && <div className="MenuPrimaryLinks">
+            {PRIMARY_NAV_ITEMS.map((item) => navLink(item))}
+          </div>}
+          <div className="MenuMoreLinks">
+            {MORE_NAV_ITEMS.map((item) => navLink(item, false))}
+          </div>
+        </nav>
       )}
-    </nav>
+    </header>
+    {currentPage === 'home' && !desktop && !menuOpen && (
+      <nav className="HomeQuickNav" aria-label="Homepage shortcuts">
+        {PRIMARY_NAV_ITEMS.map((item) => navLink(item))}
+      </nav>
+    )}
+    </>
   );
 }

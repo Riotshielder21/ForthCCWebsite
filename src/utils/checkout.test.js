@@ -13,9 +13,9 @@ let counter = 0;
 const makeId = () => `p${++counter}`;
 
 const complete = (person, overrides = {}) => ({
-  ...person, firstName: 'A', lastName: 'B', dob: '1990-05-01', email: 'a@example.com', phone: '1', address: '1 St',
-  postcode: 'EH1', swimming: 'basic', disclaimerAccepted: true,
-  emergencyContact: { name: 'C', phone: '2', relationship: 'Friend' }, ...overrides
+  ...person, firstName: 'A', lastName: 'B', dob: '1990-05-01', email: 'a@example.com', phone: '07911 123456', address: '1 St',
+  postcode: 'EH1 1AA', swimming: 'basic', disclaimerAccepted: true,
+  emergencyContact: { name: 'C', phone: '07911 123457', relationship: 'Friend' }, ...overrides
 });
 
 test('two junior memberships create two people; hire joins the first', () => {
@@ -58,11 +58,19 @@ test('age calculation rejects invalid and future dates', () => {
   assert.equal(ageOn('2010-02-31', now), null);
 });
 
+test('Unicode names and short Paddle Scotland numbers validate; malformed values are rejected', () => {
+  const [person] = assignLines([], [hire], makeId);
+  const valid = complete(person, { firstName: 'Zoë', lastName: 'O’Connor', affiliationNumber: '123' });
+  assert.deepEqual(validateCheckout({ lines: [hire], people: [valid], now }), []);
+  assert.match(validateCheckout({ lines: [hire], people: [{ ...valid, firstName: 'Anne3' }], now }).join(' '), /valid first name/);
+  assert.match(validateCheckout({ lines: [hire], people: [{ ...valid, affiliationNumber: '1000000' }], now }).join(' '), /1 to 999999/);
+});
+
 test('minors need a guardian instead of an emergency contact', () => {
   const [person] = assignLines([], [junior(1)], makeId);
   const kid = complete(person, { dob: '2015-01-01', email: '', emergencyContact: { name: '', phone: '', relationship: '' } });
   assert.match(validateCheckout({ lines: [junior(1)], people: [kid], now }).join(' '), /guardian/);
-  const ok = { ...kid, guardian: { name: 'P', phone: '3', email: 'p@example.com', relationship: 'Parent', address: '2 St', postcode: 'EH2' } };
+  const ok = { ...kid, guardian: { name: 'P', phone: '07911 123458', email: 'p@example.com', relationship: 'Parent', address: '2 St', postcode: 'EH2 2AA' } };
   assert.deepEqual(validateCheckout({ lines: [junior(1)], people: [ok], now }), []);
 });
 
@@ -199,7 +207,7 @@ test('a junior membership uses the guardian layout whatever date has been typed 
 test('juniors give the parent address, phone and email instead of their own', () => {
   const [person] = assignLines([], [junior(1)], makeId);
   const kid = complete(person, { dob: '2015-01-01', email: '', phone: '', address: '', postcode: '', emergencyContact: { name: '', phone: '', relationship: '' },
-    guardian: { name: 'P', phone: '3', email: 'p@example.com', relationship: 'Parent', address: '2 St', postcode: 'EH2' } });
+    guardian: { name: 'P', phone: '07911 123458', email: 'p@example.com', relationship: 'Parent', address: '2 St', postcode: 'EH2 2AA' } });
   assert.deepEqual(validateCheckout({ lines: [junior(1)], people: [kid], now }), []);
   assert.match(validateCheckout({ lines: [junior(1)], people: [{ ...kid, guardian: { ...kid.guardian, address: '' } }], now }).join(' '), /address/);
 });
@@ -213,7 +221,7 @@ test('family members choose adult or under 18, and the choice must match the dat
 
 const familyPeople = (kids) => {
   let people = assignLines([], [family], makeId).slice(0, 1);
-  people[0] = complete(people[0], { phone: '07', email: 'fam@example.com', address: '9 Rd', postcode: 'EH9', emergencyContact: { name: 'Gran', phone: '08', relationship: 'Grandparent' } });
+  people[0] = complete(people[0], { phone: '07911 123459', email: 'fam@example.com', address: '9 Rd', postcode: 'EH9 1AA', emergencyContact: { name: 'Gran', phone: '07911 123460', relationship: 'Grandparent' } });
   kids.forEach((kid) => { people = addFamilyMember(people, 'f1', makeId); people[people.length - 1] = { ...people[people.length - 1], firstName: kid.name, lastName: 'Fam', dob: kid.dob, junior: kid.junior, swimming: 'basic', disclaimerAccepted: true }; });
   return people;
 };
@@ -223,7 +231,7 @@ test('family members only give name, date of birth and consent; the family share
   assert.deepEqual(validateCheckout({ lines: [family], people, now }), []);
   const resolved = withFamilyContacts(people, [family]);
   assert.equal(resolved[1].address, '9 Rd');
-  assert.equal(resolved[1].guardian.phone, '07');
+  assert.equal(resolved[1].guardian.phone, '07911 123459');
   assert.equal(resolved[1].emergencyNote, 'Parents are the emergency contact');
   assert.equal(resolved[1].emergencyContact.name, 'Gran');
 });
@@ -327,7 +335,7 @@ test('guardian fields are all required for junior members, including relationshi
   const [person] = assignLines([], [line], makeId);
   const valid = complete(person, {
     dob: '2015-01-01',
-    guardian: { name: 'Parent', phone: '3', email: 'parent@example.com', relationship: 'Parent', address: '2 St', postcode: 'EH2' }
+    guardian: { name: 'Parent', phone: '07911 123458', email: 'parent@example.com', relationship: 'Parent', address: '2 St', postcode: 'EH2 2AA' }
   });
   const cases = [
     ['name', ''],

@@ -4,6 +4,7 @@ import { ageOn, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT } from '../
 import { loadEmailSession, clearEmailSession, sessionRequest } from '../utils/emailSession';
 import EmailCodeSignIn from '../components/EmailCodeSignIn';
 import { usePageEditor } from '../utils/PageContentContext';
+import { validateCheckinIdentity, validateGuestDetails } from '../utils/clubNight';
 
 const localTime = (value) => value ? new Date(value).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' }) : '';
 const blankIdentity = { firstName: '', lastName: '', email: '', dob: '' };
@@ -280,11 +281,17 @@ export default function ClubNightPage() {
   const submit = async (event) => {
     event.preventDefault();
     if (!session) { setError('Choose which session you are checking in to.'); return; }
+    const identityValidation = validateCheckinIdentity(identity);
+    if (identityValidation.error) { setError(identityValidation.error); return; }
+    if (needsDetails) {
+      const detailsResult = validateGuestDetails(identityValidation.value, details);
+      if (detailsResult.error) { setError(detailsResult.error); return; }
+    }
     setBusy(true); setError(''); setStatus('');
     try {
       const response = await fetch(apiUrl('/api/club-night/checkins'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-        body: JSON.stringify({ ...identity, sessionId: session.id, ...(needsDetails ? { details } : {}) })
+        body: JSON.stringify({ ...identityValidation.value, sessionId: session.id, ...(needsDetails ? { details } : {}) })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not record check-in.');

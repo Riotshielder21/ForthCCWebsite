@@ -1,12 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyVolunteerBenefits, DEFAULT_VOLUNTEER_BENEFITS as tiers, needsVolunteerRenewal, normaliseVolunteerLevels, validateVolunteerBenefits, volunteerLevelLabel, volunteerProfileLabels, volunteerBenefitText, volunteerPrivileges } from './volunteering.js';
+import { applyVolunteerBenefits, DEFAULT_VOLUNTEER_BENEFITS as tiers, needsVolunteerRenewal, normaliseVolunteerLevels, validateVolunteerBenefits, volunteerLevelLabel, volunteerProfileLabels, volunteerBenefitText, volunteerBenefitList, volunteerBenefitsEmail, volunteerPrivileges } from './volunteering.js';
 import { clubYearOf } from './clubYear.js';
 import { calculateCart } from './pricing.js';
 import { volunteerCancellationPhases } from './volunteerCancellation.js';
 
 const now = new Date('2027-04-01T12:00:00Z');
 const member = (tier, active = true) => ({ volunteer: { inducted: true, years: { 2027: { active, tier, benefits: ['Free key hire'] } } } });
+
+test('volunteer benefits emails capitalise greetings, use real bullets and sign off in both formats', () => {
+  const products = [{ id: 'boat-hire', name: 'Boat & kit hire' }, { id: 'keyhire', name: 'Boathouse access' }];
+  const email = volunteerBenefitsEmail({ name: ' jack watt ', tier: tiers[2], year: 2026, products });
+  assert.ok(email.body.startsWith('Hi Jack Watt,\n\n'));
+  assert.match(email.html, /<p>Hi Jack Watt,<\/p>/);
+  const benefits = volunteerBenefitList(tiers[2], products);
+  assert.equal(benefits.length, 4);
+  assert.equal((email.html.match(/<li>/g) || []).length, benefits.length);
+  for (const benefit of benefits) assert.ok(email.body.includes(`- ${benefit}`));
+  assert.match(email.html, /<li>Free Boat &amp; kit hire<\/li>/);
+  assert.ok(email.body.endsWith('Thank you,\n\nForth Canoe Club'));
+  assert.ok(email.html.endsWith('<p>Thank you,</p><p>Forth Canoe Club</p></body></html>'));
+  assert.doesNotMatch(email.html, /<br|white-space|max-width|\swidth=/);
+  assert.match(email.body, /details\. Monthly payments/);
+  assert.match(email.body, /club year 2026\/2027/);
+});
+
+test('volunteer benefits email escapes user content and preserves existing mixed-case names', () => {
+  const tier = { ...tiers[0], freeProductIds: [], extra: 'Help <script>alert("x")</script>' };
+  const email = volunteerBenefitsEmail({ name: "anne-marie o'neill McDonald <img>", tier, year: 2026 });
+  assert.ok(email.body.startsWith("Hi Anne-Marie O'Neill McDonald <Img>,"));
+  assert.doesNotMatch(email.html, /<script>|<img>/i);
+  assert.match(email.html, /&lt;script&gt;/);
+  assert.match(email.html, /&lt;Img&gt;/);
+  assert.match(volunteerBenefitsEmail({ name: 'élise dúpont', tier, year: 2026 }).body, /^Hi Élise Dúpont,/);
+});
 const people = [{ membershipId: 'm1', lineIds: ['line'] }];
 const line = { id: 'gold-sub', lineId: 'line', category: 'SUBSCRIPTIONS', pricingMode: 'subscription', basePrice: 25, allowMonthly: true };
 const price = (tier, item = line, holders = people, records = new Map([['m1', member(tier)]])) => applyVolunteerBenefits([item], holders, records, tiers, now)[0];

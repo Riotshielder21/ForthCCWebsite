@@ -42,12 +42,18 @@
         ]
       },
       {
-        "source": "**/*.@(js|css|svg|png|jpg|jpeg|webp|woff|woff2)",
+        "source": "/assets/**",
         "headers": [
           {
             "key": "Cache-Control",
             "value": "public,max-age=31536000,immutable"
           }
+        ]
+      },
+      {
+        "source": "/sw.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache" }
         ]
       },
       {
@@ -69,7 +75,7 @@
         ]
       },
       {
-        "source": "/{admin,api,order,my-details,check-ins,club-night,payment-success,_preview}{,/**}",
+        "source": "/{admin,api,order,my-details,check-ins,club-night,checkout,payment-success,_preview}{,/**}",
         "headers": [
           {
             "key": "X-Robots-Tag",
@@ -112,6 +118,13 @@
           }
         ]
       }
+    ],
+    "redirects": [
+      { "source": "/home", "destination": "/", "type": 301 },
+      { "source": "/activites", "destination": "/disciplines", "type": 301 },
+      { "source": "/activities", "destination": "/disciplines", "type": 301 },
+      { "source": "/contact", "destination": "/contact-us", "type": 301 },
+      { "source": "/club-night", "destination": "/check-ins", "type": 301 }
     ],
     "rewrites": [
       {

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { loadEmailSession, clearEmailSession, sessionRequest } from '../utils/emailSession';
+import { validateDetailsUpdate } from '../utils/myDetails';
 import EmailCodeSignIn from '../components/EmailCodeSignIn';
 import PurchaseReceipt from '../components/PurchaseReceipt';
 
@@ -26,6 +27,8 @@ function HouseholdEditor({ household, onSaved, onEmailChanged }) {
   const setContact = (field) => (event) => setForm({ ...form, emergencyContact: { ...form.emergencyContact, [field]: event.target.value } });
 
   const save = run(async () => {
+    const validation = validateDetailsUpdate(form, household);
+    if (validation.error) throw new Error(validation.error);
     const result = await sessionRequest('details', path, { method: 'PATCH', body: form });
     setMessage(result.changed.length ? 'Your details have been saved.' : 'No changes to save.');
     onSaved(result.household);

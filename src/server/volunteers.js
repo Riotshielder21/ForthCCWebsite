@@ -6,7 +6,7 @@ import { membershipActivity } from '../utils/membership.js';
 import { checkSummary, checksManagedByJustgo } from '../utils/safeguarding.js';
 import { rateLimit } from './rateLimit.js';
 import { clubYearOf, clubYearDates } from '../utils/clubYear.js';
-import { normaliseVolunteerLevels, validateVolunteerBenefits, volunteerBenefitText, volunteerLevelLabel, volunteerYear, needsVolunteerRenewal } from '../utils/volunteering.js';
+import { normaliseVolunteerLevels, validateVolunteerBenefits, volunteerBenefitText, volunteerBenefitsEmail, volunteerLevelLabel, volunteerYear, needsVolunteerRenewal } from '../utils/volunteering.js';
 import { annualAdjustment, monthlyAdjustment, monthsLeftIn, volunteerPriceFor, volunteerSignupYear } from '../utils/volunteerAdjustments.js';
 import { needsRenewal } from '../utils/renewals.js';
 import { allocateRecordIds, reserveRecordIds } from '../utils/recordIds.js';
@@ -507,7 +507,8 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       const tier = (await loadVolunteerBenefits()).find((candidate) => candidate.id === signup.tier);
       const year = signupYear(signup);
       if (!Number.isInteger(signup.clubYear)) await signupReference.update({ clubYear: year });
-      const benefits = tier ? [volunteerBenefitText(tier, await loadCatalogue())] : [];
+      const products = tier ? await loadCatalogue() : [];
+      const benefits = tier ? [volunteerBenefitText(tier, products)] : [];
       await recordVolunteerMembership(signupReference, signup, memberDocument, tier, benefits);
       if (!signup.inducted) return 'awaiting-induction';
       if (!tier) return 'needs-bracket';
@@ -516,7 +517,7 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       await settleMonthlyAdjustments(signupReference, memberDocument.id);
       if (signup.benefitsEmailedFor === `${year}:${tier.id}`) return 'up-to-date';
       const sent = await sendEmail({ to: signup.email, subject: 'Your Forth Canoe Club volunteer benefits',
-        body: `Hi ${signup.name},\n\nThank you for volunteering ${tier.hours}+ hours for club year ${year}/${year + 1}.\n${benefits.join('\n')}\n\nYour benefits are recorded on your membership and apply automatically at checkout when you use your membership details. Monthly payments you already have are lowered from your next payment, or stopped at the end of the month you have paid for when the benefit makes them free. For anything you have already paid for in full, the club will check whether a part refund is due.`,
+        ...volunteerBenefitsEmail({ name: signup.name, tier, year, products }),
         record: { kind: 'volunteer-benefits', signupId: signupReference.id, membershipIds: [memberDocument.id] } });
       if (!sent) throw new Error('Volunteer benefits saved, but the email could not be sent. Try activation again.');
       await signupReference.update({ benefitsEmailedFor: `${year}:${tier.id}` });

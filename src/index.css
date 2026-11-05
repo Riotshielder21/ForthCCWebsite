@@ -41,6 +41,12 @@
     min-width: 0;
   }
 
+  .OfflineStatus {
+    @apply fixed bottom-0 inset-x-0 z-[45] px-4 py-2 text-sm text-center;
+    background: var(--fcc-color-accent-soft);
+    color: var(--fcc-color-ink);
+  }
+
   .SiteSection {
     @apply max-w-7xl mx-auto px-6;
   }
@@ -66,32 +72,76 @@
   }
 
   .TopNav {
-    @apply hidden lg:flex items-center gap-1 xl:gap-3;
-  }
-
-  .TopNav .CartToggleButton {
-    @apply shrink-0 ml-2;
+    @apply flex items-center gap-3;
   }
 
   .TopNavButton {
-    @apply shrink-0 px-2 xl:px-3 py-2 rounded-full transition-all whitespace-nowrap;
-    font-size: 11px;
+    @apply inline-flex items-center justify-center shrink-0 px-4 py-2 rounded-full border transition-colors whitespace-nowrap;
+    min-height: 44px;
+    font-size: 14px;
     font-weight: 900;
     letter-spacing: 0;
   }
 
   .TopNavButtonActive {
-    @apply bg-sky-100;
+    @apply bg-sky-100 border-sky-100;
     color: var(--fcc-color-ink);
   }
 
   .TopNavButtonIdle {
-    @apply hover:text-sky-300;
+    @apply border-white/30 bg-white/10 hover:bg-white/20;
   }
 
-  .CartToggleButton {
-    @apply relative p-3 rounded-xl border transition ml-4;
+  .TopNavButton:focus-visible,
+  .MenuNavLink:focus-visible,
+  .MobileMenuButton:focus-visible,
+  .ProfileToggleButton:focus-visible,
+  .CartToggleButton:focus-visible,
+  .BrandLockup:focus-visible {
+    outline: 3px solid #38bdf8;
+    outline-offset: 3px;
+  }
+
+  .HomeQuickNav {
+    @apply relative grid grid-cols-2 sm:grid-cols-4 gap-3 p-4;
+    --quick-nav-height: 132px;
+    z-index: 2;
+    flex-shrink: 0;
+    color: var(--fcc-color-ink);
+  }
+
+  .HomeQuickNav:has(+ .SiteMain .HasBanner) {
+    margin-bottom: calc(-1 * var(--quick-nav-height));
+  }
+
+  .HomeQuickNav + .SiteMain .PageBannerCredit {
+    top: calc(var(--home-shortcut-height, 132px) + 0.75rem);
+  }
+
+  @media (min-width: 640px) {
+    .HomeQuickNav { --quick-nav-height: 76px; }
+    .HomeQuickNav + .SiteMain { --home-shortcut-height: 76px; }
+  }
+
+  .HomeQuickNav .TopNavButtonIdle {
+    @apply border-slate-300 bg-white hover:bg-sky-50;
+  }
+
+  .HomeQuickNav .TopNavButtonActive {
+    @apply border-sky-700 bg-sky-100;
+  }
+
+  .CartToggleButton,
+  .ProfileToggleButton {
+    @apply relative p-3 rounded-xl border transition;
     @apply border-white/10 bg-sky-950 hover:bg-sky-900;
+  }
+
+  .CartToggleButton { @apply ml-4; }
+
+  .ProfileToggleButtonActive {
+    @apply bg-sky-100 border-sky-100;
+    color: var(--fcc-color-ink);
   }
 
   .CartToggleBadge {
@@ -1307,19 +1357,39 @@
     @apply bg-red-50 text-red-700 border border-red-200;
   }
 
-  /* ─── Mobile Navigation ─────────────────────────── */
+  /* ─── Navigation Menu ───────────────────────────── */
 
-  .MobileNavControls {
-    @apply flex items-center gap-1 sm:gap-3 lg:hidden;
+  .NavControls {
+    @apply flex shrink-0 items-center gap-1 sm:gap-3;
   }
 
-  .MobileNavControls .CartToggleButton {
+  .NavControls .CartToggleButton,
+  .NavControls .ProfileToggleButton {
     @apply ml-0;
   }
 
   .MobileMenu {
-    @apply lg:hidden px-6 pb-6 flex flex-col gap-1;
+    @apply px-4 sm:px-6 pb-4;
+    max-height: calc(100dvh - 4rem);
+    overflow-y: auto;
     background: var(--fcc-color-ink);
+  }
+
+  .MenuPrimaryLinks {
+    @apply grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-3xl mx-auto py-3;
+  }
+
+  .MenuMoreLinks {
+    @apply flex flex-col sm:flex-row sm:flex-wrap sm:justify-center gap-1 border-t border-white/20 pt-3 max-w-3xl mx-auto;
+  }
+
+  .MenuNavLink {
+    @apply flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold;
+    min-height: 44px;
+  }
+
+  .MenuButtonLabel {
+    @apply hidden lg:inline;
   }
 
   /* ─── Footer ────────────────────────────────────── */
@@ -1407,11 +1477,7 @@
   /* ─── Mobile Menu ───────────────────────────────── */
 
   .MobileMenuButton {
-    @apply p-3 text-white;
-  }
-
-  .MobileMenu .TopNavButton {
-    @apply text-left;
+    @apply flex items-center gap-2 rounded-xl p-3 text-white cursor-pointer;
   }
 
   .AdminReports { max-width: 1280px; margin: 0 auto; padding: 24px; }
@@ -1640,7 +1706,14 @@
 .CheckoutAssign { display: flex; flex-direction: column; gap: 0.35rem; }
 .CheckoutGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: 0.75rem; align-items: end; }
 .CheckoutGrid > .FormLabel { min-width: 0; }
+.CheckoutGrid > .CheckoutWideField { grid-column: 1 / -1; }
 .CheckoutGrid .FormInput { min-width: 0; }
+.HomeSafeguardingCallout { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; }
+.HomeSafeguardingCallout .tile_heading_bold_2 { margin-top: 0.5rem; }
+.SafeguardingDownloads > li { align-items: flex-start; }
+.SafeguardingDownloads > li::before { display: none; }
+.SafeguardingDownloads > li > div { display: grid; gap: 0.5rem; }
+.SafeguardingDocumentActions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem; }
 .CheckoutGrid input.FormInput, .CheckoutGrid select.FormInput,
 .FormFieldGrid input.FormInput, .FormFieldGrid select.FormInput { min-height: 3rem; }
 .CheckoutFieldset { border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 0.75rem; padding: 0.75rem; }

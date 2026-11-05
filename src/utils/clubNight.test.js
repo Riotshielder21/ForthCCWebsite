@@ -110,8 +110,8 @@ test('identity needs name, valid email and date of birth', () => {
 test('guests give membership-style details; under-18s give a parent/guardian', () => {
   const now = new Date('2027-03-10T19:00:00Z');
   const adult = { firstName: 'Ann', lastName: 'Lee', email: 'ann@example.test', dob: '1990-01-02' };
-  const details = { phone: '0770', address: '1 Road', postcode: 'EH1', swimming: 'confident', disclaimerAccepted: true,
-    emergencyContact: { name: 'Bo', relationship: 'Friend', phone: '0771' } };
+  const details = { phone: '07911 123456', address: '1 Road', postcode: 'EH1 1AA', swimming: 'confident', disclaimerAccepted: true,
+    emergencyContact: { name: 'Bo', relationship: 'Friend', phone: '07911 123457' } };
   const guest = validateGuestDetails(adult, details, now).value;
   assert.equal(guest.email, 'ann@example.test');
   assert.equal(guest.junior, false);
@@ -119,7 +119,7 @@ test('guests give membership-style details; under-18s give a parent/guardian', (
   assert.match(validateGuestDetails(adult, { ...details, disclaimerAccepted: false }, now).error, /disclaimer/);
   const child = { ...adult, dob: '2015-05-05' };
   assert.match(validateGuestDetails(child, details, now).error, /parent\/guardian/);
-  const junior = validateGuestDetails(child, { ...details, guardian: { name: 'Pat Lee', relationship: 'Parent', phone: '0772', address: '1 Road', postcode: 'EH1' } }, now).value;
+  const junior = validateGuestDetails(child, { ...details, guardian: { name: 'Pat Lee', relationship: 'Parent', phone: '07911 123458', address: '1 Road', postcode: 'EH1 1AA' } }, now).value;
   assert.equal(junior.junior, true);
   assert.equal(junior.guardian.email, 'ann@example.test');
 });

@@ -6,6 +6,7 @@ Disallow: /api/
 Disallow: /order/
 Disallow: /payment-success
 Disallow: /my-details
+Disallow: /checkout
 Disallow: /check-ins
 Disallow: /club-night
 Disallow: /_preview/

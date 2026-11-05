@@ -26,7 +26,7 @@ test('published content renders safe inline links and configurable buttons witho
       value: '<script>bad</script> [classes](/?page=beginners) [bad](javascript:evil)'
     }));
     assert.match(inline, /&lt;script&gt;/);
-    assert.match(inline, /<a href="\/\?page=beginners">classes<\/a>/);
+    assert.match(inline, /<a href="\/beginners">classes<\/a>/);
     assert.doesNotMatch(inline, /href="javascript:/);
     const original = renderHome({});
     assert.match(original, /open nights<\/a>/);
@@ -34,7 +34,7 @@ test('published content renders safe inline links and configurable buttons witho
     const updated = renderHome({
       welcome1: 'Try [new classes](/?page=beginners).',
       tileLayout: [
-        { id: 'welcome', group: 'intro', type: 'existing', button: { label: 'Choose a session', url: '/?page=beginners' } },
+        { id: 'welcome', group: 'intro', type: 'existing', button: { label: 'Choose a session', url: 'https://www.forthcanoeclub.co.uk/beginners' } },
         { id: 'quick1', group: 'quick', type: 'existing', button: { label: 'Contact instead', url: '/?page=contact' } },
         { id: 'quick2', group: 'quick', type: 'existing', button: null },
         { id: 'new-image', group: 'quick', type: 'image', title: 'New image tile', description: '[Read more](/?page=about)',
@@ -45,6 +45,7 @@ test('published content renders safe inline links and configurable buttons witho
     assert.match(updated, /Choose a session/);
     assert.match(updated, /Contact instead/);
     assert.match(updated, /Explore/);
+    assert.doesNotMatch(updated, /href="(?:\/\?page=|https:\/\/www\.forthcanoeclub\.co\.uk\/)/);
     assert.doesNotMatch(updated, /data-content-field="quick1Action"/);
     assert.doesNotMatch(updated, /data-content-field="quick2Action"/);
     let anchorDepth = 0;

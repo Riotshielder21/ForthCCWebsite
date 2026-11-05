@@ -1,5 +1,6 @@
 import { londonMidnight } from './clubYear.js';
 import { sanitizePerson, personDetailErrors, ageOn, normaliseName } from './checkout.js';
+import { isValidPersonName, normaliseName as normalisePersonName } from './personalDetails.js';
 
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -115,11 +116,13 @@ const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, m
 
 /** Check-in identity: name, date of birth and email. The date of birth is only used for matching. */
 export const validateCheckinIdentity = (body, now = new Date()) => {
-  const firstName = text(body?.firstName, 80);
-  const lastName = text(body?.lastName, 80);
+  const firstName = normalisePersonName(text(body?.firstName, 80));
+  const lastName = normalisePersonName(text(body?.lastName, 80));
   const email = text(body?.email, 254).toLowerCase();
   const dob = text(body?.dob, 10);
   if (!firstName || !lastName) return { error: 'Enter your first and last name.' };
+  if (!isValidPersonName(firstName)) return { error: 'Enter a valid first name using letters, spaces, apostrophes or hyphens.' };
+  if (!isValidPersonName(lastName)) return { error: 'Enter a valid last name using letters, spaces, apostrophes or hyphens.' };
   if (!/^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(email)) return { error: 'Enter a valid email address.' };
   if (ageOn(dob, now) === null || dob < '1900-01-01') return { error: 'Enter a valid date of birth.' };
   return { value: { firstName, lastName, email, dob } };

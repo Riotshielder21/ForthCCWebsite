@@ -45,6 +45,7 @@ Open `http://localhost:3000`. Use **Admin** in the footer, then **Sign in as loc
 - **Emails** are written to Firestore's `testMail` collection (`body` and `html`), not sent. The organisation footer comes from Google Workspace **Append footer** rules, not the templates.
 - **Remote VS Code:** forward ports `3000`, `3002`, `4000`, `8080`, `9099` and `9199`.
 - **Edits:** restart the API after backend changes; Vite reloads the frontend.
+- **Vite API proxy:** when `VITE_API_BASE_URL` is empty, Vite proxies `/api` requests to `http://127.0.0.1:3000` by default. Set `VITE_API_PROXY_TARGET` when the local API uses another address or port.
 - **Seed data:** synthetic households, orders, a course and a voucher; reseeding resets them.
 - **Mobile checks:** 390x844, 360x640, 320x568 portrait and 667x375, 844x390 landscape.
 
@@ -168,7 +169,7 @@ Set `JUSTGO_API_SECRET`, `JUSTGO_ORGANISATION_ID` and `JUSTGO_API_ENABLED=true`;
 - **Origins:** `PUBLIC_SITE_URL` is canonical; `PUBLIC_SITE_URLS` adds approved checkout/receipt origins, and `CORS_ORIGINS` adds browser API origins. Keep all three frontends (`new.forthcanoeclub.co.uk`, `fccwebsite-23cfc.web.app`, `fccwebsite-23cfc.firebaseapp.com`) allowed. Escape commas as `\,` in the Hosting workflow's Cloud Run `env_vars`. CORS and Firebase `authDomain` are independent.
 - **Proxy/rate limits:** Cloud Run uses one trusted proxy hop; adjust `TRUST_PROXY_HOPS` for other deployments. Use [rateLimit.js](src/server/rateLimit.js) for new routes; the baseline is 300 requests/minute (`BASELINE_RATE_LIMIT`).
 - **Renewals:** configure `RENEWAL_JOB_TOKEN` (32+ random characters) in the API and job environment, plus `RENEWAL_JOB_URL` ending `/api/jobs/renewals`. [fcc-renewals.timer](config/fcc-renewals.timer) schedules 09:00 London on 1 and 15 February.
-- **Email:** `STAFF_ALERT_EMAIL` defaults to the committee. Configure the volunteer coordinator in Reports. Retry failed notifications in the admin panels.
+- **Email:** `STAFF_ALERT_EMAIL` defaults to the committee. Configure the volunteer coordinator in Reports. Retry failed notifications in the admin panels. Volunteer-benefits emails include HTML paragraphs and a bulleted list, with a plain-text alternative and an explicit Forth Canoe Club sign-off; email clients control line wrapping.
 - **Admin page edits:** saves target `GITHUB_CONTENT_BRANCH` (`live/web-admin-edit`); merge the review PR into `GITHUB_BRANCH` (`main`) to publish. A rebase warning needs manual reconciliation:
 
 ```bash

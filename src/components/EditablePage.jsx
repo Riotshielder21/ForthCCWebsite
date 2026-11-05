@@ -17,7 +17,7 @@ function EditableContentText({ value, label, onChange, multiline = true }) {
 
 function TileButton({ button }) {
   if (!button || !safeTileUrl(button.url)) return null;
-  return <a className="PrimaryActionButton PushBottom" href={button.url}>{button.label} <ExternalLink size={16} /></a>;
+  return <a className="PrimaryActionButton PushBottom" href={safeTileUrl(button.url)}>{button.label} <ExternalLink size={16} /></a>;
 }
 
 function TileButtonSettings({ tile, onChange }) {
@@ -33,7 +33,7 @@ function TileButtonSettings({ tile, onChange }) {
     </select></label>
     {mode === 'custom' && <>
       <label className="FormLabel">Button text<input className="FormInput" value={tile.button.label} onChange={(event) => onChange({ ...tile.button, label: event.target.value })} /></label>
-      <label className="FormLabel">Button destination<input className="FormInput" placeholder="/?page=beginners or https://…" value={tile.button.url} onChange={(event) => onChange({ ...tile.button, url: event.target.value })} /></label>
+      <label className="FormLabel">Button destination<input className="FormInput" placeholder="/beginners or https://…" value={tile.button.url} onChange={(event) => onChange({ ...tile.button, url: event.target.value })} /></label>
     </>}
   </fieldset>;
 }
@@ -302,7 +302,8 @@ export default function EditablePage({ pageId, children }) {
       if (rich) return React.cloneElement(node, {}, <ContentText value={copy[key] || ''} />);
     }
     if (typeof node.type !== 'string' && node.type !== React.Fragment) return node;
-    return React.cloneElement(node, node.props.href ? { href: safeTileUrl(node.props.href) || undefined } : {}, React.Children.map(node.props.children, (child) => inline(child, number, fields, tile, isLink)));
+    const href = node.props.href ? safeTileUrl(node.props.href) : '';
+    return React.cloneElement(node, href ? { href, ...(href.startsWith('/') ? { target: undefined, rel: undefined } : {}) } : {}, React.Children.map(node.props.children, (child) => inline(child, number, fields, tile, isLink)));
   };
   const renderTile = (tile) => {
     const number = numbers.get(tile.id);
