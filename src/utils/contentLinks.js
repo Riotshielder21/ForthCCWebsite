@@ -1,8 +1,11 @@
+import { relativeClubLink } from './routes.js';
+
 export const safeTileUrl = (value, image = false) => {
   if (typeof value !== 'string' || !value) return '';
   try {
-    const url = new URL(value, 'https://forthcanoeclub.co.uk');
-    if (url.protocol === 'https:' || (!image && url.protocol === 'mailto:')) return value;
+    const normalised = relativeClubLink(value);
+    const url = new URL(normalised, 'https://forthcanoeclub.co.uk');
+    if (url.protocol === 'https:' || (!image && url.protocol === 'mailto:')) return normalised;
   } catch {
     return '';
   }

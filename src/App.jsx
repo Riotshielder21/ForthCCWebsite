@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useMemo, useRef } from 'react';
 import {
   Trash2, ShoppingBag, X, ShoppingCart, Plus, Minus,
   CreditCard, CheckCircle2, AlertCircle
@@ -7,32 +7,38 @@ import { initializeAuth, validateDiscountCode } from './utils/firebase';
 import { calculateCart, debitRange, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson } from './utils/checkout';
-import CheckoutPage from './pages/CheckoutPage';
 import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
 import { itemLabel, productLimits } from './utils/inventory';
 import SiteNavigation from './components/SiteNavigation';
-import HomePage from './pages/HomePage';
-import MembershipPage from './pages/MembershipPage';
-import BeginnersPage from './pages/BeginnersPage';
-import DisciplinesPage from './pages/DisciplinesPage';
-import VolunteeringPage from './pages/VolunteeringPage';
-import ClubNightPage from './pages/ClubNightPage';
-import MyDetailsPage from './pages/MyDetailsPage';
-import AboutPage from './pages/AboutPage';
-import ContactUsPage from './pages/ContactUsPage';
-import AccessProjectPage from './pages/AccessProjectPage';
-import AdminPage from './pages/AdminPage';
-import AdminReportsPage from './pages/AdminReportsPage';
-import OrderLookupPage from './pages/OrderLookupPage';
-import PaymentSuccessPage from './pages/PaymentSuccessPage';
+import { pageModules } from './pages/pageModules';
+import { useSiteRoute } from './utils/useSiteRoute';
+import PageLoadBoundary from './components/PageLoadBoundary';
+import OfflineStatus from './components/OfflineStatus';
 import { loadPublishedPageContent, subscribeToProducts } from './utils/content';
 import { PageContentProvider } from './utils/PageContentContext';
 import { apiUrl } from './utils/api';
 import { PRODUCTS } from './constants/products';
-import { PAGE_CONTENT } from './constants/pageContent';
 import './index.css';
 import fccCrest from './assets/fcc-crest.png';
 import { applyVolunteerBenefits } from './utils/volunteering';
+import { readPublicSnapshot, savePublicSnapshot } from './utils/publicSnapshots';
+
+const HomePage = lazy(pageModules.home);
+const MembershipPage = lazy(pageModules.membership);
+const BeginnersPage = lazy(pageModules.beginners);
+const DisciplinesPage = lazy(pageModules.disciplines);
+const VolunteeringPage = lazy(pageModules.volunteering);
+const AboutPage = lazy(pageModules.about);
+const ContactUsPage = lazy(pageModules['contact-us']);
+const SafeguardingPage = lazy(pageModules.safeguarding);
+const AccessProjectPage = lazy(pageModules['access-project']);
+const AdminPage = lazy(pageModules.admin);
+const AdminReportsPage = lazy(pageModules['admin-reports']);
+const ClubNightPage = lazy(pageModules['club-night']);
+const MyDetailsPage = lazy(pageModules['my-details']);
+const CheckoutPage = lazy(pageModules.checkout);
+const OrderLookupPage = lazy(pageModules['order-lookup']);
+const PaymentSuccessPage = lazy(pageModules['payment-success']);
 
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -52,21 +58,8 @@ const choiceLabel = (choice) => {
 
 export default function App() {
   const [initialDraft] = useState(loadDraft);
-  const [currentPage, setCurrentPage] = useState(() => {
-    if (window.location.pathname === '/admin/reports') return 'admin-reports';
-    if (window.location.pathname === '/admin') return 'admin';
-    if (window.location.pathname === '/volunteering') return 'volunteering';
-    if (['/check-ins', '/club-night'].includes(window.location.pathname)) return 'club-night';
-    if (window.location.pathname === '/my-details') return 'my-details';
-    if (window.location.pathname.startsWith('/order/')) return 'order-lookup';
-    if (window.location.pathname === '/payment-success') return 'payment-success';
-    const previewPage = window.location.pathname.startsWith('/_preview/')
-      ? window.location.pathname.slice('/_preview/'.length)
-      : new URLSearchParams(window.location.search).get('page');
-    if (previewPage && PAGE_CONTENT[previewPage]) return previewPage === 'contact' ? 'contact-us' : previewPage;
-    return 'home';
-  });
-  const [products, setProducts] = useState(PRODUCTS);
+  const { currentPage, setCurrentPage, onLinkClick, navigateTo } = useSiteRoute();
+  const [products, setProducts] = useState(() => readPublicSnapshot('products') || PRODUCTS);
   const [availability, setAvailability] = useState({});
   const productsRef = useRef(products);
   productsRef.current = products;
@@ -94,7 +87,7 @@ export default function App() {
   const [checkoutEmail, setCheckoutEmail] = useState(initialDraft?.email || '');
   const [checkoutError, setCheckoutError] = useState('');
   const [focusPersonId, setFocusPersonId] = useState(null);
-  const pageBeforeCheckout = useRef('membership');
+  const pageBeforeCheckout = useRef('/membership');
   const [people, setPeople] = useState(initialDraft?.people || []);
   const [volunteerTiers, setVolunteerTiers] = useState([]);
   const [checkoutErrors, setCheckoutErrors] = useState([]);
@@ -115,11 +108,12 @@ export default function App() {
 
   useEffect(() => subscribeToProducts((remoteProducts) => {
     setProducts(remoteProducts);
+    savePublicSnapshot('products', remoteProducts);
   }, (error) => console.error('Product catalog unavailable:', error)), []);
 
-  useEffect(() => loadPublishedPageContent(setPageContent, (error) => {
+  useEffect(() => loadPublishedPageContent((content) => setPageContent((current) => ({ ...current, ...content })), (error) => {
     console.error('Page content unavailable:', error);
-  }), []);
+  }, currentPage), [currentPage]);
 
   const refreshAvailability = () => fetch(apiUrl('/api/availability'), { cache: 'no-store' })
     .then((response) => (response.ok ? response.json() : null))
@@ -147,9 +141,14 @@ export default function App() {
   };
 
   // Identical items are interchangeable, so reducing always takes the most recently added one and its form goes with it.
-  const removeOneFromCart = (key) => {
+  const removeOneFromCart = (selection) => {
     setCart((prev) => {
-      const index = prev.map(groupKey).lastIndexOf(key);
+      const matches = typeof selection === 'string'
+        ? (line) => groupKey(line) === selection
+        : (line) => line.id === selection.id
+          && (line.size || '') === (selection.size || '')
+          && (!selection.clubYearChoice || line.clubYearChoice === selection.clubYearChoice);
+      const index = prev.map((line) => matches(line) ? 1 : 0).lastIndexOf(1);
       return index < 0 ? prev : prev.filter((_, position) => position !== index);
     });
   };
@@ -216,7 +215,7 @@ export default function App() {
     setCheckoutError('');
     setCheckoutErrors([]);
     setFocusPersonId(null);
-    if (currentPage !== 'checkout') pageBeforeCheckout.current = currentPage;
+    if (currentPage !== 'checkout') pageBeforeCheckout.current = window.location.pathname + window.location.search + window.location.hash;
     setIsCartOpen(false);
     setCurrentPage('checkout');
   };
@@ -232,11 +231,15 @@ export default function App() {
 
   const handleBackToBasket = () => {
     setCheckoutErrors([]);
-    setCurrentPage(pageBeforeCheckout.current);
+    navigateTo(pageBeforeCheckout.current);
     setIsCartOpen(true);
   };
 
   const handlePay = async () => {
+    if (!navigator.onLine) {
+      setCheckoutErrors(['You are offline. Reconnect before checking availability and making a payment.']);
+      return;
+    }
     const errors = [
       ...(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(checkoutEmail.trim()) ? [] : ['Enter a valid email address to receive your receipt.']),
       ...validateCheckout({ lines: cart, people })
@@ -413,16 +416,23 @@ export default function App() {
         return <AboutPage />;
       case 'contact-us':
         return <ContactUsPage />;
+      case 'safeguarding':
+        return <SafeguardingPage />;
       case 'access-project':
         return <AccessProjectPage />;
       default:
-        return <HomePage onNavigate={setCurrentPage} />;
+        return <div className="SectionHero">
+          <h2 className="page_heading_bold_1">Page not found</h2>
+          <p className="text_container">This page may have moved or is not available on the rebuilt website yet.</p>
+          <a className="PrimaryActionButtonCompact" href="/">Go to the homepage</a>
+          <a className="ContentLink" href="/contact-us">Contact the club</a>
+        </div>;
     }
   };
 
   return (
     <PageContentProvider value={pageContent}>
-    <div className="SiteShell">
+    <div className="SiteShell" onClick={onLinkClick}>
       <SiteNavigation
         currentPage={currentPage}
         setCurrentPage={setCurrentPage}
@@ -431,7 +441,12 @@ export default function App() {
       />
 
       <main className="SiteMain">
-        {renderPage()}
+        <OfflineStatus currentPage={currentPage} />
+        <PageLoadBoundary key={currentPage}>
+          <Suspense fallback={<div className="SectionContent" role="status">Loading page…</div>}>
+            {renderPage()}
+          </Suspense>
+        </PageLoadBoundary>
       </main>
 
       <footer className="FooterBar">
@@ -446,8 +461,8 @@ export default function App() {
           </div>
           <div className="FooterLinks">
             <a href="https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC050275" target="_blank" rel="noreferrer" className="FooterLink">Charity Register</a>
-            <button onClick={() => setCurrentPage('contact-us')} className="FooterLink">Contact</button>
-            <button className="FooterLink">Safeguarding</button>
+            <a href="/contact-us" className="FooterLink">Contact</a>
+            <a href="/safeguarding" className="FooterLink">Safeguarding</a>
             <a href="/check-ins" onClick={(event) => {
               if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
               event.preventDefault();

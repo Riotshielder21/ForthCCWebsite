@@ -4,8 +4,8 @@ import { parseContentLinks, replaceContentLink, safeTileUrl } from '../utils/con
 
 export function ContentText({ value }) {
   return parseContentLinks(value).map((part) => part.url && safeTileUrl(part.url)
-    ? <a key={part.start} href={part.url} target={/^https:\/\//i.test(part.url) ? '_blank' : undefined}
-      rel={/^https:\/\//i.test(part.url) ? 'noreferrer' : undefined}>{part.text}</a>
+    ? <a key={part.start} href={safeTileUrl(part.url)} target={/^https:\/\//i.test(safeTileUrl(part.url)) ? '_blank' : undefined}
+      rel={/^https:\/\//i.test(safeTileUrl(part.url)) ? 'noreferrer' : undefined}>{part.text}</a>
     : <React.Fragment key={part.start}>{part.url ? value.slice(part.start, part.end) : part.text}</React.Fragment>);
 }
 
@@ -54,7 +54,7 @@ export function ContentLinkEditor({ label, onChange, children }) {
         onMouseDown={(event) => event.preventDefault()} onClick={open}><LinkIcon size={16} /></button>
       {link && <span className="ContentLinkForm" role="group" aria-label={`Link in ${label}`}>
         <label>Link text<input className="FormInput" value={link.label} onChange={(event) => setLink({ ...link, label: event.target.value })} /></label>
-        <label>Destination<input className="FormInput" placeholder="/?page=beginners or https://…" value={link.url} onChange={(event) => setLink({ ...link, url: event.target.value })} /></label>
+        <label>Destination<input className="FormInput" placeholder="/beginners or https://…" value={link.url} onChange={(event) => setLink({ ...link, url: event.target.value })} /></label>
         <button type="button" className="EditorCommand" onClick={() => apply()}>Apply link</button>
         {link.existing && <button type="button" className="EditorCommand" onClick={() => apply(true)}>Remove link</button>}
         <button type="button" className="EditorCommand" onClick={() => setLink(null)}>Cancel</button>

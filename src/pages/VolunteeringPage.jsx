@@ -8,6 +8,7 @@ import { apiUrl } from '../utils/api';
 import { usePageEditor } from '../utils/PageContentContext';
 import { DEFAULT_VOLUNTEER_BENEFITS, volunteerBenefitText } from '../utils/volunteering';
 import { DEFAULT_VOLUNTEER_PAGE } from '../utils/volunteerPage';
+import { readPublicSnapshot, savePublicSnapshot } from '../utils/publicSnapshots';
 
 function VolunteeringConfigBar({ adminUser, products, levels, onLevelsSaved, content, onContentSaved }) {
   const [panel, setPanel] = useState('page');
@@ -34,8 +35,9 @@ function VolunteeringConfigBar({ adminUser, products, levels, onLevelsSaved, con
 export default function VolunteeringPage({ products = [] }) {
   const { adminUser } = usePageEditor();
   const [configuring, setConfiguring] = useState(false);
-  const [copy, setCopy] = useState(null);
-  const [tiers, setTiers] = useState([]);
+  const [snapshot] = useState(() => readPublicSnapshot('volunteering'));
+  const [copy, setCopy] = useState(snapshot?.content || null);
+  const [tiers, setTiers] = useState(snapshot?.tiers || []);
   const [renewal, setRenewal] = useState(null);
   const [error, setError] = useState('');
   const [offline, setOffline] = useState(false);
@@ -52,8 +54,15 @@ export default function VolunteeringPage({ products = [] }) {
     let active = true;
     // The latest version comes from the server; the defaults built into the site are the fallback if it cannot be reached.
     request('/api/volunteering')
-      .then((page) => { if (active) { setCopy(page.content); setTiers(page.tiers); } })
-      .catch(() => { if (active) { setCopy(DEFAULT_VOLUNTEER_PAGE); setTiers(DEFAULT_VOLUNTEER_BENEFITS); setOffline(true); } });
+      .then((page) => { if (active) { setCopy(page.content); setTiers(page.tiers); savePublicSnapshot('volunteering', page); } })
+      .catch((cause) => {
+        console.error('Live volunteering information unavailable:', cause);
+        if (active) {
+          setCopy(snapshot?.content || DEFAULT_VOLUNTEER_PAGE);
+          setTiers(snapshot?.tiers || DEFAULT_VOLUNTEER_BENEFITS);
+          setOffline(true);
+        }
+      });
     if (token) request(`/api/volunteers/renew/${token}`)
       .then((renewal) => { if (active) setRenewal({ ...renewal, change }); })
       .catch((error) => { if (active) setError(error.message); });
@@ -68,7 +77,7 @@ export default function VolunteeringPage({ products = [] }) {
         <div className="main_tile main_tile_grey">
           <h2 className="page_heading_bold_1">{copy.title}</h2>
           <p className="text_container text_container_intro">{copy.intro}</p>
-          {adminUser && offline && <p className="StatusTextError" role="alert">The live volunteering configuration could not be loaded, so the built-in default is shown. Configuration is unavailable until the server responds.</p>}
+          {offline && <p className="StatusTextError" role="alert">Live volunteering information is unavailable. {snapshot ? 'Previously downloaded information' : 'Built-in information'} is shown and may be out of date. Reconnect before applying.</p>}
           {adminUser && !offline && <button type="button" className="PrimaryActionButtonCompact" aria-expanded={configuring}
             aria-controls="volunteering-configuration" onClick={() => setConfiguring(!configuring)}>
             <Settings2 className="IconSm" /> {configuring ? 'Close volunteering configuration' : 'Configure volunteering'}

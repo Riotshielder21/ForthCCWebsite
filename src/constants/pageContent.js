@@ -26,7 +26,7 @@ export const PAGE_CONTENT = {
       startIntro: field('Where to Start intro', 'Here are a few useful details:'),
       start1: field('Where to Start item 1 after map link', "marks our clubhouse on Edinburgh's Union Canal, where many of our activities take place.", true),
       start1Link: field('Map link text', 'This map'),
-      start1Url: field('Map URL', 'https://maps.app.goo.gl/sXk7kWQrv8EbgwY37'),
+      start1Url: field('Map URL', 'https://www.google.com/maps/search/?api=1&query=Forth+Canoe+Club%2C+Harrison+Park%2C+Polwarth%2C+Edinburgh+EH11+1ED'),
       start2Before: field('Where to Start item 2 before link', 'Our'),
       start2Link: field('Contact link text', 'contact details are here'),
       start2After: field('Where to Start item 2 after link', '.'),
@@ -75,7 +75,7 @@ export const PAGE_CONTENT = {
       intro: field('Page introduction', 'The club year runs from 1 March. Membership and annual kit hire cover the current club year, while annual subscriptions are prorated to the next 1 March renewal.', true),
       memberEyebrow: field('Membership tile label', 'MEMBERSHIP'),
       memberTitle: field('Membership tile heading', 'Club Membership'),
-      memberBody: field('Membership tile text', "Join directly through our website. We'll set up your JustGo & SCA membership for you. Select your tier below.", true),
+      memberBody: field('Membership tile text', "Join directly through our website. We'll set up your JustGo & Paddle Scotland membership for you. Select your tier below.", true),
       externalAction: field('External membership button', 'JustGo'),
       annualPriceLabel: field('Annual price label', 'Annual Price'),
       clubYearPriceLabel: field('Club-year price label', 'Club Year Price'),
@@ -166,7 +166,7 @@ export const PAGE_CONTENT = {
       tile3Title: field('Timeline tile heading', 'Project Timeline'),
       tile3Body: field('Timeline tile text', "We've completed feasibility studies and secured £32,000+ in pledges. We're now working through surveys, funding applications, designs, and approvals. Building work will follow once final funding is in place.", true),
       timelineAction: field('Timeline link text', 'View full timeline'),
-      timelineUrl: field('Timeline URL', 'https://www.forthcanoeclub.co.uk/access-project'),
+      timelineUrl: field('Timeline URL', 'https://trello.com/b/4ABvVtTg/fcc-access-project'),
       tile4Eyebrow: field('Fundraising tile label', 'Get Involved'),
       tile4Title: field('Fundraising tile heading', 'Support Our Work'),
       tile4Body: field('Fundraising tile text', 'Help us make paddling accessible to everyone. Volunteer with the project, contribute skills, or donate to the fundraiser.', true),
@@ -206,16 +206,28 @@ export const getPageCopy = (pageId, saved = {}) => {
   const fields = PAGE_CONTENT[pageId]?.fields || {};
   const copy = Object.fromEntries(Object.entries(fields).map(([key, definition]) => [key, saved[key] ?? definition.value]));
   if (pageId === 'home') {
+    const retiredMapUrl = 'https://maps.app.goo.gl/sXk7kWQrv8EbgwY37';
+    const clubMapUrl = fields.start1Url.value;
+    if (copy.start1Url === retiredMapUrl) {
+      copy.start1Url = fields.start1Url.value;
+    }
     const link = (text, url) => text ? `[${text}](${String(url).replace(/\(/g, '%28').replace(/\)/g, '%29')})` : '';
     const paragraphs = {
-      welcome3Text: `${copy.welcome3} ${link(copy.welcome3Link, '/?page=membership')}${copy.welcome3After}`,
-      welcome4Text: `${copy.welcome4Before} ${link(copy.welcome4Link, '/?page=beginners')} ${copy.welcome4After}`,
-      welcome5Text: `${copy.welcome5Before} ${link(copy.welcome5Link, '/?page=contact')}${copy.welcome5After}`,
+      welcome3Text: `${copy.welcome3} ${link(copy.welcome3Link, '/membership')}${copy.welcome3After}`,
+      welcome4Text: `${copy.welcome4Before} ${link(copy.welcome4Link, '/beginners')} ${copy.welcome4After}`,
+      welcome5Text: `${copy.welcome5Before} ${link(copy.welcome5Link, '/contact-us')}${copy.welcome5After}`,
       start1Text: `${link(copy.start1Link, copy.start1Url)} ${copy.start1}`,
-      start2Text: `${copy.start2Before} ${link(copy.start2Link, '/?page=contact')}${copy.start2After}`,
-      start5Text: `${copy.start5Before} ${link(copy.start5Link, '/?page=disciplines')}${copy.start5After}`
+      start2Text: `${copy.start2Before} ${link(copy.start2Link, '/contact-us')}${copy.start2After}`,
+      start5Text: `${copy.start5Before} ${link(copy.start5Link, '/disciplines')}${copy.start5After}`
     };
     for (const [key, value] of Object.entries(paragraphs)) copy[key] = saved[key] ?? value;
+    for (const [key, value] of Object.entries(copy)) {
+      if (typeof value === 'string') copy[key] = value.replaceAll(retiredMapUrl, clubMapUrl);
+    }
+  }
+  if (pageId === 'membership') copy.memberBody = copy.memberBody.replace(/\bSCA\b/g, 'Paddle Scotland');
+  if (pageId === 'access-project' && /^https:\/\/(?:www\.|new\.)?forthcanoeclub\.co\.uk\/access-project\/?$/.test(copy.timelineUrl)) {
+    copy.timelineUrl = fields.timelineUrl.value;
   }
   return {
     ...copy,
@@ -233,7 +245,7 @@ export function validatePageFields(pageId, content) {
     const value = copy[key];
     if (typeof value !== 'string' || value.length > 20000) throw new Error(`Invalid value for ${definition.label}.`);
     if (/url$/i.test(key)) {
-      if (value && !/^https:\/\//i.test(value)) throw new Error(`${definition.label} must be an https URL.`);
+      if (value && !/^https:\/\//i.test(value) && !/^\/(?!\/)/.test(value)) throw new Error(`${definition.label} must be an HTTPS or root-relative URL.`);
     } else {
       validateContentLinks(value);
     }

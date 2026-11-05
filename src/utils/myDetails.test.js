@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { validateDetailsUpdate, changedFields, managedByJustgo } from './myDetails.js';
 
 test('contact updates need phone and address, and an emergency contact when the household has one', () => {
-  const body = { phone: ' 0770 ', address: '1 Road', postcode: 'EH1', emergencyContact: { name: 'Bo', relationship: 'Friend', phone: '0771' }, email: 'ignored@example.test' };
+  const body = { phone: ' 07911 123456 ', address: '1 Road', postcode: 'eh1 1aa', emergencyContact: { name: 'Bo', relationship: 'Friend', phone: '07911 123457' }, email: 'ignored@example.test' };
   assert.deepEqual(validateDetailsUpdate(body, { emergencyContact: {} }).value,
-    { phone: '0770', address: '1 Road', postcode: 'EH1', emergencyContact: { name: 'Bo', relationship: 'Friend', phone: '0771' } });
+    { phone: '+447911123456', address: '1 Road', postcode: 'EH1 1AA', emergencyContact: { name: 'Bo', relationship: 'Friend', phone: '+447911123457' } });
   assert.equal(validateDetailsUpdate(body, { emergencyContact: null }).value.emergencyContact, undefined, 'junior households use the guardian');
   assert.ok(validateDetailsUpdate({ ...body, phone: '' }, {}).error);
   assert.ok(validateDetailsUpdate({ ...body, emergencyContact: { name: 'Bo' } }, { emergencyContact: {} }).error);

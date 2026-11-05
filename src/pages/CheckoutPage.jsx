@@ -220,7 +220,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                   {role !== 'member' && !minor && <label className="FormLabel">Membership email<input className="FormInput" type="email" required maxLength={254} value={person.email} onChange={field('email')} /></label>}
                   {role !== 'member' && !minor && <label className="FormLabel">Address<input className="FormInput" required maxLength={300} value={person.address} onChange={field('address')} /></label>}
                   {role !== 'member' && !minor && <label className="FormLabel">Postcode<input className="FormInput" required maxLength={12} value={person.postcode} onChange={field('postcode')} /></label>}
-                  {!role && <label className="FormLabel">Paddle Scotland / JustGo membership number (if you have one)<input className="FormInput" maxLength={40} value={person.affiliationNumber} onChange={field('affiliationNumber')} /></label>}
+                  {!role && <label className="FormLabel CheckoutWideField">Paddle Scotland / JustGo membership number (if you have one)<input className="FormInput" maxLength={40} value={person.affiliationNumber} onChange={field('affiliationNumber')} /></label>}
                   <label className="FormLabel">Swimming ability
                     <select className="FormInput" required value={person.swimming} onChange={field('swimming')}>
                       <option value="">Choose</option>

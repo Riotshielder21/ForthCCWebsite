@@ -45,9 +45,9 @@ Open `http://localhost:3000`. Use **Admin** in the footer, then **Sign in as loc
 - **Emails** are written to Firestore's `testMail` collection (`body` and `html`), not sent. The organisation footer comes from Google Workspace **Append footer** rules, not the templates.
 - **Remote VS Code:** forward ports `3000`, `3002`, `4000`, `8080`, `9099` and `9199`.
 - **Edits:** restart the API after backend changes; Vite reloads the frontend.
+- **Vite API proxy:** when `VITE_API_BASE_URL` is empty, Vite proxies `/api` requests to `http://127.0.0.1:3000` by default. Set `VITE_API_PROXY_TARGET` when the local API uses another address or port.
 - **Seed data:** synthetic households, orders, a course and a voucher; reseeding resets them.
 - **Mobile checks:** 390x844, 360x640, 320x568 portrait and 667x375, 844x390 landscape.
-- **Navigation:** Home, Membership, Beginners and Disciplines are the four primary pill links. At widths below 1024px they float over the homepage banner with transparent gaps (without scrolling), moving into the expanded menu while it is open; without a banner they remain in normal flow. At desktop widths they appear only in the header, never repeated in the expanded menu. Only one set is mounted at a time, using the 1024px media query to move it between locations. The menu remains available at every width and retains Volunteering, About, Contact Us and Access Project; My details stays in the header. Check that the primary links are never duplicated, including when resizing with the menu open, plus menu dismissal on navigation/Escape, keyboard focus, modified-click links and basket access at both sizes.
 
 ## Build And Test
 

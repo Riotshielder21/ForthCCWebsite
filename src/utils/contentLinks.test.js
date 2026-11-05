@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { parseContentLinks, validateContentLinks, replaceContentLink, validateContentButton } from './contentLinks.js';
 import { getPageCopy, validatePageFields } from '../constants/pageContent.js';
 import { validateTileLayout } from './pageTiles.js';
+import { safeTileUrl } from './contentLinks.js';
 
 test('plain text, newlines and multiple inline links retain their order and ranges', () => {
   const text = 'Try [beginners](/?page=beginners).\n[Email us](mailto:hello@example.com)';
@@ -60,7 +61,8 @@ test('published page fields keep defaults and validate links before saving', () 
   assert.equal(getPageCopy('home', fields).welcome1, welcome1);
   assert.equal(fields.welcomeTitle, 'Welcome');
   assert.throws(() => validatePageFields('home', { welcome1: '[bad](javascript:evil)' }));
-  assert.throws(() => validatePageFields('home', { start1Url: '/relative' }));
+  assert.equal(validatePageFields('home', { start1Url: '/relative' }).start1Url, '/relative');
+  assert.throws(() => validatePageFields('home', { start1Url: '//external.example' }));
   assert.throws(() => validatePageFields('home', { welcome1: 123 }));
   assert.throws(() => validatePageFields('home', { welcome1: 'a'.repeat(20001) }));
   assert.throws(() => validatePageFields('unknown', {}));
@@ -69,9 +71,18 @@ test('published page fields keep defaults and validate links before saving', () 
 test('legacy split paragraphs migrate without losing saved text, links, or deletions', () => {
   const saved = { welcome4Before: 'Start with', welcome4Link: 'our classes', welcome4After: 'on Thursdays.' };
   const copy = getPageCopy('home', saved);
-  assert.equal(copy.welcome4Text, 'Start with [our classes](/?page=beginners) on Thursdays.');
+  assert.equal(copy.welcome4Text, 'Start with [our classes](/beginners) on Thursdays.');
   assert.equal(validatePageFields('home', saved).welcome4Text, copy.welcome4Text);
   assert.equal(getPageCopy('home', { ...saved, welcome4Text: 'Completely rewritten.' }).welcome4Text, 'Completely rewritten.');
   assert.equal(getPageCopy('home', { ...saved, welcome4Text: '' }).welcome4Text, '');
   assert.match(getPageCopy('home', { start1Url: 'https://example.com/map' }).start1Text, /\(https:\/\/example.com\/map\)/);
+});
+
+test('old club destinations stay local and the old Access Project timeline goes directly to its public board', () => {
+  assert.equal(safeTileUrl('https://www.forthcanoeclub.co.uk/membership'), '/membership');
+  assert.equal(safeTileUrl('/?page=contact'), '/contact-us');
+  assert.equal(safeTileUrl('/images/photo.webp', true), '/images/photo.webp');
+  assert.equal(safeTileUrl('https://new.forthcanoeclub.co.uk/images/photo.webp', true), '/images/photo.webp');
+  assert.equal(getPageCopy('access-project', { timelineUrl: 'https://www.forthcanoeclub.co.uk/access-project' }).timelineUrl,
+    'https://trello.com/b/4ABvVtTg/fcc-access-project');
 });

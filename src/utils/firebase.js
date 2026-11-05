@@ -42,7 +42,8 @@ try {
       connectStorageEmulator(storage, host, Number(runtimeEnv.VITE_FIREBASE_STORAGE_EMULATOR_PORT) || 9199);
     }
   }
-  if (!localEmulators && typeof window !== 'undefined') {
+  if (!localEmulators && typeof window !== 'undefined' && navigator.onLine
+    && !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)) {
     isSupported().then((supported) => {
       if (supported) analytics = getAnalytics(app);
     }).catch(() => {});

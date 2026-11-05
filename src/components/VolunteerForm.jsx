@@ -16,6 +16,7 @@ export default function VolunteerForm({ tiers, products = [], renewal = null, to
   const submit = async (event) => {
     event.preventDefault(); setBusy(true); setStatus(null);
     try {
+      if (!navigator.onLine) throw new Error('You are offline. Reconnect before submitting your volunteering.');
       const response = await fetch(apiUrl(token ? `/api/volunteers/renew/${token}` : '/api/lists'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, tier, notes, listType: 'Volunteer Sign-ups',

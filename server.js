@@ -11,6 +11,8 @@ import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-adm
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
 import { PAGE_CONTENT, validatePageFields } from './src/constants/pageContent.js';
+import { resolveRoute } from './src/utils/routes.js';
+import { contentDisposition, findSafeguardingPolicy, isPdf } from './src/utils/safeguardingPolicies.js';
 import { BANNER_PAGES, validateBanner, validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart, expandClubYearLines, expandPeopleLines, NEXT_YEAR_LINE_SUFFIX } from './src/utils/pricing.js';
@@ -21,7 +23,7 @@ import { DISCOUNT_TYPES, discountDisplayStatus, discountFailure } from './src/ut
 import { REASON_REQUIRED, auditEntry, requiredReason } from './src/utils/auditLog.js';
 import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
-import { sanitizePerson, validateCheckout, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
+import { sanitizePerson, validateCheckout, personInputErrors, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen, justgoUploadCanRetry } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
 import { readJustgoSync } from './src/server/justgoSync.js';
@@ -44,6 +46,7 @@ import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './s
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
+import { registerContactRoutes } from './src/server/contact.js';
 import { applyVolunteerBenefits, volunteerPrivileges } from './src/utils/volunteering.js';
 import { allocateMemberIds } from './src/utils/memberIds.js';
 import { allocateRecordIds, reserveRecordIds } from './src/utils/recordIds.js';
@@ -235,7 +238,7 @@ app.use((req, res, next) => {
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()'
   });
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  if (/^\/(?:admin|api|order|my-details|check-ins|club-night|payment-success|_preview)(?:\/|$)/.test(req.path)) {
+  if (/^\/(?:admin|api|order|my-details|check-ins|club-night|checkout|payment-success|_preview)(?:\/|$)/.test(req.path)) {
     res.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
   }
   if (req.path.startsWith('/api/')) {
@@ -260,7 +263,17 @@ app.use(cors({
 app.get('/robots.txt', (req, res) => {
   res.type('text/plain').send('User-agent: *\nDisallow: /\n');
 });
-app.use(express.static('dist'));
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  const route = resolveRoute(req.originalUrl);
+  if (!route.preview && route.page !== 'not-found' && route.url !== req.originalUrl) return res.redirect(308, route.url);
+  next();
+});
+app.use(express.static('dist', {
+  setHeaders(res, path) {
+    if (path.endsWith('/sw.js') || path.endsWith('/index.html')) res.set('Cache-Control', 'no-cache');
+  }
+}));
 // Everything after static files (API and the SPA fallback) shares one per-visitor ceiling; routes add tighter limits.
 app.use(baselineRateLimit);
 
@@ -1678,6 +1691,7 @@ const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sen
   toMembershipRecord, stripeSubscriptionIsActive, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
   adjustVolunteerSubscriptions: (membershipId) => adjustVolunteerSubscriptions(membershipId),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+registerContactRoutes(app, { sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
 registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes,
@@ -2315,6 +2329,8 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     if (!Array.isArray(req.body.people) || req.body.people.length > 20) {
       return res.status(400).json({ error: 'Add the details for each person in your basket.' });
     }
+    const rawPersonErrors = personInputErrors(req.body.people);
+    if (rawPersonErrors.length) return res.status(400).json({ error: rawPersonErrors[0], details: rawPersonErrors });
     const sanitized = req.body.people.map(sanitizePerson);
     const people = sanitized
       .map((person) => ({ ...person, junior: resolvedKind(person, sanitized, selected) === 'junior' }))
@@ -2611,11 +2627,11 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
 });
 
 /** Sends email through Workspace; the emulator stack writes it to `testMail` instead. */
-const sendEmail = async ({ to, subject, body, html, record = {} }) => {
+const sendEmail = async ({ to, subject, body, html, replyTo: requestedReplyTo, record = {} }) => {
   const coordinatorEmail = isVolunteerEmail(record) && adminDb
     ? (await adminDb.collection('settings').doc('volunteerCoordinator').get()).data()?.email || ''
     : '';
-  const replyTo = emailReplyTo(record, coordinatorEmail);
+  const replyTo = requestedReplyTo || emailReplyTo(record, coordinatorEmail);
   if (localFirebase) {
     await adminDb.collection('testMail').add({ email: to, subject, body, ...(html ? { html } : {}), ...record, replyTo, createdAt: Timestamp.now() });
     return true;
@@ -2668,6 +2684,31 @@ app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => 
   }
 });
 
+const SAFEGUARDING_PDF_MAX_BYTES = 20 * 1024 * 1024;
+
+app.get('/api/safeguarding-documents/:id', rateLimit(30, 60 * 1000), async (req, res) => {
+  const policy = findSafeguardingPolicy(req.params.id);
+  if (!policy) return res.status(404).json({ error: 'Document not found.' });
+  try {
+    const upstream = await fetch(policy.sourceUrl, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
+    if (!upstream.ok) throw new Error(`Upstream responded ${upstream.status}.`);
+    const declaredLength = Number(upstream.headers.get('content-length') || 0);
+    if (declaredLength > SAFEGUARDING_PDF_MAX_BYTES) throw new Error('Document is too large.');
+    const bytes = new Uint8Array(await upstream.arrayBuffer());
+    if (bytes.length > SAFEGUARDING_PDF_MAX_BYTES || !isPdf(bytes)) throw new Error('Upstream did not return a PDF.');
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': contentDisposition(policy.filename, req.query.download === '1'),
+      'Cache-Control': 'public, max-age=300',
+      'X-Content-Type-Options': 'nosniff'
+    });
+    res.send(Buffer.from(bytes));
+  } catch (error) {
+    console.error(`Safeguarding document ${policy.id} unavailable:`, error.message);
+    res.status(502).json({ error: 'This document is temporarily unavailable. Please email safeguarding@forthcanoeclub.co.uk for a copy.' });
+  }
+});
+
 // Health check for the uptime alert: only healthy when Firestore can be read, so a broken database or credentials also alert.
 app.get('/health', async (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -2686,7 +2727,7 @@ app.get('/health', async (req, res) => {
 // Serve index.html for all routes (SPA routing)
 app.get('*', (req, res) => {
   const indexPath = join(__dirname, 'dist', 'index.html');
-  if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
+  if (fs.existsSync(indexPath)) return res.status(resolveRoute(req.originalUrl).page === 'not-found' ? 404 : 200).sendFile(indexPath);
   res.status(404).json({ error: 'Not found.' });
 });
 

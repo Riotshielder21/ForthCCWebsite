@@ -98,9 +98,9 @@ export default function HomePage({ onNavigate }) {
               <h3 className="product_heading_bold" data-content-field="quick1Title">{copy.quick1Title}</h3>
             </div>
             <p className="shop_product_description" data-content-field="quick1Body">{copy.quick1Body}</p>
-            <button onClick={() => onNavigate('beginners')} className="PrimaryActionButton PushBottom">
+            <a href="/beginners" className="PrimaryActionButton PushBottom">
               <span data-content-field="quick1Action">{copy.quick1Action}</span> <ArrowRight className="IconSm" />
-            </button>
+            </a>
           </div>
 
           <div className="shop_product_tile" data-tile-id="quick2">
@@ -109,9 +109,9 @@ export default function HomePage({ onNavigate }) {
               <h3 className="product_heading_bold" data-content-field="quick2Title">{copy.quick2Title}</h3>
             </div>
             <p className="shop_product_description" data-content-field="quick2Body">{copy.quick2Body}</p>
-            <button onClick={() => onNavigate('membership')} className="PrimaryActionButton PushBottom">
+            <a href="/membership" className="PrimaryActionButton PushBottom">
               <span data-content-field="quick2Action">{copy.quick2Action}</span> <ArrowRight className="IconSm" />
-            </button>
+            </a>
           </div>
 
           <div className="shop_product_tile" data-tile-id="quick3">
@@ -120,11 +120,22 @@ export default function HomePage({ onNavigate }) {
               <h3 className="product_heading_bold" data-content-field="quick3Title">{copy.quick3Title}</h3>
             </div>
             <p className="shop_product_description" data-content-field="quick3Body">{copy.quick3Body}</p>
-            <button onClick={() => onNavigate('volunteering')} className="PrimaryActionButton PushBottom">
+            <a href="/volunteering" className="PrimaryActionButton PushBottom">
               <span data-content-field="quick3Action">{copy.quick3Action}</span> <ArrowRight className="IconSm" />
-            </button>
+            </a>
           </div>
         </div>
+      </div>
+
+      <div className="SectionContent">
+        <section className="main_tile main_tile_grey HomeSafeguardingCallout">
+          <div>
+            <span className="tile_eyebrow">Safeguarding</span>
+            <h3 className="tile_heading_bold_2">Report a concern</h3>
+            <p className="text_container">Find safeguarding information and the current reporting routes.</p>
+          </div>
+          <a href="/safeguarding" className="PrimaryActionButton">Safeguarding <ArrowRight className="IconSm" /></a>
+        </section>
       </div>
 
       {/* Sponsors */}

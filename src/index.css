@@ -41,6 +41,12 @@
     min-width: 0;
   }
 
+  .OfflineStatus {
+    @apply fixed bottom-0 inset-x-0 z-[45] px-4 py-2 text-sm text-center;
+    background: var(--fcc-color-accent-soft);
+    color: var(--fcc-color-ink);
+  }
+
   .SiteSection {
     @apply max-w-7xl mx-auto px-6;
   }
@@ -1700,7 +1706,14 @@
 .CheckoutAssign { display: flex; flex-direction: column; gap: 0.35rem; }
 .CheckoutGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: 0.75rem; align-items: end; }
 .CheckoutGrid > .FormLabel { min-width: 0; }
+.CheckoutGrid > .CheckoutWideField { grid-column: 1 / -1; }
 .CheckoutGrid .FormInput { min-width: 0; }
+.HomeSafeguardingCallout { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; }
+.HomeSafeguardingCallout .tile_heading_bold_2 { margin-top: 0.5rem; }
+.SafeguardingDownloads > li { align-items: flex-start; }
+.SafeguardingDownloads > li::before { display: none; }
+.SafeguardingDownloads > li > div { display: grid; gap: 0.5rem; }
+.SafeguardingDocumentActions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem; }
 .CheckoutGrid input.FormInput, .CheckoutGrid select.FormInput,
 .FormFieldGrid input.FormInput, .FormFieldGrid select.FormInput { min-height: 3rem; }
 .CheckoutFieldset { border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 0.75rem; padding: 0.75rem; }

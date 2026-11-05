@@ -59,6 +59,9 @@ export const productMembershipRule = (product) => {
 export const normaliseProduct = (product) => {
   const rule = productMembershipRule(product);
   const { membershipRule: _rule, membershipRequired: _required, eventSchedule, ...rest } = product;
+  if (product.category === 'MEMBERSHIP' && typeof rest.description === 'string') {
+    rest.description = rest.description.replace(/\bSCA\b/g, 'Paddle Scotland');
+  }
   if (product.category === 'EVENTS' && eventSchedule) rest.eventSchedule = eventSchedule;
   return { ...rest, ...productTerms(product), ...(rule ? { membershipRule: rule, membershipRequired: rule !== 'none' } : {}) };
 };

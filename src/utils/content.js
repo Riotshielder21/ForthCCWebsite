@@ -8,7 +8,6 @@ import {
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db } from './firebase';
 import { storage } from './firebase';
-import { PAGE_CONTENT } from '../constants/pageContent';
 import { apiUrl } from './api';
 import { isLockedProduct } from './tripDiscount';
 import { normaliseProduct, resolveCatalogue, validateEventSchedule } from './catalogue';
@@ -21,29 +20,17 @@ export const subscribeToProducts = (onProducts, onError) => {
   return onSnapshot(
     collection(db, 'products'),
     (snapshot) => {
+      if (snapshot.metadata.fromCache && snapshot.empty) {
+        console.warn('Live product catalogue is unavailable; retaining previously downloaded products.');
+        return;
+      }
       onProducts(resolveCatalogue(PRODUCTS, snapshot.docs.map((productDoc) => ({ ...productDoc.data(), id: productDoc.id }))));
     },
     onError
   );
 };
 
-export const loadPublishedPageContent = (onContent, onError) => {
-  let active = true;
-  Promise.all(Object.keys(PAGE_CONTENT).map(async (pageId) => {
-    try {
-      const response = await fetch(`/content/pages/${pageId}.json`, { cache: 'no-cache' });
-      if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return [pageId, {}];
-      return [pageId, await response.json()];
-    } catch (error) {
-      onError?.(error);
-      return [pageId, {}];
-    }
-  })).then((entries) => {
-    if (active) onContent(Object.fromEntries(entries));
-  }).catch(onError);
-
-  return () => { active = false; };
-};
+export { loadPublishedPageContent } from './publicContent';
 
 export const savePageContent = async (pageId, content, idToken) => {
   const response = await fetch(apiUrl('/api/admin/publish-page'), {

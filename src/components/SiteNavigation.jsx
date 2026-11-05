@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ShoppingCart, Menu, X, UserRound } from 'lucide-react';
 import fccCrest from '../assets/fcc-crest.png';
+import { pagePath } from '../utils/routes';
 
 const PRIMARY_NAV_ITEMS = [
   { id: 'home', label: 'Home' },
@@ -50,7 +51,7 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
   const navLink = (item, bubble = true) => (
     <a
       key={item.id}
-      href={item.id === 'home' ? '/' : `/?page=${item.id}`}
+      href={pagePath(item.id)}
       onClick={(event) => {
         if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
@@ -67,12 +68,12 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
     <>
     <header className="SiteHeader">
       <div className="SiteHeaderInner">
-        <button className="BrandLockup" onClick={() => handleNav('home')} aria-label="Go to home page">
+        <a href="/" className="BrandLockup" onClick={() => setMenuOpen(false)} aria-label="Go to home page">
           <img src={fccCrest} alt="Forth Canoe Club crest" className="BrandMark" />
           <div>
             <h1 className="BrandTitle">Forth Canoe<br />Club SCIO</h1>
           </div>
-        </button>
+        </a>
 
         {desktop && <nav className="TopNav" aria-label="Primary navigation">
           {PRIMARY_NAV_ITEMS.map((item) => navLink(item))}
