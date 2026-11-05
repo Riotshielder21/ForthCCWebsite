@@ -1694,7 +1694,7 @@ const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sen
 registerContactRoutes(app, { sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
-registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes,
+registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes, stripeRequest,
   raiseAttention: (kind, key, details) => attention.raise(kind, key, details) });
 const { sendDueRosters, canViewEventRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
   emailCodes, requestNow,
