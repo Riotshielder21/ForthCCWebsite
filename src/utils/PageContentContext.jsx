@@ -5,6 +5,7 @@ import { auth, signInWithWorkspace } from './firebase';
 import { savePageContent } from './content';
 import { apiUrl } from './api';
 import { isClubEmail } from './adminAccess.js';
+import { pageDraftFingerprint, savePageDraftBatch, unsavedPageIds } from './pageDrafts.js';
 
 const PageContentContext = createContext({});
 const PageEditorContext = createContext(null);
@@ -14,6 +15,7 @@ export function PageContentProvider({ value, children }) {
   const [authReady, setAuthReady] = useState(!auth);
   const [editMode, updateEditMode] = useState(false);
   const [drafts, setDrafts] = useState({});
+  const [savedFingerprints, setSavedFingerprints] = useState({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -47,12 +49,16 @@ export function PageContentProvider({ value, children }) {
     if (!adminUser) return undefined;
     const readDrafts = () => {
       const restored = {};
+      const restoredSaved = {};
       try {
         for (const pageId of Object.keys(PAGE_CONTENT)) {
           const stored = localStorage.getItem(`fcc-page-preview:${pageId}`);
           if (stored) restored[pageId] = JSON.parse(stored);
+          const saved = localStorage.getItem(`fcc-page-saved:${pageId}`);
+          if (saved) restoredSaved[pageId] = saved;
         }
         setDrafts(restored);
+        setSavedFingerprints(restoredSaved);
         updateEditMode(localStorage.getItem('fcc-edit-mode') === 'true');
       } catch {
         setError('Some local drafts could not be restored.');
@@ -60,7 +66,7 @@ export function PageContentProvider({ value, children }) {
     };
     readDrafts();
     const onStorage = (event) => {
-      if (event.key?.startsWith('fcc-page-preview:') || event.key === 'fcc-edit-mode') readDrafts();
+      if (event.key?.startsWith('fcc-page-preview:') || event.key?.startsWith('fcc-page-saved:') || event.key === 'fcc-edit-mode') readDrafts();
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
@@ -113,14 +119,33 @@ export function PageContentProvider({ value, children }) {
     setError('');
   };
 
-  const save = async (pageId, publish = false) => {
+  const unsavedIds = unsavedPageIds(drafts, savedFingerprints);
+  const unsavedPages = unsavedIds.map((pageId) => ({ id: pageId, label: PAGE_CONTENT[pageId]?.label || pageId }));
+
+  const save = async (_pageId, publish = false) => {
     setBusy(true);
     setError('');
     setMessage('');
     try {
       if (!adminUser) throw new Error('Sign in with an approved editor account.');
       const token = await adminUser.getIdToken(true);
-      const result = await savePageContent(pageId, getPageCopy(pageId, drafts[pageId] || value[pageId]), token);
+      const pageIds = unsavedPageIds(drafts, savedFingerprints);
+      if (!pageIds.length && !publish) {
+        setMessage('There are no unsaved local changes.');
+        return;
+      }
+      const contentByPage = Object.fromEntries(pageIds.map((pageId) => [pageId, getPageCopy(pageId, drafts[pageId] || value[pageId])]));
+      let localTrackingFailed = false;
+      const results = await savePageDraftBatch(pageIds, contentByPage, token, savePageContent, (pageId, content) => {
+        const fingerprint = pageDraftFingerprint(content);
+        setSavedFingerprints((current) => ({ ...current, [pageId]: fingerprint }));
+        try { localStorage.setItem(`fcc-page-saved:${pageId}`, fingerprint); }
+        catch { localTrackingFailed = true; }
+      });
+      const warnings = [...new Set([
+        ...results.map((result) => result.warning).filter(Boolean),
+        ...(localTrackingFailed ? ['The pages were saved, but this browser could not remember their saved status.'] : [])
+      ])];
       if (publish) {
         const response = await fetch(apiUrl('/api/admin/create-content-pr'), {
           method: 'POST',
@@ -130,10 +155,11 @@ export function PageContentProvider({ value, children }) {
         if (!response.ok) throw new Error(pullRequest.error || 'Could not create review PR.');
         setReview(pullRequest);
         setMessage(`Pull request #${pullRequest.number} is ready. Merging it publishes the saved changes.`);
-        if (pullRequest.warning) setError(pullRequest.warning);
+        if (pullRequest.warning || warnings.length) setError([pullRequest.warning, ...warnings].filter(Boolean).join(' '));
       } else {
-        setMessage(`Draft saved on ${result.branch}. Not published yet.`);
-        if (result.warning) setError(result.warning);
+        const branches = [...new Set(results.map((result) => result.branch).filter(Boolean))];
+        setMessage(`${results.length} page${results.length === 1 ? '' : 's'} saved${branches.length === 1 ? ` on ${branches[0]}` : ''}. Not published yet.`);
+        if (warnings.length) setError(warnings.join(' '));
       }
     } catch (saveError) {
       setError(saveError.message);
@@ -146,6 +172,7 @@ export function PageContentProvider({ value, children }) {
     if (!window.confirm('Discard local changes for this page and restore published content? This does not remove drafts already saved to the review branch.')) return;
     try {
       localStorage.removeItem(`fcc-page-preview:${pageId}`);
+      localStorage.removeItem(`fcc-page-saved:${pageId}`);
     } catch {
       setError('Could not clear local draft storage.');
       return;
@@ -155,12 +182,17 @@ export function PageContentProvider({ value, children }) {
       delete next[pageId];
       return next;
     });
-    setMessage('Local changes discarded.');
+    setSavedFingerprints((current) => {
+      const next = { ...current };
+      delete next[pageId];
+      return next;
+    });
+    setMessage('Local changes for this page discarded.');
     setReview(null);
   };
 
   return (
-    <PageEditorContext.Provider value={{ adminUser, authReady, editMode, setEditMode, updatePage, login, logout, save, discard, busy, message, error, review, drafts }}>
+    <PageEditorContext.Provider value={{ adminUser, authReady, editMode, setEditMode, updatePage, login, logout, save, discard, busy, message, error, review, drafts, unsavedPages }}>
       <PageContentContext.Provider value={adminUser ? { ...value, ...drafts } : value}>
         {children}
       </PageContentContext.Provider>

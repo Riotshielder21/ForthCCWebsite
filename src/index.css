@@ -1225,6 +1225,7 @@
   .EditorIconButton { width: 40px; padding: 0; flex-shrink: 0; }
   .EditorPublish { background: #087c56; border-color: #087c56; color: #fff; }
   .EditorCommand:disabled, .EditorIconButton:disabled { opacity: .55; cursor: wait; }
+  .EditorUnsavedPages { flex-basis: 100%; font-weight: 700; overflow-wrap: anywhere; }
   .EditorStatus { flex-basis: 100%; overflow-wrap: anywhere; }
   .EditorError { color: #b42318; }
   .tile_group_single { display: grid; grid-template-columns: 1fr; gap: 24px; }
