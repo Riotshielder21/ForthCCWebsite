@@ -448,12 +448,6 @@ export default function App() {
             <a href="https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC050275" target="_blank" rel="noreferrer" className="FooterLink">Charity Register</a>
             <button onClick={() => setCurrentPage('contact-us')} className="FooterLink">Contact</button>
             <button className="FooterLink">Safeguarding</button>
-            <a href="/my-details" onClick={(event) => {
-              if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-              event.preventDefault();
-              setCurrentPage('my-details');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }} className="FooterLink">My details</a>
             <a href="/check-ins" onClick={(event) => {
               if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
               event.preventDefault();

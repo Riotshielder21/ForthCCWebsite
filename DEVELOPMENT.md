@@ -47,6 +47,7 @@ Open `http://localhost:3000`. Use **Admin** in the footer, then **Sign in as loc
 - **Edits:** restart the API after backend changes; Vite reloads the frontend.
 - **Seed data:** synthetic households, orders, a course and a voucher; reseeding resets them.
 - **Mobile checks:** 390x844, 360x640, 320x568 portrait and 667x375, 844x390 landscape.
+- **Navigation:** Home, Membership, Beginners and Disciplines are the four primary pill links. At widths below 1024px they float over the homepage banner with transparent gaps (without scrolling), moving into the expanded menu while it is open; without a banner they remain in normal flow. At desktop widths they appear only in the header, never repeated in the expanded menu. Only one set is mounted at a time, using the 1024px media query to move it between locations. The menu remains available at every width and retains Volunteering, About, Contact Us and Access Project; My details stays in the header. Check that the primary links are never duplicated, including when resizing with the menu open, plus menu dismissal on navigation/Escape, keyboard focus, modified-click links and basket access at both sizes.
 
 ## Build And Test
 
@@ -168,7 +169,7 @@ Set `JUSTGO_API_SECRET`, `JUSTGO_ORGANISATION_ID` and `JUSTGO_API_ENABLED=true`;
 - **Origins:** `PUBLIC_SITE_URL` is canonical; `PUBLIC_SITE_URLS` adds approved checkout/receipt origins, and `CORS_ORIGINS` adds browser API origins. Keep all three frontends (`new.forthcanoeclub.co.uk`, `fccwebsite-23cfc.web.app`, `fccwebsite-23cfc.firebaseapp.com`) allowed. Escape commas as `\,` in the Hosting workflow's Cloud Run `env_vars`. CORS and Firebase `authDomain` are independent.
 - **Proxy/rate limits:** Cloud Run uses one trusted proxy hop; adjust `TRUST_PROXY_HOPS` for other deployments. Use [rateLimit.js](src/server/rateLimit.js) for new routes; the baseline is 300 requests/minute (`BASELINE_RATE_LIMIT`).
 - **Renewals:** configure `RENEWAL_JOB_TOKEN` (32+ random characters) in the API and job environment, plus `RENEWAL_JOB_URL` ending `/api/jobs/renewals`. [fcc-renewals.timer](config/fcc-renewals.timer) schedules 09:00 London on 1 and 15 February.
-- **Email:** `STAFF_ALERT_EMAIL` defaults to the committee. Configure the volunteer coordinator in Reports. Retry failed notifications in the admin panels.
+- **Email:** `STAFF_ALERT_EMAIL` defaults to the committee. Configure the volunteer coordinator in Reports. Retry failed notifications in the admin panels. Volunteer-benefits emails include HTML paragraphs and a bulleted list, with a plain-text alternative and an explicit Forth Canoe Club sign-off; email clients control line wrapping.
 - **Admin page edits:** saves target `GITHUB_CONTENT_BRANCH` (`live/web-admin-edit`); merge the review PR into `GITHUB_BRANCH` (`main`) to publish. A rebase warning needs manual reconciliation:
 
 ```bash

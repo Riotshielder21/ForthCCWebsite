@@ -24,14 +24,31 @@ export const volunteerLevelLabel = (levels, id) => {
   return /^\d+$/.test(id || '') ? `${id}+ hours` : 'volunteer level';
 };
 
-export const volunteerBenefitText = (tier, products = []) => {
+export const volunteerBenefitList = (tier, products = []) => {
   const names = tier.freeProductIds.map((id) => products.find((product) => product.id === id)?.name || id);
   return [
     ...(tier.monthlyCap !== null ? [tier.monthlyCap === 0 ? 'Free Blue and Gold subscriptions' : `Blue and Gold subscriptions at up to £${tier.monthlyCap}/month`]
       : tier.monthlyDiscount > 0 ? [`£${tier.monthlyDiscount}/month off Blue and Gold subscriptions`] : []),
     ...names.map((name) => `Free ${name}`),
     ...(tier.extra ? [tier.extra.replace(/\.$/, '')] : [])
-  ].join('. ');
+  ];
+};
+
+export const volunteerBenefitText = (tier, products = []) => volunteerBenefitList(tier, products).join('. ');
+
+export const volunteerBenefitsEmail = ({ name, tier, year, products = [] }) => {
+  const displayName = name.trim().replace(/\p{L}[\p{L}\p{M}]*/gu, (word) => word[0].toLocaleUpperCase('en-GB') + word.slice(1));
+  const greeting = `Hi ${displayName},`;
+  const intro = `Thank you for volunteering ${tier.hours}+ hours for club year ${year}/${year + 1}.`;
+  const benefits = volunteerBenefitList(tier, products);
+  const details = 'Your benefits are recorded on your membership and apply automatically at checkout when you use your membership details. Monthly payments you already have are lowered from your next payment, or stopped at the end of the month you have paid for when the benefit makes them free. For anything you have already paid for in full, the club will check whether a part refund is due.';
+  const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+  return {
+    body: [greeting, intro, benefits.map((benefit) => `- ${benefit}`).join('\n'), details, 'Thank you,', 'Forth Canoe Club'].join('\n\n'),
+    html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="font-family:Arial,sans-serif;line-height:1.5"><p>${escape(greeting)}</p><p>${escape(intro)}</p><ul>${benefits.map((benefit) => `<li>${escape(benefit)}</li>`).join('')}</ul><p>${escape(details)}</p><p>Thank you,</p><p>Forth Canoe Club</p></body></html>`
+  };
 };
 
 export const validateVolunteerBenefits = (body) => {
