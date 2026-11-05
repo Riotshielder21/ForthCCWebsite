@@ -16,5 +16,38 @@
   "coursesBody": "Open to members and non-members. Learn the basics and progress to more technical skills. Discover and Explore courses cover kayak, canoe, and paddle board. Kids and teens courses available during holidays and after school.",
   "essentialsEyebrow": "What to Bring",
   "essentialsTitle": "Essentials",
-  "essentialsBody": "Towel\nClothes for paddling (will get wet)\nWarm change of clothes\nFlat shoes that stay on in water\n\nNo wetsuit needed, but helpful if you have one. Basic changing rooms and portaloo available."
+  "essentialsBody": "Towel\nClothes for paddling (will get wet)\nWarm change of clothes\nFlat shoes that stay on in water\n\nNo wetsuit needed, but helpful if you have one. Basic changing rooms and portaloo available.",
+  "tileLayout": [
+    {
+      "id": "hero",
+      "group": "hero",
+      "type": "existing"
+    },
+    {
+      "id": "open",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "club",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "courses",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "essentials",
+      "group": "tiles",
+      "type": "existing"
+    }
+  ],
+  "banner": {
+    "imageUrl": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fbeginners%2Fbanner%2F5ab8603f-7274-4056-8d63-e7dd496e6a52?alt=media&token=c6b95b51-69f4-4a84-8dbd-c55aa0267bf2",
+    "alt": "",
+    "credit": "",
+    "focus": "center"
+  }
 }
