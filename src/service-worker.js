@@ -48,8 +48,12 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   const sourceUrl = event.source?.url;
+  const messageOrigin = typeof event.origin === 'string' ? event.origin : '';
   try {
-    if (!sourceUrl || new URL(sourceUrl).origin !== self.location.origin) return;
+    const sourceOrigin = sourceUrl ? new URL(sourceUrl).origin : '';
+    const hasTrustedSourceOrigin = !!sourceOrigin && sourceOrigin === self.location.origin;
+    const hasTrustedMessageOrigin = !!messageOrigin && messageOrigin === self.location.origin;
+    if (!hasTrustedSourceOrigin && !hasTrustedMessageOrigin) return;
   } catch {
     return;
   }
