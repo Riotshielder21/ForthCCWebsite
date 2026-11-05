@@ -24,6 +24,10 @@ const auth = getAuth(browserApp);
 connectAuthEmulator(auth, `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}`, { disableWarnings: true });
 
 const run = Date.now().toString(36);
+const affiliationNumberFor = (offset = 0) => String((Number.parseInt(run, 36) + offset) % 999999 + 1);
+const syncedAffiliationNumber = affiliationNumberFor(1);
+const unconfirmedAffiliationNumber = affiliationNumberFor(2);
+const unknownAffiliationNumber = affiliationNumberFor(3);
 let sourceAddress = 1;
 // Each request comes from a different loopback address so the API's per-IP rate limits do not interfere.
 // The Stripe return address for each checkout, as Stripe would hold it on the session.
@@ -58,13 +62,13 @@ let idCounter = 0;
 const makeId = () => `p${++idCounter}-${run}`;
 const lineFor = (productId, index) => ({ ...PRODUCTS.find((product) => product.id === productId), lineId: `${productId}-${index}-${run}` });
 const adultDetails = (over = {}) => ({
-  firstName: 'Alex', lastName: 'Adult', dob: yearsAgo(35), email: '', phone: '07700 900111', address: '1 River Road', postcode: 'EH1 1AA',
+  firstName: 'Alex', lastName: 'Adult', dob: yearsAgo(35), email: '', phone: '+447911123456', address: '1 River Road', postcode: 'EH1 1AA',
   swimming: 'confident', medical: 'Asthma', photoConsent: true, disclaimerAccepted: true,
-  emergencyContact: { name: 'Pat Friend', phone: '07700 900222', relationship: 'Friend' }, ...over
+  emergencyContact: { name: 'Pat Friend', phone: '+447911123457', relationship: 'Friend' }, ...over
 });
 const juniorDetails = (over = {}) => ({
   firstName: 'Jamie', lastName: 'Junior', dob: yearsAgo(12), swimming: 'basic', medical: 'None', photoConsent: true, disclaimerAccepted: true,
-  guardian: { name: 'Parent Person', phone: '07700 900333', email: '', relationship: 'Parent', address: '9 Parent Street', postcode: 'EH9 9ZZ' }, ...over
+  guardian: { name: 'Parent Person', phone: '+447911123458', email: '', relationship: 'Parent', address: '9 Parent Street', postcode: 'EH9 9ZZ' }, ...over
 });
 const build = (productIds, fillers) => {
   const lines = productIds.map(lineFor);
@@ -234,11 +238,11 @@ await test('admin-chosen person details appear in the receipt email only', async
     const mail = (await db.collection('testMail').where('orderRef', '==', started.json.orderRef).get()).docs[0].data();
     const dob = details.dob.split('-').reverse().join('/');
     for (const content of [mail.body, mail.html]) {
-      assert.ok(content.includes(dob) && content.includes('07700 900111') && content.includes('Pat Friend (Friend), 07700 900222'), 'chosen details are emailed');
+      assert.ok(content.includes(dob) && content.includes('+447911123456') && content.includes('Pat Friend (Friend), +447911123457'), 'chosen details are emailed');
       assert.ok(!content.includes('Asthma') && !content.includes('1 River Road'), 'unchosen details are not emailed');
     }
     const linked = JSON.stringify((await call('GET', `/api/orders/${mail.retrievalUrl.split('/order/')[1]}`)).json);
-    assert.ok(linked.includes('Fields Member') && !linked.includes(dob) && !linked.includes(details.dob) && !linked.includes('07700'), 'the receipt link stays name-only');
+    assert.ok(linked.includes('Fields Member') && !linked.includes(dob) && !linked.includes(details.dob) && !linked.includes(details.phone), 'the receipt link stays name-only');
   } finally {
     assert.equal((await call('POST', '/api/admin/receipt-email', { headers: admin, body: { personFields: [] } })).status, 200);
   }
@@ -364,13 +368,13 @@ await test("receipt emails show an existing member's recorded details only at th
     const own = await newMember('receipt-own');
     const ownMail = await mailFor(await buy(own.email, build(['keyhire'], [own.person])));
     for (const content of [ownMail.body, ownMail.html]) {
-      assert.ok(content.includes('07700 900111') && content.includes('1 River Road') && content.includes('Pat Friend (Friend), 07700 900222'),
+      assert.ok(content.includes('+447911123456') && content.includes('1 River Road') && content.includes('Pat Friend (Friend), +447911123457'),
         'details held on the record are filled in for the member\'s own email');
     }
     const other = await newMember('receipt-other');
     const otherMail = await mailFor(await buy(email('receipt-someone-else'), build(['keyhire'], [{ ...other.person, email: other.email }])));
     for (const content of [otherMail.body, otherMail.html]) {
-      assert.ok(!content.includes('07700 900111') && !content.includes('1 River Road') && !content.includes('Pat Friend'),
+      assert.ok(!content.includes('+447911123456') && !content.includes('1 River Road') && !content.includes('Pat Friend'),
         'recorded details are not sent to a different receipt address');
     }
   } finally {
@@ -407,7 +411,7 @@ await test('junior membership uses the parent contact details', async () => {
   const [membership] = await membershipsFor(parent);
   assert.equal(membership.firstName, 'Jamie');
   assert.equal(membership.membershipTier, 'junior');
-  assert.equal(membership.household.phone, '07700 900333');
+  assert.equal(membership.household.phone, '+447911123458');
   assert.equal(membership.household.address, '9 Parent Street');
   assert.equal(membership.household.contactName, 'Parent Person');
   const order = (await db.collection('orders').doc(orderRef).get()).data();
@@ -436,11 +440,11 @@ await test('siblings buying separate junior memberships together share one house
 
 await test('junior members share a household only when their guardian matches, in checkout, Firestore and reports', async () => {
   const guardianA = {
-    name: 'Morgan Guardian', phone: '07700 900441', email: email('guardian-morgan'), relationship: 'Parent',
+    name: 'Morgan Guardian', phone: '+447911123459', email: email('guardian-morgan'), relationship: 'Parent',
     address: '41 Shared Road', postcode: 'EH4 4AA'
   };
   const guardianB = {
-    name: 'Riley Guardian', phone: '07700 900552', email: email('guardian-riley'), relationship: 'Grandparent',
+    name: 'Riley Guardian', phone: '+447911123460', email: email('guardian-riley'), relationship: 'Grandparent',
     address: '52 Separate Road', postcode: 'EH5 5BB'
   };
   const buyer = email('junior-households');
@@ -483,7 +487,7 @@ await test('junior members share a household only when their guardian matches, i
     [report.people.find((person) => person.name === 'Morgan Sibling').emergencyContact,
       report.people.find((person) => person.name === 'Taylor Sibling').emergencyContact,
       report.people.find((person) => person.name === 'Riley Other').emergencyContact],
-    ['Morgan Guardian, Parent, 07700 900441', 'Morgan Guardian, Parent, 07700 900441', 'Riley Guardian, Grandparent, 07700 900552']
+    ['Morgan Guardian, Parent, +447911123459', 'Morgan Guardian, Parent, +447911123459', 'Riley Guardian, Grandparent, +447911123460']
   );
   const memberRows = (await reportFor('members')).json.records;
   const morganRow = memberRows.find((record) => record.id === morgan.id);
@@ -491,7 +495,7 @@ await test('junior members share a household only when their guardian matches, i
   const rileyRow = memberRows.find((record) => record.id === riley.id);
   assert.deepEqual([morganRow.email, taylorRow.email, rileyRow.email], [guardianA.email, guardianA.email, guardianB.email]);
   assert.deepEqual([morganRow.parent, taylorRow.parent, rileyRow.parent], [
-    'Morgan Guardian, Parent, 07700 900441', 'Morgan Guardian, Parent, 07700 900441', 'Riley Guardian, Grandparent, 07700 900552'
+    'Morgan Guardian, Parent, +447911123459', 'Morgan Guardian, Parent, +447911123459', 'Riley Guardian, Grandparent, +447911123460'
   ]);
   shared.juniorHouseholdOrder = orderRef;
   shared.juniorHouseholdEmails = [guardianA.email, guardianB.email];
@@ -506,7 +510,7 @@ await test('multiple copies of shop services can be bought by different members 
     'gold-sub'
   ], [
     adultDetails({ firstName: 'Quinn', lastName: 'Quantity', email: email('quantity-quinn') }),
-    adultDetails({ firstName: 'Avery', lastName: 'Quantity', email: email('quantity-avery'), phone: '07700 900663', address: '63 Double Road', postcode: 'EH6 6CC' })
+    adultDetails({ firstName: 'Avery', lastName: 'Quantity', email: email('quantity-avery'), phone: '+447911123461', address: '63 Double Road', postcode: 'EH6 6DA' })
   ]);
   assert.equal(basket.people.length, 2);
   const orderRef = await buy(buyer, basket);
@@ -555,8 +559,8 @@ await test('same name and email with a different date of birth is flagged, not d
 });
 
 await test('a membership number must agree with the date of birth', async () => {
-  await db.collection('memberships').doc('sca-E2E-1').set({ affiliationNumber: `E2E-${run}`, firstName: 'Sam', lastName: 'Synced', email: email('synced'), dob: yearsAgo(40, 2, 2), status: 'active', validUntil: new Date(Date.now() + 90 * 86400000), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: new Date() });
-  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), affiliationNumber: `E2E-${run}` };
+  await db.collection('memberships').doc('sca-E2E-1').set({ affiliationNumber: syncedAffiliationNumber, firstName: 'Sam', lastName: 'Synced', email: email('synced'), dob: yearsAgo(40, 2, 2), status: 'active', validUntil: new Date(Date.now() + 90 * 86400000), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: new Date() });
+  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), affiliationNumber: syncedAffiliationNumber };
   const bad = await checkout(email('synced'), build(['boat-hire'], [{ ...synced, dob: yearsAgo(41, 2, 2) }]));
   assert.equal(bad.status, 409);
   assert.equal(bad.json.code, 'identity_conflict');
@@ -573,7 +577,7 @@ await test('an active member cannot buy a second membership, and JustGo members 
   const again = await checkout(shared.alex, build(['membership-adult'], [adultDetails({ email: shared.alex })]));
   assert.equal(again.status, 409);
   assert.equal(again.json.code, 'membership_active');
-  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), affiliationNumber: `E2E-${run}` };
+  const synced = { ...adultDetails({ firstName: 'Sam', lastName: 'Synced', dob: yearsAgo(40, 2, 2), email: email('synced') }), affiliationNumber: syncedAffiliationNumber };
   const viaJustgo = await checkout(email('synced'), build(['membership-adult'], [synced]));
   assert.equal(viaJustgo.status, 409);
   assert.equal(viaJustgo.json.code, 'renews_via_justgo');
@@ -629,7 +633,7 @@ await test('JustGo members are inactive until the sync confirms their renewal in
   const yearStart = new Date(now.getMonth() >= 2 ? now.getFullYear() : now.getFullYear() - 1, 2, 1);
   const lapsed = email('unconfirmed');
   const details = adultDetails({ firstName: 'Lou', lastName: 'Unconfirmed', dob: yearsAgo(45, 7, 7), email: lapsed });
-  await db.collection('memberships').doc(`sca-E2E-U-${run}`).set({ affiliationNumber: `E2E-U-${run}`, firstName: 'Lou', lastName: 'Unconfirmed', email: lapsed, dob: details.dob, status: 'active',
+  await db.collection('memberships').doc(`sca-E2E-U-${run}`).set({ affiliationNumber: unconfirmedAffiliationNumber, firstName: 'Lou', lastName: 'Unconfirmed', email: lapsed, dob: details.dob, status: 'active',
     validUntil: new Date(now.getTime() + 90 * 86400000), source: 'justgo', justgoSyncStatus: 'synced', renewalMethod: 'justgo', lastJustgoSync: new Date(yearStart.getTime() - 86400000) });
   const addOn = await checkout(lapsed, build(['boat-hire'], [details]));
   assert.equal(addOn.status, 409);
@@ -651,10 +655,10 @@ await test('JustGo members are inactive until the sync confirms their renewal in
 
 await test('a person with an unknown membership number is queued for JustGo identity reconciliation', async () => {
   const visitor = email('visitor');
-  const basket = build(['membership-adult'], [{ ...adultDetails({ firstName: 'Vic', lastName: 'Visitor', email: visitor }), affiliationNumber: `PS-${run}` }]);
+  const basket = build(['membership-adult'], [{ ...adultDetails({ firstName: 'Vic', lastName: 'Visitor', email: visitor }), affiliationNumber: unknownAffiliationNumber }]);
   await buy(visitor, basket);
   const [record] = await membershipsFor(visitor);
-  assert.equal(record.affiliationNumber, `PS-${run}`);
+  assert.equal(record.affiliationNumber, unknownAffiliationNumber);
   assert.deepEqual([record.justgoUpload.status, record.justgoUpload.attempts], ['queued', 0]);
   assert.equal(Object.hasOwn(record.justgoUpload, 'mode'), false, 'the API resolves the number instead of sending a browser invitation');
   shared.visitorMembership = record.id;
@@ -670,7 +674,7 @@ await test('staff can retry the upload or mark it as done by hand, and failures 
   assert.equal(failed.uploadFailures, 3);
   const staffRows = justgoUploadRows(report);
   const row = staffRows.find((entry) => entry[0] === shared.visitorMembership);
-  assert.deepEqual([row[1], row[10], row[11], row[12]], ['Vic', `PS-${run}`, 3, 'JustGo request refused before writing']);
+  assert.deepEqual([row[1], row[10], row[11], row[12]], ['Vic', unknownAffiliationNumber, 3, 'JustGo request refused before writing']);
   assert.equal((await act(shared.visitorMembership, 'retry')).status, 200);
   report = (await reportFor('members', shared.visitorMembership)).json.records;
   assert.equal(report.find((record) => record.id === shared.visitorMembership).justgo, 'Awaiting upload');
@@ -696,7 +700,7 @@ await test('family membership shares contact details and notes parents as the ch
   const records = await membershipsFor(family);
   assert.equal(records.length, 3);
   assert.equal(new Set(records.map((record) => record.householdId)).size, 1);
-  assert.ok(records.every((record) => record.household.address === '1 River Road' && record.household.phone === '07700 900111'));
+  assert.ok(records.every((record) => record.household.address === '1 River Road' && record.household.phone === '+447911123456'));
   const kid = records.find((record) => record.firstName === 'Kit');
   assert.equal(Object.hasOwn(kid, 'emergencyNote'), false);
   assert.equal(kid.household.emergencyContact.name, 'Pat Friend');
@@ -821,7 +825,7 @@ await test('event tickets list attendees with contact and emergency details, eve
   assert.equal(record.items.length, 1);
   assert.deepEqual(record.people[0].events[0].eventSchedule, schedule);
   const [row] = eventAttendeeRows([record], () => 'scheduled');
-  assert.deepEqual([row[0], row[2], row[4], row[6], row[7]], ['E2E five-day course', 'Alex Adult', '07700 900111', 'Pat Friend, Friend, 07700 900222', 'Asthma']);
+  assert.deepEqual([row[0], row[2], row[4], row[6], row[7]], ['E2E five-day course', 'Alex Adult', '+447911123456', 'Pat Friend, Friend, +447911123457', 'Asthma']);
   assert.equal(row[5], shared.alex);
 });
 
@@ -833,15 +837,15 @@ await test('reports: orders list shows each person and what they bought', async 
   assert.equal(family.people.length, 3);
   const kit = family.people.find((person) => person.name === 'Kit Adult');
   assert.equal(kit.kind, 'Under 18');
-  assert.equal(kit.emergencyContact, 'Drew Adult, Parent/Guardian, 07700 900111', 'a recorded junior\'s emergency contact is their household parent or guardian');
-  assert.equal(kit.phone, '07700 900111', 'the household supplies an actionable parent contact alongside the note');
+  assert.equal(kit.emergencyContact, 'Drew Adult, Parent/Guardian, +447911123456', 'a recorded junior\'s emergency contact is their household parent or guardian');
+  assert.equal(kit.phone, '+447911123456', 'the household supplies an actionable parent contact alongside the note');
   assert.equal(kit.email, shared.family);
   assert.equal(kit.address, '1 River Road, EH1 1AA');
   assert.deepEqual(kit.items, ['CLUB MEMBERSHIP — FAMILY']);
   const drew = family.people.find((person) => person.name === 'Drew Adult');
   const casey = family.people.find((person) => person.name === 'Casey Adult');
   assert.deepEqual([drew.emergencyContact, casey.emergencyContact], [
-    'Pat Friend, Friend, 07700 900222', 'Pat Friend, Friend, 07700 900222'
+    'Pat Friend, Friend, +447911123457', 'Pat Friend, Friend, +447911123457'
   ]);
   assert.ok(family.people.every((person) => person.address === '1 River Road, EH1 1AA'
     && person.items.includes('CLUB MEMBERSHIP — FAMILY')), 'every family member reports the same household contact and membership');
@@ -889,10 +893,10 @@ await test('reports: one member register holds website and JustGo members, compl
   assert.equal(alex.source, 'website');
   assert.equal(alex.renewalMethod, 'website');
   assert.equal(alex.justgo, 'Awaiting upload');
-  assert.equal(alex.emergencyContact, 'Pat Friend, Friend, 07700 900222');
+  assert.equal(alex.emergencyContact, 'Pat Friend, Friend, +447911123457');
   const kid = mine.find((record) => record.name === 'Kit Adult');
-  assert.equal(kid.emergencyContact, 'Drew Adult, Parent/Guardian, 07700 900111');
-  assert.equal(kid.parent, 'Drew Adult, Parent/Guardian, 07700 900111', 'parent contact recorded for the child');
+  assert.equal(kid.emergencyContact, 'Drew Adult, Parent/Guardian, +447911123456');
+  assert.equal(kid.parent, 'Drew Adult, Parent/Guardian, +447911123456', 'parent contact recorded for the child');
   assert.equal(kid.medical, 'Hay fever');
   const jam = mine.find((record) => record.name === 'Sam Synced');
   assert.equal(jam.source, 'justgo');
@@ -1085,8 +1089,8 @@ await test('deleted orders keep a masked audit entry and GDPR erasure removes a 
   assert.equal(missing.json.requiresSharedDetails, true);
   assert.equal((await membershipsFor(family)).length, 3, 'nothing was erased');
 
-  const sharedDetails = { contactName: 'Sam New', contactRelationship: 'Parent', phone: '07700 900999', email: email('gdpr-new'), address: '9 New Road', postcode: 'EH9 9ZZ',
-    emergencyName: 'Pat New', emergencyPhone: '07700 900888', emergencyRelationship: 'Friend' };
+  const sharedDetails = { contactName: 'Sam New', contactRelationship: 'Parent', phone: '+447911123462', email: email('gdpr-new'), address: '9 New Road', postcode: 'EH9 9ZZ',
+    emergencyName: 'Pat New', emergencyPhone: '+447911123463', emergencyRelationship: 'Friend' };
   const only = await erase({ membershipId: parent.id, scope: 'person', confirm: 'ERASE', sharedDetails });
   assert.equal(only.status, 200, only.text);
   const stayed = await membershipsFor(sharedDetails.email);
@@ -1545,7 +1549,7 @@ await test('events open to non-members keep them as contacts, close on time and 
   assert.equal(mail[0].email, leader);
   assert.match(mail[0].subject, /^Attendee list: E2E open day/);
   assert.match(mail[0].body, /^Hello Lee Leader,/);
-  assert.match(mail[0].body, /Vic Visitor \(Adult, born .*\n {3}Phone: 07700 900111 .*\n {3}Emergency contact: Pat Friend, Friend, 07700 900222\n {3}Medical: Nut allergy/);
+  assert.match(mail[0].body, /Vic Visitor \(Adult, born .*\n {3}Phone: \+447911123456 .*\n {3}Emergency contact: Pat Friend, Friend, \+447911123457\n {3}Medical: Nut allergy/);
   assert.match(mail[0].body, /Kit: Bringing own kit/);
   assert.match(mail[0].body, /Kit: Needs boat hire \(not paid\)/);
   assert.match(mail[0].body, /Membership: No\n/);

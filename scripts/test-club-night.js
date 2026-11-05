@@ -84,8 +84,8 @@ const volunteer = 'vol@example.test';
 
 await clear();
 try {
-  await db.collection('households').doc('HH-MEMBER').set({ contactName: 'Casey Member', contactRelationship: 'Member', email: member.email, phone: '0700 000001',
-    address: '1 Quay', postcode: 'EH1 1AA', emergencyContact: { name: 'Robin Member', relationship: 'Partner', phone: '0700 000002' } });
+  await db.collection('households').doc('HH-MEMBER').set({ contactName: 'Casey Member', contactRelationship: 'Member', email: member.email, phone: '+447911123464',
+    address: '1 Quay', postcode: 'EH1 1AA', emergencyContact: { name: 'Robin Member', relationship: 'Partner', phone: '+447911123465' } });
   await db.collection('memberships').doc('M0001').set({ firstName: member.firstName, lastName: member.lastName, dob: member.dob, householdId: 'HH-MEMBER',
     status: 'active', renewalMethod: 'website', validUntil: Timestamp.fromDate(clubYearDates(year).end) });
   await db.collection('membershipTerms').doc(`M0001_${year}`).set({ membershipId: 'M0001', clubYear: year, items: [{ productId: 'boat-hire' }] });
@@ -120,8 +120,8 @@ try {
   // Guest check-in
   const unknown = await call('/api/club-night/checkins', { method: 'POST', body: guest, at: tonight });
   assert.equal(unknown.data.needsDetails, true);
-  const details = { phone: '0700 000003', address: '3 Shore', postcode: 'EH3 3CC', swimming: 'basic', disclaimerAccepted: true, photoConsent: false,
-    emergencyContact: { name: 'Sky Guest', relationship: 'Sibling', phone: '0700 000004' } };
+  const details = { phone: '+447911123466', address: '3 Shore', postcode: 'EH3 3DA', swimming: 'basic', disclaimerAccepted: true, photoConsent: false,
+    emergencyContact: { name: 'Sky Guest', relationship: 'Sibling', phone: '+447911123467' } };
   assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: { ...guest, details: { ...details, emergencyContact: {} } }, at: tonight })).status, 400);
   const guestIn = await call('/api/club-night/checkins', { method: 'POST', body: { ...guest, details }, at: tonight });
   assert.equal(guestIn.status, 200);
@@ -170,7 +170,7 @@ try {
   assert.equal((await call('/api/club-night/checkins', { at: `${year}-03-12T00:00:00Z`, session: volunteerSession })).status, 200, 'volunteers have access before the session');
   assert.equal((await call('/api/club-night/checkins', { at: midnight.toISOString(), session: volunteerSession })).status, 403, 'volunteer access closes at next midnight');
   const contact = await call(`/api/club-night/checkins/${casey.id}/emergency-contact`, { method: 'POST', at: afterHours, session: volunteerSession });
-  assert.deepEqual(contact.data.contact, { name: 'Robin Member', relationship: 'Partner', phone: '0700 000002' });
+  assert.deepEqual(contact.data.contact, { name: 'Robin Member', relationship: 'Partner', phone: '+447911123465' });
   const log = (await db.collection('clubNightAccessLog').get()).docs.map((document) => document.data());
   assert.deepEqual([log.length, log[0].memberId, log[0].volunteerEmail], [1, 'M0001', volunteer]);
   assert.equal((await call(`/api/club-night/checkins/${casey.id}/emergency-contact`, { method: 'POST', at: midnight.toISOString(), session: volunteerSession })).status, 403, 'emergency contact is unavailable after midnight');
@@ -296,7 +296,7 @@ try {
     const roster = await call('/api/event-rosters/P00001', { at: lastDay, session });
     assert.equal(roster.status, 200);
     assert.deepEqual(roster.data.attendees.map((row) => [row.name, row.membership, row.nonMemberVisits, row.emergencyContact]),
-      [['Gale Guest', 'No', '3 of 3 this club year', 'Sky Guest, Sibling, 0700 000004']], 'two check-ins plus the event');
+      [['Gale Guest', 'No', '3 of 3 this club year', 'Sky Guest, Sibling, +447911123467']], 'two check-ins plus the event');
     assert.equal(roster.data.attendees[0].firstClubNight, false, 'Gale has checked in at club night before');
     assert.equal(JSON.stringify(roster.data).includes(guest.email), false, 'the on-screen list leaves out contact details');
     assert.deepEqual((await call('/api/event-rosters', { at: afterEvent, session })).data.events, [], 'closed after the last day');
@@ -331,11 +331,11 @@ try {
   assert.deepEqual(mine.data.purchases.map((order) => order.orderRef), ['FCC-NOW'], 'only paid orders since renewals opened');
   assert.deepEqual(mine.data.purchases[0].items[0].personNames, ['Casey Member'], 'order people resolve from the member record');
   assert.equal(mine.data.purchases[0].items[0].price, 45);
-  for (const detail of ['0700 000001', member.dob]) assert.equal(JSON.stringify(mine.data.purchases).includes(detail), false, 'receipts hold no personal details');
-  const update = { phone: '0700 999999', address: '9 New Street', postcode: 'EH9 9ZZ', emergencyContact: { name: 'Robin Member', relationship: 'Partner', phone: '0700 888888' } };
+  for (const detail of ['+447911123464', member.dob]) assert.equal(JSON.stringify(mine.data.purchases).includes(detail), false, 'receipts hold no personal details');
+  const update = { phone: '+447911123468', address: '9 New Street', postcode: 'EH9 9ZZ', emergencyContact: { name: 'Robin Member', relationship: 'Partner', phone: '+447911123469' } };
   const saved = await call('/api/my-details/HH-MEMBER', { method: 'PATCH', session: detailsSession, body: update });
   assert.deepEqual(saved.data.changed.sort(), ['address', 'emergencyContact', 'phone', 'postcode']);
-  assert.equal((await db.collection('households').doc('HH-MEMBER').get()).data().phone, '0700 999999');
+  assert.equal((await db.collection('households').doc('HH-MEMBER').get()).data().phone, '+447911123468');
   assert.equal((await db.collection('selfServiceChanges').get()).size, 1);
   assert.equal((await call('/api/my-details/HH-JUSTGO', { method: 'PATCH', session: detailsSession, body: update })).status, 404, 'other households are not reachable');
   const justgoSession = await signIn('jo@example.test', 'details', '1970-01-01');

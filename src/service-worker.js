@@ -47,6 +47,12 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('message', (event) => {
+  const sourceUrl = event.source?.url;
+  try {
+    if (!sourceUrl || new URL(sourceUrl).origin !== self.location.origin) return;
+  } catch {
+    return;
+  }
   if (['PUBLIC_CACHE_STATUS', 'PUBLIC_CACHE_REPAIR'].includes(event.data?.type)) {
     event.waitUntil((async () => {
       const cache = await caches.open(cacheName);

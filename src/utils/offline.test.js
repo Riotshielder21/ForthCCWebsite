@@ -47,6 +47,7 @@ const request = (path, mode = 'navigate', authorization = false) => ({
   method: 'GET', url: `https://club.test${path}`, mode,
   headers: { has: () => authorization }
 });
+const sameOriginSource = { url: 'https://club.test/membership' };
 
 test('public pages and lazy modules survive offline navigation and refresh, but private requests are never intercepted', async () => {
   const site = worker();
@@ -66,14 +67,43 @@ test('readiness checks actual cache entries, not just worker activation', async 
   const site = worker();
   await site.dispatch('install');
   let status;
-  const query = () => site.dispatch('message', { data: { type: 'PUBLIC_CACHE_STATUS' }, ports: [{ postMessage: (value) => { status = value; } }] });
+  const query = () => site.dispatch('message', { source: sameOriginSource, data: { type: 'PUBLIC_CACHE_STATUS' }, ports: [{ postMessage: (value) => { status = value; } }] });
   await query();
   assert.equal(status.ready, true);
   site.stores.get('fcc-public-test').delete('https://club.test/images/home.webp');
   await query();
   assert.equal(status.ready, false);
-  await site.dispatch('message', { data: { type: 'PUBLIC_CACHE_REPAIR' }, ports: [{ postMessage: (value) => { status = value; } }] });
+  await site.dispatch('message', { source: sameOriginSource, data: { type: 'PUBLIC_CACHE_REPAIR' }, ports: [{ postMessage: (value) => { status = value; } }] });
   assert.equal(status.ready, true);
+});
+
+test('messages from other origins or without a valid client URL are ignored', async () => {
+  const site = worker();
+  await site.dispatch('install');
+  const imageUrl = 'https://club.test/images/home.webp';
+  site.stores.get('fcc-public-test').delete(imageUrl);
+  const fetchedCount = site.fetched.length;
+  let replies = 0;
+  const sources = [
+    { url: 'https://attacker.test/page' },
+    { url: 'https://club.test.attacker.test/page' },
+    { url: 'not a valid URL' },
+    null
+  ];
+  for (const source of sources) {
+    await site.dispatch('message', {
+      ...(source ? { source } : {}),
+      data: { type: 'PUBLIC_CACHE_REPAIR' },
+      ports: [{ postMessage: () => { replies += 1; } }]
+    });
+  }
+  await site.dispatch('message', {
+    data: { type: 'PUBLIC_CACHE_REPAIR' },
+    ports: [{ postMessage: () => { replies += 1; } }]
+  });
+  assert.equal(site.fetched.length, fetchedCount);
+  assert.equal(site.stores.get('fcc-public-test').has(imageUrl), false);
+  assert.equal(replies, 0);
 });
 
 test('an interrupted install or changed deployment is not advertised as an offline-ready site', async () => {
