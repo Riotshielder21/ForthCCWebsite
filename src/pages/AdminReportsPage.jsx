@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, CircleSlash, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl } from '../utils/api';
-import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, onlyEventPeriod, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
+import { reportCsv, reportDetailEntries, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, onlyEventPeriod, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
 import { eventScheduleLabel } from '../utils/catalogue';
 import CustomerVouchers from '../components/CustomerVouchers';
 import ReasonInput from '../components/ReasonInput';
@@ -386,7 +386,7 @@ export default function AdminReportsPage({ onNavigate }) {
         </> : <p className="ReportNotice">This subscription is no longer active, so there is nothing to cancel here.</p>}
         <button className="EditorCommand SpaceT4" type="button" disabled={scheduleBusy} onClick={() => setScheduling(false)}><FileText size={18} /> View full details</button>
       </form>}
-      {selected && !scheduling && <><dl className="ReportDetails">{Object.entries(selected).filter(([key]) => !['items', 'people', 'history'].includes(key)).map(([key, value]) => <React.Fragment key={key}><dt>{key.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase())}</dt><dd>{detailValue(value)}</dd></React.Fragment>)}</dl>
+      {selected && !scheduling && <><dl className="ReportDetails">{reportDetailEntries(selected).map(([key, value]) => <React.Fragment key={key}><dt>{key.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase())}</dt><dd>{detailValue(value)}</dd></React.Fragment>)}</dl>
         {selected.items && <ul className="ReportItems">{selected.items.map((item, index) => <li key={index}>{item.name} {kind === 'subscribers' ? `${item.amount ?? 'Variable'} ${item.currency.toUpperCase()} / ${item.interval}` : item.price === null ? '' : money(item.price)}{item.eventSchedule && <p>{eventScheduleLabel(item.eventSchedule)}</p>}</li>)}</ul>}
         {purchaseReport && selected.status === 'paid' && <PurchasedItemActions key={selected.id} order={selected} adminUser={adminUser} onChanged={reloadSelected} />}
         {kind === 'members' && <KeyAccessControl key={selected.id} member={selected} adminUser={adminUser} onChanged={reloadSelected} />}

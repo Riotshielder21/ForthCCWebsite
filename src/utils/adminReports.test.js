@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders, onlyEventPeriod, onlyEvent, reportEventNames } from './adminReports.js';
+import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, reportDetailEntries, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders, onlyEventPeriod, onlyEvent, reportEventNames } from './adminReports.js';
 
 test('membership status is one of No, Active, Awaiting renewal, Expired or Revoked, or a raw imported status', () => {
   const now = new Date('2026-10-10T12:00:00Z');
@@ -20,6 +20,11 @@ test('membership status is one of No, Active, Awaiting renewal, Expired or Revok
   for (const status of ['Active', 'Active (no expiry)', 'Awaiting renewal', 'Expired', 'Revoked', 'No']) assert.ok(MEMBERSHIP_STATUSES.includes(status));
   assert.equal(reportDate('31/02/2027'), null);
   assert.equal(memberReport('member-1', {}).email, '');
+});
+
+test('member details leave key access state and its reason to the single access control', () => {
+  const details = reportDetailEntries({ id: 'M1', name: 'Casey Member', keyAccess: 'Revoked', keyAccessReason: 'Key returned', items: [], people: [], history: [] });
+  assert.deepEqual(details, [['id', 'M1'], ['name', 'Casey Member']]);
 });
 
 test('order reports expose purchases but not receipt access credentials', () => {
