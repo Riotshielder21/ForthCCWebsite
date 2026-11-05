@@ -48,6 +48,7 @@ Open `http://localhost:3000`. Use **Admin** in the footer, then **Sign in as loc
 - **Vite API proxy:** when `VITE_API_BASE_URL` is empty, Vite proxies `/api` requests to `http://127.0.0.1:3000` by default. Set `VITE_API_PROXY_TARGET` when the local API uses another address or port.
 - **Seed data:** synthetic households, orders, a course and a voucher; reseeding resets them.
 - **Mobile checks:** 390x844, 360x640, 320x568 portrait and 667x375, 844x390 landscape.
+- **Banner editor (#88):** Upload photo and Photo URL should have matching input heights and align on desktop; all four fields should fit on mobile.
 
 ## Build And Test
 

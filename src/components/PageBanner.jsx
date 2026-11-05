@@ -11,7 +11,7 @@ function BannerSettings({ pageId, banner }) {
   const update = (changes) => editor.updatePage(pageId, (current) => ({ ...current, banner: { ...current.banner, ...changes } }));
   return <fieldset className="PageBannerSettings" data-editor-control="true">
     <legend><ImagePlus size={16} /> Page banner</legend>
-    <label className="FormLabel BannerUploadLabel">Upload photo<input className="FormInput BannerFileInput" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={async (event) => {
+    <label className="FormLabel">Upload photo<input className="FormInput BannerFileInput" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={async (event) => {
       const file = event.target.files?.[0];
       if (!file) return;
       setUploading(true);
