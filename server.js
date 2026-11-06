@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { domainToASCII } from 'url';
@@ -11,7 +11,6 @@ import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-adm
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
 import { PAGE_CONTENT, validatePageFields } from './src/constants/pageContent.js';
-import { resolveRoute } from './src/utils/routes.js';
 import { contentDisposition, findSafeguardingPolicy, isPdf } from './src/utils/safeguardingPolicies.js';
 import { BANNER_PAGES, validateBanner, validateTileLayout, validateSupporterTiles } from './src/utils/pageTiles.js';
 import { PRODUCTS } from './src/constants/products.js';
@@ -221,14 +220,6 @@ app.disable('x-powered-by');
 
 const corsOrigins = allowedOrigins(process.env);
 const allowLocalhostOrigins = !isLive() || process.env.LOCAL_FIREBASE_EMULATORS === 'true';
-// Pages are framed by nobody; the full script/connect policy is report-only until it has been checked in browsers.
-const PAGE_CSP_REPORT_ONLY = [
-  "default-src 'self'", "script-src 'self' https://www.googletagmanager.com https://apis.google.com",
-  "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob: https:", "font-src 'self' data:",
-  "connect-src 'self' https://*.googleapis.com https://*.google-analytics.com https://*.analytics.google.com https://*.run.app",
-  "frame-src https://*.firebaseapp.com https://*.web.app", "form-action 'self' https://checkout.stripe.com"
-].join('; ');
-
 app.use(compression());
 app.use((req, res, next) => {
   res.set({
@@ -238,17 +229,10 @@ app.use((req, res, next) => {
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()'
   });
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  if (/^\/(?:admin|api|order|my-details|check-ins|club-night|checkout|payment-success|_preview)(?:\/|$)/.test(req.path)) {
-    res.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
-  }
-  if (req.path.startsWith('/api/')) {
-    res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
-  } else {
-    res.set('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
-    res.set('Content-Security-Policy-Report-Only', PAGE_CSP_REPORT_ONLY);
-  }
-  // Receipt links carry their access token in the URL: never cache them or leak them in a Referer header.
-  if (/^\/(order\/|payment-success|api\/orders\/|api\/checkout-receipt)/.test(req.path)) {
+  // API responses only; page headers (including the receipt pages) are set by Firebase Hosting in firebase.json.
+  res.set({ 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'", 'X-Robots-Tag': 'noindex, nofollow, noarchive, nosnippet' });
+  // Receipt lookups carry their access token in the URL: never cache them or leak them in a Referer header.
+  if (/^\/api\/(orders\/|checkout-receipt)/.test(req.path)) {
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
   }
   next();
@@ -263,18 +247,7 @@ app.use(cors({
 app.get('/robots.txt', (req, res) => {
   res.type('text/plain').send('User-agent: *\nDisallow: /\n');
 });
-app.use((req, res, next) => {
-  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-  const route = resolveRoute(req.originalUrl);
-  if (!route.preview && route.page !== 'not-found' && route.url !== req.originalUrl) return res.redirect(308, route.url);
-  next();
-});
-app.use(express.static('dist', {
-  setHeaders(res, path) {
-    if (path.endsWith('/sw.js') || path.endsWith('/index.html')) res.set('Cache-Control', 'no-cache');
-  }
-}));
-// Everything after static files (API and the SPA fallback) shares one per-visitor ceiling; routes add tighter limits.
+// Every API route shares one per-visitor ceiling; routes add tighter limits.
 app.use(baselineRateLimit);
 
 const stripeRequest = async (path, params, method = 'POST', { idempotencyKey } = {}) => {
@@ -1694,7 +1667,7 @@ const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sen
 registerContactRoutes(app, { sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
-registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes,
+registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes, stripeRequest,
   raiseAttention: (kind, key, details) => attention.raise(kind, key, details) });
 const { sendDueRosters, canViewEventRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
   emailCodes, requestNow,
@@ -2724,10 +2697,8 @@ app.get('/health', async (req, res) => {
   } finally { clearTimeout(timer); }
 });
 
-// Serve index.html for all routes (SPA routing)
-app.get('*', (req, res) => {
-  const indexPath = join(__dirname, 'dist', 'index.html');
-  if (fs.existsSync(indexPath)) return res.status(resolveRoute(req.originalUrl).page === 'not-found' ? 404 : 200).sendFile(indexPath);
+// The website is served by Firebase Hosting (or Vite locally); this server only answers API routes.
+app.use((req, res) => {
   res.status(404).json({ error: 'Not found.' });
 });
 
@@ -2765,7 +2736,5 @@ if (adminDb) {
 }
 
 app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
-  console.log(`ðŸŽ¯ FCC Website running at http://127.0.0.1:${PORT}`);
-  console.log(`ðŸ“ Serving from: ${__dirname}/dist`);
-  console.log(`ðŸ›‘ To stop the server, press Ctrl+C`);
+  console.log(`FCC API running at http://127.0.0.1:${PORT}`);
 });

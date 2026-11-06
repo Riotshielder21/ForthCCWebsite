@@ -6,7 +6,7 @@ import {
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
 import { calculateCart, debitRange, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
-import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson } from './utils/checkout';
+import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName } from './utils/checkout';
 import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
 import { itemLabel, productLimits } from './utils/inventory';
 import SiteNavigation from './components/SiteNavigation';
@@ -181,7 +181,8 @@ export default function App() {
           return product ? { ...withClubYear(normaliseProduct(product), item.clubYearChoice), lineId: item.lineId } : null;
         }).filter(Boolean);
         setCart(lines);
-        setPeople(result.people.map((person) => ({ ...blankPerson(person.id), ...person, verifiedDob: person.dob })));
+        setPeople(result.people.map((person) => ({ ...blankPerson(person.id), ...person, verifiedDob: person.dob,
+          verifiedEmail: result.email.trim().toLowerCase(), verifiedName: normaliseName(`${person.firstName} ${person.lastName}`) })));
         setCheckoutEmail(result.email);
         setIsAnnual(result.billingMode !== 'monthly');
         setCheckoutError('');

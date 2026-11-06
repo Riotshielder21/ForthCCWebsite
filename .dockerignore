@@ -2,10 +2,8 @@
 .github
 node_modules
 venv
-bin
-include
-lib
-lib64
+jobs
+emulator-data
 dist
 build
 .env

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders, onlyEventPeriod, onlyEvent, reportEventNames } from './adminReports.js';
+import { readFileSync } from 'node:fs';
+import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, reportDetailEntries, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders, onlyEventPeriod, onlyEvent, reportEventNames } from './adminReports.js';
 
 test('membership status is one of No, Active, Awaiting renewal, Expired or Revoked, or a raw imported status', () => {
   const now = new Date('2026-10-10T12:00:00Z');
@@ -20,6 +21,22 @@ test('membership status is one of No, Active, Awaiting renewal, Expired or Revok
   for (const status of ['Active', 'Active (no expiry)', 'Awaiting renewal', 'Expired', 'Revoked', 'No']) assert.ok(MEMBERSHIP_STATUSES.includes(status));
   assert.equal(reportDate('31/02/2027'), null);
   assert.equal(memberReport('member-1', {}).email, '');
+});
+
+test('member details leave key access state and its reason to the single access control', () => {
+  const details = reportDetailEntries({ id: 'M1', name: 'Casey Member', keyAccess: 'Revoked', keyAccessReason: 'Key returned', items: [], people: [], history: [] });
+  assert.deepEqual(details, [['id', 'M1'], ['name', 'Casey Member']]);
+});
+
+test('record detail controls have distinct React keys for the same record', () => {
+  const source = readFileSync(new URL('../pages/AdminReportsPage.jsx', import.meta.url), 'utf8');
+  const keys = ['PurchasedItemActions', 'KeyAccessControl', 'MonthlyPayments'].map((component) => {
+    const match = source.match(new RegExp('<' + component + ' key=\\{`([^`]+)`\\}'));
+    assert.ok(match, `${component} must have a record-specific key`);
+    assert.ok(match[1].includes('${selected.id}'), `${component} must reset when switching records`);
+    return match[1];
+  });
+  assert.equal(new Set(keys).size, keys.length, 'sibling controls must not reuse the same key');
 });
 
 test('order reports expose purchases but not receipt access credentials', () => {

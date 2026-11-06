@@ -1,6 +1,6 @@
 """Uploads paid website memberships through the default-disabled JustGo API.
 
-Run on a schedule (see config/fcc-upload.timer). Each website member waiting for JustGo has a `justgoUpload` record:
+Cloud Run job fcc-justgo-upload, run hourly by Cloud Scheduler. Each website member waiting for JustGo has a `justgoUpload` record:
   queued     -> waiting for an attempt
   processing -> an attempt is in progress (if interrupted, staff reconcile JustGo before retrying)
   submitted  -> the account was found or created, linked to FCC and given the FCC membership; awaiting the read sync

@@ -8,6 +8,23 @@ export const isClubEmail = (email) => {
   return parts.length === 2 && parts[0].length > 0 && parts[1] === ADMIN_DOMAIN;
 };
 
+const RETRYABLE_AUTH_CODES = new Set(['auth/network-request-failed', 'auth/timeout', 'auth/too-many-requests']);
+export const ADMIN_AUTH_RETRY_MESSAGE = 'Firebase could not refresh your admin session. Check your connection and retry. Local page edits have been kept in this browser.';
+export const retryableAdminAuthMessage = (error) => RETRYABLE_AUTH_CODES.has(error?.code) ? ADMIN_AUTH_RETRY_MESSAGE : '';
+
+export const verifyAdminSession = async (user, forceRefresh = false) => {
+  if (!user || user.isAnonymous) return { status: 'rejected', message: 'Sign in with an approved website editor account.' };
+  try {
+    const token = await user.getIdTokenResult(forceRefresh);
+    if (token.claims.admin === true && isClubEmail(user.email)) return { status: 'approved', user };
+    return { status: 'rejected', message: 'This account is not an approved website editor.' };
+  } catch (error) {
+    const retryMessage = retryableAdminAuthMessage(error);
+    if (retryMessage) return { status: 'retry', message: retryMessage };
+    return { status: 'rejected', message: 'Your admin session has expired or been revoked. Sign in again.' };
+  }
+};
+
 /**
  * Checks a request to grant or remove admin access. Admins cannot remove themselves, so at least one always remains,
  * and removing someone needs a reason.

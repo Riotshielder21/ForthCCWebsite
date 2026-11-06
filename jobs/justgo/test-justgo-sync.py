@@ -1,6 +1,6 @@
 """Checks the JustGo sync in an isolated emulator project: one register, no duplicates, website data preserved.
 
-Run with the emulator up:  FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 venv/bin/python scripts/test-justgo-sync.py
+Run with the emulator up:  FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 venv/bin/python jobs/justgo/test-justgo-sync.py
 """
 import asyncio
 import datetime

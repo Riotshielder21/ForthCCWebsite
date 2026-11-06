@@ -10,9 +10,24 @@ import { activeSubscriptionItems } from '../utils/subscriptions.js';
 import { resolveOrderPeople } from './orderPeople.js';
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
+const CUSTOMER_ID = /^cus_[A-Za-z0-9_-]+$/;
+
+export const updateStripeCustomerEmails = async (request, subscriptions, email) => {
+  const customerIds = new Set();
+  for (const document of subscriptions) {
+    const subscription = await request(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
+    const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id;
+    if (!CUSTOMER_ID.test(customerId || '')) throw new Error(`Stripe subscription ${document.id} has no valid customer.`);
+    customerIds.add(customerId);
+  }
+  for (const customerId of customerIds) {
+    await request(`customers/${encodeURIComponent(customerId)}`, [['email', email]], 'POST');
+  }
+  return [...customerIds];
+};
 
 /** Members verify their email with a code, then view and update their household's contact details. */
-export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, raiseAttention = async () => {} }) => {
+export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripeRequest, raiseAttention = async () => {} }) => {
   const households = () => db().collection('households');
   const householdsFor = async (email) => (await households().where('email', '==', email).limit(10).get()).docs;
   const peopleIn = async (householdId) => (await db().collection('memberships').where('householdId', '==', householdId).limit(20).get()).docs;
@@ -183,18 +198,36 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, raiseA
       if (!record || record.householdId !== owned.household.id || record.fromEmail !== session.email) {
         return res.status(400).json({ error: 'That code is wrong or has expired. Request a new code if needed.' });
       }
-      await owned.reference.update({ email: newEmail, updatedAt: Timestamp.now(), updatedBy: 'self-service' });
-      // Older member records may still carry their own copy of the contact email.
+      const payerSubscriptions = (await db().collection('subscriptions').where('email', '==', session.email).limit(100).get()).docs
+        .filter((document) => document.data().status === 'active');
+      if (payerSubscriptions.length) {
+        try {
+          if (!stripeRequest) throw new Error('Stripe is not configured.');
+          await updateStripeCustomerEmails(stripeRequest, payerSubscriptions, newEmail);
+        } catch (stripeError) {
+          await raiseAttention('stripe-email-update', `${owned.household.id}-${Date.now()}`, { email: session.email,
+            detail: `Stripe could not change the billing email from ${session.email} to ${newEmail}: ${stripeError.message}. Confirm the Stripe customer email, then resolve this item.` })
+            .catch((attentionError) => console.error('Could not flag the Stripe email-change failure:', attentionError.message));
+          throw Object.assign(new Error(`Could not update the Stripe customer email: ${stripeError.message}`),
+            { publicMessage: 'Could not update the billing email. Request a new code and try again, or contact the club.' });
+        }
+      }
+      // Keep the club record and its active billing mirrors consistent after Stripe accepts the new email.
       const people = await peopleIn(owned.household.id);
-      await Promise.all(people.filter((person) => person.data().email === session.email).map((person) => person.ref.update({ email: newEmail })));
-      await db().collection('selfServiceChanges').add({ householdId: owned.household.id, fields: ['email'], at: Timestamp.now() });
+      const at = Timestamp.now();
+      const batch = db().batch();
+      batch.update(owned.reference, { email: newEmail, updatedAt: at, updatedBy: 'self-service' });
+      people.filter((person) => person.data().email === session.email).forEach((person) => batch.update(person.ref, { email: newEmail }));
+      payerSubscriptions.forEach((document) => batch.update(document.ref, { email: newEmail, updatedAt: at }));
+      batch.set(db().collection('selfServiceChanges').doc(), { householdId: owned.household.id, fields: ['email'], at });
+      await batch.commit();
       await sendEmail({ to: session.email, subject: 'Your Forth Canoe Club contact email has changed',
         body: `The contact email for your Forth Canoe Club membership has been changed to ${newEmail}.\n\nIf you did not make this change, contact secretary@forthcanoeclub.co.uk straight away.`,
         record: { kind: 'email-changed', householdId: owned.household.id } }).catch((error) => console.error('Could not send email-change notice:', error.message));
       res.json({ success: true, email: newEmail, message: 'Your contact email has been changed. Sign in again with the new address to make further changes.' });
     } catch (error) {
       console.error('Could not confirm email change:', error.message);
-      res.status(500).json({ error: 'Could not change your email address.' });
+      res.status(500).json({ error: error.publicMessage || 'Could not change your email address.' });
     }
   });
 };

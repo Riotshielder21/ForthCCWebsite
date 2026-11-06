@@ -88,12 +88,14 @@ export function PageEditorToolbar({ pageId }) {
     <div className="PageEditorToolbar" data-editor-control="true">
       <label className="EditorModeSwitch"><input type="checkbox" checked={editor.editMode} onChange={(event) => editor.setEditMode(event.target.checked)} /> Edit Mode</label>
       {editor.editMode && <>
-        <button className="EditorCommand" disabled={editor.busy} onClick={() => editor.save(pageId)}><Save size={18} /> Save draft</button>
-        <button className="EditorCommand EditorPublish" disabled={editor.busy} onClick={() => editor.save(pageId, true)}><Send size={18} /> Publish for review</button>
+        <button className="EditorCommand" disabled={editor.busy || !editor.unsavedPages.length} onClick={() => editor.save(pageId)}><Save size={18} /> Save all drafts</button>
+        <button className="EditorCommand EditorPublish" disabled={editor.busy} onClick={() => editor.save(pageId, true)}><Send size={18} /> Publish all for review</button>
         <button className="EditorIconButton" title="Discard local page changes" aria-label="Discard local page changes" disabled={editor.busy} onClick={() => editor.discard(pageId)}><Undo2 size={18} /></button>
       </>}
       <button className="EditorIconButton" title="Sign out" aria-label="Sign out" onClick={() => editor.logout().catch(() => window.alert('Sign-out failed. Please try again.'))}><LogOut size={18} /></button>
-      {(editor.message || editor.error || editor.busy || editor.drafts[pageId]) && <span className={editor.error ? 'EditorStatus EditorError' : 'EditorStatus'} role="status">{editor.busy ? 'Saving…' : editor.error || editor.message || 'Local draft (not published)'}</span>}
+      {editor.authError && <span className="EditorStatus EditorError" role="alert">{editor.authError} <button type="button" className="EditorRetryButton" disabled={editor.authRetrying} onClick={editor.retryAuth}>{editor.authRetrying ? 'Retrying…' : 'Retry session'}</button></span>}
+      {editor.unsavedPages.length > 0 && <span className="EditorUnsavedPages">Unsaved ({editor.unsavedPages.length}): {editor.unsavedPages.map((page) => page.label).join(', ')}</span>}
+      {(editor.message || editor.error || editor.busy || editor.drafts[pageId]) && <span className={editor.error ? 'EditorStatus EditorError' : 'EditorStatus'} role="status">{editor.busy ? 'Saving all changed pages…' : editor.error || editor.message || (editor.unsavedPages.some((page) => page.id === pageId) ? 'Local changes not saved' : 'Draft saved (not published)')}</span>}
       {editor.review?.url && <a className="ContentLink" target="_blank" rel="noreferrer" href={editor.review.url}>Review #{editor.review.number} <ExternalLink size={14} /></a>}
     </div>
   );

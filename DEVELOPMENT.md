@@ -11,9 +11,20 @@ npm install-scripts approve esbuild protobufjs
 npm ci
 cp .env.example .env
 cp -n .env.emulator.example .env.emulator
+python3 -m venv venv && venv/bin/pip install -r jobs/justgo/requirements.txt
 ```
 
 ## Run Locally
+
+One command starts the emulators, seeds test records on first run, then starts the API and website:
+
+```bash
+npm run local            # or scripts/localhost_startup.sh [--fresh | --clean] [--preview]
+```
+
+Saved emulator data in `./emulator-data` is reused; `--fresh` starts empty and reseeds, and `--clean` starts empty without test records (only the local test admin account) and leaves the saved data untouched. `--preview` serves a production build instead of the Vite dev server. Pass options through npm with `npm run local -- --clean`. Ctrl+C stops everything and saves the emulator data (not with `--clean`). If emulators are already running they are reused.
+
+To run the parts separately instead:
 
 Terminal 1: Auth, database and image storage.
 
@@ -37,17 +48,21 @@ Terminal 3: frontend.
 ```bash
 set -a; source .env.emulator; set +a
 unset NODE_ENV
-npm run dev
+npm run dev -- --port 3000
 ```
 
-Open `http://localhost:3000`. Use **Admin** in the footer, then **Sign in as local test admin**. Emulator UI: `http://localhost:4000`; API: `http://localhost:3002`.
+Open `http://localhost:3000`. The API only answers `/api/...` and `/health`; the website is served by Vite locally and Firebase Hosting in production. Use **Admin** in the footer, then **Sign in as local test admin**. Emulator UI: `http://localhost:4000`; API: `http://localhost:3002`.
 
 - **Emails** are written to Firestore's `testMail` collection (`body` and `html`), not sent. The organisation footer comes from Google Workspace **Append footer** rules, not the templates.
+- **Checkout revalidation:** returning-member verification belongs to the checked receipt email, name and date of birth. Editing the receipt email or identity fields clears the match (including volunteer discount previews); press **Verify** on the person step to check again. Every changed step must pass **Next** again, and the complete checkout is validated before requesting payment. Lookup failures block progress rather than treating members as new people.
 - **Remote VS Code:** forward ports `3000`, `3002`, `4000`, `8080`, `9099` and `9199`.
 - **Edits:** restart the API after backend changes; Vite reloads the frontend.
 - **Vite API proxy:** when `VITE_API_BASE_URL` is empty, Vite proxies `/api` requests to `http://127.0.0.1:3000` by default. Set `VITE_API_PROXY_TARGET` when the local API uses another address or port.
 - **Seed data:** synthetic households, orders, a course and a voucher; reseeding resets them.
 - **Mobile checks:** 390x844, 360x640, 320x568 portrait and 667x375, 844x390 landscape.
+- **Banner editor (#88):** Upload photo and Photo URL should have matching input heights and align on desktop; all four fields should fit on mobile.
+- **Key access (#26):** Grant, revoke, then restore access on a synthetic member. After each refresh, the record dialog must have exactly one key-access heading, reason field and action.
+- **Mobile editor navigation:** Homepage shortcut bubbles disappear in Edit Mode below 1024px; the hamburger menu remains available. Turning Edit Mode off restores the shortcuts. Desktop navigation is unchanged.
 
 ## Build And Test
 
@@ -69,7 +84,7 @@ npx --yes firebase-tools@14.22.0 emulators:exec \
   'npm run test:integration'
 ```
 
-Install `requirements.txt` first; for the repository virtual environment, set `PYTHON="$PWD/bin/python"`. Use fresh emulators, not imported data. The runner seeds fixtures and mocks Stripe; real Stripe Test Clocks are manual only.
+Install `jobs/justgo/requirements.txt` first; for the repository virtual environment, set `PYTHON="$PWD/venv/bin/python"`. Use fresh emulators, not imported data. The runner seeds fixtures and mocks Stripe; real Stripe Test Clocks are manual only.
 
 ### Focused emulator tests
 
@@ -87,9 +102,9 @@ With emulators running and `.env.emulator` loaded:
 node scripts/test-admin-domain.js
 node scripts/test-club-night.js
 node scripts/test-volunteering.js
-bin/python scripts/test-justgo-api.py
-bin/python scripts/test-justgo-sync.py
-bin/python scripts/test-justgo-upload.py
+venv/bin/python jobs/justgo/test-justgo-api.py
+venv/bin/python jobs/justgo/test-justgo-sync.py
+venv/bin/python jobs/justgo/test-justgo-upload.py
 
 LOCAL_FIREBASE_EMULATORS=true GCLOUD_PROJECT=demo-fcc-item-action-tests \
 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
@@ -148,17 +163,19 @@ The migration covers households, membership terms, orders, products, discount co
 
 ## JustGo
 
-Use the [v2.2 API contract](docs/justgo/justgo-api-v2.2.json), not browser automation. Jobs run through the VM's systemd units with `.env`; keep secrets out of Git.
+Use the [v2.2 API contract](docs/justgo/justgo-api-v2.2.json), not browser automation. The Python code in [jobs/justgo/](jobs/justgo/) runs as two Cloud Run jobs started by Cloud Scheduler: `fcc-justgo-sync` (daily 04:00 London) and `fcc-justgo-upload` (hourly). Each deployment rebuilds them (see [Scheduled jobs](#scheduled-jobs)); keep secrets out of Git.
+
+Run the operator commands locally with the secret from Secret Manager:
 
 ```bash
-gcloud secrets versions access latest --secret=justgo-api-secret
-venv/bin/python scripts/justgo-admin.py discover
-scripts/justgo-admin.py snapshot
+export JUSTGO_API_SECRET="$(gcloud secrets versions access latest --secret=justgo-api-secret)" JUSTGO_API_ENABLED=true JUSTGO_ORGANISATION_ID=...
+venv/bin/python jobs/justgo/justgo-admin.py discover
+venv/bin/python jobs/justgo/justgo-admin.py snapshot
 ```
 
-Set `JUSTGO_API_SECRET`, `JUSTGO_ORGANISATION_ID` and `JUSTGO_API_ENABLED=true`; leave writes off initially. Use discovery to set `JUSTGO_MEMBERSHIP_DEFINITIONS`, `JUSTGO_CREDENTIAL_DEFINITIONS`, `JUSTGO_ACTIVE_MEMBERSHIP_STATUSES`, `JUSTGO_ACTIVE_MEMBER_STATUSES` and `JUSTGO_CLUB_MEMBER_ROLE`; optionally set `JUSTGO_UNSUSPENDED_LEVELS`. Check the snapshot before enabling `fcc-sync`, then `JUSTGO_API_WRITES_ENABLED=true` and `fcc-upload`.
+Job settings are GitHub repository variables (Settings > Secrets and variables > Actions > Variables), applied on the next deploy: `JUSTGO_ORGANISATION_ID`, then from discovery `JUSTGO_MEMBERSHIP_DEFINITIONS`, `JUSTGO_CREDENTIAL_DEFINITIONS`, `JUSTGO_ACTIVE_MEMBERSHIP_STATUSES`, `JUSTGO_ACTIVE_MEMBER_STATUSES` and `JUSTGO_CLUB_MEMBER_ROLE`; optionally `JUSTGO_UNSUSPENDED_LEVELS`. Check the snapshot before setting `JUSTGO_API_ENABLED=true` (resumes the sync schedule), then `JUSTGO_API_WRITES_ENABLED=true` (resumes the upload schedule). Run a job once on demand with `gcloud run jobs execute fcc-justgo-sync --region europe-west2 --wait`; its output is in Cloud Run job logs.
 
-- Sync reads memberships, suspension and credentials; run weekly. After 8 days without success, membership confirmation is unreliable and the register warns staff.
+- Sync reads memberships, suspension and credentials. After 8 days without success, membership confirmation is unreliable and the register warns staff.
 - Upload links paid website memberships to FCC. Ambiguous identities, suspended/inactive accounts, overlapping memberships, family/guardian issues and uncertain writes require staff review, not automatic retry.
 - Read commands: `discover`, `find-member`, `member`, `snapshot`. Writes require both the write flag and `--confirm-write`: `create-member`, `update-member`, `add-to-club`, `update-club-role`, `remove-from-club`, `add-membership --tier --club-year`, `update-membership`. Unlinking affects FCC only; nothing deletes or suspends a JustGo account.
 - Output redacts known personal fields but IDs and free text remain private. Do not publish it.
@@ -168,7 +185,7 @@ Set `JUSTGO_API_SECRET`, `JUSTGO_ORGANISATION_ID` and `JUSTGO_API_ENABLED=true`;
 - **Google sign-in:** authorise `new.forthcanoeclub.co.uk` in Firebase and `https://new.forthcanoeclub.co.uk/__/auth/handler` in the OAuth client before setting the Actions variable `VITE_FIREBASE_AUTH_DOMAIN` and rebuilding. Keep the existing `firebaseapp.com` redirect. Removing the variable restores the secret's domain on the next deploy; leave emulator settings unchanged.
 - **Origins:** `PUBLIC_SITE_URL` is canonical; `PUBLIC_SITE_URLS` adds approved checkout/receipt origins, and `CORS_ORIGINS` adds browser API origins. Keep all three frontends (`new.forthcanoeclub.co.uk`, `fccwebsite-23cfc.web.app`, `fccwebsite-23cfc.firebaseapp.com`) allowed. Escape commas as `\,` in the Hosting workflow's Cloud Run `env_vars`. CORS and Firebase `authDomain` are independent.
 - **Proxy/rate limits:** Cloud Run uses one trusted proxy hop; adjust `TRUST_PROXY_HOPS` for other deployments. Use [rateLimit.js](src/server/rateLimit.js) for new routes; the baseline is 300 requests/minute (`BASELINE_RATE_LIMIT`).
-- **Renewals:** configure `RENEWAL_JOB_TOKEN` (32+ random characters) in the API and job environment, plus `RENEWAL_JOB_URL` ending `/api/jobs/renewals`. [fcc-renewals.timer](config/fcc-renewals.timer) schedules 09:00 London on 1 and 15 February.
+- **Renewals:** Cloud Scheduler job `fcc-renewals` posts to the API's `/api/jobs/renewals` at 09:00 London on 1 and 15 February, using the `renewal-job-token` secret that the API also reads as `RENEWAL_JOB_TOKEN`.
 - **Email:** `STAFF_ALERT_EMAIL` defaults to the committee. Configure the volunteer coordinator in Reports. Retry failed notifications in the admin panels. Volunteer-benefits emails include HTML paragraphs and a bulleted list, with a plain-text alternative and an explicit Forth Canoe Club sign-off; email clients control line wrapping.
 - **Admin page edits:** saves target `GITHUB_CONTENT_BRANCH` (`live/web-admin-edit`); merge the review PR into `GITHUB_BRANCH` (`main`) to publish. A rebase warning needs manual reconciliation:
 
@@ -194,6 +211,18 @@ Refunds need refund write and payment/invoice/charge/refund read permissions. Re
 Use purchased-item actions, not order deletion, for refunds/revocations. Refunds alone do not stop access or billing. Retry unfinished actions with the exact recorded request, never a replacement refund. Shared physical boathouse codes must be rotated after disclosure if access needs retracting.
 
 GDPR erasure is irreversible; admin deletion retains a recovery snapshot. Erasure stops affected billing but preserves shared beneficiaries and anonymised financial history. Stripe history/mandates may need manual review; Google Sheets and JustGo cleanup are separate. Treat receipt links as private.
+
+### Scheduled jobs
+
+[scheduled-jobs.sh](scripts/scheduled-jobs.sh) replaces the old VM systemd timers. Each deployment runs `scripts/scheduled-jobs.sh deploy`, which rebuilds the JustGo jobs from [jobs/justgo/](jobs/justgo/), applies the JustGo repository variables, and creates or updates the three Cloud Scheduler jobs. JustGo schedules stay paused until their enable flags are true.
+
+One-off setup, as a project owner, before the first deployment that includes it:
+
+```bash
+scripts/scheduled-jobs.sh setup <deploy-account-email>
+```
+
+This enables the APIs and creates the `fcc-scheduled-jobs` service account (Firestore access, starts the jobs). It creates the `renewal-job-token` secret if missing and grants the API and deploy accounts access. The deploy account also gets Cloud Scheduler admin and permission to act as the jobs account. If `justgo-api-secret` is missing it is created with a placeholder; add the real value with `gcloud secrets versions add justgo-api-secret --data-file=-` before enabling JustGo.
 
 ### Outage alerts
 

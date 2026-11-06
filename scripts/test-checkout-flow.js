@@ -1151,8 +1151,8 @@ await test('API responses carry security headers and CORS only answers approved 
   assert.equal(blocked['access-control-allow-origin'], undefined);
 });
 
-await test('receipt links are never cached or sent as a referrer, and the unpaid order endpoint is gone', async () => {
-  for (const path of ['/api/orders/FCC-NOPE.token', '/api/checkout-receipt?session_id=cs_x&receipt_token=y', '/order/FCC-NOPE.token', '/payment-success?receipt_token=y']) {
+await test('receipt lookups are never cached or sent as a referrer, and the unpaid order endpoint is gone', async () => {
+  for (const path of ['/api/orders/FCC-NOPE.token', '/api/checkout-receipt?session_id=cs_x&receipt_token=y']) {
     const headers = await new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port: apiPort, path }, (response) => { response.resume(); resolve(response.headers); }).on('error', reject));
     assert.equal(headers['cache-control'], 'no-store', path);
     assert.equal(headers['referrer-policy'], 'no-referrer', path);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateAdminChange, adminCandidateProblem, isClubEmail } from './adminAccess.js';
+import { validateAdminChange, adminCandidateProblem, isClubEmail, ADMIN_AUTH_RETRY_MESSAGE, retryableAdminAuthMessage, verifyAdminSession } from './adminAccess.js';
 
 test('club email checks require the exact FCC domain and a single nonempty local part', () => {
   assert.equal(isClubEmail('Jo@ForthCanoeClub.co.uk'), true);
@@ -51,4 +51,25 @@ test('only verified Google sign-ins on the club domain can be approved', () => {
   assert.ok(adminCandidateProblem(password));
   assert.equal(adminCandidateProblem(password, { allowPasswordAccounts: true }), '');
   assert.ok(adminCandidateProblem({ ...password, email: 'jo@gmail.com' }, { allowPasswordAccounts: true }));
+});
+
+test('admin session verification distinguishes retryable refresh failures from revoked access', async () => {
+  const user = { email: 'admin@forthcanoeclub.co.uk', isAnonymous: false,
+    getIdTokenResult: async (forceRefresh) => ({ claims: { admin: true }, forceRefresh }) };
+  assert.deepEqual(await verifyAdminSession(user, true), { status: 'approved', user });
+  assert.equal((await verifyAdminSession({ ...user, getIdTokenResult: async () => ({ claims: {} }) })).status, 'rejected');
+  assert.equal((await verifyAdminSession({ ...user, email: 'admin@example.com' })).status, 'rejected');
+
+  for (const code of ['auth/network-request-failed', 'auth/timeout', 'auth/too-many-requests']) {
+    const failure = Object.assign(new Error('raw Firebase error'), { code });
+    assert.equal(retryableAdminAuthMessage(failure), ADMIN_AUTH_RETRY_MESSAGE);
+    const result = await verifyAdminSession({ ...user, getIdTokenResult: async () => { throw failure; } });
+    assert.deepEqual(result, { status: 'retry', message: ADMIN_AUTH_RETRY_MESSAGE });
+  }
+  for (const code of ['auth/id-token-revoked', 'auth/user-disabled', 'auth/user-token-expired']) {
+    assert.equal(retryableAdminAuthMessage({ code }), '');
+    const result = await verifyAdminSession({ ...user, getIdTokenResult: async () => { throw Object.assign(new Error('raw Firebase error'), { code }); } });
+    assert.equal(result.status, 'rejected');
+    assert.doesNotMatch(result.message, /raw Firebase error/);
+  }
 });

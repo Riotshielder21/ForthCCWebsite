@@ -16,7 +16,7 @@ import { allocateRecordIds } from '../src/utils/recordIds.js';
 const PROJECT = 'demo-fcc-club-night-tests';
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: PROJECT });
 const db = getFirestore(initializeApp({ projectId: PROJECT }, 'club-night-tests'));
-const COLLECTIONS = ['households', 'memberships', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'auditLog', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals', 'membershipTerms', 'selfAssessmentLog', 'eventRosterAccess', 'eventRosterAccessLog', 'eventRosters'];
+const COLLECTIONS = ['households', 'memberships', 'subscriptions', 'lists', 'clubNightCheckins', 'clubNightAccessLog', 'emailCodes', 'emailSessions', 'selfServiceChanges', 'settings', 'counters', 'orders', 'auditLog', 'formSubmissions', 'discountCodes', 'renewalInvites', 'volunteerRenewals', 'membershipTerms', 'selfAssessmentLog', 'eventRosterAccess', 'eventRosterAccessLog', 'eventRosters'];
 const clear = async () => {
   for (const name of COLLECTIONS) {
     const snapshot = await db.collection(name).get();
@@ -36,7 +36,14 @@ const requireAdmin = async (req, res) => {
 const requestNow = (req) => req.headers['x-test-now'] ? new Date(req.headers['x-test-now']) : new Date();
 const emailCodes = registerEmailCodeRoutes(app, { db: () => db, sendEmail });
 const eventProducts = [];
-registerMyDetailsRoutes(app, { db: () => db, sendEmail, emailCodes });
+const stripeEmailCalls = [];
+const stripeRequest = async (path, params, method) => {
+  stripeEmailCalls.push({ path, params, method });
+  if (path === 'subscriptions/sub-casey') return { customer: 'cus_casey' };
+  if (path === 'customers/cus_casey') return { id: 'cus_casey', email: params?.find(([key]) => key === 'email')?.[1] };
+  throw new Error(`Unexpected Stripe request: ${path}`);
+};
+registerMyDetailsRoutes(app, { db: () => db, sendEmail, emailCodes, stripeRequest });
 const loadCatalogue = async () => [{ id: 'gold-sub', name: 'Gold subscription', category: 'SUBSCRIPTIONS' }, { id: 'boat-hire', name: 'Boat hire', category: 'ADDONS' }, ...eventProducts];
 const { canViewEventRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => db, sendEmail, loadCatalogue, emailCodes, requestNow });
 registerClubNightRoutes(app, { requireAdmin, db: () => db, emailCodes, requestNow, loadCatalogue, canViewEventRosters });
@@ -342,15 +349,22 @@ try {
   assert.equal((await call('/api/my-details', { session: justgoSession })).data.households[0].justgo, true);
   assert.equal((await call('/api/my-details/HH-JUSTGO', { method: 'PATCH', session: justgoSession, body: update })).status, 409);
 
+  await db.collection('subscriptions').doc('sub-casey').set({ email: member.email, status: 'active', membershipIds: ['M0001'] });
   const newEmail = 'casey.new@example.test';
   assert.equal((await call('/api/my-details/HH-MEMBER/email', { method: 'POST', session: detailsSession, body: { newEmail } })).status, 200);
   assert.equal((await call('/api/my-details/HH-MEMBER/email/confirm', { method: 'POST', session: detailsSession, body: { newEmail, code: '000000' === lastCode(newEmail) ? '000001' : '000000' } })).status, 400);
   const changed = await call('/api/my-details/HH-MEMBER/email/confirm', { method: 'POST', session: detailsSession, body: { newEmail, code: lastCode(newEmail) } });
   assert.equal(changed.status, 200);
   assert.equal((await db.collection('households').doc('HH-MEMBER').get()).data().email, newEmail);
+  assert.equal((await db.collection('subscriptions').doc('sub-casey').get()).data().email, newEmail, 'the local billing record follows the payer email');
+  assert.deepEqual(stripeEmailCalls, [
+    { path: 'subscriptions/sub-casey', params: null, method: 'GET' },
+    { path: 'customers/cus_casey', params: [['email', newEmail]], method: 'POST' }
+  ], 'the Stripe customer receives the confirmed email before club records change');
   assert.ok(sent.some((message) => message.to === member.email && message.record.kind === 'email-changed'), 'old address is told');
   assert.equal((await call('/api/my-details', { session: detailsSession })).data.households.length, 0, 'old email no longer reaches the household');
   assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: { ...member, email: newEmail }, at: nextWeek })).data.success, true, 'check-in uses the new email');
+  await db.collection('subscriptions').doc('sub-casey').delete();
 
   // GDPR erasure removes club-night and email-code records
   const guestId = guestRecord.id;

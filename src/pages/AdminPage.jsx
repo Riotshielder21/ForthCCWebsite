@@ -41,7 +41,7 @@ const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorate
 
 export default function AdminPage({ products, onNavigate }) {
   const editor = usePageEditor();
-  const { adminUser, authReady } = editor;
+  const { adminUser, authReady, authError, authRetrying, retryAuth } = editor;
   const [attentionCount, setAttentionCount] = useState(0);
   useEffect(() => {
     if (!adminUser) return undefined;
@@ -228,7 +228,8 @@ export default function AdminPage({ products, onNavigate }) {
           <h2 className="tile_heading_bold_2">Website editor</h2>
           <p className="text_container SpaceB6">Sign in with an approved Forth Canoe Club Google Workspace account.</p>
           <form onSubmit={(event) => { event.preventDefault(); handleLogin(); }} className="SpaceY4">
-            {error && <p className="StatusText StatusTextError">{error}</p>}
+            {(authError || error) && <p className="StatusText StatusTextError" role="alert">{authError || error}</p>}
+            {authError && <button className="EditorCommand" type="button" disabled={authRetrying} onClick={retryAuth}>{authRetrying ? 'Retrying session…' : 'Retry existing session'}</button>}
             <button className="FormSubmitButton" type="submit">{import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true' ? 'Sign in as local test admin' : 'Continue with Google'}</button>
           </form>
         </div>
@@ -238,6 +239,7 @@ export default function AdminPage({ products, onNavigate }) {
 
   return (
     <div className="PageFadeIn">
+      {authError && <div className="AdminAuthWarning" role="alert"><span>{authError}</span><button className="EditorCommand" type="button" disabled={authRetrying} onClick={retryAuth}>{authRetrying ? 'Retrying…' : 'Retry session'}</button></div>}
       <div className="SectionHero">
         <div className="PageHero">
           <div>

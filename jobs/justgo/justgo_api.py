@@ -343,7 +343,7 @@ def _env_set(environ, name, default=()):
 
 
 def integration_config(environ=None):
-    """Tenant mappings confirmed through read-only discovery (scripts/justgo-admin.py discover)."""
+    """Tenant mappings confirmed through read-only discovery (jobs/justgo/justgo-admin.py discover)."""
     environ = os.environ if environ is None else environ
     try:
         definitions = json.loads(environ.get("JUSTGO_MEMBERSHIP_DEFINITIONS") or "{}")

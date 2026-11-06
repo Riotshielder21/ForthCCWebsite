@@ -99,6 +99,33 @@ export const toggleFamilyLine = (people, lineId, personId) => people.map((person
   ? { ...person, lineIds: person.lineIds.includes(lineId) ? person.lineIds.filter((id) => id !== lineId) : [...person.lineIds, lineId] }
   : person);
 
+export const returningVerificationMatches = (person, email) => !person.returning || Boolean(
+  person.verifiedDob && person.verifiedDob === person.dob
+  && person.verifiedEmail === email.trim().toLowerCase()
+  && person.verifiedName === normaliseName(`${person.firstName} ${person.lastName}`)
+);
+
+export const invalidatePersonVerification = (person) => ({
+  ...person, verifiedDob: '', verifiedEmail: '', verifiedName: '', volunteerPreview: null
+});
+
+// Item assignments have their own step; person steps validate details and the applicable family/tier rules.
+export const checkoutStepSnapshot = (step, email, people, lines) => {
+  if (step === 'email') return JSON.stringify(email);
+  if (step === 'assign') return JSON.stringify({
+    lines: lines.map((line) => line.lineId),
+    people: people.map(({ id, lineIds, ownKitLineIds }) => ({ id, lineIds, ownKitLineIds }))
+  });
+  const person = people.find((candidate) => step === `person:${candidate.id}`);
+  if (!person) return null;
+  const familyLine = person.lineIds.map((id) => lines.find((line) => line.lineId === id)).find(isFamilyMembership);
+  return JSON.stringify(people.filter((candidate) => candidate.id === person.id || (familyLine && candidate.lineIds.includes(familyLine.lineId)))
+    .map((candidate) => {
+      const { lineIds, ownKitLineIds, ...details } = candidate;
+      return { ...details, role: familyRole(candidate, people, lines), kind: resolvedKind(candidate, people, lines) };
+    }));
+};
+
 /** A returning member's name came from our records, so it stays masked (`J*** S***`) unless the date of birth that unlocked it is entered. */
 export const displayName = (person) => {
   const name = [person?.firstName, person?.lastName].filter(Boolean).join(' ');

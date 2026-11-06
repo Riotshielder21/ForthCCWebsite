@@ -2,7 +2,7 @@
 
 The club website provides information about paddling, membership and volunteering, plus a shop for membership, subscriptions, vouchers and event/course tickets. Approved club admins can edit pages in place, manage the catalogue, create forms and download reports.
 
-The React/Vite frontend runs on Firebase Hosting. An Express API runs on Cloud Run, with Firestore for records, Firebase Storage for uploaded images, Stripe for payments and Google Workspace for forms and email. Bundled images and default page content live in this repository.
+The React/Vite frontend runs on Firebase Hosting. An Express API runs on Cloud Run, scheduled jobs run on Cloud Scheduler and Cloud Run jobs, with Firestore for records, Firebase Storage for uploaded images, Stripe for payments and Google Workspace for forms and email. Bundled images and default page content live in this repository.
 
 ## Project Layout
 
@@ -14,10 +14,11 @@ The React/Vite frontend runs on Firebase Hosting. An Express API runs on Cloud R
 | [src/constants/](src/constants/) | Default page copy and starter products |
 | [src/utils/](src/utils/) | Firebase, catalogue, pricing and report logic/tests |
 | [src/assets/](src/assets/), [public/](public/) | Default assets and published page JSON |
-| [server.js](server.js) | Payments, webhooks, reports and admin API |
-| [scripts/](scripts/) | Local emulator fixtures/tests and the guarded JustGo API jobs (sync, upload, operator commands) |
+| [server.js](server.js), [src/server/](src/server/) | API only: payments, webhooks, reports and admin routes |
+| [scripts/](scripts/) | Local startup, emulator fixtures/tests, migrations and deployment helpers |
+| [jobs/justgo/](jobs/justgo/) | Guarded JustGo API jobs (sync, upload, operator commands), run as Cloud Run jobs |
 | [firebase.json](firebase.json) | Hosting and emulator configuration |
-| [.github/workflows/firebase-hosting.yml](.github/workflows/firebase-hosting.yml) | API, website and Firebase-rules deployment |
+| [.github/workflows/firebase-hosting.yml](.github/workflows/firebase-hosting.yml) | API, website, Firebase-rules and scheduled-job deployment |
 
 ## Working On It
 

@@ -20,6 +20,7 @@
     --fcc-font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --fcc-letter-tight: -0.04em;
     --fcc-letter-wide: 0.24em;
+    --site-header-height: 4rem;
   }
 
   body {
@@ -684,6 +685,17 @@
   }
 
   .PageBannerSettings legend { @apply flex items-center gap-2 px-2 font-semibold; }
+  .PageBannerSettings .FormLabel { min-width: 0; }
+  .PageBannerSettings .FormInput { display: block; margin-top: 8px; height: 48px; }
+  .PageBannerSettings .BannerFileInput { padding: 6px; cursor: pointer; }
+  .BannerFileInput::file-selector-button {
+    min-height: 34px; margin-right: 12px; padding: 4px 12px; border: 1px solid #087c56;
+    border-radius: 6px; color: #fff; background: #087c56; font: inherit; font-weight: 700;
+    cursor: pointer;
+  }
+  .BannerFileInput:hover::file-selector-button { background: #066947; border-color: #066947; }
+  .BannerFileInput:focus-visible { outline: 3px solid #00a8e8; outline-offset: 2px; }
+  .BannerFileInput:disabled, .BannerFileInput:disabled::file-selector-button { cursor: wait; opacity: .65; }
   .PageBannerSettingsActions { @apply flex flex-wrap gap-2 md:col-span-2; }
 
   /* ─── Grid Layouts ──────────────────────────────── */
@@ -1157,6 +1169,29 @@
 
   .AdminEventSchedule { min-width: 0; border: 0; margin: 16px 0; padding: 0; }
   .AdminEventTimes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .CheckinSessionCard {
+    display: flex; flex-direction: column; gap: 16px; margin-top: 20px; padding: 16px;
+    border: 1px solid var(--fcc-color-border); border-radius: 12px; background: var(--fcc-color-surface-subtle);
+  }
+  .CheckinSessionCard legend { padding: 0 8px; }
+  .CheckinSessionFields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .CheckinSessionFields .FormLabel { min-width: 0; margin: 0; }
+  .CheckinSessionName, .CheckinSessionFields .AdminEventTimes { grid-column: 1 / -1; }
+  .CheckinSessionOptions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .CheckinSessionOption {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px;
+    border: 1px solid var(--fcc-color-border); border-radius: 8px; background: var(--fcc-color-surface);
+    font-weight: 600; cursor: pointer;
+  }
+  .CheckinSessionOption input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: #087c56; }
+  .CheckinSessionActions { display: flex; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--fcc-color-border); }
+  .CheckinSessionSaveActions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+  @media (max-width: 640px) {
+    .CheckinSessionFields, .CheckinSessionFields .AdminEventTimes { grid-template-columns: 1fr; }
+    .CheckinSessionOption { width: 100%; }
+    .CheckinSessionActions, .CheckinSessionSaveActions { flex-direction: column; }
+    .CheckinSessionActions .EditorCommand, .CheckinSessionSaveActions .EditorCommand { width: 100%; }
+  }
 
   .AdminFormBuilder {
     @apply max-w-3xl;
@@ -1176,8 +1211,9 @@
     .AdminPreviewActions { align-items: flex-end; }
   }
   .PageEditorToolbar {
-    position: sticky; top: 0; z-index: 40; display: flex; flex-wrap: wrap;
-    align-items: center; gap: 8px; padding: 12px 24px; background: #fff;
+    position: sticky; top: var(--site-header-height); z-index: 40; display: flex; flex-wrap: wrap;
+    align-items: center; gap: 8px; max-height: calc(100dvh - var(--site-header-height)); overflow-y: auto;
+    padding: 12px 24px; background: #fff;
     border-bottom: 2px solid #00a8e8; color: var(--fcc-color-ink); font-size: 13px;
   }
   .EditorModeSwitch { display: inline-flex; gap: 8px; align-items: center; padding: 8px; font-weight: 700; white-space: nowrap; }
@@ -1190,8 +1226,14 @@
   .EditorIconButton { width: 40px; padding: 0; flex-shrink: 0; }
   .EditorPublish { background: #087c56; border-color: #087c56; color: #fff; }
   .EditorCommand:disabled, .EditorIconButton:disabled { opacity: .55; cursor: wait; }
+  .EditorUnsavedPages { flex-basis: 100%; font-weight: 700; overflow-wrap: anywhere; }
   .EditorStatus { flex-basis: 100%; overflow-wrap: anywhere; }
   .EditorError { color: #b42318; }
+  .EditorRetryButton { margin-left: 8px; text-decoration: underline; font-weight: 700; }
+  .AdminAuthWarning {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px;
+    padding: 12px 24px; color: #7a2e0e; background: #fff4e5; border-bottom: 1px solid #f5c27a;
+  }
   .tile_group_single { display: grid; grid-template-columns: 1fr; gap: 24px; }
   .tile_editor { position: relative; min-width: 0; display: flex; flex-direction: column; }
   .tile_editor > .main_tile, .tile_editor > .shop_product_tile, .tile_editor > .sponsor_subtile { flex: 1; height: auto; min-height: 0; min-width: 0; }

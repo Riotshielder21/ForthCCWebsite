@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ShoppingCart, Menu, X, UserRound } from 'lucide-react';
 import fccCrest from '../assets/fcc-crest.png';
 import { pagePath } from '../utils/routes';
+import { usePageEditor } from '../utils/PageContentContext';
 
 const PRIMARY_NAV_ITEMS = [
   { id: 'home', label: 'Home' },
@@ -18,6 +19,8 @@ const MORE_NAV_ITEMS = [
 ];
 
 export default function SiteNavigation({ currentPage, setCurrentPage, cartCount, onCartOpen }) {
+  const editor = usePageEditor();
+  const editing = Boolean(editor?.adminUser && editor.editMode);
   const [menuOpen, setMenuOpen] = useState(false);
   const [desktop, setDesktop] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches);
   const menuButton = useRef(null);
@@ -134,7 +137,7 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
         </nav>
       )}
     </header>
-    {currentPage === 'home' && !desktop && !menuOpen && (
+    {currentPage === 'home' && !desktop && !menuOpen && !editing && (
       <nav className="HomeQuickNav" aria-label="Homepage shortcuts">
         {PRIMARY_NAV_ITEMS.map((item) => navLink(item))}
       </nav>

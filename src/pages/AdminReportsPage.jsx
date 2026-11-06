@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, CircleSlash, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl } from '../utils/api';
-import { reportCsv, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, onlyEventPeriod, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
+import { reportCsv, reportDetailEntries, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, onlyEventPeriod, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
 import { eventScheduleLabel } from '../utils/catalogue';
 import CustomerVouchers from '../components/CustomerVouchers';
 import ReasonInput from '../components/ReasonInput';
@@ -386,10 +386,10 @@ export default function AdminReportsPage({ onNavigate }) {
         </> : <p className="ReportNotice">This subscription is no longer active, so there is nothing to cancel here.</p>}
         <button className="EditorCommand SpaceT4" type="button" disabled={scheduleBusy} onClick={() => setScheduling(false)}><FileText size={18} /> View full details</button>
       </form>}
-      {selected && !scheduling && <><dl className="ReportDetails">{Object.entries(selected).filter(([key]) => !['items', 'people', 'history'].includes(key)).map(([key, value]) => <React.Fragment key={key}><dt>{key.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase())}</dt><dd>{detailValue(value)}</dd></React.Fragment>)}</dl>
+      {selected && !scheduling && <><dl className="ReportDetails">{reportDetailEntries(selected).map(([key, value]) => <React.Fragment key={key}><dt>{key.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase())}</dt><dd>{detailValue(value)}</dd></React.Fragment>)}</dl>
         {selected.items && <ul className="ReportItems">{selected.items.map((item, index) => <li key={index}>{item.name} {kind === 'subscribers' ? `${item.amount ?? 'Variable'} ${item.currency.toUpperCase()} / ${item.interval}` : item.price === null ? '' : money(item.price)}{item.eventSchedule && <p>{eventScheduleLabel(item.eventSchedule)}</p>}</li>)}</ul>}
-        {purchaseReport && selected.status === 'paid' && <PurchasedItemActions key={selected.id} order={selected} adminUser={adminUser} onChanged={reloadSelected} />}
-        {kind === 'members' && <KeyAccessControl key={selected.id} member={selected} adminUser={adminUser} onChanged={reloadSelected} />}
+        {purchaseReport && selected.status === 'paid' && <PurchasedItemActions key={`purchased-items:${selected.id}`} order={selected} adminUser={adminUser} onChanged={reloadSelected} />}
+        {kind === 'members' && <KeyAccessControl key={`key-access:${selected.id}`} member={selected} adminUser={adminUser} onChanged={reloadSelected} />}
         {selected.people?.length > 0 && <div className="ReportPeople"><h4 className="CartItemTitle">People on this order</h4>{selected.people.map((person, index) => <dl key={index} className="ReportDetails">
           {[['Name', person.name], ['Date of birth', person.dob], ['Type', person.returningMember ? `${person.kind} (existing member)` : person.kind], ['Items', person.items.join(', ')], ['Email', person.email], ['Phone', person.phone], ['Address', person.address], ['Emergency contact', person.emergencyContact], ['Swimming', person.swimming], ['Medical', person.medical], ['Photo consent', person.photoConsent ? 'Yes' : 'No'], ['Membership ID', person.membershipId]].filter(([, value]) => value).map(([label, value]) => <React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}
         </dl>)}</div>}
@@ -401,7 +401,7 @@ export default function AdminReportsPage({ onNavigate }) {
           <button className="EditorCommand" type="button" onClick={() => justgoAction(selected.id, 'manual')}>Manually added in JustGo</button>
         </div>}
         {kind === 'members' && <div className="ReportsRowActions"><button className="EditorCommand" type="button" onClick={() => sendRenewal(selected.id)}><Mail size={18} /> Send renewal email</button></div>}
-        {(kind === 'orders' || kind === 'members') && <MonthlyPayments key={selected.id} adminUser={adminUser}
+        {(kind === 'orders' || kind === 'members') && <MonthlyPayments key={`monthly-payments:${selected.id}`} adminUser={adminUser}
           query={new URLSearchParams(kind === 'orders' ? { orderRef: selected.id } : { membershipId: selected.id }).toString()} />}
         {selected.email && <CustomerVouchers adminUser={adminUser} email={selected.email} />}
         {kind === 'members' && <button className="EditorCommand TileRemove" onClick={() => { setErasure({ membershipId: selected.id, name: selected.name }); setSelected(null); }}><ShieldX size={18} /> GDPR erasure</button>}

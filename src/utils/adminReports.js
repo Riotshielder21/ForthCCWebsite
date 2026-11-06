@@ -38,6 +38,9 @@ const statusDate = (value) => {
 
 export const MEMBERSHIP_STATUSES = ['Active', 'Active (no expiry)', 'Awaiting renewal', 'Pending', 'Unavailable', 'Expired', 'Suspended', 'No FCC membership', 'Revoked', 'No'];
 
+const CONTROLLED_DETAIL_FIELDS = new Set(['items', 'people', 'history', 'keyAccess', 'keyAccessReason']);
+export const reportDetailEntries = (record) => Object.entries(record || {}).filter(([key]) => !CONTROLLED_DETAIL_FIELDS.has(key));
+
 /**
  * The one membership status shown to admins, on event rosters and at check-ins. Active stays Active even after a renewal
  * email is sent. Once cover ends, a member whose renewal link is still live is Awaiting renewal, then Expired when the

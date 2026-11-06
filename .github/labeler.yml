@@ -8,11 +8,11 @@ backend:
 
 tests:
   - changed-files:
-      - any-glob-to-any-file: ['**/*.test.js', 'scripts/test-*.js']
+      - any-glob-to-any-file: ['**/*.test.js', 'scripts/test-*.js', 'jobs/**/test-*.py']
 
 scripts:
   - changed-files:
-      - any-glob-to-any-file: ['scripts/**', 'bin/**']
+      - any-glob-to-any-file: ['scripts/**', 'jobs/**']
 
 documentation:
   - changed-files:
@@ -24,4 +24,4 @@ ci:
 
 dependencies:
   - changed-files:
-      - any-glob-to-any-file: ['package.json', 'package-lock.json', 'requirements*.txt']
+      - any-glob-to-any-file: ['package.json', 'package-lock.json', '**/requirements*.txt']
