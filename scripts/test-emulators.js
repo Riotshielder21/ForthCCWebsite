@@ -64,7 +64,7 @@ globalThis.fetch = async (url, options) => {
 };`;
 const server = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(mockStripe)}`, 'server.js'], {
   env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', STRIPE_WEBHOOK_SECRET: 'whsec_local_only', STRIPE_SECRET_KEY: 'sk_test_local_fixture',
-    STRIPE_REPORT_SECRET_KEY: 'rk_test_local_fixture', STRIPE_SUBSCRIPTION_ADMIN_KEY: 'rk_test_local_fixture' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    STRIPE_REPORT_SECRET_KEY: 'rk_test_local_fixture', STRIPE_SUBSCRIPTION_ADMIN_KEY: 'rk_test_local_fixture', GITHUB_CONTENT_TOKEN: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
 let output = '';
 server.stdout.on('data', (chunk) => { output += chunk; });
 server.stderr.on('data', (chunk) => { output += chunk; });
@@ -101,8 +101,12 @@ try {
   }
   assert.equal((await request('/health')).status, 200, 'compressed requests must not crash the API');
   assert.equal((await request('/api/admin/reports?kind=orders')).status, 401);
+  assert.equal((await request('/api/admin/page-drafts')).status, 401, 'saved page drafts are admin-only');
   const user = (await signInWithEmailAndPassword(auth, 'admin@forthcanoeclub.co.uk', 'local-test-password')).user;
   const token = await user.getIdToken(true);
+  const unavailableDrafts = await request('/api/admin/page-drafts', { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(unavailableDrafts.status, 503, 'missing GitHub configuration must not look like there are no saved drafts');
+  assert.match(unavailableDrafts.result.error, /GitHub publishing is not configured/);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const eventSchedule = { mode: 'consecutive', startDate: '2027-04-05', startTime: '15:00', endTime: '17:00', days: 5, timeZone: 'Europe/London' };
   await db.collection('products').doc('TEST-EVENT').set({ name: 'Five-day course', category: 'EVENTS', type: 'event-ticket', basePrice: 50, eventSchedule });

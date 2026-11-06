@@ -32,6 +32,17 @@ export const subscribeToProducts = (onProducts, onError) => {
 
 export { loadPublishedPageContent } from './publicContent';
 
+export const loadSavedPageDrafts = async (idToken) => {
+  const response = await fetch(apiUrl('/api/admin/page-drafts'), {
+    headers: { Authorization: `Bearer ${idToken}` },
+    cache: 'no-store'
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Could not check saved page drafts.');
+  if (!result.pages || typeof result.pages !== 'object' || Array.isArray(result.pages)) throw new Error('Invalid saved page drafts response.');
+  return result;
+};
+
 export const savePageContent = async (pageId, content, idToken) => {
   const response = await fetch(apiUrl('/api/admin/publish-page'), {
     method: 'POST',

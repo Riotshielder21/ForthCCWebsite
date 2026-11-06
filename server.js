@@ -41,6 +41,7 @@ import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from '
 import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive, endedAtCutoff, clubYearEndUpdate } from './src/utils/subscriptions.js';
 import { registerGdprRoutes } from './src/server/gdpr.js';
 import { rebaseBranch, rebaseWarning } from './src/server/githubRebase.js';
+import { readContentDrafts } from './src/server/contentDrafts.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
@@ -1691,6 +1692,23 @@ registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...arg
   volunteerRenewalContent, sendVolunteerRenewals,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
+
+app.get('/api/admin/page-drafts', rateLimit(30, 60 * 1000), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (!await requireAdmin(req, res)) return;
+    const token = process.env.GITHUB_CONTENT_TOKEN;
+    if (!token) return res.status(503).json({ error: 'GitHub publishing is not configured on the API server.' });
+    const repository = process.env.GITHUB_REPOSITORY || 'Riotshielder21/ForthCCWebsite';
+    const branch = process.env.GITHUB_CONTENT_BRANCH || 'live/web-admin-edit';
+    const base = process.env.GITHUB_BRANCH || 'main';
+    const pages = await readContentDrafts(createGitHubClient(repository, token), branch, base);
+    res.json({ branch, pages });
+  } catch (error) {
+    console.error('Could not check saved page drafts:', error.message);
+    res.status(500).json({ error: error.message || 'Could not check saved page drafts.' });
+  }
+});
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
