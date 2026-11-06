@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import PurchaseReceipt from '../components/PurchaseReceipt';
 
 export default function OrderLookupPage() {
@@ -8,7 +8,7 @@ export default function OrderLookupPage() {
 
   useEffect(() => {
     const accessKey = window.location.pathname.split('/').filter(Boolean).pop();
-    fetch(apiUrl(`/api/orders/${encodeURIComponent(accessKey || '')}`))
+    apiFetch(apiUrl(`/api/orders/${encodeURIComponent(accessKey || '')}`))
       .then(async (response) => {
         const contentType = response.headers.get('content-type') || '';
         const data = contentType.includes('application/json') ? await response.json() : {};

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { MAX_VOLUNTEER_OPPORTUNITIES } from '../utils/volunteerPage';
 
 export default function VolunteerPageEditor({ adminUser, content, panel, onSaved }) {
@@ -15,7 +15,7 @@ export default function VolunteerPageEditor({ adminUser, content, panel, onSaved
     setBusy(true); setError(''); setMessage('');
     try {
       const token = await adminUser.getIdToken();
-      const response = await fetch(apiUrl('/api/admin/volunteering'), { method: 'POST',
+      const response = await apiFetch(apiUrl('/api/admin/volunteering'), { method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(draft) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not save volunteering.');

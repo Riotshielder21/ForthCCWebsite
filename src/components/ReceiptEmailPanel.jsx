@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Mail } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { RECEIPT_PERSON_FIELDS } from '../utils/receipt';
 
 /** Chooses which submitted details each person's section of the confirmation email repeats back to the buyer. */
@@ -13,7 +13,7 @@ export default function ReceiptEmailPanel({ adminUser }) {
 
   const request = useCallback(async (options = {}) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl('/api/admin/receipt-email'), {
+    const response = await apiFetch(apiUrl('/api/admin/receipt-email'), {
       ...options,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
     });

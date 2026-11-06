@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Send, CheckCircle, AlertCircle } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 
 const EMPTY = { name: '', email: '', category: '', notes: '' };
 
@@ -39,7 +39,7 @@ export default function FormComponent({
         .map(({ question, answer }) => `${question.label}: ${answer}`);
       if (items.length === 0) throw new Error('Please answer the questions.');
 
-      const response = await fetch(apiUrl(endpoint), {
+      const response = await apiFetch(apiUrl(endpoint), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

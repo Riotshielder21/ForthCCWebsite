@@ -5,7 +5,7 @@ import {
   displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT, requiresMembership, grantsMembership,
   returningVerificationMatches, invalidatePersonVerification, checkoutStepSnapshot, validateCheckout
 } from '../utils/checkout';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { applyTripDiscounts, isTripEvent } from '../utils/tripDiscount';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -75,7 +75,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const check = (key) => (event) => update(person.id, (candidate) => ({ ...candidate, [key]: event.target.checked }));
 
   const lookupMembers = async (dob = '') => {
-    const response = await fetch(apiUrl('/api/membership-names'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim(), ...(dob ? { dob } : {}) }) });
+    const response = await apiFetch(apiUrl('/api/membership-names'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim(), ...(dob ? { dob } : {}) }) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Membership lookup is unavailable. Please try again.');
     if (typeof result.exists !== 'boolean' || !Array.isArray(result.names)) throw new Error('Membership lookup returned an invalid response. Please try again.');

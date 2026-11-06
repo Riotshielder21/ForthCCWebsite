@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { ageOn, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT } from '../utils/checkout';
 import { loadEmailSession, clearEmailSession, sessionRequest } from '../utils/emailSession';
 import EmailCodeSignIn from '../components/EmailCodeSignIn';
@@ -21,7 +21,7 @@ function Field({ label, children }) {
 
 /** Admins signed in with Google use their ID token, so they skip the volunteer email code. */
 const adminRequest = async (adminUser, path, { method = 'GET', body } = {}) => {
-  const response = await fetch(apiUrl(path), {
+  const response = await apiFetch(apiUrl(path), {
     method, cache: 'no-store',
     headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), Authorization: `Bearer ${await adminUser.getIdToken()}` },
     ...(body ? { body: JSON.stringify(body) } : {})
@@ -250,7 +250,7 @@ export default function ClubNightPage() {
     let active = true;
     const loadClub = async () => {
       try {
-        const response = await fetch(apiUrl('/api/club-night'), { cache: 'no-store' });
+        const response = await apiFetch(apiUrl('/api/club-night'), { cache: 'no-store' });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Could not load check-in availability.');
         if (active) setClub(result);
@@ -289,7 +289,7 @@ export default function ClubNightPage() {
     }
     setBusy(true); setError(''); setStatus('');
     try {
-      const response = await fetch(apiUrl('/api/club-night/checkins'), {
+      const response = await apiFetch(apiUrl('/api/club-night/checkins'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
         body: JSON.stringify({ ...identityValidation.value, sessionId: session.id, ...(needsDetails ? { details } : {}) })
       });

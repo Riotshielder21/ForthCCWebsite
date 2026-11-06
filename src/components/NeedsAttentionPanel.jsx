@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, RefreshCw, RotateCcw, Check } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 
 const when = (value) => value ? new Date(value).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
 
@@ -17,7 +17,7 @@ export default function NeedsAttentionPanel({ adminUser, onOpenRecord }) {
 
   const request = useCallback(async (path, method = 'GET', body) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl(path), { method, cache: 'no-store',
+    const response = await apiFetch(apiUrl(path), { method, cache: 'no-store',
       headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'The request did not complete.');

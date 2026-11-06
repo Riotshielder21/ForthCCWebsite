@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { saveEmailSession } from '../utils/emailSession';
 
 const post = async (path, body) => {
-  const response = await fetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' })
+  const response = await apiFetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' })
     .catch(() => { throw new Error('Could not reach the club website. Check your connection and try again.'); });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || 'Something went wrong. Please try again.');

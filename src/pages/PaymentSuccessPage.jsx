@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import PurchaseReceipt from '../components/PurchaseReceipt';
 import { takeReceiptParams } from '../utils/receiptSession';
 
@@ -42,7 +42,7 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
     const check = async () => {
       attempts += 1;
       try {
-        const response = await fetch(apiUrl(`/api/checkout-status?session_id=${encodeURIComponent(sessionId)}`), { cache: 'no-store' });
+        const response = await apiFetch(apiUrl(`/api/checkout-status?session_id=${encodeURIComponent(sessionId)}`), { cache: 'no-store' });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Could not check payment status.');
         if (!active) return;
@@ -57,7 +57,7 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
             return;
           }
           try {
-            const receiptResponse = await fetch(apiUrl(`/api/checkout-receipt?session_id=${encodeURIComponent(sessionId)}&receipt_token=${encodeURIComponent(receiptToken)}`), { cache: 'no-store' });
+            const receiptResponse = await apiFetch(apiUrl(`/api/checkout-receipt?session_id=${encodeURIComponent(sessionId)}&receipt_token=${encodeURIComponent(receiptToken)}`), { cache: 'no-store' });
             const receiptResult = await receiptResponse.json();
             if (!receiptResponse.ok) throw new Error(receiptResult.error || 'Could not load receipt.');
             if (active) setReceipt(receiptResult);

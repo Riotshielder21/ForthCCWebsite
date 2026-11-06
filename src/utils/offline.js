@@ -1,4 +1,4 @@
-import { apiUrl } from './api';
+import { apiUrl, apiFetch } from './api';
 import { savePublicSnapshot } from './publicSnapshots';
 
 export function prepareOfflineSite(onStatus) {
@@ -21,7 +21,7 @@ export function prepareOfflineSite(onStatus) {
   };
   const register = async () => {
     notify('saving');
-    fetch(apiUrl('/api/volunteering'), { credentials: 'omit', priority: 'low' }).then(async (response) => {
+    apiFetch(apiUrl('/api/volunteering'), { credentials: 'omit', priority: 'low' }).then(async (response) => {
       if (!response.ok) throw new Error(`Could not download public volunteering information (${response.status}).`);
       savePublicSnapshot('volunteering', await response.json());
     }).catch((error) => console.error('Public volunteering information could not be saved:', error));

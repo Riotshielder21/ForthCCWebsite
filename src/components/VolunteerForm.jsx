@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Send, CheckCircle, AlertCircle } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { volunteerBenefitText } from '../utils/volunteering';
 
 export default function VolunteerForm({ tiers, products = [], renewal = null, token = '', title = 'Volunteer sign-up', description = '' }) {
@@ -17,7 +17,7 @@ export default function VolunteerForm({ tiers, products = [], renewal = null, to
     event.preventDefault(); setBusy(true); setStatus(null);
     try {
       if (!navigator.onLine) throw new Error('You are offline. Reconnect before submitting your volunteering.');
-      const response = await fetch(apiUrl(token ? `/api/volunteers/renew/${token}` : '/api/lists'), {
+      const response = await apiFetch(apiUrl(token ? `/api/volunteers/renew/${token}` : '/api/lists'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, tier, notes, listType: 'Volunteer Sign-ups',
           items: [`Activities: ${activities}`, `Availability: ${availability}`] })

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ShieldCheck, UserMinus } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { ADMIN_DOMAIN } from '../utils/adminAccess';
 
 /** Existing admins approve or remove other club Google accounts as website admins. */
@@ -13,7 +13,7 @@ export default function AdminAccessPanel({ adminUser }) {
 
   const request = useCallback(async (options = {}) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl('/api/admin/admins'), {
+    const response = await apiFetch(apiUrl('/api/admin/admins'), {
       ...options,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
     });

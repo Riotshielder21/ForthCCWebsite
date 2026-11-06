@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 
 const CHANGES = { initial: 'Initial version', content: 'Page, list or form wording', levels: 'Volunteer levels', restore: 'Restore' };
 const when = (iso) => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' });
@@ -13,7 +13,7 @@ export default function VolunteerVersionHistory({ adminUser, refreshKey, onResto
   const [message, setMessage] = useState('');
   const request = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl(path), { ...options, headers: { Authorization: `Bearer ${token}` } });
+    const response = await apiFetch(apiUrl(path), { ...options, headers: { Authorization: `Bearer ${token}` } });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not load the version history.');
     return result;

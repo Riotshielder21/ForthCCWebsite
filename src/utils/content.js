@@ -8,7 +8,7 @@ import {
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db } from './firebase';
 import { storage } from './firebase';
-import { apiUrl } from './api';
+import { apiUrl, apiFetch } from './api';
 import { isLockedProduct } from './tripDiscount';
 import { normaliseProduct, resolveCatalogue, validateEventSchedule } from './catalogue';
 import { cleanStockFields } from './inventory';
@@ -35,7 +35,7 @@ export const subscribeToProducts = (onProducts, onError) => {
 export { loadPublishedPageContent } from './publicContent';
 
 export const loadSavedPageDrafts = async (idToken) => {
-  const response = await fetch(apiUrl('/api/admin/page-drafts'), {
+  const response = await apiFetch(apiUrl('/api/admin/page-drafts'), {
     headers: { Authorization: `Bearer ${idToken}` },
     cache: 'no-store'
   });
@@ -46,7 +46,7 @@ export const loadSavedPageDrafts = async (idToken) => {
 };
 
 export const savePageContent = async (pageId, content, idToken) => {
-  const response = await fetch(apiUrl('/api/admin/publish-page'), {
+  const response = await apiFetch(apiUrl('/api/admin/publish-page'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -60,7 +60,7 @@ export const savePageContent = async (pageId, content, idToken) => {
 };
 
 export const reserveProductId = async (idToken) => {
-  const response = await fetch(apiUrl('/api/admin/products/reserve-id'), {
+  const response = await apiFetch(apiUrl('/api/admin/products/reserve-id'), {
     method: 'POST',
     headers: { Authorization: `Bearer ${idToken}` }
   });

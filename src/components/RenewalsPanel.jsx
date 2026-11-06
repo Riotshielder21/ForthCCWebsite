@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Mail } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { clubYearLabel } from '../utils/clubYear';
 
 const dayLabel = (millis) => new Date(millis).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' });
@@ -14,7 +14,7 @@ export default function RenewalsPanel({ adminUser }) {
 
   const request = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl(path), { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
+    const response = await apiFetch(apiUrl(path), { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
     const result = await response.json().catch(() => null);
     if (!result) throw new Error('The API server did not respond. For local development set VITE_API_BASE_URL (see DEVELOPMENT.md).');
     if (!response.ok) throw new Error(result.error || 'Request failed.');

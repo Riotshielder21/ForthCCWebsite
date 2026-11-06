@@ -9,6 +9,8 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { getAppCheck } from 'firebase-admin/app-check';
+import { appCheckMiddleware } from './src/server/appCheck.js';
 import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
 import { PAGE_CONTENT, validatePageFields } from './src/constants/pageContent.js';
 import { contentDisposition, findSafeguardingPolicy, isPdf } from './src/utils/safeguardingPolicies.js';
@@ -241,7 +243,7 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: (origin, callback) => callback(null, isAllowedOrigin(origin, corsOrigins, { allowLocalhost: allowLocalhostOrigins })),
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Email-Session', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Email-Session', 'X-Firebase-AppCheck', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
   maxAge: 600
 }));
 // Cloud Run is the API origin; public page crawling belongs on Firebase Hosting.
@@ -250,6 +252,12 @@ app.get('/robots.txt', (req, res) => {
 });
 // Every API route shares one per-visitor ceiling; routes add tighter limits.
 app.use(baselineRateLimit);
+app.use(appCheckMiddleware({
+  mode: process.env.APP_CHECK_MODE || 'monitor',
+  local: process.env.LOCAL_FIREBASE_EMULATORS === 'true',
+  appIds: (process.env.APP_CHECK_APP_IDS || '').split(',').map((id) => id.trim()).filter(Boolean),
+  verifyToken: (token) => getAppCheck(getApps()[0] || initializeAdminApp()).verifyToken(token)
+}));
 
 const stripeRequest = async (path, params, method = 'POST', { idempotencyKey } = {}) => {
   const secretKey = process.env.STRIPE_SECRET_KEY || '';

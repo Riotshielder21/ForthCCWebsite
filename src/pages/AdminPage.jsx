@@ -7,7 +7,7 @@ import { usePageEditor } from '../utils/PageContentContext';
 import DiscountCodesPanel from '../components/DiscountCodesPanel';
 import PagedAdminList from '../components/PagedAdminList';
 import EventRosterControl from '../components/EventRosterControl';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { validateEventSchedule, eventScheduleLabel, normaliseProduct } from '../utils/catalogue';
 import { cleanStockFields } from '../utils/inventory';
 import { cleanEventDetails } from '../utils/eventRoster';
@@ -48,7 +48,7 @@ export default function AdminPage({ products, onNavigate }) {
   useEffect(() => {
     if (!adminUser) return undefined;
     let current = true;
-    adminUser.getIdToken().then((token) => fetch(apiUrl('/api/admin/attention'), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }))
+    adminUser.getIdToken().then((token) => apiFetch(apiUrl('/api/admin/attention'), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }))
       .then((response) => response.ok ? response.json() : { count: 0 })
       .then((result) => { if (current) setAttentionCount(result.count || 0); })
       .catch(() => {});
@@ -97,7 +97,7 @@ export default function AdminPage({ products, onNavigate }) {
     setError('');
     try {
       const token = await adminUser.getIdToken();
-      const response = await fetch(apiUrl('/api/admin/forms'), {
+      const response = await apiFetch(apiUrl('/api/admin/forms'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({

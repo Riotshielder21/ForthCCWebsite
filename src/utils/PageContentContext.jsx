@@ -3,7 +3,7 @@ import { onIdTokenChanged, signOut } from 'firebase/auth';
 import { getPageCopy, PAGE_CONTENT } from '../constants/pageContent';
 import { auth, signInWithWorkspace } from './firebase';
 import { loadSavedPageDrafts, savePageContent } from './content';
-import { apiUrl } from './api';
+import { apiUrl, apiFetch } from './api';
 import { retryableAdminAuthMessage, verifyAdminSession } from './adminAccess.js';
 import { pageDraftFingerprint, pageDraftStatus, savePageDraftBatch } from './pageDrafts.js';
 
@@ -221,7 +221,7 @@ export function PageContentProvider({ value, children }) {
         ...(localTrackingFailed ? ['The pages were saved, but this browser could not remember their saved status.'] : [])
       ])];
       if (publish) {
-        const response = await fetch(apiUrl('/api/admin/create-content-pr'), {
+        const response = await apiFetch(apiUrl('/api/admin/create-content-pr'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
         });

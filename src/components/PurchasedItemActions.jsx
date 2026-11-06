@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 
 const money = (pence) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(pence / 100);
 
@@ -10,7 +10,7 @@ export default function PurchasedItemActions({ order, adminUser, onChanged }) {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const request = async (path, options = {}) => {
-    const response = await fetch(apiUrl(path), { ...options, headers: {
+    const response = await apiFetch(apiUrl(path), { ...options, headers: {
       Authorization: `Bearer ${await adminUser.getIdToken(true)}`, 'Content-Type': 'application/json'
     }, cache: 'no-store' });
     const result = await response.json();

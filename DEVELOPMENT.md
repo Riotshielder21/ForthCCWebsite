@@ -201,6 +201,14 @@ The editor toolbar appears whenever an approved admin is signed in; its presence
 
 Volunteering configuration is saved directly to Firestore, not through GitHub publishing; its History panel restores previous versions.
 
+### App Check
+
+Register the deployed web app with Firebase App Check's reCAPTCHA Enterprise provider. Add the public site key as the GitHub Actions secret `VITE_APPCHECK_SITE_KEY`; deployment requires it and embeds it in the website. The site key is public, not a server credential. Do not add the standalone reCAPTCHA scripts or call the assessments API: Firebase manages token exchange and refresh.
+
+App Check initializes before Auth, Firestore and Storage. Browser API calls use `apiFetch` to attach `X-Firebase-AppCheck`; Cloud Run verifies it with Firebase Admin and restricts it to the deployed Firebase app ID. Existing admin claims, email sessions, rate limits and input validation still apply. All browser API mutations and private admin/member/receipt/roster reads are checked. Stripe webhooks and scheduled renewal callbacks retain their own authentication and are exempt. Local loopback runs and Firebase emulators do not obtain browser tokens; the local API bypass is enabled only by `LOCAL_FIREBASE_EMULATORS=true`.
+
+The GitHub repository variable `APP_CHECK_MODE` defaults to `monitor`: missing/invalid tokens are logged, not blocked. In this mode token acquisition failures are logged and requests still run. After deploying, inspect Cloud Run's `App Check` logs and Firebase's verified-request metrics. Enable Firebase enforcement independently for Auth, Firestore and Storage when ready. Set `APP_CHECK_MODE=enforce` and redeploy to reject missing/invalid tokens on protected Cloud Run routes too; enabling Firebase enforcement alone does not protect Cloud Run. Deploy and allow older browser versions to refresh before enforcing. App Check attests the app; it is not proof of a person's identity and does not eliminate all automated abuse.
+
 ### Images
 
 Admins can choose PNG, JPG or WebP photos up to 25 MB for page banners, image tiles, supporter logos and shop products. The admin's browser ([imageProcessing.js](src/utils/imageProcessing.js)) corrects the camera rotation, then makes WebP copies at the widths in [responsiveImages.js](src/utils/responsiveImages.js) (banners 640–3840 px, tiles and products 320–1920 px, logos 160–640 px), never wider than the original. It also makes a plain JPEG/PNG copy for receipt emails, offline reading and old browsers, and a ~1 KB preview stored in the page content. The original is not uploaded; every stored file stays under the 5 MB limit in [storage.rules](storage.rules) and is cached by browsers for a year. A 6000×4000 photo takes about 3 seconds to prepare in desktop Chrome.

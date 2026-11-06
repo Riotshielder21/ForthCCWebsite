@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle, Send } from 'lucide-react';
 import FormComponent from './FormComponent';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { CONTACT_CATEGORIES, CONTACT_LIMITS } from '../utils/contact';
 
 const EMPTY_CONTACT = { name: '', email: '', category: '', message: '' };
@@ -26,7 +26,7 @@ function ContactForm() {
     setStatus(null);
     try {
       if (!navigator.onLine) throw new Error('You are offline. Reconnect before sending your message.');
-      const response = await fetch(apiUrl('/api/contact'), {
+      const response = await apiFetch(apiUrl('/api/contact'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(contact)
@@ -91,7 +91,7 @@ export default function ContactForms() {
   const [error, setError] = useState('');
   useEffect(() => {
     const controller = new AbortController();
-    fetch(apiUrl('/api/forms'), { signal: controller.signal })
+    apiFetch(apiUrl('/api/forms'), { signal: controller.signal })
       .then((response) => readApiResponse(response, 'Could not load additional contact forms.'))
       .then((result) => setForms(result.forms))
       .catch((loadError) => {

@@ -100,6 +100,13 @@ try {
     }
   }
   assert.equal((await request('/health')).status, 200, 'compressed requests must not crash the API');
+  const preflight = await fetch(`http://127.0.0.1:${port}/api/checkout-session`, {
+    method: 'OPTIONS',
+    headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type,x-firebase-appcheck' }
+  });
+  assert.equal(preflight.status, 204);
+  assert.match(preflight.headers.get('access-control-allow-headers'), /X-Firebase-AppCheck/i);
   assert.equal((await request('/api/admin/reports?kind=orders')).status, 401);
   assert.equal((await request('/api/admin/page-drafts')).status, 401, 'saved page drafts are admin-only');
   const user = (await signInWithEmailAndPassword(auth, 'admin@forthcanoeclub.co.uk', 'local-test-password')).user;

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 
 export default function KeyAccessControl({ member, adminUser, onChanged }) {
   const [reason, setReason] = useState('');
@@ -12,7 +12,7 @@ export default function KeyAccessControl({ member, adminUser, onChanged }) {
     if (!window.confirm(`${action === 'revoke' ? 'Revoke key access and stop future code emails for' : 'Grant key access and email the current codes to'} ${member.name}?`)) return;
     setBusy(true); setError('');
     try {
-      const response = await fetch(apiUrl(`/api/admin/memberships/${encodeURIComponent(member.id)}/key-access`), {
+      const response = await apiFetch(apiUrl(`/api/admin/memberships/${encodeURIComponent(member.id)}/key-access`), {
         method: 'POST', headers: { Authorization: `Bearer ${await adminUser.getIdToken(true)}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, reason })
       });

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, Mail, X } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { CHECK_TYPES } from '../utils/safeguarding';
 import { uniqueReportEmails } from '../utils/adminReports';
 
@@ -100,7 +100,7 @@ export default function VolunteersPanel({ adminUser }) {
   };
   const request = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl(path), { ...options,
+    const response = await apiFetch(apiUrl(path), { ...options,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Volunteer request failed.');

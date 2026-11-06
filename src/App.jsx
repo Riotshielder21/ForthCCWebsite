@@ -16,7 +16,7 @@ import PageLoadBoundary from './components/PageLoadBoundary';
 import OfflineStatus from './components/OfflineStatus';
 import { loadPublishedPageContent, subscribeToProducts } from './utils/content';
 import { PageContentProvider } from './utils/PageContentContext';
-import { apiUrl } from './utils/api';
+import { apiUrl, apiFetch } from './utils/api';
 import { PRODUCTS } from './constants/products';
 import './index.css';
 import fccCrest from './assets/fcc-crest.png';
@@ -115,7 +115,7 @@ export default function App() {
     console.error('Page content unavailable:', error);
   }, currentPage), [currentPage]);
 
-  const refreshAvailability = () => fetch(apiUrl('/api/availability'), { cache: 'no-store' })
+  const refreshAvailability = () => apiFetch(apiUrl('/api/availability'), { cache: 'no-store' })
     .then((response) => (response.ok ? response.json() : null))
     .then((result) => { if (result?.availability) setAvailability(result.availability); })
     .catch(() => {});
@@ -172,7 +172,7 @@ export default function App() {
     params.delete('renew');
     window.history.replaceState(null, '', `${window.location.pathname}${params.size ? `?${params}` : ''}`);
     setCurrentPage((page) => (page === 'home' ? 'membership' : page));
-    fetch(apiUrl(`/api/renewals/${encodeURIComponent(token)}`), { cache: 'no-store' })
+    apiFetch(apiUrl(`/api/renewals/${encodeURIComponent(token)}`), { cache: 'no-store' })
       .then(async (response) => ({ ok: response.ok, result: await response.json().catch(() => null) }))
       .then(({ ok, result }) => {
         if (!ok || !result) throw new Error(result?.error || 'Could not load your renewal. Add your membership to the basket instead.');
@@ -252,7 +252,7 @@ export default function App() {
     setCheckoutErrors([]);
     setCheckoutBusy(true);
     try {
-      const response = await fetch(apiUrl('/api/checkout-session'), {
+      const response = await apiFetch(apiUrl('/api/checkout-session'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -312,7 +312,7 @@ export default function App() {
 
   // A line for both club years is priced as this year's line plus next year's.
   useEffect(() => {
-    fetch(apiUrl('/api/volunteer-benefits')).then(async (response) => {
+    apiFetch(apiUrl('/api/volunteer-benefits')).then(async (response) => {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not load volunteer pricing.');
       setVolunteerTiers(result.tiers);
