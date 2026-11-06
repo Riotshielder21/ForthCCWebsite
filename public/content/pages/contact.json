@@ -81,12 +81,18 @@
       "type": "text",
       "appearance": "grey",
       "eyebrow": "Additional Contacts",
-      "title": "Boats, Volunteering and Paddling",
+      "title": "Equipment, Volunteering and Paddling",
       "description": "Volunteer Coordinator & Boathouse Custodian\njack.watt@ㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤforthcanoeclub.co.uk\n\nDiscipline and Performance Representative - Poppy Croal\ncomp.rep@ㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤㅤforthcanoeclub.co.uk",
       "url": "",
       "action": "Open link",
       "imageUrl": "",
       "alt": ""
     }
-  ]
+  ],
+  "banner": {
+    "imageUrl": "",
+    "alt": "",
+    "credit": "",
+    "focus": "center"
+  }
 }
