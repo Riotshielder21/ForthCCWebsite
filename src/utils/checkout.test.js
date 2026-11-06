@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, membershipPartsNeeded, peopleGrantedMembership, requiresMembership, grantsMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem, displayName
+  assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, membershipPartsNeeded, peopleGrantedMembership, requiresMembership, grantsMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem, displayName,
+  returningVerificationMatches, invalidatePersonVerification, checkoutStepSnapshot, normaliseName, assignLine
 } from './checkout.js';
 
 const now = new Date(2026, 9, 11);
@@ -16,6 +17,34 @@ const complete = (person, overrides = {}) => ({
   ...person, firstName: 'A', lastName: 'B', dob: '1990-05-01', email: 'a@example.com', phone: '07911 123456', address: '1 St',
   postcode: 'EH1 1AA', swimming: 'basic', disclaimerAccepted: true,
   emergencyContact: { name: 'C', phone: '07911 123457', relationship: 'Friend' }, ...overrides
+});
+
+test('returning verification is bound to the checked email, name and date of birth', () => {
+  const person = { ...complete(blankPerson('p')), returning: true, verifiedDob: '1990-05-01', verifiedEmail: 'a@example.com', verifiedName: normaliseName('A B') };
+  assert.equal(returningVerificationMatches(person, ' A@EXAMPLE.COM '), true);
+  assert.equal(returningVerificationMatches({ ...person, dob: '1990-05-02' }, 'a@example.com'), false);
+  assert.equal(returningVerificationMatches(person, 'other@example.com'), false);
+  assert.equal(returningVerificationMatches({ ...person, firstName: 'Other' }, 'a@example.com'), false);
+  assert.equal(returningVerificationMatches({ ...person, verifiedEmail: undefined }, 'a@example.com'), false);
+  const invalidated = invalidatePersonVerification({ ...person, volunteerPreview: { volunteer: { inducted: true } } });
+  assert.equal(returningVerificationMatches(invalidated, 'a@example.com'), false);
+  assert.equal(invalidated.volunteerPreview, null);
+  assert.equal(invalidated.firstName, person.firstName);
+  assert.equal(returningVerificationMatches(blankPerson('new'), 'a@example.com'), true);
+});
+
+test('step snapshots change for edited details, emails, family members and assignments', () => {
+  const people = [complete({ ...blankPerson('p'), lineIds: ['f1'] }), complete({ ...blankPerson('child'), lineIds: ['f1'], junior: true })];
+  const snapshot = checkoutStepSnapshot('person:p', 'a@example.com', people, [family, hire]);
+  for (const change of [{ phone: '07911 123458' }, { photoConsent: true }, { email: 'b@example.com' }, { dob: '1991-05-01' }]) {
+    assert.notEqual(checkoutStepSnapshot('person:p', 'a@example.com', [{ ...people[0], ...change }, people[1]], [family, hire]), snapshot);
+  }
+  assert.notEqual(checkoutStepSnapshot('person:p', 'a@example.com', [people[0], { ...people[1], medical: 'Changed' }], [family, hire]), snapshot);
+  const assigned = assignLine(people, hire.lineId, 'p');
+  assert.equal(checkoutStepSnapshot('person:p', 'a@example.com', assigned, [family, hire]), snapshot);
+  assert.notEqual(checkoutStepSnapshot('assign', '', assigned, [family, hire]), checkoutStepSnapshot('assign', '', people, [family, hire]));
+  assert.notEqual(checkoutStepSnapshot('email', 'a@example.com', people, [family]), checkoutStepSnapshot('email', 'b@example.com', people, [family]));
+  assert.equal(checkoutStepSnapshot('person:missing', '', people, [family]), null);
 });
 
 test('two junior memberships create two people; hire joins the first', () => {

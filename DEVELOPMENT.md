@@ -43,6 +43,7 @@ npm run dev
 Open `http://localhost:3000`. Use **Admin** in the footer, then **Sign in as local test admin**. Emulator UI: `http://localhost:4000`; API: `http://localhost:3002`.
 
 - **Emails** are written to Firestore's `testMail` collection (`body` and `html`), not sent. The organisation footer comes from Google Workspace **Append footer** rules, not the templates.
+- **Checkout revalidation:** returning-member verification belongs to the checked receipt email, name and date of birth. Editing the receipt email or identity fields clears the match (including volunteer discount previews); press **Verify** on the person step to check again. Every changed step must pass **Next** again, and the complete checkout is validated before requesting payment. Lookup failures block progress rather than treating members as new people.
 - **Remote VS Code:** forward ports `3000`, `3002`, `4000`, `8080`, `9099` and `9199`.
 - **Edits:** restart the API after backend changes; Vite reloads the frontend.
 - **Vite API proxy:** when `VITE_API_BASE_URL` is empty, Vite proxies `/api` requests to `http://127.0.0.1:3000` by default. Set `VITE_API_PROXY_TARGET` when the local API uses another address or port.
