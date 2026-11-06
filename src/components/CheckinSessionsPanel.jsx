@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { WEEKDAYS, MAX_CHECKIN_SESSIONS } from '../utils/clubNight';
 
 const blankSession = () => ({ key: Math.random().toString(36).slice(2), id: '', name: '', frequency: 'weekly', startDate: '', endDate: '', start: '', end: '', boatHire: false, subscriptions: false, selfAssessment: false });
@@ -21,7 +21,7 @@ export default function CheckinSessionsPanel({ adminUser }) {
   const [busy, setBusy] = useState(false);
   const request = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl(path), { ...options,
+    const response = await apiFetch(apiUrl(path), { ...options,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token } });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Check-in session request failed.');

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Eye, Save, Send } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 
 /**
  * When the event leader's attendee list was last sent, a button to send it now, the extra people who can open the list on
@@ -16,7 +16,7 @@ export default function EventRosterControl({ adminUser, productId, saved }) {
 
   const call = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl(path), {
+    const response = await apiFetch(apiUrl(path), {
       ...options,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
     });

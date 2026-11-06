@@ -6,8 +6,15 @@ import { GripVertical, Minus, Plus, Settings, Type, ImagePlus, Link, Save, Send,
 import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { PAGE_TILE_GROUPS, moveTile, safeTileUrl, TILE_APPEARANCES, TILE_WIDTHS, tileAppearanceClass, tileIsWide } from '../utils/pageTiles';
 import { uploadPageImage } from '../utils/content';
+import ResponsiveImage from './ResponsiveImage';
 import { ContentText, ContentLinkEditor } from './ContentText';
 import PageBanner from './PageBanner';
+
+// Tile updaters accept one field (key, value) or an object of several fields changed together.
+const tileChanges = (key, value) => (typeof key === 'object' ? key : { [key]: value });
+// A typed or removed image link drops the sizes and preview made for the previous upload.
+const NO_TILE_IMAGE_SIZES = { imageSources: undefined, imagePlaceholder: undefined };
+const uploadedTileImage = ({ imageUrl, sources, placeholder }) => ({ imageUrl, imageSources: sources, imagePlaceholder: placeholder });
 
 function EditableContentText({ value, label, onChange, multiline = true }) {
   return <ContentLinkEditor label={label} onChange={onChange}>
@@ -84,18 +91,25 @@ export function InlineText({ value, label, onChange, multiline = true }) {
 export function PageEditorToolbar({ pageId }) {
   const editor = usePageEditor();
   if (!editor.adminUser) return null;
+  const statusUnavailable = editor.checkingDraftStatus || Boolean(editor.draftStatusError);
+  const status = editor.checkingDraftStatus ? 'Checking saved drafts against browser changes…'
+    : editor.unsavedPages.some((page) => page.id === pageId) ? 'This page has browser changes not saved to GitHub.'
+      : editor.unpublishedPages.some((page) => page.id === pageId) ? 'This page has a saved draft that is not published.'
+        : 'No unsaved changes for this page.';
   return (
     <div className="PageEditorToolbar" data-editor-control="true">
       <label className="EditorModeSwitch"><input type="checkbox" checked={editor.editMode} onChange={(event) => editor.setEditMode(event.target.checked)} /> Edit Mode</label>
       {editor.editMode && <>
-        <button className="EditorCommand" disabled={editor.busy || !editor.unsavedPages.length} onClick={() => editor.save(pageId)}><Save size={18} /> Save all drafts</button>
-        <button className="EditorCommand EditorPublish" disabled={editor.busy} onClick={() => editor.save(pageId, true)}><Send size={18} /> Publish all for review</button>
+        <button className="EditorCommand" disabled={editor.busy || statusUnavailable || !editor.unsavedPages.length} onClick={() => editor.save(pageId)}><Save size={18} /> Save all drafts</button>
+        <button className="EditorCommand EditorPublish" disabled={editor.busy || statusUnavailable} onClick={() => editor.save(pageId, true)}><Send size={18} /> {editor.unsavedPages.length ? 'Save all & request review' : 'Request publication review'}</button>
         <button className="EditorIconButton" title="Discard local page changes" aria-label="Discard local page changes" disabled={editor.busy} onClick={() => editor.discard(pageId)}><Undo2 size={18} /></button>
       </>}
       <button className="EditorIconButton" title="Sign out" aria-label="Sign out" onClick={() => editor.logout().catch(() => window.alert('Sign-out failed. Please try again.'))}><LogOut size={18} /></button>
       {editor.authError && <span className="EditorStatus EditorError" role="alert">{editor.authError} <button type="button" className="EditorRetryButton" disabled={editor.authRetrying} onClick={editor.retryAuth}>{editor.authRetrying ? 'Retrying…' : 'Retry session'}</button></span>}
-      {editor.unsavedPages.length > 0 && <span className="EditorUnsavedPages">Unsaved ({editor.unsavedPages.length}): {editor.unsavedPages.map((page) => page.label).join(', ')}</span>}
-      {(editor.message || editor.error || editor.busy || editor.drafts[pageId]) && <span className={editor.error ? 'EditorStatus EditorError' : 'EditorStatus'} role="status">{editor.busy ? 'Saving all changed pages…' : editor.error || editor.message || (editor.unsavedPages.some((page) => page.id === pageId) ? 'Local changes not saved' : 'Draft saved (not published)')}</span>}
+      {editor.draftStatusError && <span className="EditorStatus EditorError" role="alert">{editor.draftStatusError} <button type="button" className="EditorRetryButton" disabled={editor.checkingDraftStatus} onClick={editor.retryDraftStatus}>Retry draft status</button></span>}
+      {!statusUnavailable && editor.unsavedPages.length > 0 && <span className="EditorUnsavedPages">Unsaved browser changes ({editor.unsavedPages.length}): {editor.unsavedPages.map((page) => page.label).join(', ')}</span>}
+      {!statusUnavailable && editor.unpublishedPages.length > 0 && <span className="EditorUnpublishedPages">Saved, not published ({editor.unpublishedPages.length}): {editor.unpublishedPages.map((page) => page.label).join(', ')}</span>}
+      {!editor.draftStatusError && <span className={editor.error ? 'EditorStatus EditorError' : 'EditorStatus'} role="status">{editor.busy ? 'Saving all changed pages…' : editor.error || editor.message || status}</span>}
       {editor.review?.url && <a className="ContentLink" target="_blank" rel="noreferrer" href={editor.review.url}>Review #{editor.review.number} <ExternalLink size={14} /></a>}
     </div>
   );
@@ -164,23 +178,23 @@ function SupporterTile({ tile, number, updateTile, onDelete }) {
   const settings = <>
     <label className="FormLabel">Supporter {number} name<input className="FormInput" value={tile.name} onChange={(event) => updateTile('name', event.target.value)} /></label>
     <label className="FormLabel">Website URL<input className="FormInput" value={tile.url} onChange={(event) => updateTile('url', event.target.value)} /></label>
-    <label className="FormLabel">Logo URL<input className="FormInput" value={tile.imageUrl} onChange={(event) => updateTile('imageUrl', event.target.value)} /></label>
+    <label className="FormLabel">Logo URL<input className="FormInput" value={tile.imageUrl} onChange={(event) => updateTile({ imageUrl: event.target.value, ...NO_TILE_IMAGE_SIZES })} /></label>
     <label className="FormLabel">Logo description<input className="FormInput" value={tile.alt} onChange={(event) => updateTile('alt', event.target.value)} /></label>
     <label className="FormLabel">Upload logo<input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={async (event) => {
       const file = event.target.files?.[0];
       if (!file) return;
       setUploading(true);
       setError('');
-      try { updateTile('imageUrl', await uploadPageImage('home', tile.id, file)); }
+      try { updateTile(uploadedTileImage(await uploadPageImage('home', tile.id, file, 'logo'))); }
       catch (uploadError) { setError(uploadError.message); }
       finally { setUploading(false); }
     }} /></label>
-    {uploading && <span role="status">Uploading…</span>}
+    {uploading && <span role="status">Resizing and uploading…</span>}
     {error && <span className="EditorError" role="alert">{error}</span>}
   </>;
   return <SortableTile tile={tile} number={number} label={`Supporter ${number}`} className="sponsor_editor_tile" settings={settings} onDelete={onDelete} onPresentationChange={updateTile} allowWidth={false}>
     <a className="sponsor_subtile" href={safeTileUrl(tile.url) || undefined} target="_blank" rel="noreferrer" aria-label={imageUrl ? tile.name : undefined}>
-      {imageUrl ? <img className="sponsor_logo" src={imageUrl} alt={tile.alt || tile.name} />
+      {imageUrl ? <ResponsiveImage className="sponsor_logo" src={imageUrl} sources={tile.imageSources} placeholder={tile.imagePlaceholder} alt={tile.alt || tile.name} fit="contain" />
         : <span className="sponsor_name">{editing ? <InlineText value={tile.name} label={`Supporter ${number} name`} multiline={false} onChange={(value) => updateTile('name', value)} /> : tile.name}</span>}
     </a>
   </SortableTile>;
@@ -208,7 +222,7 @@ export function SupporterTiles() {
       <div className={`sponsor_grid ${editing ? 'sponsor_grid_editing' : ''}`}>
         {tiles.map((tile, index) => <SupporterTile key={tile.id} tile={tile} number={index + 1}
           updateTile={(key, value) => editor.updatePage('home', (current) => ({ ...current,
-            supporterTiles: current.supporterTiles.map((item) => item.id === tile.id ? { ...item, [key]: value } : item)
+            supporterTiles: current.supporterTiles.map((item) => item.id === tile.id ? { ...item, ...tileChanges(key, value) } : item)
           }))}
           onDelete={() => {
             if (window.confirm(`Remove Supporter ${index + 1}? This change takes effect only after publishing.`)) {
@@ -236,18 +250,18 @@ function CustomTile({ pageId, tile, number, updateTile, onDelete }) {
     <TileButtonSettings tile={tile} onChange={(value) => updateTile('button', value)} />
     <label className="FormLabel">Tile {number} type<select className="FormInput" value={tile.type} onChange={(event) => updateTile('type', event.target.value)}>{['text', 'image', 'link'].map((type) => <option key={type}>{type}</option>)}</select></label>
     {tile.type === 'image' && <>
-      <label className="FormLabel">Image URL<input className="FormInput" type="url" value={tile.imageUrl || ''} onChange={(event) => updateTile('imageUrl', event.target.value)} /></label>
+      <label className="FormLabel">Image URL<input className="FormInput" type="url" value={tile.imageUrl || ''} onChange={(event) => updateTile({ imageUrl: event.target.value, ...NO_TILE_IMAGE_SIZES })} /></label>
       <label className="FormLabel">Image description<input className="FormInput" value={tile.alt || ''} onChange={(event) => updateTile('alt', event.target.value)} /></label>
       <label className="FormLabel">Upload image<input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={async (event) => {
         const file = event.target.files?.[0];
         if (!file) return;
         setUploadError('');
         setUploading(true);
-        try { updateTile('imageUrl', await uploadPageImage(pageId, tile.id, file)); }
+        try { updateTile(uploadedTileImage(await uploadPageImage(pageId, tile.id, file))); }
         catch (error) { setUploadError(error.message); }
         finally { setUploading(false); }
       }} /></label>
-      {uploading && <p role="status">Uploading…</p>}
+      {uploading && <p role="status">Resizing and uploading…</p>}
       {uploadError && <p className="EditorError" role="alert">{uploadError}</p>}
     </>}
     {tile.type === 'link' && <label className="FormLabel">Link URL<input className="FormInput" value={tile.url || ''} onChange={(event) => updateTile('url', event.target.value)} /></label>}
@@ -259,7 +273,7 @@ function CustomTile({ pageId, tile, number, updateTile, onDelete }) {
     {(tile.eyebrow || editor.editMode) && <span className="tile_eyebrow">{text('eyebrow')}</span>}
     <h3 className="tile_heading_bold_2">{text('title')}</h3>
     {tile.type === 'image' && (safeTileUrl(tile.imageUrl, true)
-      ? <img className="main_tile_image SpaceT4" src={safeTileUrl(tile.imageUrl, true)} alt={tile.alt || ''} />
+      ? <ResponsiveImage className="main_tile_image SpaceT4" src={safeTileUrl(tile.imageUrl, true)} sources={tile.imageSources} placeholder={tile.imagePlaceholder} alt={tile.alt || ''} fit="contain" />
       : editor.editMode && <button className="tile_image_placeholder" data-editor-control="true" onClick={() => document.querySelector(`[data-tile-id="${tile.id}"] .tile_editor_controls button[aria-expanded]`)?.click()} aria-label={`Configure Tile ${number} image`}><ImagePlus size={36} /></button>)}
     <p className="text_container AdminPreserveLines SpaceT4 SpaceB4">{text('description')}</p>
     {tile.button !== undefined ? <TileButton button={tile.button} />
@@ -315,12 +329,12 @@ export default function EditablePage({ pageId, children }) {
     if (tile.type !== 'existing') return <CustomTile key={tile.id} tile={tile} pageId={pageId} number={number} onDelete={onDelete}
       updateTile={(key, value) => editor.updatePage(pageId, (current) => ({
         ...current,
-        tileLayout: current.tileLayout.map((item) => item.id === tile.id ? { ...item, [key]: value } : item)
+        tileLayout: current.tileLayout.map((item) => item.id === tile.id ? { ...item, ...tileChanges(key, value) } : item)
       }))} />;
     const original = originals.get(tile.id);
     if (!original) return null;
     const updateTile = (key, value) => editor.updatePage(pageId, (current) => ({ ...current,
-      tileLayout: current.tileLayout.map((item) => item.id === tile.id ? { ...item, [key]: value } : item)
+      tileLayout: current.tileLayout.map((item) => item.id === tile.id ? { ...item, ...tileChanges(key, value) } : item)
     }));
     const hasButton = (node) => React.isValidElement(node) && (node.props.className?.split(' ').includes('PrimaryActionButton')
       || React.Children.toArray(node.props.children).some(hasButton));

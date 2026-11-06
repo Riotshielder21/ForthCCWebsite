@@ -678,6 +678,13 @@
     .PageBannerImage { transform: none; }
   }
 
+  /* The tiny inline preview of an uploaded image, shown until the right-sized copy has downloaded over it. */
+  .ResponsiveImagePreview { background-repeat: no-repeat; background-position: center; }
+  .ResponsiveImage-cover.ResponsiveImagePreview { background-size: cover; }
+  .ResponsiveImage-contain.ResponsiveImagePreview { background-size: contain; }
+  .PageBannerImage.ResponsiveImagePreview { background-position: center var(--banner-focus, 50%); }
+  .BannerUploadNote { @apply md:col-span-2; }
+
   .PageBannerSettings {
     @apply max-w-7xl mx-auto my-4 px-6 py-4 grid gap-3 md:grid-cols-2 rounded-xl;
     border: 2px dashed #38bdf8;
@@ -1226,7 +1233,7 @@
   .EditorIconButton { width: 40px; padding: 0; flex-shrink: 0; }
   .EditorPublish { background: #087c56; border-color: #087c56; color: #fff; }
   .EditorCommand:disabled, .EditorIconButton:disabled { opacity: .55; cursor: wait; }
-  .EditorUnsavedPages { flex-basis: 100%; font-weight: 700; overflow-wrap: anywhere; }
+  .EditorUnsavedPages, .EditorUnpublishedPages { flex-basis: 100%; font-weight: 700; overflow-wrap: anywhere; }
   .EditorStatus { flex-basis: 100%; overflow-wrap: anywhere; }
   .EditorError { color: #b42318; }
   .EditorRetryButton { margin-left: 8px; text-decoration: underline; font-weight: 700; }

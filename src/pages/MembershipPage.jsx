@@ -9,6 +9,7 @@ import { productLimits } from '../utils/inventory';
 import { scopeLabel, voucherScope } from '../utils/vouchers';
 import fccBurgee from '../assets/fcc-burgee.png';
 import { safeTileUrl } from '../utils/contentLinks';
+import ResponsiveImage from '../components/ResponsiveImage';
 
 // Matches .shop_catalogue_grid: one column, two from md (768px), three from lg (1024px).
 function useGridColumns() {
@@ -74,7 +75,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
     return tileImages.slice(start, start + columns).some(Boolean);
   };
   const productImage = (product, index) => product?.imageUrl
-    ? <img className="shop_product_image" src={product.imageUrl} alt="" />
+    ? <ResponsiveImage className="shop_product_image" src={product.imageUrl} sources={product.imageSources} placeholder={product.imagePlaceholder} alt="" fit="cover" />
     : rowHasImage(index) && <div className="shop_product_image shop_product_image_placeholder" aria-hidden="true"><img src={fccBurgee} alt="" /></div>;
 
   return (

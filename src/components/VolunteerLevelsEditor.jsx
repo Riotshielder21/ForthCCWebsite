@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { MAX_VOLUNTEER_LEVELS, volunteerBenefitText } from '../utils/volunteering';
 
 const newLevelId = () => `level-${crypto.randomUUID().slice(0, 8)}`;
@@ -32,7 +32,7 @@ export default function VolunteerLevelsEditor({ adminUser, products = [], levels
     setBusy(true); setError(''); setMessage('');
     try {
       const token = await adminUser.getIdToken();
-      const response = await fetch(apiUrl('/api/admin/volunteer-benefits'), { method: 'POST',
+      const response = await apiFetch(apiUrl('/api/admin/volunteer-benefits'), { method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ tiers: levels }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not save volunteer levels.');

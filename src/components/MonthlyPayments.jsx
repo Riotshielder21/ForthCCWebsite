@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { monthlyTotal, activeSubscriptionItems } from '../utils/subscriptions';
 import ReasonInput from './ReasonInput';
 
@@ -19,7 +19,7 @@ export default function MonthlyPayments({ adminUser, query }) {
 
   const request = useCallback(async (path, method = 'GET', body) => {
     const token = await adminUser.getIdToken(true);
-    const response = await fetch(apiUrl(path), { method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    const response = await apiFetch(apiUrl(path), { method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
       cache: 'no-store', ...(body ? { body: JSON.stringify(body) } : {}) });
     const result = await response.json().catch(() => null);
     if (!result) throw new Error('The API server did not respond. For local development set VITE_API_BASE_URL (see DEVELOPMENT.md).');

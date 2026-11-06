@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { KeyRound } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { BOATHOUSE_ACCESS_POINTS, BOATHOUSE_LIMITS } from '../utils/boathouse';
 
 /** Current boathouse access codes, kept server-side and only visible to admins. */
@@ -13,7 +13,7 @@ export default function BoathouseCodePanel({ adminUser }) {
 
   const request = useCallback(async (options = {}) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl('/api/admin/boathouse-code'), {
+    const response = await apiFetch(apiUrl('/api/admin/boathouse-code'), {
       ...options,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
     });

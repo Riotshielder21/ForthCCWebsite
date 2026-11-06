@@ -1,4 +1,5 @@
 import { validateContentLinks, validateContentButton, safeTileUrl } from './contentLinks.js';
+import { validateImagePlaceholder, validateImageSources } from './responsiveImages.js';
 export { safeTileUrl } from './contentLinks.js';
 
 export const TILE_TYPES = ['text', 'image', 'link'];
@@ -47,6 +48,15 @@ export const getBanner = (pageId, saved) => BANNER_PAGES.includes(pageId)
   ? { ...EMPTY_BANNER, ...(saved ?? DEFAULT_BANNERS[pageId]) }
   : undefined;
 
+// Only an uploaded image has stored sizes and a preview; they are dropped when there is no image link.
+const validatedImageExtras = (imageUrl, sources, placeholder, names = ['sources', 'placeholder']) => {
+  if (!imageUrl) return {};
+  const validSources = validateImageSources(sources);
+  const validPlaceholder = validateImagePlaceholder(placeholder);
+  return { ...(validSources.length ? { [names[0]]: validSources } : {}), ...(validPlaceholder ? { [names[1]]: validPlaceholder } : {}) };
+};
+const TILE_IMAGE_FIELDS = ['imageSources', 'imagePlaceholder'];
+
 export const validateBanner = (pageId, banner) => {
   if (!BANNER_PAGES.includes(pageId)) throw new Error('This page cannot have a banner.');
   if (!banner || typeof banner !== 'object' || Array.isArray(banner)) throw new Error('Invalid banner.');
@@ -59,7 +69,7 @@ export const validateBanner = (pageId, banner) => {
   }));
   const focus = banner.focus ?? 'center';
   if (!Object.hasOwn(BANNER_FOCUS, focus)) throw new Error('Invalid banner focus.');
-  return { ...result, focus };
+  return { ...result, focus, ...validatedImageExtras(result.imageUrl, banner.sources, banner.placeholder) };
 };
 
 export const defaultTileLayout = (pageId) => Object.entries(PAGE_TILE_GROUPS[pageId] || {})
@@ -89,7 +99,7 @@ export const validateSupporterTiles = (tiles) => {
       }
       result[key] = value;
     }
-    return result;
+    return { ...result, ...validatedImageExtras(result.imageUrl, tile.imageSources, tile.imagePlaceholder, TILE_IMAGE_FIELDS) };
   });
 };
 
@@ -123,7 +133,7 @@ export const validateTileLayout = (pageId, input) => {
       result[key] = value;
     }
     validateContentLinks(result.description);
-    return result;
+    return { ...result, ...validatedImageExtras(result.imageUrl, tile.imageSources, tile.imagePlaceholder, TILE_IMAGE_FIELDS) };
   });
 };
 

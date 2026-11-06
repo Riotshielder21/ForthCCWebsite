@@ -4,7 +4,7 @@ import VolunteerForm from '../components/VolunteerForm';
 import VolunteerLevelsEditor from '../components/VolunteerLevelsEditor';
 import VolunteerPageEditor from '../components/VolunteerPageEditor';
 import VolunteerVersionHistory from '../components/VolunteerVersionHistory';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { usePageEditor } from '../utils/PageContentContext';
 import { DEFAULT_VOLUNTEER_BENEFITS, volunteerBenefitText } from '../utils/volunteering';
 import { DEFAULT_VOLUNTEER_PAGE } from '../utils/volunteerPage';
@@ -46,7 +46,7 @@ export default function VolunteeringPage({ products = [] }) {
   useEffect(() => {
     if (token) window.history.replaceState({}, '', window.location.pathname);
     const request = async (path) => {
-      const response = await fetch(apiUrl(path));
+      const response = await apiFetch(apiUrl(path));
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not load volunteering.');
       return result;

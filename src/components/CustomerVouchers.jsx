@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 
 const date = (millis) => millis ? new Date(millis).toLocaleDateString('en-GB') : '-';
 
@@ -12,7 +12,7 @@ export default function CustomerVouchers({ adminUser, email }) {
     (async () => {
       try {
         const token = await adminUser.getIdToken();
-        const response = await fetch(apiUrl(`/api/admin/customer?q=${encodeURIComponent(email)}`), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+        const response = await apiFetch(apiUrl(`/api/admin/customer?q=${encodeURIComponent(email)}`), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
         const result = await response.json().catch(() => null);
         if (!result) throw new Error('The API server did not respond. For local development set VITE_API_BASE_URL (see DEVELOPMENT.md).');
         if (response.status === 404) return active && setState({ loading: false, vouchers: [], error: '' });

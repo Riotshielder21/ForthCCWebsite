@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { saveProduct } from '../utils/content';
 import { scopeLabel, VOUCHER_CATEGORIES, voucherRows, voucherScope } from '../utils/vouchers';
 import PagedAdminList from './PagedAdminList';
@@ -32,7 +32,7 @@ export default function DiscountCodesPanel({ adminUser, products }) {
 
   const request = useCallback(async (path, options = {}) => {
     const token = await adminUser.getIdToken();
-    const response = await fetch(apiUrl(path), {
+    const response = await apiFetch(apiUrl(path), {
       ...options,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
     });

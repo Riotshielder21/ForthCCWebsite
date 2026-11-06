@@ -9,6 +9,8 @@ service firebase.storage {
         && request.auth.token.email.lower().matches('[^@\\s]+@forthcanoeclub[.]co[.]uk');
     }
 
+    // Admins may choose photos up to 25 MB; the browser resizes them before upload (src/utils/imageProcessing.js),
+    // so each stored size, preview fallback and logo stays under 5 MB and the original is never stored.
     match /pages/{pageId}/{tileId}/{fileName} {
       allow read: if true;
       allow write: if isClubAdmin()

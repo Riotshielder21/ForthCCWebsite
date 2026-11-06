@@ -9,6 +9,8 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { getAppCheck } from 'firebase-admin/app-check';
+import { appCheckMiddleware } from './src/server/appCheck.js';
 import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
 import { PAGE_CONTENT, validatePageFields } from './src/constants/pageContent.js';
 import { contentDisposition, findSafeguardingPolicy, isPdf } from './src/utils/safeguardingPolicies.js';
@@ -41,6 +43,7 @@ import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from '
 import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive, endedAtCutoff, clubYearEndUpdate } from './src/utils/subscriptions.js';
 import { registerGdprRoutes } from './src/server/gdpr.js';
 import { rebaseBranch, rebaseWarning } from './src/server/githubRebase.js';
+import { readContentDrafts } from './src/server/contentDrafts.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
@@ -240,7 +243,7 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: (origin, callback) => callback(null, isAllowedOrigin(origin, corsOrigins, { allowLocalhost: allowLocalhostOrigins })),
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Email-Session', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Email-Session', 'X-Firebase-AppCheck', ...(process.env.LOCAL_FIREBASE_EMULATORS === 'true' ? ['X-Test-Now'] : [])],
   maxAge: 600
 }));
 // Cloud Run is the API origin; public page crawling belongs on Firebase Hosting.
@@ -249,6 +252,12 @@ app.get('/robots.txt', (req, res) => {
 });
 // Every API route shares one per-visitor ceiling; routes add tighter limits.
 app.use(baselineRateLimit);
+app.use(appCheckMiddleware({
+  mode: process.env.APP_CHECK_MODE || 'monitor',
+  local: process.env.LOCAL_FIREBASE_EMULATORS === 'true',
+  appIds: (process.env.APP_CHECK_APP_IDS || '').split(',').map((id) => id.trim()).filter(Boolean),
+  verifyToken: (token) => getAppCheck(getApps()[0] || initializeAdminApp()).verifyToken(token)
+}));
 
 const stripeRequest = async (path, params, method = 'POST', { idempotencyKey } = {}) => {
   const secretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -1169,6 +1178,9 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
 });
 
 // Reject compressed bodies until a published body-parser release fixes GHSA-27r3-jxmh-p828.
+// Page content carries each uploaded image's size links and preview (about 3 KB per image), so pages with many
+// photos or supporter logos need a larger limit. The route still requires an admin and validates every field.
+app.use('/api/admin/publish-page', express.json({ limit: '512kb', inflate: false }));
 app.use(express.json({ limit: '100kb', inflate: false }));
 
 // Google Sheets API Setup
@@ -1691,6 +1703,23 @@ registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...arg
   volunteerRenewalContent, sendVolunteerRenewals,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
+
+app.get('/api/admin/page-drafts', rateLimit(30, 60 * 1000), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (!await requireAdmin(req, res)) return;
+    const token = process.env.GITHUB_CONTENT_TOKEN;
+    if (!token) return res.status(503).json({ error: 'GitHub publishing is not configured on the API server.' });
+    const repository = process.env.GITHUB_REPOSITORY || 'Riotshielder21/ForthCCWebsite';
+    const branch = process.env.GITHUB_CONTENT_BRANCH || 'live/web-admin-edit';
+    const base = process.env.GITHUB_BRANCH || 'main';
+    const pages = await readContentDrafts(createGitHubClient(repository, token), branch, base);
+    res.json({ branch, pages });
+  } catch (error) {
+    console.error('Could not check saved page drafts:', error.message);
+    res.status(500).json({ error: error.message || 'Could not check saved page drafts.' });
+  }
+});
 
 app.post('/api/admin/publish-page', rateLimit(10, 60 * 1000), async (req, res) => {
   try {

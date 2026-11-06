@@ -3,8 +3,9 @@ import { getAuth, GoogleAuthProvider, signInWithCustomToken, onAuthStateChanged,
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { getAnalytics, isSupported } from 'firebase/analytics';
-import { apiUrl } from './api.js';
+import { apiUrl, apiFetch } from './api.js';
 import { ADMIN_DOMAIN, isClubEmail } from './adminAccess.js';
+import { initializeBrowserAppCheck } from './appCheck.js';
 
 const runtimeEnv = typeof import.meta.env !== 'undefined' ? import.meta.env : process.env;
 const localEmulators = runtimeEnv.DEV === true && runtimeEnv.VITE_USE_FIREBASE_EMULATORS === 'true';
@@ -29,6 +30,7 @@ let analytics = null;
 
 try {
   app = initializeApp(firebaseConfig);
+  initializeBrowserAppCheck(app);
   auth = getAuth(app);
   db = getFirestore(app);
   storage = getStorage(app);
@@ -108,7 +110,7 @@ export const signInWithWorkspace = async () => {
 };
 
 export const validateDiscountCode = async (code) => {
-  const response = await fetch(apiUrl('/api/discount-codes/validate'), {
+  const response = await apiFetch(apiUrl('/api/discount-codes/validate'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code })

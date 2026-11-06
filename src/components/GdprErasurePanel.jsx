@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ShieldX, X } from 'lucide-react';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import ReasonInput from './ReasonInput';
 import { sharedDetailsErrors } from '../utils/erasure';
 
@@ -31,7 +31,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
 
   const post = useCallback(async (path, body) => {
     const token = await adminUser.getIdToken(true);
-    const response = await fetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    const response = await apiFetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(data.error || 'Request failed.'), { data });
     return data;

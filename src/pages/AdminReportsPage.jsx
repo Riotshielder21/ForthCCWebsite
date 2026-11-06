@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, CircleSlash, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
-import { apiUrl } from '../utils/api';
+import { apiUrl, apiFetch } from '../utils/api';
 import { reportCsv, reportDetailEntries, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, onlyEventPeriod, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
 import { eventScheduleLabel } from '../utils/catalogue';
 import CustomerVouchers from '../components/CustomerVouchers';
@@ -89,7 +89,7 @@ export default function AdminReportsPage({ onNavigate }) {
   const purchaseReport = kind === 'orders' || kind === 'events';
   const SettingsPanel = SETTINGS_TABS.find(([, id]) => id === kind)?.[3];
   const reloadSelected = async () => {
-    const response = await fetch(apiUrl(`/api/admin/reports?${new URLSearchParams({ kind, recordId: selected.id })}`), {
+    const response = await apiFetch(apiUrl(`/api/admin/reports?${new URLSearchParams({ kind, recordId: selected.id })}`), {
       headers: { Authorization: `Bearer ${await adminUser.getIdToken(true)}` }, cache: 'no-store'
     });
     const result = await response.json();
@@ -109,7 +109,7 @@ export default function AdminReportsPage({ onNavigate }) {
       if (generation.current !== revision) return;
       const params = new URLSearchParams({ kind });
       if (nextCursor) params.set('cursor', nextCursor);
-      const response = await fetch(apiUrl(`/api/admin/reports?${params}`), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const response = await apiFetch(apiUrl(`/api/admin/reports?${params}`), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not load report.');
       if (generation.current !== revision) return;
@@ -181,7 +181,7 @@ export default function AdminReportsPage({ onNavigate }) {
     setError('');
     try {
       const token = await adminUser.getIdToken(true);
-      const response = await fetch(apiUrl(`/api/admin/memberships/${encodeURIComponent(id)}/justgo`), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action }) });
+      const response = await apiFetch(apiUrl(`/api/admin/memberships/${encodeURIComponent(id)}/justgo`), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not update JustGo status.');
       setSelected(null);
@@ -196,7 +196,7 @@ export default function AdminReportsPage({ onNavigate }) {
     setError('');
     try {
       const token = await adminUser.getIdToken(true);
-      const response = await fetch(apiUrl('/api/admin/renewals/send'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ membershipId: id }) });
+      const response = await apiFetch(apiUrl('/api/admin/renewals/send'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ membershipId: id }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not send the renewal email.');
       setSelected(null);
@@ -244,7 +244,7 @@ export default function AdminReportsPage({ onNavigate }) {
     try {
       const token = await adminUser.getIdToken(true);
       for (const path of activeMonthly.flatMap((subscription) => subscription.cancelPaths)) {
-        const response = await fetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        const response = await apiFetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ reason }) });
         const result = await response.json().catch(() => ({}));
         if (!response.ok && response.status !== 409) throw new Error(result.error || 'Could not cancel the monthly payments.');
@@ -262,7 +262,7 @@ export default function AdminReportsPage({ onNavigate }) {
     setError('');
     try {
       const token = await adminUser.getIdToken(true);
-      const response = await fetch(apiUrl(`/api/admin/subscribers/${encodeURIComponent(selected.id)}/cancel`), {
+      const response = await apiFetch(apiUrl(`/api/admin/subscribers/${encodeURIComponent(selected.id)}/cancel`), {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ mode: stripeMode, clubCustomerId: selected.clubCustomerId,
           confirmId: scheduleConfirmation, acknowledgeImmediateCancellation: scheduleAcknowledged, reason })
@@ -284,7 +284,7 @@ export default function AdminReportsPage({ onNavigate }) {
     setError('');
     try {
       const token = await adminUser.getIdToken(true);
-      const response = await fetch(apiUrl(`/api/admin/records/${kind}/${encodeURIComponent(deleting.id)}`), {
+      const response = await apiFetch(apiUrl(`/api/admin/records/${kind}/${encodeURIComponent(deleting.id)}`), {
         method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ confirmId: confirmation, acknowledgeStripe: stripeAcknowledged, reason })
       });
