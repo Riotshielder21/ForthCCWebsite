@@ -3,19 +3,22 @@
   "welcome1": "Welcome to Forth Canoe Club. We're a local, open, active, and friendly kayaking / canoeing club, right in the heart of Edinburgh. We can't wait to have you join us on the water!",
   "welcome2": "If you're a complete beginner or a bit scared to start, don't let that get in the way — that's what we're here for!",
   "welcome3": "We also cater to experienced, adventurous paddlers, already involved in a specific discipline or keen to compete.",
-  "welcome3Link": "All are most welcome members.",
-  "welcome3After": ".",
+  "welcome3Link": "",
+  "welcome3After": "",
   "welcome4Before": "Total beginners might find the easiest way to get started is at one of our",
   "welcome4Link": "open nights",
   "welcome4After": "— usually held on the first Thursday of every month.",
   "welcome5Before": "Any questions,",
   "welcome5Link": "get in touch",
   "welcome5After": ".",
+  "welcome3Text": "We also cater to experienced, adventurous paddlers, already involved in a specific discipline or keen to compete. ",
+  "welcome4Text": "Total beginners might find the easiest way to get started is at one of our [open nights](/beginners) — usually held on the first Thursday of every month.",
+  "welcome5Text": "Any questions, [get in touch](/contact-us).",
   "startTitle": "Where to Start",
   "startIntro": "Here are a few useful details:",
   "start1": "marks our clubhouse on Edinburgh's Union Canal, where many of our activities take place.",
   "start1Link": "This map",
-  "start1Url": "https://maps.app.goo.gl/sXk7kWQrv8EbgwY37",
+  "start1Url": "https://www.google.com/maps/search/?api=1&query=Forth+Canoe+Club%2C+Harrison+Park%2C+Polwarth%2C+Edinburgh+EH11+1ED",
   "start2Before": "Our",
   "start2Link": "contact details are here",
   "start2After": ".",
@@ -24,6 +27,9 @@
   "start5Before": "Information about our classes is on the",
   "start5Link": "disciplines page",
   "start5After": ".",
+  "start1Text": "[This map](https://www.google.com/maps/search/?api=1&query=Forth+Canoe+Club%2C+Harrison+Park%2C+Polwarth%2C+Edinburgh+EH11+1ED) marks our clubhouse on Edinburgh's Union Canal, where many of our activities take place.",
+  "start2Text": "Our [contact details are here](/contact-us).",
+  "start5Text": "Information about our classes is on the [disciplines page](/disciplines).",
   "charityEyebrow": "Registered Scottish Charity SC050275",
   "missionTitle": "Our Mission",
   "missionIntro": "Forth Canoe Club is a registered Scottish Charity (SC050275) and is set up for the advancement of public participation in sport. In particular we seek to do the following:",
@@ -51,8 +57,18 @@
   "sponsors": "Garfield Weston Foundation | https://garfieldweston.org/\nPaddle Scotland | https://www.paddlescotland.org.uk/\nSportScotland | https://sportscotland.org.uk/\nCity of Edinburgh Council | https://www.edinburgh.gov.uk/\nAndy Jackson Fund for Access | https://www.andyjacksonfund.org.uk/\nAnalog Devices | https://www.analog.com/\nBoroughmuir High School | https://boroughmuirhighschool.org/\nNational Lottery Community Fund | https://www.tnlcommunityfund.org.uk/\nScottish Building Society | https://www.scottishbs.co.uk/",
   "locationEyebrow": "Find Us",
   "locationTitle": "Harrison Park, Polwarth",
-  "locationBody": "Edinburgh EH11 1ED — On the Union Canal, just west of the city centre.",
+  "locationBody": "Edinburgh EH11 1EG — On the Union Canal, just west of the city centre.",
   "tileLayout": [
+    {
+      "id": "welcome",
+      "group": "intro",
+      "type": "existing"
+    },
+    {
+      "id": "start",
+      "group": "intro",
+      "type": "existing"
+    },
     {
       "id": "mission",
       "group": "mission",
@@ -81,18 +97,6 @@
     {
       "id": "location",
       "group": "location",
-      "type": "existing"
-    },
-    {
-      "id": "welcome",
-      "group": "intro",
-      "type": "existing",
-      "appearance": "grey",
-      "width": "standard"
-    },
-    {
-      "id": "start",
-      "group": "intro",
       "type": "existing"
     }
   ],
@@ -160,5 +164,39 @@
       "imageUrl": "",
       "alt": ""
     }
-  ]
+  ],
+  "banner": {
+    "imageUrl": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fhome%2Fbanner%2Fe2284534-f85f-4e21-92cb-8619e32f8e94-960-fallback.jpg?alt=media&token=f5f7ea04-ab21-426c-8860-38ebb5507d1a",
+    "alt": "The canal on a summer day, with a green narrowboat, a red-roofed boathouse and a sandstone church tower",
+    "credit": "Forth Canoe Club",
+    "focus": "bottom",
+    "sources": [
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fhome%2Fbanner%2Fe2284534-f85f-4e21-92cb-8619e32f8e94-640.webp?alt=media&token=ed3ab825-0f95-4e95-a6d2-5f09acffd3f9",
+        "width": 640,
+        "height": 427
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fhome%2Fbanner%2Fe2284534-f85f-4e21-92cb-8619e32f8e94-960.webp?alt=media&token=e4021dfe-d92b-4aaa-9519-4ca8eba0944f",
+        "width": 960,
+        "height": 640
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fhome%2Fbanner%2Fe2284534-f85f-4e21-92cb-8619e32f8e94-1280.webp?alt=media&token=a2ac7775-2729-4bc4-a842-9c919fd9bec6",
+        "width": 1280,
+        "height": 853
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fhome%2Fbanner%2Fe2284534-f85f-4e21-92cb-8619e32f8e94-1600.webp?alt=media&token=0a3a837d-47bc-4309-aae3-1fa0917d8823",
+        "width": 1600,
+        "height": 1067
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fhome%2Fbanner%2Fe2284534-f85f-4e21-92cb-8619e32f8e94-1869.webp?alt=media&token=0e7b76e5-97b5-4726-a040-758982e342ad",
+        "width": 1869,
+        "height": 1246
+      }
+    ],
+    "placeholder": "data:image/webp;base64,UklGRuQAAABXRUJQVlA4INgAAADwBACdASoYABAAPtFUo0uoJKMhsAgBABoJYgCdAYrZ9r/W4XDLaTThyFR7RsWF4gAA/un7fzaD2Ps0eXTzrLpntAnp9JXGmD1ocLnsIdR0G1EY1Gz3ehufyAXLKoUjntvOUijnfjRGgT6/oi4nH30sXD+omP0EqJ3+tzhTpq3kZszLRvFi7bt8Z3fL7mF6Kawx3m/W37Xnv0yQl2cjA3ytVixn4VFIiIVLvAtL+n8yrN+cL09+e3mnawLnA4aWd3rX0tTkkSMR+0KijyqKZvTVdGVciNCQAAA="
+  }
 }
