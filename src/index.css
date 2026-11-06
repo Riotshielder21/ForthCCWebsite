@@ -678,6 +678,13 @@
     .PageBannerImage { transform: none; }
   }
 
+  /* The tiny inline preview of an uploaded image, shown until the right-sized copy has downloaded over it. */
+  .ResponsiveImagePreview { background-repeat: no-repeat; background-position: center; }
+  .ResponsiveImage-cover.ResponsiveImagePreview { background-size: cover; }
+  .ResponsiveImage-contain.ResponsiveImagePreview { background-size: contain; }
+  .PageBannerImage.ResponsiveImagePreview { background-position: center var(--banner-focus, 50%); }
+  .BannerUploadNote { @apply md:col-span-2; }
+
   .PageBannerSettings {
     @apply max-w-7xl mx-auto my-4 px-6 py-4 grid gap-3 md:grid-cols-2 rounded-xl;
     border: 2px dashed #38bdf8;

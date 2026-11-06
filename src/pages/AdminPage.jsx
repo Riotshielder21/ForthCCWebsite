@@ -23,6 +23,8 @@ const EMPTY_PRODUCT = {
   allowMonthly: false,
   hasAnnualDiscount: false,
   imageUrl: '',
+  imageSources: [],
+  imagePlaceholder: '',
   capacity: '',
   variants: [{ size: '', stock: 0 }],
   eventSchedule: { mode: 'single', startDate: '', startTime: '15:00', endTime: '17:00', days: 1, weeks: 1, timeZone: 'Europe/London' },
@@ -197,8 +199,8 @@ export default function AdminPage({ products, onNavigate }) {
     setMessage('');
     setUploading(true);
     try {
-      const imageUrl = await uploadProductImage(draft.id, imageFile);
-      updateDraft('imageUrl', imageUrl);
+      const { imageUrl, sources, placeholder } = await uploadProductImage(draft.id, imageFile);
+      setDraft((current) => ({ ...current, imageUrl, imageSources: sources, imagePlaceholder: placeholder }));
       resetImageInput();
       setMessage('Image uploaded. Save the product to publish it.');
     } catch (uploadError) {
@@ -279,18 +281,18 @@ export default function AdminPage({ products, onNavigate }) {
               {draft.imageUrl ? <img className="AdminImagePreview" src={draft.imageUrl} alt="Product preview" />
                 : <p className="text_container text_container_note">No image set.</p>}
               <label className="FormLabel">Image URL<input className="FormInput" type="text" value={draft.imageUrl} disabled={uploading || saving}
-                onChange={(event) => { updateDraft('imageUrl', event.target.value); resetImageInput(); setMessage(''); setError(''); }} /></label>
+                onChange={(event) => { setDraft((current) => ({ ...current, imageUrl: event.target.value, imageSources: [], imagePlaceholder: '' })); resetImageInput(); setMessage(''); setError(''); }} /></label>
               <label className="FormLabel">Upload a new image<input key={fileInputKey} className="FormInput" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading || saving} onChange={(event) => { setImageFile(event.target.files?.[0] || null); setMessage(''); setError(''); }} /></label>
               <div className="AdminImageActions">
                 <button type="button" className="EditorCommand" onClick={handleImageUpload} disabled={!imageFile || !draft.id || uploading || saving}>
-                  {uploading ? <Loader2 className="IconMd animate-spin" /> : <Upload className="IconMd" />} {uploading ? `Uploading ${imageFile?.name || 'image'}…` : 'Upload image'}
+                  {uploading ? <Loader2 className="IconMd animate-spin" /> : <Upload className="IconMd" />} {uploading ? `Resizing and uploading ${imageFile?.name || 'image'}…` : 'Upload image'}
                 </button>
                 <button type="button" className="EditorCommand" disabled={uploading || saving || (!draft.imageUrl && !imageFile)} onClick={() => {
-                  updateDraft('imageUrl', ''); resetImageInput(); setError(''); setMessage('Image removed. Save the product to publish this change.');
+                  setDraft((current) => ({ ...current, imageUrl: '', imageSources: [], imagePlaceholder: '' })); resetImageInput(); setError(''); setMessage('Image removed. Save the product to publish this change.');
                 }}><Trash2 className="IconMd" /> Remove image</button>
               </div>
               {imageFile && !uploading && <p className="StatusText" role="status">Not uploaded yet: {imageFile.name}. Upload it before saving.</p>}
-              <p className="text_container text_container_note"><ImagePlus className="IconSm" /> PNG, JPG, or WebP up to 5 MB. Paste a URL or upload an image, then save the product. Remove image clears the product image without deleting the stored file.</p>
+              <p className="text_container text_container_note"><ImagePlus className="IconSm" /> PNG, JPG, or WebP up to 25 MB, ideally at least 1280 px wide. Uploads are resized in your browser into several sizes so each visitor downloads only the size their screen needs. Paste a URL or upload an image, then save the product. Remove image clears the product image without deleting the stored file.</p>
             </fieldset>
             {draft.category === 'EVENTS' && <fieldset className="AdminEventSchedule">
               <legend className="tile_heading_bold_1">Event schedule</legend>

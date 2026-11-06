@@ -201,6 +201,14 @@ The editor toolbar appears whenever an approved admin is signed in; its presence
 
 Volunteering configuration is saved directly to Firestore, not through GitHub publishing; its History panel restores previous versions.
 
+### Images
+
+Admins can choose PNG, JPG or WebP photos up to 25 MB for page banners, image tiles, supporter logos and shop products. The admin's browser ([imageProcessing.js](src/utils/imageProcessing.js)) corrects the camera rotation, then makes WebP copies at the widths in [responsiveImages.js](src/utils/responsiveImages.js) (banners 640–3840 px, tiles and products 320–1920 px, logos 160–640 px), never wider than the original. It also makes a plain JPEG/PNG copy for receipt emails, offline reading and old browsers, and a ~1 KB preview stored in the page content. The original is not uploaded; every stored file stays under the 5 MB limit in [storage.rules](storage.rules) and is cached by browsers for a year. A 6000×4000 photo takes about 3 seconds to prepare in desktop Chrome.
+
+[ResponsiveImage.jsx](src/components/ResponsiveImage.jsx) measures each image's box and downloads the smallest copy at least as wide as the box × the screen's pixel density (capped at 2×, allowing for cover cropping). The blurred preview shows at once and the sharp copy replaces it when downloaded; if the box grows (for example, a maximised window), a larger copy loads, but it never steps down. Examples for a 3:2 banner: phone 1600 px, 1366×768 laptop 1600 px, 1080p 1920 px, 1440p 2560 px, 4K 3840 px. The service worker stores only the plain copy for offline reading, so new visitors do not download every size.
+
+Banners need originals at least 2560 px wide to look sharp on large desktop monitors; the editor warns when an upload is narrower. Typing a photo URL instead of uploading shows that single image, as before. Older uploads without sizes keep working, and failed uploads may leave unused files in Storage. See [docs/hosting-cost-plan.md](docs/hosting-cost-plan.md) for traffic and cost estimates.
+
 ### Live mode and sensitive operations
 
 `WEBSITE_ISLIVE` defaults to false. Live mode versions consent wording and retains records/audit history. Before enabling it, publish the required policies, settle retention/analytics consent and outstanding security issues, and review Stripe live-mode support: checkout currently accepts test keys only.

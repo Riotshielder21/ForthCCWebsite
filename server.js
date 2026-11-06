@@ -1178,6 +1178,9 @@ let adminDb;
 let adminAuth;
 let gmailApi;
 let driveApi;
+// Page content carries each uploaded image's size links and preview (about 3 KB per image), so pages with many
+// photos or supporter logos need a larger limit. The route still requires an admin and validates every field.
+app.use('/api/admin/publish-page', express.json({ limit: '512kb', inflate: false }));
 let sheetsApi;
 const localFirebase = process.env.LOCAL_FIREBASE_EMULATORS === 'true';
 if (localFirebase) assertLocalFirebase(process.env);

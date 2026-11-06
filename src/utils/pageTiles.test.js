@@ -118,3 +118,33 @@ test('page banners accept secure or site images and reject anything else', () =>
   }
   assert.throws(() => validateBanner('membership', DEFAULT_BANNERS.home), /cannot have a banner/);
 });
+
+const STORED = 'https://firebasestorage.googleapis.com/v0/b/x/o/pages%2Fhome%2Fbanner%2Fa-640.webp?alt=media';
+const PREVIEW = 'data:image/webp;base64,UklGRg==';
+
+test('uploaded banners keep their stored sizes and preview, sorted by width', () => {
+  const sources = [{ url: STORED.replace('640', '1280'), width: 1280, height: 853 }, { url: STORED, width: 640, height: 427 }];
+  const banner = validateBanner('home', { imageUrl: STORED, sources, placeholder: PREVIEW });
+  assert.deepEqual(banner.sources.map((source) => source.width), [640, 1280]);
+  assert.equal(banner.placeholder, PREVIEW);
+  assert.deepEqual(validateBanner('home', { imageUrl: '', sources, placeholder: PREVIEW }), { imageUrl: '', alt: '', credit: '', focus: 'center' },
+    'sizes are dropped when the photo is removed');
+  for (const bad of [[{ url: 'http://example.com/a.webp', width: 640, height: 427 }], [{ url: `${STORED},x`, width: 640, height: 427 }],
+    [{ url: STORED, width: 640.5, height: 427 }], [{ url: STORED, width: 640, height: 427 }, { url: STORED, width: 640, height: 427 }], 'x']) {
+    assert.throws(() => validateBanner('home', { imageUrl: STORED, sources: bad }));
+  }
+  assert.throws(() => validateBanner('home', { imageUrl: STORED, placeholder: 'data:image/svg+xml;base64,AAAA' }));
+  assert.throws(() => validateBanner('home', { imageUrl: STORED, placeholder: 'javascript:alert(1)' }));
+});
+
+test('tile and supporter images keep stored sizes only alongside an image link', () => {
+  const imageSources = [{ url: STORED, width: 640, height: 427 }];
+  const [tile] = validateTileLayout('about', [{ id: 'photo', group: 'tiles', type: 'image', imageUrl: STORED, imageSources, imagePlaceholder: PREVIEW }]);
+  assert.deepEqual(tile.imageSources, imageSources);
+  assert.equal(tile.imagePlaceholder, PREVIEW);
+  const [plain] = validateTileLayout('about', [{ id: 'text', group: 'tiles', type: 'text', imageSources, imagePlaceholder: PREVIEW }]);
+  assert.equal(Object.hasOwn(plain, 'imageSources'), false);
+  const [logo] = validateSupporterTiles([{ id: 'logo', name: 'Sponsor', imageUrl: STORED, imageSources, imagePlaceholder: PREVIEW }]);
+  assert.deepEqual(logo.imageSources, imageSources);
+  assert.throws(() => validateSupporterTiles([{ id: 'logo', name: 'Sponsor', imageUrl: STORED, imageSources: [{ url: 'javascript:x', width: 1, height: 1 }] }]));
+});
