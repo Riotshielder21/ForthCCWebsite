@@ -1,6 +1,6 @@
 """Checks the JustGo upload queue in an isolated emulator project with a fake uploader.
 
-Run with the emulator up:  FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 venv/bin/python scripts/test-justgo-upload.py
+Run with the emulator up:  FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 venv/bin/python jobs/justgo/test-justgo-upload.py
 """
 import asyncio
 import datetime

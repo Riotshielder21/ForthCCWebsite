@@ -71,6 +71,7 @@ jobs:
             STRIPE_WEBHOOK_SECRET=stripe-test-webhook-secret:latest
             AUDIT_LOOKUP_SECRET=audit-lookup-secret:latest
             STRIPE_SUBSCRIPTION_ADMIN_KEY=stripe-subscription-admin-key:latest
+            RENEWAL_JOB_TOKEN=renewal-job-token:latest
 
       - name: Verify API browser access
         env:
@@ -130,13 +131,31 @@ jobs:
           VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
           VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
-          VITE_APP_ID: ${{ secrets.VITE_APP_ID }}
           VITE_API_BASE_URL: ${{ steps.deploy-api.outputs.url }}
 
       - name: Deploy Firebase services
         run: npx firebase-tools deploy --project fccwebsite-23cfc --only hosting,firestore:rules,storage
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.google-auth.outputs.credentials_file_path }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy scheduled jobs (JustGo sync/upload, renewal emails)
+        run: scripts/scheduled-jobs.sh deploy
+        env:
+          API_URL: ${{ steps.deploy-api.outputs.url }}
+          GOOGLE_CLOUD_PROJECT: fccwebsite-23cfc
+          # JustGo settings are repository variables; the schedules stay paused until the enable flags are true.
+          JUSTGO_API_ENABLED: ${{ vars.JUSTGO_API_ENABLED }}
+          JUSTGO_API_WRITES_ENABLED: ${{ vars.JUSTGO_API_WRITES_ENABLED }}
+          JUSTGO_ORGANISATION_ID: ${{ vars.JUSTGO_ORGANISATION_ID }}
+          JUSTGO_MEMBERSHIP_DEFINITIONS: ${{ vars.JUSTGO_MEMBERSHIP_DEFINITIONS }}
+          JUSTGO_CREDENTIAL_DEFINITIONS: ${{ vars.JUSTGO_CREDENTIAL_DEFINITIONS }}
+          JUSTGO_ACTIVE_MEMBERSHIP_STATUSES: ${{ vars.JUSTGO_ACTIVE_MEMBERSHIP_STATUSES }}
+          JUSTGO_ACTIVE_MEMBER_STATUSES: ${{ vars.JUSTGO_ACTIVE_MEMBER_STATUSES }}
+          JUSTGO_CLUB_MEMBER_ROLE: ${{ vars.JUSTGO_CLUB_MEMBER_ROLE }}
+          JUSTGO_UNSUSPENDED_LEVELS: ${{ vars.JUSTGO_UNSUSPENDED_LEVELS }}
 
       - name: Configure API outage email alert
         run: node scripts/setup-api-monitoring.mjs

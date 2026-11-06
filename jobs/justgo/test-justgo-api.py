@@ -1,6 +1,6 @@
 """Offline checks for the JustGo API client: guards, paging, parsing and the uploader. No network or Firestore.
 
-Run:  bin/python scripts/test-justgo-api.py
+Run:  venv/bin/python jobs/justgo/test-justgo-api.py
 """
 import asyncio
 import contextlib

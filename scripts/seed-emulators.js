@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
+import { ensureLocalAdmin } from './local-admin.js';
 import { PRODUCTS } from '../src/constants/products.js';
 import { clubYearDates, clubYearOf } from '../src/utils/clubYear.js';
 import { termId } from '../src/utils/membershipTerms.js';
@@ -12,15 +13,7 @@ const projectId = assertLocalFirebase(process.env);
 initializeApp({ projectId });
 const auth = getAuth();
 const db = getFirestore();
-const uid = 'local-club-admin';
-try {
-  await auth.getUser(uid);
-  await auth.updateUser(uid, { password: 'local-test-password' });
-} catch (error) {
-  if (error.code !== 'auth/user-not-found') throw error;
-  await auth.createUser({ uid, email: 'admin@forthcanoeclub.co.uk', password: 'local-test-password', emailVerified: true });
-}
-await auth.setCustomUserClaims(uid, { admin: true });
+await ensureLocalAdmin(auth);
 const batch = db.batch();
 for (const product of PRODUCTS) {
   const { id, ...fields } = product;

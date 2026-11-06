@@ -139,7 +139,7 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
   });
 
   /**
-   * The scheduled job (config/fcc-renewals.timer, on 1 and 15 February), authorised by RENEWAL_JOB_TOKEN. From 1 February
+   * The scheduled job (Cloud Scheduler job fcc-renewals, on 1 and 15 February), authorised by RENEWAL_JOB_TOKEN. From 1 February
    * it sends the first email to anyone not yet emailed; from 15 February the reminder to anyone not yet reminded. Running it
    * again in the same round sends nothing new. Outside February it does nothing.
    */
