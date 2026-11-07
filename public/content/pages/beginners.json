@@ -1,0 +1,86 @@
+{
+  "title": "Beginners",
+  "intro": "Whether you're a complete beginner or returning after a long break, we welcome you. No prior experience needed. We provide all the kit and qualified instructors to help you get started safely on the water.",
+  "openEyebrow": "Every Thursday (April–October)",
+  "openTitle": "Open Night",
+  "openBody": "No membership required. Just book online and come along. Our qualified instructors will help you get fitted with kit and guide your first steps into paddling. Sessions are around 1.5 hours and run between April and October.",
+  "youthNote": "For young people: Under 16s must be supervised by an adult. Children under 8 can paddle in an open canoe with a supervising adult.",
+  "openAction": "Book Open Night",
+  "openUrl": "https://events.humanitix.com/host/forth-canoe-club",
+  "clubEyebrow": "Members Only",
+  "clubTitle": "Club Night",
+  "clubBody": "After joining, come down for regular uncoached paddling sessions on Thursdays between April and October. Works best if you've attended an intro course or several open nights first. Boat hire £10 per session, or £70 per year for regular paddlers.",
+  "clubNote": "No need to book — just check club emails to confirm sessions are running.",
+  "coursesEyebrow": "Guided Learning",
+  "coursesTitle": "Paddle Courses",
+  "coursesBody": "Open to members and non-members. Learn the basics and progress to more technical skills. Discover and Explore courses cover kayak, canoe, and paddle board. Kids and teens courses available during holidays and after school.",
+  "essentialsEyebrow": "What to Bring",
+  "essentialsTitle": "Essentials",
+  "essentialsBody": "Towel\nClothes for paddling (will get wet)\nWarm change of clothes\nFlat shoes that stay on in water\n\nNo wetsuit needed, but helpful if you have one. Basic changing rooms and portaloo available.",
+  "tileLayout": [
+    {
+      "id": "hero",
+      "group": "hero",
+      "type": "existing"
+    },
+    {
+      "id": "open",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "club",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "courses",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "essentials",
+      "group": "tiles",
+      "type": "existing"
+    }
+  ],
+  "banner": {
+    "imageUrl": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fbeginners%2Fbanner%2Fee21e7cf-c901-461a-ba74-ec0967bcecb7-960-fallback.jpg?alt=media&token=12f404b5-2e42-4ceb-abfc-8ca8c2465b76",
+    "alt": "6 kayakers in a staggered line racing down the river rapids on the River Garry in the highlands",
+    "credit": "GBx",
+    "focus": "center",
+    "sources": [
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fbeginners%2Fbanner%2Fee21e7cf-c901-461a-ba74-ec0967bcecb7-640.webp?alt=media&token=dd84ba9b-0cef-49f8-807b-4ea341917648",
+        "width": 640,
+        "height": 480
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fbeginners%2Fbanner%2Fee21e7cf-c901-461a-ba74-ec0967bcecb7-960.webp?alt=media&token=c7080c44-5ac0-45f7-a969-af1e631cfa3b",
+        "width": 960,
+        "height": 720
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fbeginners%2Fbanner%2Fee21e7cf-c901-461a-ba74-ec0967bcecb7-1280.webp?alt=media&token=81dff9c2-2f14-4daf-9855-6ff03cf023d7",
+        "width": 1280,
+        "height": 960
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fbeginners%2Fbanner%2Fee21e7cf-c901-461a-ba74-ec0967bcecb7-1600.webp?alt=media&token=22673784-aa56-4dba-a277-7bf396ad063a",
+        "width": 1600,
+        "height": 1200
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fbeginners%2Fbanner%2Fee21e7cf-c901-461a-ba74-ec0967bcecb7-1920.webp?alt=media&token=0b571bb6-6a83-4a5a-bd5c-0c7bf6fd335b",
+        "width": 1920,
+        "height": 1440
+      },
+      {
+        "url": "https://firebasestorage.googleapis.com/v0/b/fccwebsite-23cfc.firebasestorage.app/o/pages%2Fbeginners%2Fbanner%2Fee21e7cf-c901-461a-ba74-ec0967bcecb7-2048.webp?alt=media&token=c2f335e2-e980-4cc2-ba21-962d6f998203",
+        "width": 2048,
+        "height": 1536
+      }
+    ],
+    "placeholder": "data:image/webp;base64,UklGRgIBAABXRUJQVlA4IPYAAAAQBQCdASoYABIAPtFgqU+oJSOiKAgBABoJZQAD4bENHaekuyoNsJq0eBx/J/Hn6OAAAP7AXzbyi2blB79gIFLv/WaK3Yc1HeD57Ct22ZltAAvM9Fh9OJi8YSc8IW3rLk/+YyTIg54oL8d+/L/OKggxf3XVEGwrfjjXkycheqv3HMmKYg8yScA1etVCu1K4D5aGVXT22phEokxRPlGunc0A6nfh+tY38SjN1ZOAhkV/NTvj5P9WWaU2cAue7AV20gVYq2jw+Us2bgLZBDl+V+krsRSzF7Bpwp+4C2kfkNaOWxiDroCRGf+/IHmN+JIWhivHWiSjEAA="
+  }
+}

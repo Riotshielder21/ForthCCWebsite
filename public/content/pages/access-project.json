@@ -1,0 +1,53 @@
+{
+  "title": "Access Project",
+  "intro": "Making paddling accessible to everyone. Our Access Project works to remove barriers and create opportunities for people who might not otherwise have access to water sports.",
+  "tile1Eyebrow": "The Challenge",
+  "tile1Title": "Our Vision",
+  "tile1Body": "Paddlesports can be accessible for people with disabilities. We want to be a pathway club for ParaCanoe athletes. Currently, wheelchair users must be lifted in and out of boats. We're working to change that and restore independence and autonomy. We're also advocating for accessible facilities like changing rooms and showers.",
+  "tile2Eyebrow": "Our Approach",
+  "tile2Title": "Inclusive Design",
+  "tile2Body": "“It’s what you can do, rather than what you can’t do.” We work with individuals facing barriers to paddling, adapting sessions to meet their needs. Well designed access improves the site for everyone.",
+  "tile3Eyebrow": "Track Progress",
+  "tile3Title": "Project Timeline",
+  "tile3Body": "We've completed feasibility studies and secured £32,000+ in pledges. We're now working through surveys, funding applications, designs, and approvals. Building work will follow once final funding is in place.",
+  "timelineAction": "View full timeline",
+  "timelineUrl": "https://trello.com/b/4ABvVtTg/fcc-access-project",
+  "tile4Eyebrow": "Get Involved",
+  "tile4Title": "Support Our Work",
+  "tile4Body": "Help us make paddling accessible to everyone. Volunteer with the project, contribute skills, or donate to the fundraiser.",
+  "donateAction": "Donate Now",
+  "donateUrl": "https://www.justgiving.com/campaign/forth-access-project",
+  "tileLayout": [
+    {
+      "id": "hero",
+      "group": "hero",
+      "type": "existing"
+    },
+    {
+      "id": "tile1",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "tile2",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "tile3",
+      "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "tile4",
+      "group": "tiles",
+      "type": "existing"
+    }
+  ],
+  "banner": {
+    "imageUrl": "",
+    "alt": "",
+    "credit": "",
+    "focus": "center"
+  }
+}
