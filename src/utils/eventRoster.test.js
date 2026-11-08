@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bookingsClosed, rosterDue, rosterViewable, lastEventDate, cleanRosterViewers, MAX_ROSTER_VIEWERS, cleanEventDetails, kitStatus, KIT, buildRoster, rosterEmail } from './eventRoster.js';
+import { bookingsClosed, rosterDue, rosterViewable, lastEventDate, cleanRosterViewers, MAX_ROSTER_VIEWERS, cleanEventDetails, kitStatus, KIT, NO_PHOTOS, buildRoster, rosterEmail } from './eventRoster.js';
 import { peopleNeedingMembership, requiresMembership } from './checkout.js';
 
 const schedule = { mode: 'single', startDate: '2027-05-10', startTime: '09:00', endTime: '17:00', days: 1, timeZone: 'Europe/London' };
@@ -55,8 +55,8 @@ test('the roster lists each paid ticket with contacts, medical details, membersh
       { id: 'boat-hire', lineId: 'h1', category: 'SERVICES', name: 'Boat hire' }],
     people: [
       { id: 'a', lineIds: ['t1', 'h1'], firstName: 'Ann', lastName: 'Adult', dob: '1990-01-01', phone: '0700', email: 'ann@example.com', medical: 'Asthma', swimming: 'Confident',
-        emergencyContact: { name: 'Bob', relationship: 'Partner', phone: '0711' }, membershipId: 'M1' },
-      { id: 'z', lineIds: ['t2'], returning: true, firstName: 'Zed', lastName: 'Member', dob: '1985-02-02', membershipId: 'M2', existingMember: true }] },
+        emergencyContact: { name: 'Bob', relationship: 'Partner', phone: '0711' }, membershipId: 'M1', photoConsent: true },
+      { id: 'z', lineIds: ['t2'], returning: true, firstName: 'Zed', lastName: 'Member', dob: '1985-02-02', membershipId: 'M2', existingMember: true, photoConsent: true }] },
     { id: 'ORD-2', status: 'paid', email: 'cara@example.com', items: [{ id: 'trip', lineId: 't3', category: 'EVENTS' }],
       people: [{ id: 'c', lineIds: ['t3'], firstName: 'Cara', lastName: 'Contact', dob: '2000-03-03', membershipId: 'M3' }] },
     { id: 'ORD-3', status: 'pending', items: [{ id: 'trip', lineId: 't4', category: 'EVENTS' }], people: [{ id: 'p', lineIds: ['t4'], firstName: 'Pending' }] },
@@ -65,7 +65,7 @@ test('the roster lists each paid ticket with contacts, medical details, membersh
   const members = new Map([
     ['M1', { status: 'active', validUntil: '2028-02-28' }],
     ['M2', { status: 'active', validUntil: '2028-02-28', phone: '0799', medical: 'Diabetic', emergencyContact: { name: 'Yan', relationship: 'Sister', phone: '0722' },
-      entitlements: [{ productId: 'boat-hire', grantedAt: '2026-04-01T00:00:00Z' }] }],
+      entitlements: [{ productId: 'boat-hire', grantedAt: '2026-04-01T00:00:00Z' }], consents: { photoVideo: { accepted: false, source: 'my-details' } } }],
     ['M3', { contactOnly: true }]
   ]);
   const roster = buildRoster('trip', orders, members, now, undefined, new Map([['M1', 5], ['M3', 2]]), new Set(['M1']));
@@ -80,11 +80,15 @@ test('the roster lists each paid ticket with contacts, medical details, membersh
   assert.deepEqual(roster.map((row) => row.nonMemberVisits), [undefined, '2 of 3 this club year', undefined], 'visits are only shown for non-members');
   assert.deepEqual(roster.map((row) => row.firstClubNight), [false, true, true], 'members and non-members are flagged if they have never checked in');
   assert.equal(buildRoster('trip', orders, members, now)[0].firstClubNight, undefined, 'unknown without check-in history');
+  assert.deepEqual(roster.map((row) => row.photoConsent), [true, false, false], 'no answer is a no, and a withdrawal on the record beats the order');
 
   const { subject, body } = rosterEmail(event, roster);
   assert.match(subject, /^Attendee list: River trip \(/);
   assert.match(body, /^Hello Lee,/);
-  assert.match(body, /Attendees: 3\. 1 needs boat hire and has not paid for it\./);
+  assert.match(body, /Attendees: 3\. 1 needs boat hire and has not paid for it\.\nPhoto and video consent: 2 people have not given it \(marked below\), so do not photograph or film them\./);
+  assert.equal(body.split(`Photos: ${NO_PHOTOS}`).length - 1, 2, 'only those without consent are marked');
+  assert.doesNotMatch(body.split('2. Cara')[0], /Photos:/, 'Ann gave consent');
+  assert.doesNotMatch(rosterEmail(event, [roster[0]]).body, /Photo and video consent:/);
   assert.match(body, /1\. Ann Adult \(Adult, born 1990-01-01\)\n {3}Phone: 0700 {3}Email: ann@example\.com\n {3}Emergency contact: Bob, Partner, 0711\n {3}Medical: Asthma/);
   assert.match(body, /Kit: Bringing own kit/);
   assert.match(body, /Membership: No\n {3}Non-member visits: 2 of 3 this club year\n {3}First club night: Yes\n/);

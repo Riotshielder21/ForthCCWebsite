@@ -7,6 +7,9 @@ import {
 } from '../utils/checkout';
 import { apiUrl, apiFetch } from '../utils/api';
 import { applyTripDiscounts, isTripEvent } from '../utils/tripDiscount';
+import { noticeVersionMap } from '../utils/notices';
+import { applyConsentPrefill, sameNoticeVersions } from '../utils/consents';
+import { watchPublishedNotices } from '../utils/noticesClient';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -22,6 +25,17 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const validatedSteps = useRef({});
   const lookupVersion = useRef(0);
   const receiptEmailCopied = useRef(false);
+  const [noticeState, setNoticeState] = useState({ notices: null, error: '' });
+  // The tick belongs to the exact versions shown; a notice published or changed meanwhile clears it. Until it is
+  // touched (null) it is ticked when everyone in the basket has agreed to exactly these versions before.
+  const [agreedNotices, setAgreedNotices] = useState(null);
+  useEffect(() => watchPublishedNotices(setNoticeState), []);
+  const noticeVersions = noticeState.notices ? noticeVersionMap(noticeState.notices) : null;
+  const noticeKey = JSON.stringify(noticeVersions);
+  const noticesPrefilled = people.length > 0 && people.every((candidate) => sameNoticeVersions(candidate.prefill?.notices, noticeVersions)
+    && returningVerificationMatches(candidate, email));
+  const noticesTicked = agreedNotices === null ? noticesPrefilled : agreedNotices === noticeKey;
+  const noticesAgreed = Boolean(noticeVersions) && (!noticeState.notices.length || noticesTicked);
 
   // Family members are filled in on their family membership's page, so they get no step of their own.
   const stepPeople = useMemo(() => people.filter((candidate) => familyRole(candidate, people, lines) !== 'member'), [people, lines]);
@@ -101,11 +115,11 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
           return;
         }
         delete validatedSteps.current[`person:${personId}`];
-        onPeopleChange(people.map((entry) => entry.id === personId ? {
+        onPeopleChange(people.map((entry) => entry.id === personId ? applyConsentPrefill({
           ...entry, email: email.trim().toLowerCase(), guardian: { ...entry.guardian, email: email.trim().toLowerCase() },
           verifiedDob: dob, verifiedEmail: email.trim().toLowerCase(), verifiedName: normaliseName(`${match.firstName} ${match.lastName}`),
           volunteerPreview: match.volunteer ? { volunteer: match.volunteer, firstName: match.firstName, lastName: match.lastName, dob } : null
-        } : entry));
+        }, match.prefill) : entry));
       }
     } catch (error) {
       console.error('Checkout membership lookup failed:', error);
@@ -173,10 +187,14 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
         const finalErrors = [
           ...(!EMAIL.test(email.trim()) ? ['Enter a valid receipt email address.'] : []),
           ...validateCheckout({ lines, people }),
-          ...people.filter((candidate) => !returningVerificationMatches(candidate, email)).map(() => 'Verify the email and date of birth again before continuing.')
+          ...people.filter((candidate) => !returningVerificationMatches(candidate, email)).map(() => 'Verify the email and date of birth again before continuing.'),
+          ...(noticeState.error ? []
+            : !noticeVersions ? ['The club notices are still loading. Try again in a moment.']
+              : !noticesAgreed ? ['Tick to agree to the club notices before continuing to payment.'] : [])
         ];
         if (finalErrors.length) { setErrors(finalErrors); return; }
-        return onPay();
+        // If the notices could not be loaded here, the server still refuses payment while any are unagreed.
+        return onPay(noticeVersions || {});
       }
       validatedSteps.current[current] = checkoutStepSnapshot(current, email, people, lines);
     } else {
@@ -220,6 +238,21 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const memberField = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.value }));
   const memberCheck = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.checked }));
   const shownErrors = [...errors, ...(serverErrors || []).filter((message) => !errors.includes(message))];
+  // Optional photo consent and the required disclaimer, with why a box is or is not already ticked.
+  const consentChecks = (candidate, onCheck) => {
+    const { prefill } = candidate;
+    return (
+      <>
+        <label className="CheckoutCheck"><input type="checkbox" checked={candidate.photoConsent} onChange={onCheck('photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
+        <p className="CartItemMeta">Optional{resolvedKind(candidate, people, lines) === 'junior' ? '; a parent or guardian answers for under-18s' : ''}. Saying no never stops anyone booking or taking part, and it can be changed at any time in <a href="/my-details" target="_blank" rel="noopener">My details</a>.
+          {prefill?.photoConsent && candidate.photoConsent ? ' Ticked because this was agreed before.'
+            : prefill?.photoChanged && !candidate.photoConsent ? ' Not ticked because the wording has changed since it was last agreed.' : ''}</p>
+        <label className="CheckoutCheck"><input type="checkbox" checked={candidate.disclaimerAccepted} onChange={onCheck('disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
+        {prefill?.disclaimer && candidate.disclaimerAccepted ? <p className="CartItemMeta">Ticked because this was agreed before. It is required, so it must stay ticked.</p>
+          : prefill?.disclaimerChanged && !candidate.disclaimerAccepted ? <p className="CartItemMeta">The wording has changed since this was last agreed, so please read it and tick it again.</p> : null}
+      </>
+    );
+  };
   const verificationButton = (candidate) => (
     <>
       <button type="button" className="PrimaryActionButtonCompact" disabled={checking || !candidate.dob || !EMAIL.test(email.trim()) || returningVerificationMatches(candidate, email)}
@@ -272,10 +305,10 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                   <div className="CheckoutNames">
                     {choices.map((name) => (
                       <button key={`${name.firstName} ${name.lastName}`} type="button" className="PrimaryActionButtonCompact"
-                        onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob, verifiedDob: dobCheck.dob,
+                        onClick={() => update(person.id, (candidate) => applyConsentPrefill({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob, verifiedDob: dobCheck.dob,
                           email: email.trim().toLowerCase(), guardian: { ...candidate.guardian, email: email.trim().toLowerCase() },
                           verifiedEmail: email.trim().toLowerCase(), verifiedName: normaliseName(`${name.firstName} ${name.lastName}`),
-                          volunteerPreview: name.volunteer ? { volunteer: name.volunteer, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob } : null }))}>
+                          volunteerPreview: name.volunteer ? { volunteer: name.volunteer, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob } : null }, name.prefill))}>
                         {name.firstName} {name.lastName}
                       </button>
                     ))}
@@ -294,7 +327,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                 </label>
                 <p className="CartItemMeta">We match this with your membership record. We never show other details.</p>
                 {verificationButton(person)}
-                <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(person.id, (candidate) => ({ ...candidate, returning: false, firstName: '', lastName: '', dob: '', verifiedDob: '' }))}>This is not me / enter full details</button>
+                <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(person.id, (candidate) => ({ ...invalidatePersonVerification(candidate), returning: false, firstName: '', lastName: '', dob: '' }))}>This is not me / enter full details</button>
               </>
             ) : (
               <>
@@ -347,10 +380,9 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     </div>
                   </fieldset>
                 )}
-                <label className="CheckoutCheck"><input type="checkbox" checked={person.photoConsent} onChange={check('photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
               </>
             )}
-            <label className="CheckoutCheck"><input type="checkbox" checked={person.disclaimerAccepted} onChange={check('disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
+            {consentChecks(person, check)}
 
             {familyLine && (
               <>
@@ -366,7 +398,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                         <input className="FormInput" type="date" required value={member.dob} onChange={memberField(member.id, 'dob')} />
                       </label>
                       {verificationButton(member)}
-                      <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(member.id, (candidate) => ({ ...candidate, returning: false, firstName: '', lastName: '', dob: '', verifiedDob: '' }))}>Not them / enter full details</button>
+                      <button type="button" className="PrimaryActionButtonCompact" onClick={() => update(member.id, (candidate) => ({ ...invalidatePersonVerification(candidate), returning: false, firstName: '', lastName: '', dob: '' }))}>Not them / enter full details</button>
                     </> : <>
                     <fieldset className="CheckoutFieldset">
                       <legend>This person is</legend>
@@ -386,9 +418,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                     </div>
                     <label className="FormLabel">Medical conditions or notes<textarea className="FormInput" rows="2" maxLength={1000} value={member.medical} onChange={memberField(member.id, 'medical')} /></label>
                     <p className="CartItemMeta">{member.junior ? 'Parents are their emergency contact.' : 'Shares the family contact details and family emergency contact.'}</p>
-                    <label className="CheckoutCheck"><input type="checkbox" checked={member.photoConsent} onChange={memberCheck(member.id, 'photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
                     </>}
-                    <label className="CheckoutCheck"><input type="checkbox" checked={member.disclaimerAccepted} onChange={memberCheck(member.id, 'disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
+                    {consentChecks(member, (key) => memberCheck(member.id, key))}
                   </section>
                 ))}
                 <button type="button" className="PrimaryActionButtonCompact" disabled={busy || checking || familyCount >= FAMILY_MAX}
@@ -449,6 +480,14 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                 ))}
               </div>
             )}
+            {noticeState.notices?.length > 0 && <div className="CheckoutSection">
+              <label className="CheckoutCheck"><input type="checkbox" checked={noticesAgreed} onChange={(event) => setAgreedNotices(event.target.checked ? noticeKey : '')} />
+                <span>I agree to the club's Notices, published <a href="/notices" target="_blank" rel="noopener">here</a>.</span></label>
+              <p className="CartItemMeta">{noticeState.notices.map((notice) => `${notice.title} (version ${notice.currentVersion})`).join(', ')}</p>
+              {agreedNotices === null && noticesPrefilled && <p className="CartItemMeta">Ticked because everyone in this basket has agreed to these versions before. It is required, so it must stay ticked.</p>}
+            </div>}
+            {noticeState.notices === null && !noticeState.error && <p className="CartItemMeta" role="status">Loading the club notices…</p>}
+            {noticeState.error && <p className="CartItemMeta" role="status">The club notices could not be loaded. If payment is refused, reload the page and agree to the <a href="/notices" target="_blank" rel="noopener">Notices</a>.</p>}
             <p className="CartSummaryTotal">Total £{total.toFixed(2)}{lines.some(isTripEvent) ? ' before trip discounts' : ''}</p>
           </div>
         )}

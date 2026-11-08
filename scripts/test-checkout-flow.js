@@ -12,6 +12,7 @@ import { PRODUCTS } from '../src/constants/products.js';
 import { assignLines } from '../src/utils/checkout.js';
 import { eventAttendeeRows, justgoUploadRows } from '../src/utils/adminReports.js';
 import { sha256 } from '../src/utils/emailCodes.js';
+import { applyConsentPrefill, checkoutWording } from '../src/utils/consents.js';
 import { joiningShare, fullMonthsAfterCurrent, clubYearOf, clubYearDates, monthlyDebits, nextFirst } from '../src/utils/clubYear.js';
 
 const projectId = assertLocalFirebase(process.env);
@@ -75,8 +76,12 @@ const build = (productIds, fillers) => {
   const people = assignLines([], lines, makeId).map((person, index) => ({ ...person, ...(fillers[index] || {}) }));
   return { lines, people };
 };
-const checkout = (emailAddress, { lines, people }, extra = {}, headers = {}) => call('POST', '/api/checkout-session', { body: {
-  email: emailAddress, items: lines.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), people, billingMode: 'annual', ...extra }, headers });
+// Agrees to whichever notices are published, as the checkout page does, unless a test sends its own noticeVersions.
+const currentNoticeVersions = async () => Object.fromEntries((await db.collection('notices').get()).docs
+  .filter((document) => !document.data().archived && document.data().currentVersion > 0).map((document) => [document.id, document.data().currentVersion]));
+const checkout = async (emailAddress, { lines, people }, extra = {}, headers = {}) => call('POST', '/api/checkout-session', { body: {
+  email: emailAddress, items: lines.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), people, billingMode: 'annual',
+  noticeVersions: await currentNoticeVersions(), wording: checkoutWording(), ...extra }, headers });
 const sendWebhook = async (event) => {
   const payload = JSON.stringify(event);
   const timestamp = Math.floor(Date.now() / 1000);
@@ -337,7 +342,9 @@ await test('an email only reveals that a record exists, names need the matching 
   const lookup = (body) => call('POST', '/api/membership-names', { body });
   assert.deepEqual((await lookup({ email: shared.alex })).json, { exists: true, names: [] });
   assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(36) })).json, { exists: true, names: [] });
-  assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(35) })).json, { exists: true, names: [{ firstName: 'Alex', lastName: 'Adult' }] });
+  const prefill = { disclaimer: true, disclaimerChanged: false, photoConsent: true, photoChanged: false, notices: await currentNoticeVersions() };
+  assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(35) })).json, { exists: true, names: [{ firstName: 'Alex', lastName: 'Adult', prefill }] },
+    'the matching date of birth also says which boxes checkout may tick in advance');
   assert.deepEqual((await lookup({ email: email('nobody'), dob: yearsAgo(35) })).json, { exists: false, names: [] });
 });
 
@@ -1911,6 +1918,230 @@ await test('a subscription ending at the club-year boundary voids an unpaid Febr
   assert.equal(early.needsStaff, true, 'an unexpected ending is flagged');
 });
 
+await test('failed monthly debits email the member each time; when Stripe gives up, benefits end at the paid-up date and can be restarted', async () => {
+  const payer = email('debit-fail');
+  const details = adultDetails({ firstName: 'Dee', lastName: 'Debit', email: payer });
+  const order = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'this'), { billingMode: 'monthly' }, autumn));
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const paidUpSeconds = seconds(order.subscriptionPlan.groups[0].firstDebitAt.toDate());
+  const mails = async (kind) => (await db.collection('testMail').where('subscriptionId', '==', subscriptionId).get()).docs
+    .map((document) => document.data()).filter((mail) => mail.kind === kind);
+  const failed = (attempt, nextAttempt) => sendWebhook({ type: 'invoice.payment_failed', data: { object: {
+    id: `in_${subscriptionId}`, subscription: subscriptionId, amount_due: 2400, attempt_count: attempt, next_payment_attempt: nextAttempt, customer_email: payer,
+    lines: { data: [{ period: { start: paidUpSeconds, end: paidUpSeconds + 31 * 24 * 60 * 60 } }] } } } });
+  const invoiceAttention = async () => (await openAttention()).filter((entry) => entry.kind === 'invoice-failed' && entry.subscriptionId === subscriptionId);
+
+  assert.equal((await failed(1, paidUpSeconds + 3 * 24 * 60 * 60)).status, 200);
+  assert.equal((await failed(1, paidUpSeconds + 3 * 24 * 60 * 60)).status, 200, 'Stripe resends the event');
+  const [retrying, ...repeats] = await mails('invoice-failed');
+  assert.equal(repeats.length, 0, 'each attempt is emailed once');
+  assert.equal(retrying.email, payer);
+  assert.match(retrying.body, /£24\.00/);
+  assert.match(retrying.body, /try again on/);
+  assert.doesNotMatch(retrying.body, /restart=/);
+  assert.equal((await mails('treasurer-copy')).length, 0, 'the treasurer is copied only once Stripe gives up');
+  assert.equal((await invoiceAttention()).length, 0, 'staff are not asked to act while Stripe retries');
+
+  assert.equal((await failed(4, null)).status, 200);
+  const final = (await mails('invoice-failed')).find((mail) => mail.final);
+  assert.match(final.body, /stopped/);
+  const key = /restart=(\S+)/.exec(final.body)[1];
+  assert.ok(final.body.includes(`/payment-issue?subscription=${key}`));
+  const [copy] = await mails('treasurer-copy');
+  assert.equal(copy.email, 'treasurer@forthcanoeclub.co.uk');
+  assert.ok(copy.body.includes(payer));
+  assert.equal((await invoiceAttention()).length, 1, 'staff see that Stripe has stopped retrying');
+
+  const tooSoon = await call('GET', `/api/subscriptions/${key}/restart`, { headers: autumn });
+  assert.equal(tooSoon.status, 409, 'until Stripe cancels, the payments are still running');
+  assert.equal(tooSoon.json.code, 'payments_running');
+
+  const ended = await sendWebhook({ type: 'customer.subscription.deleted', data: { object: {
+    id: subscriptionId, status: 'canceled', ended_at: seconds(new Date()), cancellation_details: { reason: 'payment_failed' },
+    metadata: { club_year: String(autumnYear), cutoff_at: String(seconds(thisYear.end)) } } } });
+  assert.equal(ended.status, 200, ended.text);
+  const record = (await db.collection('subscriptions').doc(subscriptionId).get()).data();
+  assert.equal(record.status, 'ended');
+  assert.equal(record.paidUntil.toMillis(), paidUpSeconds * 1000, 'paid up to the start of the unpaid month');
+  assert.ok(record.items.every((item) => item.status !== 'active' && item.cancelledBy === 'stripe'));
+  const [member] = await membershipsFor(payer);
+  assert.equal(member.validUntil.toMillis(), thisYear.end.getTime(), 'the membership itself was paid in full, so it runs on');
+  assert.ok(!member.subscriptionItems.some((item) => item.status === 'active'), 'the monthly benefits end');
+  assert.equal((await mails('subscription-stopped')).length, 0, 'the member already had the final email with the links');
+
+  const december = testNow(londonNoon(autumnYear, 11, 10));
+  const restart = await call('GET', `/api/subscriptions/${key}/restart`, { headers: december });
+  assert.equal(restart.status, 200, restart.text);
+  assert.equal(restart.json.billingMode, 'monthly');
+  assert.equal(restart.json.email, payer);
+  assert.deepEqual(restart.json.items.map((item) => item.id), ['gold-sub'], 'only what Stripe stopped');
+  assert.deepEqual(restart.json.people.map((person) => [person.firstName, person.returning, person.lineIds.length]), [['Dee', true, 1]]);
+  assert.deepEqual(restart.json.people[0].prefill, { disclaimer: true, disclaimerChanged: false, photoConsent: true, photoChanged: false, notices: await currentNoticeVersions() },
+    'the answers on the record are offered in advance');
+
+  const people = restart.json.people.map((person) => applyConsentPrefill(person, person.prefill));
+  const resumed = await checkout(payer, { lines: restart.json.items, people }, { billingMode: 'monthly', restartOf: key }, december);
+  assert.equal(resumed.status, 200, resumed.text);
+  assert.equal((await orderData(resumed.json.orderRef)).restartOf, subscriptionId);
+  assert.equal((await pay(resumed.json.orderRef)).status, 200);
+  assert.equal((await db.collection('subscriptions').doc(subscriptionId).get()).data().restartedAs, resumed.json.orderRef);
+  assert.equal((await invoiceAttention()).length, 0, 'restarting settles the failed debit');
+  assert.equal((await call('GET', `/api/subscriptions/${key}/restart`, { headers: december })).json.code, 'payments_restarted');
+  const twice = await checkout(payer, { lines: restart.json.items, people }, { billingMode: 'monthly', restartOf: key }, december);
+  assert.equal(twice.status, 409);
+  assert.equal(twice.json.code, 'already_paid');
+});
+
+await test('when Stripe cancels without a final failure email, the member is told and can confirm the payments are stopping', async () => {
+  const payer = email('debit-fail.quiet');
+  const order = await orderData(await buy(payer, lessonFor('Quinn'), { billingMode: 'monthly' }, autumn));
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const ended = await sendWebhook({ type: 'customer.subscription.deleted', data: { object: {
+    id: subscriptionId, status: 'canceled', ended_at: seconds(new Date()), metadata: { club_year: String(autumnYear), cutoff_at: String(seconds(thisYear.end)) } } } });
+  assert.equal(ended.status, 200, ended.text);
+  const stopped = (await db.collection('testMail').where('subscriptionId', '==', subscriptionId).get()).docs.map((document) => document.data())
+    .filter((mail) => mail.kind === 'subscription-stopped');
+  assert.equal(stopped.length, 1);
+  const key = /subscription=(\S+)/.exec(stopped[0].body)[1];
+  assert.equal((await call('GET', `/api/subscriptions/${subscriptionId}.${'0'.repeat(64)}/restart`)).status, 404, 'a wrong token is refused');
+  const cancelled = await call('POST', `/api/subscriptions/${key}/cancel`);
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal(cancelled.json.decision, 'cancelled');
+  assert.equal((await call('POST', `/api/subscriptions/${key}/cancel`)).status, 200, 'confirming twice is harmless');
+  assert.ok(!(await openAttention()).some((entry) => entry.kind === 'subscription-ended' && entry.subscriptionId === subscriptionId), 'staff need do nothing');
+  assert.equal((await call('GET', `/api/subscriptions/${key}/restart`)).json.code, 'payments_cancelled');
+});
+
+await test('a failed bank payment emails links to retry the same basket or cancel the order', async () => {
+  const failedOrder = async (payer, firstName) => {
+    const started = await checkout(payer, build(['membership-adult'], [adultDetails({ firstName, lastName: 'Bank', email: payer })]));
+    assert.equal(started.status, 200, started.text);
+    const order = await orderData(started.json.orderRef);
+    assert.equal((await sendWebhook({ type: 'checkout.session.async_payment_failed', data: { object: {
+      id: order.stripe.sessionId, metadata: { order_ref: started.json.orderRef } } } })).status, 200);
+    const mail = (await db.collection('testMail').where('orderRef', '==', started.json.orderRef).get()).docs.map((document) => document.data())
+      .find((entry) => entry.kind === 'payment-failed');
+    return { orderRef: started.json.orderRef, retryKey: /retry=(\S+)/.exec(mail.body)[1], cancelKey: /payment-issue\?order=(\S+)/.exec(mail.body)[1] };
+  };
+  const payer = email('retry-bank');
+  const { orderRef, retryKey, cancelKey } = await failedOrder(payer, 'Rory');
+  assert.equal(retryKey, cancelKey);
+  const retry = await call('GET', `/api/orders/${retryKey}/retry`);
+  assert.equal(retry.status, 200, retry.text);
+  assert.equal(retry.json.email, payer);
+  assert.deepEqual(retry.json.items.map((item) => item.id), ['membership-adult']);
+  assert.equal(retry.json.people[0].firstName, 'Rory');
+  assert.ok(!('membershipId' in retry.json.people[0]));
+  assert.deepEqual([retry.json.people[0].disclaimerAccepted, retry.json.people[0].photoConsent], [false, false], 'boxes are only ticked from the offered answers');
+  assert.deepEqual(retry.json.people[0].prefill, { disclaimer: true, disclaimerChanged: false, photoConsent: true, photoChanged: false, notices: await currentNoticeVersions() },
+    'the answers given on the failed order are offered while their wording is current');
+  const retryPeople = retry.json.people.map((person) => applyConsentPrefill(person, person.prefill));
+
+  const again = await checkout(payer, { lines: retry.json.items, people: retryPeople }, { retryOf: retryKey });
+  assert.equal(again.status, 200, again.text);
+  assert.equal((await orderData(again.json.orderRef)).retryOf, orderRef);
+  assert.equal((await pay(again.json.orderRef)).status, 200);
+  assert.equal((await orderData(orderRef)).retriedAs, again.json.orderRef);
+  assert.ok(!(await openAttention()).some((entry) => entry.kind === 'payment-failed' && entry.orderRef === orderRef), 'paying again settles it for staff');
+  assert.equal((await call('GET', `/api/orders/${retryKey}/retry`)).json.code, 'order_retried');
+  const twice = await checkout(payer, { lines: retry.json.items, people: retryPeople }, { retryOf: retryKey });
+  assert.equal(twice.status, 409);
+  assert.equal(twice.json.code, 'already_paid');
+  assert.equal((await call('POST', `/api/orders/${cancelKey}/cancel`)).json.code, 'order_retried', 'a paid retry cannot be cancelled');
+
+  const other = await failedOrder(email('cancel-bank'), 'Cara');
+  const cancelled = await call('POST', `/api/orders/${other.cancelKey}/cancel`);
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal((await orderData(other.orderRef)).status, 'cancelled');
+  assert.equal((await call('POST', `/api/orders/${other.cancelKey}/cancel`)).status, 200, 'cancelling twice is harmless');
+  assert.equal((await call('GET', `/api/orders/${other.retryKey}/retry`)).json.code, 'order_cancelled');
+  assert.ok(!(await openAttention()).some((entry) => entry.kind === 'payment-failed' && entry.orderRef === other.orderRef));
+  assert.equal((await call('GET', `/api/orders/${other.orderRef}.${'0'.repeat(64)}/retry`)).status, 404, 'a wrong token is refused');
+});
+
+await test('earlier answers are offered only for the wording in force now; a no and a withdrawal in My details carry to the next checkout', async () => {
+  const address = email('consent-prefill');
+  const details = adultDetails({ firstName: 'Pria', lastName: 'Prefill', dob: yearsAgo(41, 3, 3), email: address });
+  await buy(address, build(['membership-adult'], [details]));
+  const [joined] = await membershipsFor(address);
+  const noticeVersions = await currentNoticeVersions();
+  const offered = async (dob = details.dob) => (await call('POST', '/api/membership-names', { body: { email: address, dob } })).json.names;
+  assert.deepEqual((await offered())[0].prefill, { disclaimer: true, disclaimerChanged: false, photoConsent: true, photoChanged: false, notices: noticeVersions });
+  assert.deepEqual(await offered(yearsAgo(42, 3, 3)), [], 'nothing is offered without the matching date of birth');
+
+  const returning = { returning: true, firstName: 'Pria', lastName: 'Prefill', dob: details.dob };
+  const unticked = await checkout(address, build(['keyhire'], [{ ...returning, disclaimerAccepted: false, photoConsent: true }]));
+  assert.equal(unticked.status, 400, 'unticking the disclaimer blocks checkout; it is not a withdrawal');
+  assert.match(unticked.json.error, /disclaimer must be accepted/);
+  for (const wording of [undefined, { ...checkoutWording(), photoVideo: '00000000' }]) {
+    const stale = await checkout(address, build(['keyhire'], [{ ...returning, disclaimerAccepted: true, photoConsent: true }]), { wording });
+    assert.equal(stale.status, 409, 'a page showing older consent wording must reload');
+    assert.equal(stale.json.code, 'wording_changed');
+  }
+
+  // New photo consent wording: the earlier yes no longer counts, and checkout can say why.
+  await db.collection('policies').doc('photo-video-consent').set({ currentHash: 'older wording' }, { merge: true });
+  const synced = await call('POST', '/api/admin/policies/sync', { headers: admin });
+  assert.equal(synced.status, 200, synced.text);
+  const photoVersion = synced.json.recorded.find((entry) => entry.key === 'photo-video-consent')?.version;
+  assert.equal(photoVersion, joined.consents.photoVideo.version + 1);
+  assert.deepEqual((await offered())[0].prefill, { disclaimer: true, disclaimerChanged: false, photoConsent: false, photoChanged: true, notices: noticeVersions });
+
+  // A no is an answer: it replaces the yes (including fields only older records had) and is kept in the history.
+  await db.collection('memberships').doc(joined.id).update({ 'consents.photoVideo.legacyUnversioned': true });
+  const declinedRef = await buy(address, build(['keyhire'], [{ ...returning, disclaimerAccepted: true, photoConsent: false }]));
+  const declined = (await db.collection('memberships').doc(joined.id).get()).data().consents;
+  const { recordedAt, notices, ...answered } = declined.photoVideo;
+  assert.deepEqual(answered, { policyKey: 'photo-video-consent', version: photoVersion, accepted: false, by: 'self', source: 'checkout', orderRef: declinedRef },
+    'nothing from the older record is left');
+  assert.ok(recordedAt.toMillis() > joined.consents.photoVideo.recordedAt.toMillis());
+  assert.deepEqual(Object.fromEntries(notices.map((entry) => [entry.noticeId, entry.version])), noticeVersions, 'the notice versions in force are kept with the answer');
+  assert.deepEqual(declined.photoVideoHistory.map((entry) => [entry.accepted, entry.version]), [[true, photoVersion - 1], [false, photoVersion]]);
+  assert.deepEqual((await offered())[0].prefill, { disclaimer: true, disclaimerChanged: false, photoConsent: false, photoChanged: false, notices: noticeVersions });
+
+  // My details: anyone in the household can be changed by its contact address, and only theirs.
+  const session = await detailsSession(address);
+  const shown = await call('GET', '/api/my-details', { headers: session });
+  assert.equal(shown.status, 200, shown.text);
+  const household = shown.json.households.find((entry) => entry.people.some((person) => person.memberId === joined.id));
+  assert.equal(household.people.find((person) => person.memberId === joined.id).photoConsent, false);
+  const answer = (accepted, extra = {}, headers = session, memberId = joined.id) => call('PUT',
+    `/api/my-details/${household.id}/photo-consent/${memberId}`, { headers, body: { accepted, ...extra } });
+  assert.equal((await answer(true)).json.code, 'wording_changed', 'consent is only given to the wording shown');
+  assert.equal((await answer(true, { wording: checkoutWording() }, await detailsSession(email('someone-else')))).status, 404);
+  assert.equal((await answer(false, {}, session, shared.alexMembership)).status, 404, 'someone outside the household cannot be changed');
+  const given = await answer(true, { wording: checkoutWording() });
+  assert.equal(given.status, 200, given.text);
+  assert.equal(given.json.household.people.find((person) => person.memberId === joined.id).photoConsent, true);
+  const regiven = (await db.collection('memberships').doc(joined.id).get()).data().consents;
+  assert.deepEqual([regiven.photoVideo.accepted, regiven.photoVideo.version, regiven.photoVideo.by, regiven.photoVideo.source, regiven.photoVideo.orderRef],
+    [true, photoVersion, 'household-contact', 'my-details', null]);
+  assert.equal(regiven.photoVideoHistory.length, 3);
+  assert.ok((await db.collection('selfServiceChanges').where('memberId', '==', joined.id).get()).docs.some((document) => document.data().fields.includes('photoConsent')),
+    'the change is logged for staff');
+  assert.equal((await offered())[0].prefill.photoConsent, true);
+
+  // A withdrawal after a payment failed beats the answer on the failed order when it is retried.
+  const started = await checkout(address, build(['boat-hire'], [{ ...returning, disclaimerAccepted: true, photoConsent: true }]));
+  assert.equal(started.status, 200, started.text);
+  const failedOrder = await orderData(started.json.orderRef);
+  assert.equal((await sendWebhook({ type: 'checkout.session.async_payment_failed', data: { object: {
+    id: failedOrder.stripe.sessionId, metadata: { order_ref: started.json.orderRef } } } })).status, 200);
+  const failedMail = (await db.collection('testMail').where('orderRef', '==', started.json.orderRef).get()).docs.map((document) => document.data())
+    .find((entry) => entry.kind === 'payment-failed');
+  const retryKey = /retry=(\S+)/.exec(failedMail.body)[1];
+  const withdrawn = await answer(false);
+  assert.equal(withdrawn.status, 200, withdrawn.text);
+  assert.equal(withdrawn.json.changed, true);
+  assert.equal((await answer(false)).json.changed, false, 'the same answer again changes nothing');
+  assert.equal((await db.collection('memberships').doc(joined.id).get()).data().consents.photoVideoHistory.length, 4);
+  assert.equal((await offered())[0].prefill.photoConsent, false, 'the next checkout reflects the withdrawal');
+  const retry = await call('GET', `/api/orders/${retryKey}/retry`);
+  assert.equal(retry.status, 200, retry.text);
+  assert.deepEqual([retry.json.people[0].prefill.disclaimer, retry.json.people[0].prefill.photoConsent], [true, false], 'the newer withdrawal wins');
+  assert.equal((await call('POST', `/api/orders/${retryKey}/cancel`)).status, 200);
+});
+
 await test('a delayed bank payment backdates the subscription to its missed 1st', async () => {
   // Checkout 40 days ago, paid only now: the first 1st has passed.
   const checkedOut = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
@@ -1921,6 +2152,58 @@ await test('a delayed bank payment backdates the subscription to its missed 1st'
   const order = await orderData(orderRef);
   assert.equal(order.subscriptionPlan.status, 'active', order.subscriptionPlan.error);
   assert.equal(order.subscriptionPlan.groups[0].created, true);
+});
+
+await test('a delayed checkout cannot restore photo consent withdrawn while its bank payment clears', async () => {
+  const payer = email('delayed-consent');
+  const details = adultDetails({ firstName: 'Dana', lastName: 'Delayed', email: payer });
+  await buy(payer, build(['membership-adult'], [details]));
+  const [member] = await membershipsFor(payer);
+  const returning = { returning: true, firstName: details.firstName, lastName: details.lastName, dob: details.dob,
+    disclaimerAccepted: true, photoConsent: true };
+  const started = await checkout(payer, build(['boat-hire'], [returning]));
+  assert.equal(started.status, 200, started.text);
+  const order = await orderData(started.json.orderRef);
+  assert.equal(order.photoConsentAsked, true);
+  const session = { id: order.stripe.sessionId, mode: 'payment', payment_status: 'unpaid', amount_total: order.totalPence,
+    metadata: { order_ref: started.json.orderRef }, payment_intent: `pi_${started.json.orderRef}` };
+  assert.equal((await sendWebhook({ type: 'checkout.session.completed', data: { object: session } })).status, 200);
+
+  const sessionHeaders = await detailsSession(payer);
+  const detailsPage = await call('GET', '/api/my-details', { headers: sessionHeaders });
+  const household = detailsPage.json.households.find((entry) => entry.people.some((person) => person.memberId === member.id));
+  const withdrawal = await call('PUT', `/api/my-details/${household.id}/photo-consent/${member.id}`, {
+    headers: sessionHeaders, body: { accepted: false }
+  });
+  assert.equal(withdrawal.status, 200, withdrawal.text);
+  const withdrawn = (await db.collection('memberships').doc(member.id).get()).data().consents.photoVideo;
+  assert.equal(withdrawn.accepted, false);
+
+  assert.equal((await sendWebhook({ type: 'checkout.session.async_payment_succeeded', data: { object: { ...session, payment_status: 'paid' } } })).status, 200);
+  const after = (await db.collection('memberships').doc(member.id).get()).data().consents;
+  assert.equal(after.photoVideo.accepted, false, 'the later withdrawal remains the current answer');
+  assert.equal(after.photoVideo.recordedAt.toMillis(), withdrawn.recordedAt.toMillis());
+  assert.ok(after.photoVideoHistory.some((entry) => entry.accepted === true && entry.orderRef === started.json.orderRef
+    && entry.recordedAt.toMillis() === order.createdAt.toMillis()), 'the earlier checkout answer remains in history at its answer time');
+});
+
+await test('a pre-deploy order without a photo-consent marker does not create a false withdrawal', async () => {
+  const payer = email('legacy-consent-order');
+  const details = adultDetails({ firstName: 'Lee', lastName: 'Legacy', email: payer });
+  await buy(payer, build(['membership-adult'], [details]));
+  const [member] = await membershipsFor(payer);
+  const before = (await db.collection('memberships').doc(member.id).get()).data().consents;
+  const returning = { returning: true, firstName: details.firstName, lastName: details.lastName, dob: details.dob,
+    disclaimerAccepted: true, photoConsent: false };
+  const started = await checkout(payer, build(['boat-hire'], [returning]));
+  assert.equal(started.status, 200, started.text);
+  const orderRef = started.json.orderRef;
+  await db.collection('orders').doc(orderRef).update({ photoConsentAsked: FieldValue.delete() });
+  assert.equal((await pay(orderRef)).status, 200);
+
+  const after = (await db.collection('memberships').doc(member.id).get()).data().consents;
+  assert.deepEqual(after.photoVideo, before.photoVideo, 'the earlier checkout did not ask this existing member');
+  assert.deepEqual(after.photoVideoHistory, before.photoVideoHistory);
 });
 
 await test('renewal emails: one per contact address, a basket link, sent on 1 February and a 15 February reminder', async () => {
@@ -1957,12 +2240,14 @@ await test('renewal emails: one per contact address, a basket link, sent on 1 Fe
   assert.equal(link.json.billingMode, 'annual');
   assert.deepEqual(link.json.items.map((item) => [item.id, item.clubYearChoice]), [['membership-family', 'next'], ['keyhire', 'next']]);
   assert.deepEqual(link.json.people.map((person) => [person.firstName, person.returning, person.junior, person.lineIds.length]).sort(), [['Ren', true, false, 2], ['Rio', true, true, 1]]);
+  assert.deepEqual(link.json.people.map((person) => [person.firstName, person.prefill.disclaimer, person.prefill.photoConsent]).sort(), [['Ren', true, true], ['Rio', true, false]],
+    'each person is offered their own answers, including a no to photos');
   assert.equal((await call('GET', `/api/renewals/${token}`, { headers: testNow(londonNoon(autumnYear + 1, 3, 2)) })).json.code, 'renewal_expired', 'expires after 31 March');
   assert.equal((await call('GET', `/api/renewals/${'0'.repeat(64)}`)).status, 404);
 
   // The prefilled basket checks out as these returning members.
   const lines = link.json.items.map((item) => ({ ...PRODUCTS.find((product) => product.id === item.id), ...item }));
-  const renewal = await checkout(renewer, { lines, people: link.json.people.map((person) => ({ ...person, disclaimerAccepted: true })) }, {}, january);
+  const renewal = await checkout(renewer, { lines, people: link.json.people.map((person) => applyConsentPrefill(person, person.prefill)) }, {}, january);
   assert.equal(renewal.status, 200, renewal.text);
   const order = await orderData(renewal.json.orderRef);
   assert.deepEqual(order.people.map((person) => person.membershipId).sort(), ids, 'matched to the existing records');
@@ -1989,6 +2274,41 @@ await test('renewal emails: one per contact address, a basket link, sent on 1 Fe
 });
 
 await db.collection('products').doc(lessonId).delete();
+
+await test('checkout needs agreement to the current version of every published notice', async () => {
+  const noticeId = `test-notice-${run}`;
+  const publish = (body) => call('PUT', `/api/admin/notices/${noticeId}`, { body: { title: 'Test notice', body }, headers: admin });
+  const first = await publish('Version one wording.');
+  assert.equal(first.status, 200, first.text);
+  assert.equal(first.json.version, 1);
+  try {
+    const address = email('notices');
+    const basket = () => build(['membership-adult'], [adultDetails({ email: address, firstName: 'Nora', lastName: 'Notices' })]);
+    const others = Object.fromEntries(Object.entries(await currentNoticeVersions()).filter(([id]) => id !== noticeId));
+    const missing = await checkout(address, basket(), { noticeVersions: others });
+    assert.equal(missing.status, 400);
+    assert.equal(missing.json.code, Object.keys(others).length ? 'notices_changed' : 'notices_required');
+    assert.equal((await publish('Version two wording.')).json.version, 2);
+    const stale = await checkout(address, basket(), { noticeVersions: { ...others, [noticeId]: 1 } });
+    assert.equal(stale.status, 400);
+    assert.equal(stale.json.code, 'notices_changed');
+    const orderRef = await buy(address, basket(), { noticeVersions: { ...others, [noticeId]: 2 } });
+    const order = (await db.collection('orders').doc(orderRef).get()).data();
+    assert.ok(order.noticeAgreement.versions.some((entry) => entry.noticeId === noticeId && entry.version === 2), 'the order records the agreed version');
+    const [member] = await membershipsFor(address);
+    assert.equal(member.consents.notices.orderRef, orderRef);
+    assert.ok(member.consents.notices.versions.some((entry) => entry.noticeId === noticeId && entry.version === 2), 'the member record keeps the agreed version');
+    const offered = async () => (await call('POST', '/api/membership-names', { body: { email: address, dob: member.dob } })).json.names[0].prefill.notices;
+    assert.deepEqual(await offered(), { ...others, [noticeId]: 2 }, 'the agreement is offered while every notice is unchanged');
+    assert.equal((await publish('Version three wording.')).json.version, 3);
+    assert.equal(await offered(), null, 'one changed notice means agreeing again');
+    const pdf = await call('GET', `/api/notices/${noticeId}/pdf?version=1`);
+    assert.equal(pdf.status, 200);
+    assert.ok(pdf.text.startsWith('%PDF-'), 'superseded versions stay downloadable');
+  } finally {
+    await call('DELETE', `/api/admin/notices/${noticeId}`, { headers: admin });
+  }
+});
 
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');

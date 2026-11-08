@@ -31,7 +31,7 @@ export function useSiteRoute() {
     const title = PUBLIC_ROUTES[route.page]?.title || {
       admin: 'Admin', 'admin-reports': 'Admin Reports', 'club-night': 'Check-ins',
       'my-details': 'My Details', checkout: 'Checkout', 'order-lookup': 'Order',
-      'payment-success': 'Payment', 'not-found': 'Page Not Found'
+      'payment-success': 'Payment', 'payment-issue': 'Payment', 'not-found': 'Page Not Found'
     }[route.page];
     document.title = `${title} | Forth Canoe Club SCIO`;
   }, [route.page]);

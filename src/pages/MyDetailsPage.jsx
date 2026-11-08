@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { loadEmailSession, clearEmailSession, sessionRequest } from '../utils/emailSession';
 import { validateDetailsUpdate } from '../utils/myDetails';
+import { PHOTO_CONSENT_TEXT } from '../utils/checkout';
+import { checkoutWording } from '../utils/consents';
 import EmailCodeSignIn from '../components/EmailCodeSignIn';
 import PurchaseReceipt from '../components/PurchaseReceipt';
 
@@ -8,6 +10,33 @@ const formFor = (household) => ({
   phone: household.phone, address: household.address, postcode: household.postcode,
   emergencyContact: household.emergencyContact ? { ...household.emergencyContact } : null
 });
+
+/** Each person's photo and video consent, saved as soon as it changes. JustGo households answer here too. */
+function PhotoConsentChoices({ household, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const change = (person) => async (event) => {
+    const accepted = event.target.checked;
+    setBusy(true); setError(''); setMessage('');
+    try {
+      const result = await sessionRequest('details', `/api/my-details/${encodeURIComponent(household.id)}/photo-consent/${encodeURIComponent(person.memberId)}`,
+        { method: 'PUT', body: { accepted, wording: checkoutWording() } });
+      onSaved(result.household);
+      setMessage(`${person.firstName} ${person.lastName}: photo and video consent ${accepted ? 'given' : 'withdrawn'}.`);
+    } catch (saveError) { setError(saveError.message); } finally { setBusy(false); }
+  };
+  return <fieldset className="CheckoutFieldset SpaceT4">
+    <legend>{PHOTO_CONSENT_TEXT}</legend>
+    <p className="text_container">Optional. Saying no never stops anyone booking or taking part, and a change applies from now on, including at your next booking. A parent or guardian answers for under-18s. The <a href="/notices">club notices</a> explain how photos and videos are used.</p>
+    {household.people.map((person) => <label key={person.memberId} className="CheckoutCheck">
+      <input type="checkbox" checked={person.photoConsent === true} disabled={busy} onChange={change(person)} />
+      {' '}{person.firstName} {person.lastName}{person.junior ? ' (under 18)' : ''}{person.photoConsent === null ? ' (not answered yet)' : ''}
+    </label>)}
+    {error && <p className="StatusTextError" role="alert">{error}</p>}
+    {message && <p role="status">{message}</p>}
+  </fieldset>;
+}
 
 function HouseholdEditor({ household, onSaved, onEmailChanged }) {
   const [form, setForm] = useState(() => formFor(household));
@@ -47,6 +76,7 @@ function HouseholdEditor({ household, onSaved, onEmailChanged }) {
     <ul className="text_container">{household.people.map((person) => <li key={person.memberId}>
       {person.firstName} {person.lastName} ({person.memberId}) · {person.membership}
     </li>)}</ul>
+    <PhotoConsentChoices household={household} onSaved={onSaved} />
     {household.justgo ? <p className="text_container">This membership is managed in JustGo. Please update your details in JustGo; changes reach the club at the next sync.</p> : <>
       <form className="FormContainer FormBody" onSubmit={save}>
         <label className="FormLabel">Phone<input className="FormInput" type="tel" autoComplete="tel" maxLength="40" required value={form.phone} onChange={set('phone')} /></label>
@@ -140,7 +170,7 @@ export default function MyDetailsPage() {
     <h2 className="page_heading_bold_1">My details</h2>
     {notice && <p role="status">{notice}</p>}
     {!session ? <EmailCodeSignIn purpose="details" askDob onVerified={(verified) => { setNotice(''); setError(''); setSession(verified); }}
-      intro="See your current purchases, ask to stop monthly payments, and update the phone number, address, emergency contact or email address we hold for your membership. Enter the email you joined or bought with and your date of birth, and we will send you a 6-digit code. Booking for a child or family member? Use their date of birth instead. Name and date of birth changes: contact secretary@forthcanoeclub.co.uk." />
+      intro="See your current purchases, ask to stop monthly payments, give or withdraw photo and video consent, and update the phone number, address, emergency contact or email address we hold for your membership. Enter the email you joined or bought with and your date of birth, and we will send you a 6-digit code. Booking for a child or family member? Use their date of birth instead. Name and date of birth changes: contact secretary@forthcanoeclub.co.uk." />
       : <>
         <p className="text_container">Signed in as {session.email}. <button className="EditorCommand" type="button" onClick={() => signOut()}>Sign out</button></p>
         {error && <p className="StatusTextError" role="alert">{error}</p>}

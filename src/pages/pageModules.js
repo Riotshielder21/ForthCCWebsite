@@ -7,6 +7,7 @@ export const pageModules = {
   about: () => import('./AboutPage'),
   'contact-us': () => import('./ContactUsPage'),
   safeguarding: () => import('./SafeguardingPage'),
+  notices: () => import('./NoticesPage'),
   'access-project': () => import('./AccessProjectPage'),
   admin: () => import('./AdminPage'),
   'admin-reports': () => import('./AdminReportsPage'),
@@ -14,5 +15,6 @@ export const pageModules = {
   'my-details': () => import('./MyDetailsPage'),
   checkout: () => import('./CheckoutPage'),
   'order-lookup': () => import('./OrderLookupPage'),
-  'payment-success': () => import('./PaymentSuccessPage')
+  'payment-success': () => import('./PaymentSuccessPage'),
+  'payment-issue': () => import('./PaymentIssuePage')
 };

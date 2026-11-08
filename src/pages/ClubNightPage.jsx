@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiUrl, apiFetch } from '../utils/api';
 import { ageOn, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT } from '../utils/checkout';
+import { checkoutWording } from '../utils/consents';
 import { loadEmailSession, clearEmailSession, sessionRequest } from '../utils/emailSession';
 import EmailCodeSignIn from '../components/EmailCodeSignIn';
 import { usePageEditor } from '../utils/PageContentContext';
@@ -91,7 +92,8 @@ function EventAttendeeLists({ request, onEvents }) {
         <span className="CheckinsEventAction">{open?.event.id === event.id ? 'Hide attendees' : 'View attendees'}</span>
       </button>
       {open?.event.id === event.id && <>
-        <p className="text_container" role="status">{open.attendees.length} booked</p>
+        <p className="text_container" role="status">{open.attendees.length} booked{open.attendees.some((person) => person.noPhotos)
+          ? `; ${open.attendees.filter((person) => person.noPhotos).length} without photo and video consent` : ''}</p>
         <ul className="CheckinsList" aria-label={`${event.name} attendees`}>
           {open.attendees.map((person, index) => <li className="CheckinsCard" key={`${person.name}-${index}`}>
             <h4 className="CheckinsName">{person.name}{person.kind === 'Under 18' ? ' (under 18)' : ''}</h4>
@@ -103,6 +105,7 @@ function EventAttendeeLists({ request, onEvents }) {
               <div><dt>Swimming</dt><dd>{person.swimming || 'Not given'}</dd></div>
               <div><dt>Medical</dt><dd>{person.medical || 'None given'}</dd></div>
               <div><dt>Emergency contact</dt><dd>{person.emergencyContact || 'Not given'}</dd></div>
+              {person.noPhotos && <div><dt>Photos</dt><dd className="StatusTextError">No consent: do not photograph or film</dd></div>}
             </dl>
           </li>)}
         </ul>
@@ -291,7 +294,7 @@ export default function ClubNightPage() {
     try {
       const response = await apiFetch(apiUrl('/api/club-night/checkins'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-        body: JSON.stringify({ ...identityValidation.value, sessionId: session.id, ...(needsDetails ? { details } : {}) })
+        body: JSON.stringify({ ...identityValidation.value, sessionId: session.id, ...(needsDetails ? { details, wording: checkoutWording() } : {}) })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not record check-in.');
@@ -352,6 +355,7 @@ export default function ClubNightPage() {
           </Field>
           <Field label="Medical or other information we should know (optional)"><textarea className="FormInput" maxLength="1000" value={details.medical} onChange={setDetail('medical')} /></Field>
           <label className="CheckoutCheck"><input type="checkbox" checked={details.photoConsent} onChange={setDetail('photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
+          <p className="text_container_note">Optional{junior ? '; a parent or guardian answers for under-18s' : ''}. Saying no never stops anyone taking part, and it can be changed at any time in <a href="/my-details">My details</a>.</p>
           <label className="CheckoutCheck"><input type="checkbox" required checked={details.disclaimerAccepted} onChange={setDetail('disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
         </fieldset>}
         {error && <p className="StatusTextError" role="alert">{error}</p>}

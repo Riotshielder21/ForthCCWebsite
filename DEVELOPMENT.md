@@ -150,6 +150,16 @@ stripe listen --events checkout.session.completed,checkout.session.async_payment
 
 Restart the API with a test `STRIPE_SECRET_KEY` and the CLI's `STRIPE_WEBHOOK_SECRET`. Use card `4242 4242 4242 4242`, a future expiry and any CVC; cancel sandbox subscriptions afterwards. Dashboard endpoints need the same events and their own mode-specific signing secret. Never commit or share keys.
 
+### Failed payments
+
+Stripe does the retrying. In each mode's Dashboard, under **Billing → Revenue recovery → Retries**, use Smart Retries (or a fixed schedule), set **If all retries for a payment fail** to **Cancel the subscription**, and include Bacs Direct Debit. Turn off Stripe's own failed-payment customer emails so members are not emailed twice.
+
+- **Monthly debit fails** (`invoice.payment_failed`): the member is emailed each attempt once, with the date Stripe tries again. On the final attempt (no retry scheduled) the email says the payments have stopped and links to restart (`/membership?restart=…`, the same items and people refilled in the basket for a new monthly checkout; missed months are not collected) or confirm they are stopping (`/payment-issue?subscription=…`). The treasurer gets a copy, and it is listed under Needs attention.
+- **Stripe cancels the subscription** (`customer.subscription.deleted` before the club-year cut-off): its monthly items, and any membership paid with it, end at the paid-up date (the start of the earliest unpaid month). The member is emailed the links if the final-failure email was not sent. Restarting or confirming settles the Needs-attention entries.
+- **A one-off bank payment fails** (`checkout.session.async_payment_failed`): the member is emailed links to retry (`/membership?retry=…`, the same basket as a new order) or cancel the order (`/payment-issue?order=…`). Retry links last 30 days. Once a retry is paid the old order records `retriedAs`; a second retry is refused.
+
+Links are `ID.TOKEN`; only the token's hash is stored, and a new email replaces the earlier link. Opening a link never changes anything; cancelling needs the button on the page. To try it in the sandbox, attach card `4000 0000 0000 0341` (attaches, then declines) to a customer with a subscription and use **Advance time** on a Test Clock, or resend an `invoice.payment_failed` event from the Dashboard. Locally, payer emails starting `debit-fail.` give the mocked subscription an unpaid next debit (see `scripts/mock-stripe.mjs`).
+
 ## Data migrations
 
 Export Firestore first, inspect the dry run, then apply. Already-converted records are skipped; incomplete guardian data must be corrected before retrying.
@@ -216,6 +226,27 @@ Admins can choose PNG, JPG or WebP photos up to 25 MB for page banners, image ti
 [ResponsiveImage.jsx](src/components/ResponsiveImage.jsx) measures each image's box and downloads the smallest copy at least as wide as the box × the screen's pixel density (capped at 2×, allowing for cover cropping). The blurred preview shows at once and the sharp copy replaces it when downloaded; if the box grows (for example, a maximised window), a larger copy loads, but it never steps down. Examples for a 3:2 banner: phone 1600 px, 1366×768 laptop 1600 px, 1080p 1920 px, 1440p 2560 px, 4K 3840 px. The service worker stores only the plain copy for offline reading, so new visitors do not download every size.
 
 Banners need originals at least 2560 px wide to look sharp on large desktop monitors; the editor warns when an upload is narrower. Typing a photo URL instead of uploading shows that single image, as before. Older uploads without sizes keep working, and failed uploads may leave unused files in Storage. See [docs/hosting-cost-plan.md](docs/hosting-cost-plan.md) for traffic and cost estimates.
+
+### Notices
+
+The [Notices page](src/pages/NoticesPage.jsx) (`/notices`) shows the club's notices (privacy notice, data retention, terms…) as a row of tabs along the top, one notice per tab, with the selected tab joined to its document below. Signed-in admins tick **Edit notices** on the page to write, add, reorder or archive them; there is no GitHub review step, and changes go live when published.
+
+- **Versions.** Publishing changed wording (title or text) makes the next numbered version through the API ([notices.js](src/server/notices.js)). Each version is kept for good in `noticeVersions/{id}@{n}` with who published it and when; archiving and restoring are logged in `noticeHistory`. Both collections are server-only. The public `notices` collection holds only the current wording, and stays readable while admin identities stay out of it.
+- **PDF.** `GET /api/notices/{id}/pdf?version=n` builds a PDF of any published version (the current one without `version`). Archived notices' old versions stay downloadable for the record.
+- **Checkout.** The review step asks people to tick "I agree to the club's Notices" when any are published. The server refuses payment unless `noticeVersions` names the current version of every published notice, so a notice changed mid-checkout must be agreed again. The order keeps `noticeAgreement` and each member's `consents.notices` keeps the latest agreement.
+- **Formatting.** `## ` and `### ` start headings, `- ` and `1. ` start list items, blank lines separate paragraphs, and links use `[text](https://…)`, as in [notices.js](src/utils/notices.js).
+
+Use the IDs `privacy-notice` and `data-retention` (the titles "Privacy notice" and "Data retention" give these) so live-mode readiness checks find them. Agreeing to the notices records that people were told; it is not consent, so photo/video consent stays a separate tick.
+
+### Consents
+
+Checkout and club-night guest check-in ask everyone for the participation disclaimer (required) and photo and video consent (optional; saying no never blocks anything). A parent or guardian answers for under-18s. Helpers are in [consents.js](src/utils/consents.js); the wording is `DISCLAIMER_TEXT` and `PHOTO_CONSENT_TEXT` in [checkout.js](src/utils/checkout.js).
+
+- **Records.** Each person's membership record (contact-only for non-members) keeps `consents.disclaimer` and `consents.photoVideo`. A photo answer holds the wording version, when, who answered (`self`, `guardian` or `household-contact`), where (`checkout`, `club-night` or `my-details`), the order and the notice versions in force. A newer answer replaces the whole record, including a no. Checkout orders mark whether they asked the photo question; legacy orders without that marker do not turn an implicit false into a recorded withdrawal for an existing member. Checkout answers are timestamped when the order is created, not when a bank payment later clears; a more recent answer in My details therefore stays current. Every change is added to `consents.photoVideoHistory`. Orders keep `policyVersions`. In live mode the version is `policies/{key}.currentVersion`, which the API raises at start-up and hourly when its wording has changed (`syncPolicies`); before then every version is `pre-live`.
+- **Ticked in advance.** Checkout ticks earlier answers only when they were given to the current version. This happens after the date of birth matches (`/api/membership-names` returns `prefill`) and on renewal, retry and restart links. If the wording has changed, the box stays unticked with a note. Notices are ticked only when every published notice is still at the agreed version. Unticking the disclaimer blocks checkout; it is not a withdrawal. Unticking photo consent records a no. Changing the person's name, date of birth or email clears these ticks. A retry link offers the failed order's answers, unless the membership record has a newer answer (such as a withdrawal).
+- **My details.** The household's contact can give or withdraw photo consent for anyone in the household, including JustGo-managed households, because the club holds this answer. Each change is logged in `selfServiceChanges`. It applies to attendee lists straight away and to the next checkout.
+- **Attendee lists.** Leaders see only "No consent: do not photograph or film" for anyone without consent, and the email adds a count. They do not see the history.
+- **Wording checks.** The browser sends `wording` (fingerprints of both texts) with checkout, guest check-in and a My details grant. If it does not match the API's build, the API answers 409 `wording_changed` and the person must reload. Saved checkout drafts from an older build lose their ticks. Hosting and the API deploy separately, so a release that changes either text may refuse checkouts for a few minutes until both are live; after that, reloading fixes it.
 
 ### Live mode and sensitive operations
 

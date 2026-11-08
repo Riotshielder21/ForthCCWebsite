@@ -200,7 +200,9 @@ export const registerEventRosterRoutes = (app, { requireAdmin, db, sendEmail, lo
       res.json({ event: summary(product), attendees: roster.map((row) => ({
         name: row.name, kind: row.kind || '', membership: row.membership || '', nonMemberVisits: row.nonMemberVisits || '',
         ...(row.firstClubNight === undefined ? {} : { firstClubNight: row.firstClubNight }),
-        kit: row.kit, swimming: row.swimming || '', medical: row.medical || '', emergencyContact: row.emergencyContact || ''
+        kit: row.kit, swimming: row.swimming || '', medical: row.medical || '', emergencyContact: row.emergencyContact || '',
+        // Leaders only need to know who must not be photographed, not anyone's full consent record.
+        ...(row.photoConsent === true ? {} : { noPhotos: true })
       })) });
     } catch (error) {
       console.error('Could not load the event roster:', error.message);

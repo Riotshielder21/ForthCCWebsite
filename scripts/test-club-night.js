@@ -12,6 +12,7 @@ import { clubYearOf, clubYearDates } from '../src/utils/clubYear.js';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { VOLUNTEER_LIST } from '../src/utils/lists.js';
 import { allocateRecordIds } from '../src/utils/recordIds.js';
+import { checkoutWording } from '../src/utils/consents.js';
 
 const PROJECT = 'demo-fcc-club-night-tests';
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: PROJECT });
@@ -130,7 +131,10 @@ try {
   const details = { phone: '+447911123466', address: '3 Shore', postcode: 'EH3 3DA', swimming: 'basic', disclaimerAccepted: true, photoConsent: false,
     emergencyContact: { name: 'Sky Guest', relationship: 'Sibling', phone: '+447911123467' } };
   assert.equal((await call('/api/club-night/checkins', { method: 'POST', body: { ...guest, details: { ...details, emergencyContact: {} } }, at: tonight })).status, 400);
-  const guestIn = await call('/api/club-night/checkins', { method: 'POST', body: { ...guest, details }, at: tonight });
+  const staleGuest = await call('/api/club-night/checkins', { method: 'POST', body: { ...guest, details }, at: tonight });
+  assert.equal(staleGuest.status, 409, 'a page showing older consent wording must reload');
+  assert.equal(staleGuest.data.code, 'wording_changed');
+  const guestIn = await call('/api/club-night/checkins', { method: 'POST', body: { ...guest, details, wording: checkoutWording() }, at: tonight });
   assert.equal(guestIn.status, 200);
   assert.match(guestIn.data.message, /see the volunteer/);
   const guestRecord = (await db.collection('memberships').where('searchName', '==', 'gale guest').get()).docs[0];
@@ -139,6 +143,9 @@ try {
   assert.match(guestRecord.data().householdId, /^H\d{5,}$/);
   assert.equal(guestRecord.data().swimming, 'basic');
   assert.equal(guestRecord.data().email, undefined, 'contact details live on the household');
+  const guestPhotos = guestRecord.data().consents.photoVideo;
+  assert.deepEqual([guestPhotos.accepted, guestPhotos.version, guestPhotos.by, guestPhotos.source], [false, 'pre-live', 'self', 'club-night'], 'a guest\'s no is recorded too');
+  assert.deepEqual(guestRecord.data().consents.photoVideoHistory.map((entry) => entry.accepted), [false]);
   const guestHousehold = (await db.collection('households').doc(guestRecord.data().householdId).get()).data();
   assert.equal(guestHousehold.email, guest.email);
   assert.equal(guestHousehold.emergencyContact.name, 'Sky Guest');
@@ -305,6 +312,7 @@ try {
     assert.deepEqual(roster.data.attendees.map((row) => [row.name, row.membership, row.nonMemberVisits, row.emergencyContact]),
       [['Gale Guest', 'No', '3 of 3 this club year', 'Sky Guest, Sibling, +447911123467']], 'two check-ins plus the event');
     assert.equal(roster.data.attendees[0].firstClubNight, false, 'Gale has checked in at club night before');
+    assert.equal(roster.data.attendees[0].noPhotos, true, 'leaders see who must not be photographed or filmed');
     assert.equal(JSON.stringify(roster.data).includes(guest.email), false, 'the on-screen list leaves out contact details');
     assert.deepEqual((await call('/api/event-rosters', { at: afterEvent, session })).data.events, [], 'closed after the last day');
     assert.equal((await call('/api/event-rosters/P00001', { at: afterEvent, session })).status, 404);
@@ -348,6 +356,26 @@ try {
   const justgoSession = await signIn('jo@example.test', 'details', '1970-01-01');
   assert.equal((await call('/api/my-details', { session: justgoSession })).data.households[0].justgo, true);
   assert.equal((await call('/api/my-details/HH-JUSTGO', { method: 'PATCH', session: justgoSession, body: update })).status, 409);
+
+  // Photo and video consent is the club's record, so every household can give or withdraw it, JustGo ones included.
+  const photos = (householdId, memberId, body, session = detailsSession) => call(`/api/my-details/${householdId}/photo-consent/${memberId}`, { method: 'PUT', session, body });
+  assert.equal(mine.data.households[0].people[0].photoConsent, null, 'no answer recorded yet');
+  assert.equal((await photos('HH-MEMBER', 'M0001', { accepted: 'yes' })).status, 400);
+  assert.equal((await photos('HH-MEMBER', 'M0001', { accepted: true })).data.code, 'wording_changed', 'consent is only given to the wording shown');
+  assert.equal((await photos('HH-JUSTGO', 'M0002', { accepted: false })).status, 404, 'another household is not reachable');
+  assert.equal((await photos('HH-MEMBER', 'M0002', { accepted: false })).status, 404, 'someone outside the household is not reachable');
+  const consented = await photos('HH-MEMBER', 'M0001', { accepted: true, wording: checkoutWording() });
+  assert.equal(consented.status, 200, JSON.stringify(consented.data));
+  assert.equal(consented.data.household.people[0].photoConsent, true);
+  const withdrawn = await photos('HH-MEMBER', 'M0001', { accepted: false });
+  assert.deepEqual([withdrawn.data.changed, withdrawn.data.household.people[0].photoConsent], [true, false]);
+  assert.equal((await photos('HH-MEMBER', 'M0001', { accepted: false })).data.changed, false, 'the same answer again changes nothing');
+  const caseyConsents = (await db.collection('memberships').doc('M0001').get()).data().consents;
+  assert.deepEqual([caseyConsents.photoVideo.accepted, caseyConsents.photoVideo.by, caseyConsents.photoVideo.source, caseyConsents.photoVideo.version],
+    [false, 'household-contact', 'my-details', 'pre-live']);
+  assert.deepEqual(caseyConsents.photoVideoHistory.map((entry) => entry.accepted), [true, false], 'every answer is kept');
+  assert.equal((await db.collection('selfServiceChanges').where('memberId', '==', 'M0001').get()).docs.filter((document) => document.data().fields.includes('photoConsent')).length, 2);
+  assert.equal((await photos('HH-JUSTGO', 'M0002', { accepted: false }, justgoSession)).status, 200, 'JustGo households answer here too');
 
   await db.collection('subscriptions').doc('sub-casey').set({ email: member.email, status: 'active', membershipIds: ['M0001'] });
   const newEmail = 'casey.new@example.test';

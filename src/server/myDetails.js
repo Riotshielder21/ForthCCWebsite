@@ -8,6 +8,10 @@ import { buildLinkedReceipt } from '../utils/receipt.js';
 import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
 import { activeSubscriptionItems } from '../utils/subscriptions.js';
 import { resolveOrderPeople } from './orderPeople.js';
+import { currentCheckoutPolicies } from './policies.js';
+import { loadNotices } from './notices.js';
+import { noticeVersionMap } from '../utils/notices.js';
+import { noticeVersionEntries, photoConsentRecord, photoHistoryAdditions, wordingMatches } from '../utils/consents.js';
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const CUSTOMER_ID = /^cus_[A-Za-z0-9_-]+$/;
@@ -27,7 +31,7 @@ export const updateStripeCustomerEmails = async (request, subscriptions, email) 
 };
 
 /** Members verify their email with a code, then view and update their household's contact details. */
-export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripeRequest, raiseAttention = async () => {} }) => {
+export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripeRequest, raiseAttention = async () => {}, live = () => false }) => {
   const households = () => db().collection('households');
   const householdsFor = async (email) => (await households().where('email', '==', email).limit(10).get()).docs;
   const peopleIn = async (householdId) => (await db().collection('memberships').where('householdId', '==', householdId).limit(20).get()).docs;
@@ -79,8 +83,9 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripe
       justgo: people.some((person) => managedByJustgo(person.data())),
       people: people.map((person) => {
         const member = person.data();
+        const photo = member.consents?.photoVideo?.accepted;
         return { memberId: person.id, firstName: member.firstName || '', lastName: member.lastName || '', dob: member.dob || '',
-          junior: memberIsJunior(member), swimming: member.swimming || '',
+          junior: memberIsJunior(member), swimming: member.swimming || '', photoConsent: typeof photo === 'boolean' ? photo : null,
           membership: member.contactOnly ? 'Not a member' : membershipActivity(member) === 'active' ? 'Active member' : 'Membership not active' };
       })
     };
@@ -143,6 +148,46 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripe
     } catch (error) {
       console.error('Could not record the cancellation request:', error.message);
       res.status(500).json({ error: 'Could not send your request. Please email secretary@forthcanoeclub.co.uk.' });
+    }
+  });
+
+  /**
+   * Gives or withdraws photo and video consent for someone in the household. The club holds this answer, not JustGo, so
+   * JustGo-managed households can change it too. Withdrawing always works; giving consent must be to the current wording.
+   */
+  app.put('/api/my-details/:householdId/photo-consent/:memberId', rateLimit(20, 60 * 1000), async (req, res) => {
+    try {
+      if (!db()) return res.status(503).json({ error: 'Member details are not available right now.' });
+      const session = await emailCodes.requireEmailSession(req, res, 'details');
+      if (!session) return;
+      if (!ID.test(req.params.householdId) || !ID.test(req.params.memberId)) return res.status(400).json({ error: 'Choose a person.' });
+      if (typeof req.body?.accepted !== 'boolean') return res.status(400).json({ error: 'Choose whether to give photo and video consent.' });
+      const { accepted } = req.body;
+      if (accepted && !wordingMatches(req.body.wording)) {
+        return res.status(409).json({ code: 'wording_changed', error: 'The photo consent wording has changed since this page loaded. Reload the page and try again.' });
+      }
+      const household = await households().doc(req.params.householdId).get();
+      if (!household.exists || household.data().email !== session.email) return res.status(404).json({ error: 'Household not found.' });
+      const [policies, noticeVersions] = await Promise.all([currentCheckoutPolicies(db(), live()), loadNotices(db()).then(noticeVersionMap)]);
+      const reference = db().collection('memberships').doc(req.params.memberId);
+      const at = Timestamp.now();
+      const changed = await db().runTransaction(async (transaction) => {
+        const member = await transaction.get(reference);
+        if (!member.exists || member.data().householdId !== household.id) return null;
+        const record = photoConsentRecord({ policy: policies.photoVideo, accepted, at, by: memberIsJunior(member.data()) ? 'guardian' : 'household-contact',
+          source: 'my-details', notices: noticeVersionEntries(noticeVersions) });
+        const additions = photoHistoryAdditions(member.data().consents, record);
+        if (!additions.length) return false;
+        transaction.update(reference, { 'consents.photoVideo': record, 'consents.photoVideoHistory': FieldValue.arrayUnion(...additions), updatedAt: at });
+        transaction.set(db().collection('selfServiceChanges').doc(), { householdId: household.id, memberId: member.id, fields: ['photoConsent'], at });
+        return true;
+      });
+      if (changed === null) return res.status(404).json({ error: 'Person not found in this household.' });
+      res.set('Cache-Control', 'no-store');
+      res.json({ success: true, changed, household: await describe(await households().doc(household.id).get()) });
+    } catch (error) {
+      console.error('Could not update photo consent:', error.message);
+      res.status(500).json({ error: 'Could not save your photo consent choice. Please try again.' });
     }
   });
 

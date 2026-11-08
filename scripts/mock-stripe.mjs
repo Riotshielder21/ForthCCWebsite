@@ -18,7 +18,9 @@ const fail = (message, status = 400) => Response.json({ error: { message, ...(st
 // Payer email prefixes: `new-card.` uses different card details at every checkout; `sub-fail.` has every subscription
 // change declined; `unpaid-feb.` has an unpaid invoice left open on each subscription (voided at the cut-off);
 // `flaky.` has Stripe fail with a temporary error the first time each order's subscription is created;
-// `paid-late.` has every Checkout Session paid straight away in Stripe, with the webhook never sent.
+// `paid-late.` has every Checkout Session paid straight away in Stripe, with the webhook never sent; `debit-fail.` has the
+// next monthly debit on each subscription fail and stay open, for the period starting at the end of the current one, and
+// Stripe cancel the subscription once the site looks for its uncollectible debits (as it does when Stripe gives up).
 const paymentMethodFor = (email) => email.startsWith('new-card.') ? `pm_e2e_${counter}` : 'pm_e2e';
 const itemsFrom = (params) => [...params.keys()].map((name) => /^items\[(\d+)\]\[price_data\]\[product\]$/.exec(name)?.[1]).filter(Boolean).map((index) => ({
   id: `si_e2e_${runId}_${counter}_${index}`,
@@ -101,6 +103,9 @@ globalThis.fetch = async (url, options) => {
   if (parsed.pathname === '/v1/invoices' && method === 'GET') {
     const subscription = parsed.searchParams.get('subscription');
     const status = parsed.searchParams.get('status');
+    // The site only asks for uncollectible debits once Stripe has given up on them, which cancels the subscription.
+    const owner = subscriptions.get(subscription);
+    if (status === 'uncollectible' && owner?.debitFails) Object.assign(owner, { status: 'canceled', ended_at: now() });
     return Response.json({ data: [...invoices.values()].filter((invoice) => invoice.subscription === subscription && (!status || invoice.status === status)) });
   }
   const key = options?.headers?.['Idempotency-Key'];
@@ -163,6 +168,12 @@ globalThis.fetch = async (url, options) => {
     if (email.startsWith('unpaid-feb.')) {
       const invoice = { id: `in_e2e_${runId}_${counter}`, subscription: subscription.id, status: 'open', amount_due: items.reduce((sum, item) => sum + item.price.unit_amount, 0) };
       invoices.set(invoice.id, invoice);
+    }
+    if (email.startsWith('debit-fail.')) {
+      const invoice = { id: `in_e2e_${runId}_${counter}_failed`, subscription: subscription.id, status: 'open', amount_due: items.reduce((sum, item) => sum + item.price.unit_amount, 0),
+        lines: { data: [{ period: { start: subscription.current_period_end, end: subscription.current_period_end + 31 * 24 * 60 * 60 } }] } };
+      invoices.set(invoice.id, invoice);
+      subscription.debitFails = true;
     }
     return remember(subscription);
   }
