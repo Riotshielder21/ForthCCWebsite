@@ -27,4 +27,4 @@ The React/Vite frontend runs on Firebase Hosting. An Express API runs on Cloud R
 
 Page edits are reviewed through GitHub before publishing. Catalogue edits and image uploads save to Firebase directly. Stripe reports refresh on demand; scheduling a subscriber's club-year end requires explicit admin confirmation.
 
-Checkout currently accepts Stripe test keys only. Subscription lifecycle handling and complete customer erasure are not implemented; deleting a website record does not cancel Stripe billing.
+Checkout currently accepts Stripe test keys only. Complete customer erasure is not implemented. Deleting a member record stops that member's monthly payments recorded on the website (no refund); deleting an order record does not cancel Stripe billing.

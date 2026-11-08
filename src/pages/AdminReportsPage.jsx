@@ -293,7 +293,9 @@ export default function AdminReportsPage({ onNavigate }) {
       setActiveMonthly(result.activeMonthly || []);
       if (!response.ok) throw new Error(result.error || 'Could not delete record.');
       setRecords((current) => current.filter((record) => record.id !== deleting.id));
-      setMessage(`Record ${deleting.id} deleted. Stripe payments and other records were not changed.`);
+      setMessage(result.stoppedMonthly?.length
+        ? `Record ${deleting.id} deleted and its monthly payments stopped (no refund). Other records were not changed.`
+        : `Record ${deleting.id} deleted. Stripe payments and other records were not changed.`);
       setDeleting(null);
     } catch (deleteError) {
       setError(deleteError.message);
@@ -407,12 +409,19 @@ export default function AdminReportsPage({ onNavigate }) {
         {kind === 'members' && <button className="EditorCommand TileRemove" onClick={() => { setErasure({ membershipId: selected.id, name: selected.name }); setSelected(null); }}><ShieldX size={18} /> GDPR erasure</button>}
         {!['subscribers', 'events'].includes(kind) && <button className="EditorCommand TileRemove" onClick={() => beginDelete(selected)}><Trash2 size={18} /> Delete this record</button>}</>}
       {deleting && <form onSubmit={(event) => { event.preventDefault(); deleteRecord(); }}>
-        <p className="ReportNotice">Permanently deletes this {kind === 'orders' ? 'order' : 'member-register'} record only. Other customer records, Firebase login accounts, vouchers, Google Sheets, emails, and Stripe subscriptions remain unchanged. This is not complete customer erasure. Check retention requirements first.</p>
+        <p className="ReportNotice">{kind === 'orders'
+          ? 'Permanently deletes this order record only. Other customer records, Firebase login accounts, vouchers, Google Sheets, emails, and Stripe subscriptions remain unchanged. This is not complete customer erasure. Check retention requirements first.'
+          : 'Permanently deletes this member-register record and stops any monthly payments for this member straight away. Nothing is refunded, and anyone else on the same subscription keeps paying. Other customer records, Firebase login accounts, vouchers, Google Sheets and emails remain unchanged. This is not complete customer erasure. Check retention requirements first.'}</p>
         {activeMonthly.length > 0 && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>Monthly payments are still being collected.</strong>
           <ul>{activeMonthly.map((subscription) => <li key={subscription.id}>{subscription.itemNames.join(', ')}{subscription.names.length ? ` for ${subscription.names.join(', ')}` : ''} — paid by {subscription.email} ({subscription.id})</li>)}</ul>
           <p>Cancel them now (straight away, no refund), then delete the record. The reason below is recorded for both.</p>
           <button className="EditorCommand TileRemove" type="button" disabled={deleteBusy || !reason.trim()} onClick={cancelActiveMonthly}>{deleteBusy ? 'Cancelling…' : 'Cancel them now'}</button></div></div>}
-        {stripeRequired && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div><strong>Cancel active subscriptions in Stripe first.</strong><p>Deleting website data does not stop recurring payments.{deleting.stripeSubscriptionId && ` Subscription: ${deleting.stripeSubscriptionId}`}</p><a className="ContentLink" href="https://dashboard.stripe.com/test/subscriptions" target="_blank" rel="noreferrer">Open Stripe test subscriptions</a><label><input type="checkbox" checked={stripeAcknowledged} onChange={(event) => setStripeAcknowledged(event.target.checked)} required /> I have checked Stripe and cancelled any active subscription before deletion.</label></div></div>}
+        {stripeRequired && <div className="ReportDeleteWarning"><AlertTriangle size={22} /><div>{kind === 'members'
+          ? <><strong>Check Stripe for subscriptions set up outside the website.</strong><p>Monthly payments recorded on the website are stopped automatically. One set up directly in Stripe is not.</p></>
+          : <><strong>Cancel active subscriptions in Stripe first.</strong><p>Deleting website data does not stop recurring payments.{deleting.stripeSubscriptionId && ` Subscription: ${deleting.stripeSubscriptionId}`}</p></>}
+          <a className="ContentLink" href="https://dashboard.stripe.com/test/subscriptions" target="_blank" rel="noreferrer">Open Stripe test subscriptions</a><label><input type="checkbox" checked={stripeAcknowledged} onChange={(event) => setStripeAcknowledged(event.target.checked)} required /> {kind === 'members'
+            ? 'I have checked Stripe for any subscription not recorded on the website.'
+            : 'I have checked Stripe and cancelled any active subscription before deletion.'}</label></div></div>}
         <label className="AdminCheckbox SpaceT4"><input type="checkbox" checked={confirmation === deleting.id} onChange={(event) => setConfirmation(event.target.checked ? deleting.id : '')} disabled={deleteBusy} /> I want to permanently delete record {deleting.id}.</label>
         <ReasonInput value={reason} onChange={setReason} disabled={deleteBusy} />
         {error && <p className="StatusTextError" role="alert">{error}</p>}

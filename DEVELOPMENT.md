@@ -259,7 +259,7 @@ Create Secret Manager secrets and grant the Cloud Run account access:
 
 Refunds need refund write and payment/invoice/charge/refund read permissions. Reporting uses a separate server-only `STRIPE_REPORT_SECRET_KEY`.
 
-Use purchased-item actions, not order deletion, for refunds/revocations. Refunds alone do not stop access or billing. Retry unfinished actions with the exact recorded request, never a replacement refund. Shared physical boathouse codes must be rotated after disclosure if access needs retracting.
+Use purchased-item actions, not order deletion, for refunds/revocations. Refunds alone do not stop access or billing. Deleting a member record stops that member's monthly items straight away without a refund; others on the same subscription keep paying, and subscriptions set up directly in Stripe still need checking by hand. Deleting an order is refused while its monthly payments run. Retry unfinished actions with the exact recorded request, never a replacement refund. Shared physical boathouse codes must be rotated after disclosure if access needs retracting.
 
 GDPR erasure is irreversible; admin deletion retains a recovery snapshot. Erasure stops affected billing but preserves shared beneficiaries and anonymised financial history. Stripe history/mandates may need manual review; Google Sheets and JustGo cleanup are separate. Treat receipt links as private.
 

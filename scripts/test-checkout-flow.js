@@ -13,6 +13,7 @@ import { assignLines } from '../src/utils/checkout.js';
 import { eventAttendeeRows, justgoUploadRows } from '../src/utils/adminReports.js';
 import { sha256 } from '../src/utils/emailCodes.js';
 import { applyConsentPrefill, checkoutWording } from '../src/utils/consents.js';
+import { activeSubscriptionItems } from '../src/utils/subscriptions.js';
 import { joiningShare, fullMonthsAfterCurrent, clubYearOf, clubYearDates, monthlyDebits, nextFirst } from '../src/utils/clubYear.js';
 
 const projectId = assertLocalFirebase(process.env);
@@ -1751,6 +1752,38 @@ await test('problems reach staff: a refused set-up is listed, can be retried and
   assert.ok(!(await openAttention()).some((candidate) => candidate.id === entry.id));
   const resolved = (await db.collection('attention').doc(entry.id).get()).data();
   assert.equal(resolved.resolutionNote, 'Member paid by bank transfer.');
+});
+
+await test('deleting a member stops their monthly payments without a refund; the payer keeps paying for others', async () => {
+  const payer = email('delete-monthly');
+  const lines = ['membership-adult', 'membership-adult', 'gold-sub', 'gold-sub'].map(lineFor);
+  const basket = { lines, people: assignLines([], lines, makeId).map((person, index) => ({ ...person, ...adultDetails(index === 0
+    ? { firstName: 'Dora', lastName: 'Deleted', email: payer }
+    : { firstName: 'Kit', lastName: 'Kept', dob: yearsAgo(30), email: email('delete-monthly-partner') }) })) };
+  const orderRef = await buy(payer, basket, { billingMode: 'monthly' }, autumn);
+  const order = await orderData(orderRef);
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const named = await Promise.all(order.people.map(async ({ membershipId }) => [(await db.collection('memberships').doc(membershipId).get()).data().firstName, membershipId]));
+  const doraId = named.find(([firstName]) => firstName === 'Dora')[1];
+  const kitId = named.find(([firstName]) => firstName === 'Kit')[1];
+  const remove = (body) => call('DELETE', `/api/admin/records/members/${doraId}`, { headers: admin, body: { confirmId: doraId, reason: 'Left the club', ...body } });
+
+  const unchecked = await remove({});
+  assert.equal(unchecked.status, 409, 'Stripe must still be checked for subscriptions set up outside the website');
+  assert.equal(unchecked.json.requiresStripeAcknowledgement, true);
+  assert.ok(activeSubscriptionItems((await db.collection('subscriptions').doc(subscriptionId).get()).data()).some((item) => item.membershipIds.includes(doraId)),
+    'nothing is cancelled until the deletion is confirmed');
+
+  const deleted = await remove({ acknowledgeStripe: true });
+  assert.equal(deleted.status, 200, deleted.text);
+  assert.deepEqual(deleted.json.stoppedMonthly.map((entry) => entry.id), [subscriptionId]);
+  assert.equal((await db.collection('memberships').doc(doraId).get()).exists, false);
+  const subscription = (await db.collection('subscriptions').doc(subscriptionId).get()).data();
+  assert.equal(subscription.status, 'active', 'the payer keeps paying for Kit');
+  const active = activeSubscriptionItems(subscription);
+  assert.ok(active.length && active.every((item) => !item.membershipIds.includes(doraId) && item.membershipIds.includes(kitId)));
+  const audit = (await db.collection('auditLog').where('stripeSubscriptionId', '==', subscriptionId).get()).docs.map((document) => document.data());
+  assert.ok(audit.some((entry) => entry.kind === 'subscription' && entry.reason === 'Member record deleted: Left the club'), 'the stop is in the audit log');
 });
 
 await test('a temporary Stripe fault is retried without a second subscription, and a member can ask to cancel', async () => {
