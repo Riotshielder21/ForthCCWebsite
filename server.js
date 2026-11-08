@@ -24,7 +24,7 @@ import { DISCOUNT_TYPES, discountDisplayStatus, discountFailure } from './src/ut
 import { REASON_REQUIRED, auditEntry, requiredReason } from './src/utils/auditLog.js';
 import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
-import { sanitizePerson, validateCheckout, personInputErrors, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership } from './src/utils/checkout.js';
+import { sanitizePerson, validateCheckout, personInputErrors, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership, ageOn } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen, justgoUploadCanRetry } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
 import { readJustgoSync } from './src/server/justgoSync.js';
@@ -46,7 +46,8 @@ import { rebaseBranch, rebaseWarning } from './src/server/githubRebase.js';
 import { readContentDrafts } from './src/server/contentDrafts.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
 import { loadNotices, registerNoticeRoutes } from './src/server/notices.js';
-import { checkNoticeAgreement } from './src/utils/notices.js';
+import { checkNoticeAgreement, noticeVersionMap } from './src/utils/notices.js';
+import { consentPrefill, photoConsentRecord, photoHistoryAdditions, retryConsentPrefill, wordingMatches } from './src/utils/consents.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
@@ -390,6 +391,10 @@ const findMembership = async (person, now = new Date()) => {
   };
 };
 
+/** Deletes for the fields of `previous` that `next` does not have. */
+const staleFields = (previous, next) => Object.fromEntries(Object.keys(previous && typeof previous === 'object' ? previous : {})
+  .filter((key) => !Object.hasOwn(next, key)).map((key) => [key, FieldValue.delete()]));
+
 const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapshots = new Map(), memberSnapshots = new Map() }) => {
   const paidYear = clubYearOf(paidAt.toDate());
   const households = new Map();
@@ -438,6 +443,18 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
     const { id, lineIds, membershipId, existingMember, householdId, ownKitLineIds, grantMembership: _grant, grantMembershipYears: _years, heldClubYears: _held, subscriptionGroup: _group, ...details } = person;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
     const previous = memberSnapshots.get(membershipId)?.data();
+    // A parent or guardian answers for anyone under 18 when the order is created.
+    const by = person.junior || (ageOn(person.dob, (order.createdAt || paidAt).toDate()) ?? 18) < 18 ? 'guardian' : 'self';
+    const photoConsentAsked = order.photoConsentAsked === true || !existingMember;
+    const photoAnsweredAt = order.createdAt || paidAt;
+    const photoVideo = photoConsentAsked ? photoConsentRecord({ policy: order.policyVersions?.photoVideo, accepted: person.photoConsent === true, at: photoAnsweredAt, by,
+      source: 'checkout', orderRef, notices: order.noticeAgreement?.versions }) : null;
+    const previousPhoto = previous?.consents?.photoVideo;
+    const previousPhotoAt = previousPhoto?.recordedAt?.toMillis?.();
+    const photoAnswerAt = photoAnsweredAt?.toMillis?.();
+    const newerPhotoAnswerExists = Number.isFinite(previousPhotoAt) && Number.isFinite(photoAnswerAt) && previousPhotoAt >= photoAnswerAt;
+    const writePhotoConsent = photoConsentAsked && !newerPhotoAnswerExists;
+    const photoHistory = photoConsentAsked ? photoHistoryAdditions(previous?.consents, photoVideo) : [];
     transaction.set(adminDb.collection('memberships').doc(membershipId), {
       ...(existingMember ? {} : {
         ...details, source: 'website', renewalMethod: 'website', createdAt: paidAt, searchName: normaliseName(`${person.firstName} ${person.lastName}`)
@@ -450,8 +467,12 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
       ...Object.fromEntries(HOUSEHOLD_MEMBER_FIELDS.map((key) => [key, FieldValue.delete()])),
       // Consent is recorded against the wording version shown at checkout; the disclaimer is re-accepted on every purchase.
       consents: {
-        disclaimer: { ...order.policyVersions?.disclaimer, acceptedAt: paidAt, by: person.junior ? 'guardian' : 'self' },
-        ...(existingMember ? {} : { photoVideo: { ...order.policyVersions?.photoVideo, accepted: person.photoConsent === true, recordedAt: paidAt, by: person.junior ? 'guardian' : 'self' } }),
+        disclaimer: { ...order.policyVersions?.disclaimer, acceptedAt: paidAt, by },
+        ...(writePhotoConsent ? {
+          // A merged write keeps fields the new answer lacks (such as legacyUnversioned), so those are deleted.
+          photoVideo: { ...staleFields(previousPhoto, photoVideo), ...photoVideo }
+        } : {}),
+        ...(photoHistory.length ? { photoVideoHistory: FieldValue.arrayUnion(...photoHistory) } : {}),
         // The person paying agrees to the club notices for everyone on the order; the latest agreement replaces the last.
         ...(order.noticeAgreement ? { notices: { ...order.noticeAgreement, orderRef, by: 'purchaser' } } : {})
       },
@@ -470,13 +491,14 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
   }
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, noticeAgreement = null, subscriptionPlan = null, retryOf = '', restartOf = '' }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, noticeAgreement = null, subscriptionPlan = null, retryOf = '', restartOf = '', photoConsentAsked = false }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     schemaVersion: CURRENT_ORDER_VERSION,
     email: email.toLowerCase(),
     items,
     people,
+    ...(photoConsentAsked ? { photoConsentAsked: true } : {}),
     stockProductIds,
     policyVersions,
     ...(noticeAgreement ? { noticeAgreement } : {}),
@@ -1787,7 +1809,7 @@ const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sen
 registerContactRoutes(app, { sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
-registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes, stripeRequest,
+registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message), emailCodes, stripeRequest, live: () => isLive(),
   raiseAttention: (kind, key, details) => attention.raise(kind, key, details) });
 const { sendDueRosters, canViewEventRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
   emailCodes, requestNow,
@@ -1808,7 +1830,7 @@ registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => 
 registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadReceiptPersonFields, receiptPeopleWithRecords } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
-  volunteerRenewalContent, sendVolunteerRenewals,
+  volunteerRenewalContent, sendVolunteerRenewals, live: () => isLive(),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
 
@@ -2319,9 +2341,17 @@ app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
       .map((record) => [`${record.firstName} ${record.lastName}|${record.dob || ''}`, record])).values()];
     const names = new Map();
     if (/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
-      for (const { firstName, lastName, dob: held, volunteer } of records) if (held === dob) names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName,
-        ...(volunteer?.inducted ? { volunteer: { inducted: true, years: Object.fromEntries(Object.entries(volunteer.years || {})
-          .map(([year, value]) => [year, { active: value.active === true, tier: value.tier }])) } } : {}) });
+      const matched = records.filter((record) => record.dob === dob);
+      // Checkout ticks in advance only what a matched person agreed to the current wording; the server still checks on payment.
+      const [policies, noticeVersions] = matched.length
+        ? await Promise.all([currentCheckoutPolicies(adminDb, isLive()), loadNotices(adminDb).then(noticeVersionMap)]) : [];
+      for (const record of matched) {
+        const { firstName, lastName, volunteer } = record;
+        names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName,
+          ...(volunteer?.inducted ? { volunteer: { inducted: true, years: Object.fromEntries(Object.entries(volunteer.years || {})
+            .map(([year, value]) => [year, { active: value.active === true, tier: value.tier }])) } } : {}),
+          prefill: consentPrefill(record, policies, noticeVersions) });
+      }
     }
     res.json({ exists: records.length > 0, names: [...names.values()] });
   } catch (error) {
@@ -2460,6 +2490,11 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
         : person);
     const detailErrors = validateCheckout({ lines: selected, people, now });
     if (detailErrors.length) return res.status(400).json({ error: detailErrors[0], details: detailErrors });
+    // Answers are recorded against the wording version current here, so a page still showing older wording must reload.
+    if (people.length && !wordingMatches(req.body.wording)) {
+      return res.status(409).json({ code: 'wording_changed',
+        error: 'The disclaimer or photo consent wording has changed since this page loaded. Reload the page, then read and tick them again.' });
+    }
     const notices = checkNoticeAgreement(await loadNotices(adminDb), req.body.noticeVersions);
     if (notices.error) return res.status(400).json({ code: notices.code, error: notices.error });
     // From here each line covers one club year; a 'both' line becomes this year's line and a next-year line.
@@ -2663,6 +2698,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       discountCode: discountDocument?.id || '', stripeSessionId: freeSessionId,
       people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptTokenHash: hashAccessToken(receiptToken), stockProductIds: reservedStockIds, policyVersions,
       noticeAgreement: notices.versions.length ? { versions: notices.versions, agreedAt: Timestamp.now() } : null, subscriptionPlan,
+      photoConsentAsked: people.length > 0,
       retryOf: retried && retried.order.status === 'payment_failed' ? retried.reference.id : '', restartOf });
     orderCreated = true;
     if (free) {
@@ -2826,6 +2862,17 @@ const retryRefusal = (orderRef, order) => {
   return null;
 };
 const orderSummary = (orderRef, order) => ({ orderRef, itemNames: [...new Set((order.items || []).map((item) => item.name))], totalPence: order.totalPence || 0 });
+/** A failed order's people for its retry basket, with the consent answers checkout may tick again in `prefill`. */
+const retryPeople = async (order, people) => {
+  if (!people.length) return people;
+  const stored = new Map((order.people || []).map((person) => [person.id, person]));
+  const memberIds = [...new Set(people.map((person) => stored.get(person.id)?.membershipId).filter(Boolean))];
+  const [policies, noticeVersions, documents] = await Promise.all([currentCheckoutPolicies(adminDb, isLive()), loadNotices(adminDb).then(noticeVersionMap),
+    memberIds.length ? adminDb.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id))) : []]);
+  const members = new Map(documents.filter((document) => document.exists).map((document) => [document.id, document.data()]));
+  return people.map((person) => ({ ...person, disclaimerAccepted: false, photoConsent: false,
+    prefill: retryConsentPrefill({ person, order, member: members.get(stored.get(person.id)?.membershipId), policies, noticeVersions }) }));
+};
 
 /** The basket a retry link fills: the failed order's items and details, checked out again as a new order. */
 app.get('/api/orders/:key/retry', rateLimit(20, 60 * 1000), async (req, res) => {
@@ -2839,7 +2886,7 @@ app.get('/api/orders/:key/retry', rateLimit(20, 60 * 1000), async (req, res) => 
     const basket = retryBasket(order, clubYearOf(requestNow(req)));
     if (!basket.items.length) return res.status(410).json({ code: 'link_expired', error: 'What this order was for is no longer on sale.', ...orderSummary(reference.id, order) });
     res.json({ ...orderSummary(reference.id, order), email: order.email, billingMode: order.billingMode === 'monthly' ? 'monthly' : 'annual',
-      discountCode: order.discountCode || '', ...basket });
+      discountCode: order.discountCode || '', ...basket, people: await retryPeople(order, basket.people) });
   } catch (error) {
     console.error('Could not load a retry link:', error.message);
     res.status(500).json({ error: 'Could not load this order.' });
@@ -2910,7 +2957,9 @@ app.get('/api/subscriptions/:key/restart', rateLimit(20, 60 * 1000), async (req,
     let index = 0;
     const now = requestNow(req);
     const stopped = { ...record, items: (record.items || []).filter((item) => item.cancelledBy === 'stripe') };
-    const basket = restartBasket(stopped, members, clubYearOf(now), () => `restart-${++index}`, now);
+    const [policies, noticeVersions] = await Promise.all([currentCheckoutPolicies(adminDb, isLive()), loadNotices(adminDb).then(noticeVersionMap)]);
+    const basket = restartBasket(stopped, members, clubYearOf(now), () => `restart-${++index}`, now,
+      (member) => ({ prefill: consentPrefill(member, policies, noticeVersions) }));
     if (!basket?.items.length) return res.status(410).json({ code: 'link_expired', error: 'The club year these payments were for has ended. Add what you need to your basket instead.', ...summary });
     res.json({ ...summary, email: record.email, billingMode: 'monthly', items: basket.items, people: basket.people });
   } catch (error) {

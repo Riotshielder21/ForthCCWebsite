@@ -7,6 +7,7 @@ import { initializeAuth, validateDiscountCode } from './utils/firebase';
 import { calculateCart, debitRange, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName } from './utils/checkout';
+import { applyConsentPrefill, checkoutWording, draftForCurrentWording } from './utils/consents';
 import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
 import { itemLabel, productLimits } from './utils/inventory';
 import SiteNavigation from './components/SiteNavigation';
@@ -65,7 +66,7 @@ const BASKET_LINKS = [
 ];
 
 export default function App() {
-  const [initialDraft] = useState(loadDraft);
+  const [initialDraft] = useState(() => draftForCurrentWording(loadDraft()));
   const { currentPage, setCurrentPage, onLinkClick, navigateTo } = useSiteRoute();
   const [products, setProducts] = useState(() => readPublicSnapshot('products') || PRODUCTS);
   const [availability, setAvailability] = useState({});
@@ -193,8 +194,8 @@ export default function App() {
           return product ? { ...withClubYear(normaliseProduct(product), item.clubYearChoice), lineId: item.lineId, ...(item.size ? { size: item.size } : {}) } : null;
         }).filter(Boolean);
         setCart(lines);
-        setPeople(result.people.map((person) => ({ ...blankPerson(person.id), ...person, ...(person.returning ? { verifiedDob: person.dob,
-          verifiedEmail: result.email.trim().toLowerCase(), verifiedName: normaliseName(`${person.firstName} ${person.lastName}`) } : {}) })));
+        setPeople(result.people.map((person) => applyConsentPrefill({ ...blankPerson(person.id), ...person, ...(person.returning ? { verifiedDob: person.dob,
+          verifiedEmail: result.email.trim().toLowerCase(), verifiedName: normaliseName(`${person.firstName} ${person.lastName}`) } : {}) }, person.prefill)));
         setCheckoutEmail(result.email);
         setIsAnnual(result.billingMode !== 'monthly');
         setResumeLink(link.resumes ? { [link.resumes]: value } : null);
@@ -228,7 +229,7 @@ export default function App() {
       return;
     }
     if (!cart.length && !people.length && !checkoutEmail) clearDraft();
-    else saveDraft({ email: checkoutEmail, people, cart: cart.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), isAnnual, resumeLink });
+    else saveDraft({ email: checkoutEmail, people, cart: cart.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), isAnnual, resumeLink, wording: checkoutWording() });
   }, [currentPage, cart, people, checkoutEmail, isAnnual, resumeLink]);
 
   const handleStartCheckout = () => {
@@ -281,7 +282,8 @@ export default function App() {
           discountCode: activePromo?.code || '',
           billingMode: annualBilling ? 'annual' : 'monthly',
           ...(resumeLink || {}),
-          noticeVersions
+          noticeVersions,
+          wording: checkoutWording()
         })
       });
       const order = await response.json();

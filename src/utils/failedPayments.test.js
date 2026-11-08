@@ -66,6 +66,9 @@ test('a restart basket has the stopped items for the same returning members', ()
   assert.deepEqual(basket.people.map((person) => [person.firstName, person.returning, person.junior, person.lineIds.length]), [['Ann', true, false, 2], ['Ben', true, true, 1]]);
   assert.equal(restartBasket(record, members, 2026, () => 'x', now), null, 'a finished club year cannot be restarted');
   assert.equal(restartBasket({ ...record, clubYear: 2026 }, members, 2025, () => 'x', now).clubYearChoice, 'next');
+  const described = restartBasket(record, members, 2025, () => 'x', now, (member) => ({ prefill: { photoConsent: member.id === 'A' } }));
+  assert.deepEqual(described.people.map((person) => [person.firstName, person.prefill.photoConsent]), [['Ann', true], ['Ben', false]], 'each person gets their own extras');
+  assert.ok(basket.people.every((person) => !('prefill' in person)), 'nothing extra by default');
 });
 
 test('failed-debit emails say when Stripe retries, or that payments stopped with restart and cancel links', () => {

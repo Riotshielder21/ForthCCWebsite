@@ -6,6 +6,10 @@ import { needsRenewal, renewalBasket, renewalChoice, renewalEmail, renewalRound,
 import { rateLimit } from './rateLimit.js';
 import { needsVolunteerRenewal } from '../utils/volunteering.js';
 import { loadEntitlements } from './membershipTerms.js';
+import { currentCheckoutPolicies } from './policies.js';
+import { loadNotices } from './notices.js';
+import { noticeVersionMap } from '../utils/notices.js';
+import { consentPrefill } from '../utils/consents.js';
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 const normaliseEmail = (value) => String(value || '').trim().toLowerCase();
@@ -19,7 +23,7 @@ const DAY = 24 * 60 * 60 * 1000;
  */
 const SENT = 'renewalInviteSentFor';
 const REMINDED = 'renewalReminderSentFor';
-export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow, volunteerRenewalContent, sendVolunteerRenewals }) => {
+export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow, volunteerRenewalContent, sendVolunteerRenewals, live = () => false }) => {
   const memberships = () => db().collection('memberships');
 
   /** Members needing renewal grouped by contact email; `onlyUnsent` leaves out anyone whose `field` already has this year. */
@@ -183,9 +187,13 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       const entitlements = await loadEntitlements(db(), members.map((member) => member.id));
       const basket = renewalBasket(members.map((member) => ({ ...member, entitlements: entitlements.get(member.id) || [] })), await loadCatalogue(),
         invite.renewalYear - 1, () => `renew-${++index}`);
+      // The link went to the household's contact email, so checkout can tick what each person agreed to the current wording.
+      const [policies, noticeVersions] = await Promise.all([currentCheckoutPolicies(db(), live()), loadNotices(db()).then(noticeVersionMap)]);
+      const byId = new Map(members.map((member) => [member.id, member]));
       res.json({ email: invite.email, renewalYear: invite.renewalYear, clubYearChoice: choice, billingMode: basket.billingMode,
         items: basket.items.map((item) => ({ ...item, clubYearChoice: choice })),
-        people: basket.people.map(({ membershipId: _membershipId, ...person }) => ({ ...person, junior: (ageOn(person.dob, now) ?? 18) < 18 })) });
+        people: basket.people.map(({ membershipId, ...person }) => ({ ...person, junior: (ageOn(person.dob, now) ?? 18) < 18,
+          prefill: consentPrefill(byId.get(membershipId), policies, noticeVersions) })) });
     } catch (error) {
       console.error('Could not load a renewal link:', error.message);
       res.status(500).json({ error: 'Could not load this renewal link.' });

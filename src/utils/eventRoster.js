@@ -62,6 +62,9 @@ export const cleanEventDetails = (product) => {
 
 export const KIT = { boatHire: 'Has annual boat hire', ownKit: 'Bringing own kit', needsHire: 'Needs boat hire (not paid)' };
 
+/** How an attendee list marks someone who has not given photo and video consent. */
+export const NO_PHOTOS = 'No consent: do not photograph or film';
+
 export const kitStatus = ({ ownKit = false, heldIds = [] }) => {
   if (heldIds.includes(BOAT_HIRE_ID)) return KIT.boatHire;
   return ownKit ? KIT.ownKit : KIT.needsHire;
@@ -88,6 +91,8 @@ export const buildRoster = (productId, orders, members = new Map(), now = new Da
       return {
         name: report.name, kind: report.kind, dob: report.dob, phone: report.phone, email: report.email,
         emergencyContact: report.emergencyContact, medical: report.medical, swimming: report.swimming,
+        // The answer on the membership record when there is one, so a later withdrawal in My details shows here.
+        photoConsent: report.photoConsent === true,
         kit: kitStatus({ ownKit: ticket.ownKit === true, heldIds }),
         membership,
         ...(!membership.startsWith('Active') && visits.has(person.membershipId) ? { nonMemberVisits: visitSummary(visits.get(person.membershipId)).label } : {}),
@@ -101,6 +106,7 @@ export const buildRoster = (productId, orders, members = new Map(), now = new Da
 export const rosterEmail = (product, roster) => {
   const schedule = product.eventSchedule ? eventScheduleLabel(product.eventSchedule) : '';
   const needsHire = roster.filter((row) => row.kit === KIT.needsHire).length;
+  const noPhotos = roster.filter((row) => row.photoConsent !== true).length;
   const attendees = roster.map((row, index) => [
     `${index + 1}. ${row.name}${row.kind ? ` (${row.kind}${row.dob ? `, born ${row.dob}` : ''})` : ''}`,
     `   Phone: ${row.phone || 'not given'}   Email: ${row.email || 'not given'}`,
@@ -108,6 +114,7 @@ export const rosterEmail = (product, roster) => {
     `   Medical: ${row.medical || 'none given'}`,
     `   Swimming: ${row.swimming || 'not given'}`,
     `   Kit: ${row.kit}`,
+    ...(row.photoConsent === true ? [] : [`   Photos: ${NO_PHOTOS}`]),
     ...(row.membership ? [`   Membership: ${row.membership}`] : []),
     ...(row.nonMemberVisits ? [`   Non-member visits: ${row.nonMemberVisits}`] : []),
     ...(typeof row.firstClubNight === 'boolean' ? [`   First club night: ${row.firstClubNight ? 'Yes' : 'No'}`] : []),
@@ -120,7 +127,8 @@ export const rosterEmail = (product, roster) => {
       `Here is the attendee list for ${product.name}.`,
       ...(schedule ? [`When: ${schedule}`] : []),
       ...(product.closeDate ? [`Bookings closed: ${formatDate(product.closeDate)}`] : []),
-      `Attendees: ${roster.length}${needsHire ? `. ${needsHire} need${needsHire === 1 ? 's' : ''} boat hire and ${needsHire === 1 ? 'has' : 'have'} not paid for it.` : ''}`, '',
+      `Attendees: ${roster.length}${needsHire ? `. ${needsHire} need${needsHire === 1 ? 's' : ''} boat hire and ${needsHire === 1 ? 'has' : 'have'} not paid for it.` : ''}`,
+      ...(noPhotos ? [`Photo and video consent: ${noPhotos} ${noPhotos === 1 ? 'person has' : 'people have'} not given it (marked below), so do not photograph or film them.`] : []), '',
       ...(roster.length ? attendees.flatMap((block) => [block, '']) : ['Nobody has booked.', '']),
       'This email contains personal and medical details. Keep it private and delete it after the event.',
       'Questions: secretary@forthcanoeclub.co.uk'

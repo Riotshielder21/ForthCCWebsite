@@ -12,6 +12,7 @@ import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { importStripeSubscribers } from '../src/utils/stripeReports.js';
 import { resolveCatalogue } from '../src/utils/catalogue.js';
 import { PRODUCTS } from '../src/constants/products.js';
+import { checkoutWording } from '../src/utils/consents.js';
 
 const projectId = assertLocalFirebase(process.env);
 initializeAdminApp({ projectId });
@@ -124,7 +125,7 @@ try {
   await db.collection('memberships').doc('TEST-EVENT-MEMBER').set({ firstName: 'Eve', lastName: 'Event', email: 'event@example.com', dob: '1990-01-01', status: 'active', validUntil: Timestamp.fromDate(new Date(Date.now() + 90 * 86400000)) });
   const eventCheckout = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'TEST-EVENT', lineId: 'L1' }], billingMode: 'monthly',
-      people: [{ id: 'P1', lineIds: ['L1'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }] }) });
+      people: [{ id: 'P1', lineIds: ['L1'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }], wording: checkoutWording() }) });
   assert.equal(eventCheckout.status, 200, `Event checkout failed: ${JSON.stringify(eventCheckout.result)}\nAPI output:\n${output}`);
   const eventOrder = (await db.collection('orders').doc(eventCheckout.result.orderRef).get()).data();
   assert.deepEqual(eventOrder.items[0].eventSchedule, eventSchedule);
@@ -216,7 +217,7 @@ try {
     body: JSON.stringify({ email: 'receipt@example.com', total: '0', items: [] }) }, { expectJson: false })).status, 404, 'unpaid orders cannot be created through the retired endpoint');
   const purchase = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'keyhire', lineId: 'receipt-key' }], billingMode: 'annual',
-      people: [{ id: 'receipt-person', lineIds: ['receipt-key'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }] }) });
+      people: [{ id: 'receipt-person', lineIds: ['receipt-key'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }], wording: checkoutWording() }) });
   assert.equal(purchase.status, 200, `Receipt checkout failed: ${JSON.stringify(purchase.result)}\nAPI output:\n${output}`);
   const purchaseOrder = (await db.collection('orders').doc(purchase.result.orderRef).get()).data();
   const successUrl = new URL(purchase.result.checkoutUrl).searchParams.get('success_url');

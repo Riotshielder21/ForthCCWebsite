@@ -81,9 +81,9 @@ export const retryBasket = (order, currentYear) => {
 
 /**
  * The basket that restarts a cancelled subscription: its items again, monthly, for the people who had them. Returns
- * null when its club year is no longer on sale.
+ * null when its club year is no longer on sale. `describe(member)` adds fields to each person.
  */
-export const restartBasket = (record, members, currentYear, makeId, now = new Date()) => {
+export const restartBasket = (record, members, currentYear, makeId, now = new Date(), describe = () => ({})) => {
   const clubYearChoice = choiceFor(new Set([record.clubYear]), currentYear);
   if (!clubYearChoice) return null;
   const byId = new Map(members.map((member) => [member.id, member]));
@@ -98,7 +98,7 @@ export const restartBasket = (record, members, currentYear, makeId, now = new Da
       if (!people.has(id)) {
         const member = byId.get(id);
         people.set(id, { id: makeId(), returning: true, firstName: member.firstName || '', lastName: member.lastName || '', dob: member.dob || '',
-          junior: (ageOn(member.dob, now) ?? 18) < 18, lineIds: [] });
+          junior: (ageOn(member.dob, now) ?? 18) < 18, ...describe(member), lineIds: [] });
       }
       people.get(id).lineIds.push(lineId);
     }

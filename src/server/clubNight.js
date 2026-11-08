@@ -2,6 +2,9 @@ import crypto from 'node:crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { rateLimit } from './rateLimit.js';
 import { currentCheckoutPolicies } from './policies.js';
+import { loadNotices } from './notices.js';
+import { noticeVersionMap } from '../utils/notices.js';
+import { noticeVersionEntries, photoConsentRecord, wordingMatches } from '../utils/consents.js';
 import { clubYearOf, holdsForClubYear } from '../utils/clubYear.js';
 import { loadEntitlements } from './membershipTerms.js';
 import { membershipStatus } from '../utils/adminReports.js';
@@ -98,12 +101,14 @@ export const registerClubNightRoutes = (app, { requireAdmin, db, emailCodes, req
     const { id: _id, lineIds: _lines, ownKitLineIds: _kit, returning: _returning, photoConsent, disclaimerAccepted: _accepted, ...details } = person;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
     const by = person.junior ? 'guardian' : 'self';
+    const photoVideo = photoConsentRecord({ policy: policies.photoVideo, accepted: photoConsent === true, at, by, source: 'club-night',
+      notices: noticeVersionEntries(noticeVersionMap(await loadNotices(db()))) });
     const batch = db().batch();
     batch.set(db().collection('households').doc(householdId), household);
     batch.set(db().collection('memberships').doc(memberId), {
       ...details, householdId, contactOnly: true, source: 'club-night', createdAt: at, updatedAt: at,
       searchName: normaliseName(`${person.firstName} ${person.lastName}`), schemaVersion: CURRENT_MEMBERSHIP_VERSION,
-      consents: { disclaimer: { ...policies.disclaimer, acceptedAt: at, by }, photoVideo: { ...policies.photoVideo, accepted: photoConsent === true, recordedAt: at, by } }
+      consents: { disclaimer: { ...policies.disclaimer, acceptedAt: at, by }, photoVideo, photoVideoHistory: [photoVideo] }
     });
     await batch.commit();
     return (await db().collection('memberships').doc(memberId).get());
@@ -168,6 +173,9 @@ export const registerClubNightRoutes = (app, { requireAdmin, db, emailCodes, req
         }
         const guest = validateGuestDetails(identity, req.body.details, now);
         if (guest.error) return res.status(400).json({ error: guest.error });
+        if (!wordingMatches(req.body.wording)) {
+          return res.status(409).json({ code: 'wording_changed', error: 'The disclaimer or photo consent wording has changed since this page loaded. Reload the page, then read and tick them again.' });
+        }
         matches = [await createGuest(guest.value, now)];
       }
       const memberDocument = matches.length === 1 ? matches[0] : null;

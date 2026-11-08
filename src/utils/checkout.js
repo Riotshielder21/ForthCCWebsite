@@ -105,8 +105,10 @@ export const returningVerificationMatches = (person, email) => !person.returning
   && person.verifiedName === normaliseName(`${person.firstName} ${person.lastName}`)
 );
 
+// Boxes ticked from the matched record go with the match, so they never carry over to someone else.
 export const invalidatePersonVerification = (person) => ({
-  ...person, verifiedDob: '', verifiedEmail: '', verifiedName: '', volunteerPreview: null
+  ...person, verifiedDob: '', verifiedEmail: '', verifiedName: '', volunteerPreview: null,
+  ...(person.prefill ? { prefill: null, disclaimerAccepted: false, photoConsent: false } : {})
 });
 
 // Item assignments have their own step; person steps validate details and the applicable family/tier rules.
