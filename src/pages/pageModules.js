@@ -7,6 +7,7 @@ export const pageModules = {
   about: () => import('./AboutPage'),
   'contact-us': () => import('./ContactUsPage'),
   safeguarding: () => import('./SafeguardingPage'),
+  notices: () => import('./NoticesPage'),
   'access-project': () => import('./AccessProjectPage'),
   admin: () => import('./AdminPage'),
   'admin-reports': () => import('./AdminReportsPage'),

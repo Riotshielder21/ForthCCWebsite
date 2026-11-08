@@ -75,8 +75,12 @@ const build = (productIds, fillers) => {
   const people = assignLines([], lines, makeId).map((person, index) => ({ ...person, ...(fillers[index] || {}) }));
   return { lines, people };
 };
-const checkout = (emailAddress, { lines, people }, extra = {}, headers = {}) => call('POST', '/api/checkout-session', { body: {
-  email: emailAddress, items: lines.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), people, billingMode: 'annual', ...extra }, headers });
+// Agrees to whichever notices are published, as the checkout page does, unless a test sends its own noticeVersions.
+const currentNoticeVersions = async () => Object.fromEntries((await db.collection('notices').get()).docs
+  .filter((document) => !document.data().archived && document.data().currentVersion > 0).map((document) => [document.id, document.data().currentVersion]));
+const checkout = async (emailAddress, { lines, people }, extra = {}, headers = {}) => call('POST', '/api/checkout-session', { body: {
+  email: emailAddress, items: lines.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), people, billingMode: 'annual',
+  noticeVersions: await currentNoticeVersions(), ...extra }, headers });
 const sendWebhook = async (event) => {
   const payload = JSON.stringify(event);
   const timestamp = Math.floor(Date.now() / 1000);
@@ -1989,6 +1993,37 @@ await test('renewal emails: one per contact address, a basket link, sent on 1 Fe
 });
 
 await db.collection('products').doc(lessonId).delete();
+
+await test('checkout needs agreement to the current version of every published notice', async () => {
+  const noticeId = `test-notice-${run}`;
+  const publish = (body) => call('PUT', `/api/admin/notices/${noticeId}`, { body: { title: 'Test notice', body }, headers: admin });
+  const first = await publish('Version one wording.');
+  assert.equal(first.status, 200, first.text);
+  assert.equal(first.json.version, 1);
+  try {
+    const address = email('notices');
+    const basket = () => build(['membership-adult'], [adultDetails({ email: address, firstName: 'Nora', lastName: 'Notices' })]);
+    const others = Object.fromEntries(Object.entries(await currentNoticeVersions()).filter(([id]) => id !== noticeId));
+    const missing = await checkout(address, basket(), { noticeVersions: others });
+    assert.equal(missing.status, 400);
+    assert.equal(missing.json.code, Object.keys(others).length ? 'notices_changed' : 'notices_required');
+    assert.equal((await publish('Version two wording.')).json.version, 2);
+    const stale = await checkout(address, basket(), { noticeVersions: { ...others, [noticeId]: 1 } });
+    assert.equal(stale.status, 400);
+    assert.equal(stale.json.code, 'notices_changed');
+    const orderRef = await buy(address, basket(), { noticeVersions: { ...others, [noticeId]: 2 } });
+    const order = (await db.collection('orders').doc(orderRef).get()).data();
+    assert.ok(order.noticeAgreement.versions.some((entry) => entry.noticeId === noticeId && entry.version === 2), 'the order records the agreed version');
+    const [member] = await membershipsFor(address);
+    assert.equal(member.consents.notices.orderRef, orderRef);
+    assert.ok(member.consents.notices.versions.some((entry) => entry.noticeId === noticeId && entry.version === 2), 'the member record keeps the agreed version');
+    const pdf = await call('GET', `/api/notices/${noticeId}/pdf?version=1`);
+    assert.equal(pdf.status, 200);
+    assert.ok(pdf.text.startsWith('%PDF-'), 'superseded versions stay downloadable');
+  } finally {
+    await call('DELETE', `/api/admin/notices/${noticeId}`, { headers: admin });
+  }
+});
 
 await test('every paid order produced a receipt email record', async () => {
   const orders = (await db.collection('orders').where('status', '==', 'paid').get()).docs.filter((document) => document.id !== 'TEST-MEMBERSHIP');

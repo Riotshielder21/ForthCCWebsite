@@ -16,6 +16,12 @@ service cloud.firestore {
         && !(productId in ['boat-hire', 'blue-sub', 'gold-sub'] && (request.resource == null || request.resource.data.get('active', true) == false));
     }
 
+    // Published notices are public; they are written, versioned and archived only through the API.
+    match /notices/{noticeId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

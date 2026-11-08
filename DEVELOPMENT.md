@@ -217,6 +217,17 @@ Admins can choose PNG, JPG or WebP photos up to 25 MB for page banners, image ti
 
 Banners need originals at least 2560 px wide to look sharp on large desktop monitors; the editor warns when an upload is narrower. Typing a photo URL instead of uploading shows that single image, as before. Older uploads without sizes keep working, and failed uploads may leave unused files in Storage. See [docs/hosting-cost-plan.md](docs/hosting-cost-plan.md) for traffic and cost estimates.
 
+### Notices
+
+The [Notices page](src/pages/NoticesPage.jsx) (`/notices`) shows the club's notices (privacy notice, data retention, terms…) as a row of tabs along the top, one notice per tab, with the selected tab joined to its document below. Signed-in admins tick **Edit notices** on the page to write, add, reorder or archive them; there is no GitHub review step, and changes go live when published.
+
+- **Versions.** Publishing changed wording (title or text) makes the next numbered version through the API ([notices.js](src/server/notices.js)). Each version is kept for good in `noticeVersions/{id}@{n}` with who published it and when; archiving and restoring are logged in `noticeHistory`. Both collections are server-only. The public `notices` collection holds only the current wording, and stays readable while admin identities stay out of it.
+- **PDF.** `GET /api/notices/{id}/pdf?version=n` builds a PDF of any published version (the current one without `version`). Archived notices' old versions stay downloadable for the record.
+- **Checkout.** The review step asks people to tick "I agree to the club's Notices" when any are published. The server refuses payment unless `noticeVersions` names the current version of every published notice, so a notice changed mid-checkout must be agreed again. The order keeps `noticeAgreement` and each member's `consents.notices` keeps the latest agreement.
+- **Formatting.** `## ` and `### ` start headings, `- ` and `1. ` start list items, blank lines separate paragraphs, and links use `[text](https://…)`, as in [notices.js](src/utils/notices.js).
+
+Use the IDs `privacy-notice` and `data-retention` (the titles "Privacy notice" and "Data retention" give these) so live-mode readiness checks find them. Agreeing to the notices records that people were told; it is not consent, so photo/video consent stays a separate tick.
+
 ### Live mode and sensitive operations
 
 `WEBSITE_ISLIVE` defaults to false. Live mode versions consent wording and retains records/audit history. Before enabling it, publish the required policies, settle retention/analytics consent and outstanding security issues, and review Stripe live-mode support: checkout currently accepts test keys only.
