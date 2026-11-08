@@ -355,7 +355,6 @@ export default function ClubNightPage() {
           </Field>
           <Field label="Medical or other information we should know (optional)"><textarea className="FormInput" maxLength="1000" value={details.medical} onChange={setDetail('medical')} /></Field>
           <label className="CheckoutCheck"><input type="checkbox" checked={details.photoConsent} onChange={setDetail('photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
-          <p className="text_container_note">Optional{junior ? '; a parent or guardian answers for under-18s' : ''}. Saying no never stops anyone taking part, and it can be changed at any time in <a href="/my-details">My details</a>.</p>
           <label className="CheckoutCheck"><input type="checkbox" required checked={details.disclaimerAccepted} onChange={setDetail('disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
         </fieldset>}
         {error && <p className="StatusTextError" role="alert">{error}</p>}

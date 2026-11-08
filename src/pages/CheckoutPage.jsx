@@ -238,18 +238,14 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const memberField = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.value }));
   const memberCheck = (id, key) => (event) => update(id, (candidate) => ({ ...candidate, [key]: event.target.checked }));
   const shownErrors = [...errors, ...(serverErrors || []).filter((message) => !errors.includes(message))];
-  // Optional photo consent and the required disclaimer, with why a box is or is not already ticked.
+  // Optional photo consent and the required disclaimer; a disclaimer whose wording changed must be ticked again.
   const consentChecks = (candidate, onCheck) => {
     const { prefill } = candidate;
     return (
       <>
         <label className="CheckoutCheck"><input type="checkbox" checked={candidate.photoConsent} onChange={onCheck('photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
-        <p className="CartItemMeta">Optional{resolvedKind(candidate, people, lines) === 'junior' ? '; a parent or guardian answers for under-18s' : ''}. Saying no never stops anyone booking or taking part, and it can be changed at any time in <a href="/my-details" target="_blank" rel="noopener">My details</a>.
-          {prefill?.photoConsent && candidate.photoConsent ? ' Ticked because this was agreed before.'
-            : prefill?.photoChanged && !candidate.photoConsent ? ' Not ticked because the wording has changed since it was last agreed.' : ''}</p>
         <label className="CheckoutCheck"><input type="checkbox" checked={candidate.disclaimerAccepted} onChange={onCheck('disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
-        {prefill?.disclaimer && candidate.disclaimerAccepted ? <p className="CartItemMeta">Ticked because this was agreed before. It is required, so it must stay ticked.</p>
-          : prefill?.disclaimerChanged && !candidate.disclaimerAccepted ? <p className="CartItemMeta">The wording has changed since this was last agreed, so please read it and tick it again.</p> : null}
+        {prefill?.disclaimerChanged && !candidate.disclaimerAccepted && <p className="CartItemMeta">The wording has changed, so please read it and tick it again.</p>}
       </>
     );
   };

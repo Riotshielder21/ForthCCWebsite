@@ -28,7 +28,7 @@ function PhotoConsentChoices({ household, onSaved }) {
   };
   return <fieldset className="CheckoutFieldset SpaceT4">
     <legend>{PHOTO_CONSENT_TEXT}</legend>
-    <p className="text_container">Optional. Saying no never stops anyone booking or taking part, and a change applies from now on, including at your next booking. A parent or guardian answers for under-18s. The <a href="/notices">club notices</a> explain how photos and videos are used.</p>
+    <p className="text_container">Optional. See the <a href="/notices">club notices</a> for how photos and videos are used.</p>
     {household.people.map((person) => <label key={person.memberId} className="CheckoutCheck">
       <input type="checkbox" checked={person.photoConsent === true} disabled={busy} onChange={change(person)} />
       {' '}{person.firstName} {person.lastName}{person.junior ? ' (under 18)' : ''}{person.photoConsent === null ? ' (not answered yet)' : ''}

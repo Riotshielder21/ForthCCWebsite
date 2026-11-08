@@ -1746,11 +1746,29 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
     if (!collection || !req.params.id || req.params.id.includes('/') || req.params.id.length > 1500) {
       return res.status(400).json({ error: 'Invalid report record.' });
     }
-    if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Type the exact record ID to confirm deletion.' });
+    if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Tick the box to confirm deleting this record.' });
     const reason = requiredReason(req.body);
     if (!reason) return res.status(400).json({ error: REASON_REQUIRED });
     const activeMonthly = await activeMonthlyPaymentsFor(req.params.kind, req.params.id);
-    if (activeMonthly.length) {
+    let stoppedMonthly = [];
+    if (activeMonthly.length && req.params.kind === 'members') {
+      if (req.body.acknowledgeStripe !== true) {
+        return res.status(409).json({ requiresStripeAcknowledgement: true,
+          error: 'Check Stripe for any other subscription before deleting this record. Deleting website data does not stop payments.' });
+      }
+      // Stops this member's monthly items now, without a refund; others on the same subscription keep paying.
+      try {
+        for (const entry of activeMonthly) {
+          const reference = adminDb.collection('subscriptions').doc(entry.id);
+          const record = (await reference.get()).data();
+          const ending = record ? activeSubscriptionItems(record).filter((item) => (item.membershipIds || record.membershipIds || []).includes(req.params.id)) : [];
+          if (ending.length) await stopSubscriptionItems(reference, record, ending, admin, 'cancel-member', `Member record deleted: ${reason}`);
+        }
+      } catch (error) {
+        return res.status(502).json({ error: `Stripe did not stop the monthly payments, so the record was not deleted: ${error.message}` });
+      }
+      stoppedMonthly = activeMonthly;
+    } else if (activeMonthly.length) {
       return res.status(409).json({ code: 'active_monthly_payments', activeMonthly,
         error: 'This record still has monthly payments being collected. Cancel them first; deleting the record would not stop them.' });
     }
@@ -1779,7 +1797,7 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
         ...deletionAuditEntry({ kind: req.params.kind, id: req.params.id, fields, orderPeople, secret: auditSecret, stripeAcknowledged: req.body.acknowledgeStripe === true }) }));
       return { status: 200, success: true };
     });
-    res.status(result.status).json(result);
+    res.status(result.status).json({ ...result, ...(result.success ? { stoppedMonthly } : {}) });
   } catch (error) {
     console.error('Admin deletion failed:', error.message);
     res.status(500).json({ error: 'Could not delete record.' });
