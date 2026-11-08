@@ -1949,7 +1949,7 @@ await test('failed monthly debits email the member each time; when Stripe gives 
   assert.ok(final.body.includes(`/payment-issue?subscription=${key}`));
   const [copy] = await mails('treasurer-copy');
   assert.equal(copy.email, 'treasurer@forthcanoeclub.co.uk');
-  assert.match(copy.body, new RegExp(payer.replace(/[.]/g, '\\.')));
+  assert.ok(copy.body.includes(payer));
   assert.equal((await invoiceAttention()).length, 1, 'staff see that Stripe has stopped retrying');
 
   const tooSoon = await call('GET', `/api/subscriptions/${key}/restart`, { headers: autumn });
