@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { CLUB_REPLY_TO, emailReplyTo, TREASURER_REPLY_TO } from './emailReplyTo.js';
 
 test('customer receipt and payment-failure messages reply to the treasurer', () => {
-  for (const kind of ['order-receipt', 'payment-failed']) {
+  for (const kind of ['order-receipt', 'payment-failed', 'invoice-failed', 'subscription-stopped']) {
     assert.equal(emailReplyTo({ kind }, 'volunteer@example.test'), TREASURER_REPLY_TO, kind);
   }
 });

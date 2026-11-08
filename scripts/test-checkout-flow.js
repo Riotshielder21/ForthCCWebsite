@@ -1915,6 +1915,141 @@ await test('a subscription ending at the club-year boundary voids an unpaid Febr
   assert.equal(early.needsStaff, true, 'an unexpected ending is flagged');
 });
 
+await test('failed monthly debits email the member each time; when Stripe gives up, benefits end at the paid-up date and can be restarted', async () => {
+  const payer = email('debit-fail');
+  const details = adultDetails({ firstName: 'Dee', lastName: 'Debit', email: payer });
+  const order = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'this'), { billingMode: 'monthly' }, autumn));
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const paidUpSeconds = seconds(order.subscriptionPlan.groups[0].firstDebitAt.toDate());
+  const mails = async (kind) => (await db.collection('testMail').where('subscriptionId', '==', subscriptionId).get()).docs
+    .map((document) => document.data()).filter((mail) => mail.kind === kind);
+  const failed = (attempt, nextAttempt) => sendWebhook({ type: 'invoice.payment_failed', data: { object: {
+    id: `in_${subscriptionId}`, subscription: subscriptionId, amount_due: 2400, attempt_count: attempt, next_payment_attempt: nextAttempt, customer_email: payer,
+    lines: { data: [{ period: { start: paidUpSeconds, end: paidUpSeconds + 31 * 24 * 60 * 60 } }] } } } });
+  const invoiceAttention = async () => (await openAttention()).filter((entry) => entry.kind === 'invoice-failed' && entry.subscriptionId === subscriptionId);
+
+  assert.equal((await failed(1, paidUpSeconds + 3 * 24 * 60 * 60)).status, 200);
+  assert.equal((await failed(1, paidUpSeconds + 3 * 24 * 60 * 60)).status, 200, 'Stripe resends the event');
+  const [retrying, ...repeats] = await mails('invoice-failed');
+  assert.equal(repeats.length, 0, 'each attempt is emailed once');
+  assert.equal(retrying.email, payer);
+  assert.match(retrying.body, /£24\.00/);
+  assert.match(retrying.body, /try again on/);
+  assert.doesNotMatch(retrying.body, /restart=/);
+  assert.equal((await mails('treasurer-copy')).length, 0, 'the treasurer is copied only once Stripe gives up');
+  assert.equal((await invoiceAttention()).length, 0, 'staff are not asked to act while Stripe retries');
+
+  assert.equal((await failed(4, null)).status, 200);
+  const final = (await mails('invoice-failed')).find((mail) => mail.final);
+  assert.match(final.body, /stopped/);
+  const key = /restart=(\S+)/.exec(final.body)[1];
+  assert.match(final.body, new RegExp(`/payment-issue\\?subscription=${key.replace('.', '\\.')}`));
+  const [copy] = await mails('treasurer-copy');
+  assert.equal(copy.email, 'treasurer@forthcanoeclub.co.uk');
+  assert.match(copy.body, new RegExp(payer.replace(/[.]/g, '\\.')));
+  assert.equal((await invoiceAttention()).length, 1, 'staff see that Stripe has stopped retrying');
+
+  const tooSoon = await call('GET', `/api/subscriptions/${key}/restart`, { headers: autumn });
+  assert.equal(tooSoon.status, 409, 'until Stripe cancels, the payments are still running');
+  assert.equal(tooSoon.json.code, 'payments_running');
+
+  const ended = await sendWebhook({ type: 'customer.subscription.deleted', data: { object: {
+    id: subscriptionId, status: 'canceled', ended_at: seconds(new Date()), cancellation_details: { reason: 'payment_failed' },
+    metadata: { club_year: String(autumnYear), cutoff_at: String(seconds(thisYear.end)) } } } });
+  assert.equal(ended.status, 200, ended.text);
+  const record = (await db.collection('subscriptions').doc(subscriptionId).get()).data();
+  assert.equal(record.status, 'ended');
+  assert.equal(record.paidUntil.toMillis(), paidUpSeconds * 1000, 'paid up to the start of the unpaid month');
+  assert.ok(record.items.every((item) => item.status !== 'active' && item.cancelledBy === 'stripe'));
+  const [member] = await membershipsFor(payer);
+  assert.equal(member.validUntil.toMillis(), thisYear.end.getTime(), 'the membership itself was paid in full, so it runs on');
+  assert.ok(!member.subscriptionItems.some((item) => item.status === 'active'), 'the monthly benefits end');
+  assert.equal((await mails('subscription-stopped')).length, 0, 'the member already had the final email with the links');
+
+  const december = testNow(londonNoon(autumnYear, 11, 10));
+  const restart = await call('GET', `/api/subscriptions/${key}/restart`, { headers: december });
+  assert.equal(restart.status, 200, restart.text);
+  assert.equal(restart.json.billingMode, 'monthly');
+  assert.equal(restart.json.email, payer);
+  assert.deepEqual(restart.json.items.map((item) => item.id), ['gold-sub'], 'only what Stripe stopped');
+  assert.deepEqual(restart.json.people.map((person) => [person.firstName, person.returning, person.lineIds.length]), [['Dee', true, 1]]);
+
+  const people = restart.json.people.map((person) => ({ ...person, disclaimerAccepted: true }));
+  const resumed = await checkout(payer, { lines: restart.json.items, people }, { billingMode: 'monthly', restartOf: key }, december);
+  assert.equal(resumed.status, 200, resumed.text);
+  assert.equal((await orderData(resumed.json.orderRef)).restartOf, subscriptionId);
+  assert.equal((await pay(resumed.json.orderRef)).status, 200);
+  assert.equal((await db.collection('subscriptions').doc(subscriptionId).get()).data().restartedAs, resumed.json.orderRef);
+  assert.equal((await invoiceAttention()).length, 0, 'restarting settles the failed debit');
+  assert.equal((await call('GET', `/api/subscriptions/${key}/restart`, { headers: december })).json.code, 'payments_restarted');
+  const twice = await checkout(payer, { lines: restart.json.items, people }, { billingMode: 'monthly', restartOf: key }, december);
+  assert.equal(twice.status, 409);
+  assert.equal(twice.json.code, 'already_paid');
+});
+
+await test('when Stripe cancels without a final failure email, the member is told and can confirm the payments are stopping', async () => {
+  const payer = email('debit-fail.quiet');
+  const order = await orderData(await buy(payer, lessonFor('Quinn'), { billingMode: 'monthly' }, autumn));
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const ended = await sendWebhook({ type: 'customer.subscription.deleted', data: { object: {
+    id: subscriptionId, status: 'canceled', ended_at: seconds(new Date()), metadata: { club_year: String(autumnYear), cutoff_at: String(seconds(thisYear.end)) } } } });
+  assert.equal(ended.status, 200, ended.text);
+  const stopped = (await db.collection('testMail').where('subscriptionId', '==', subscriptionId).get()).docs.map((document) => document.data())
+    .filter((mail) => mail.kind === 'subscription-stopped');
+  assert.equal(stopped.length, 1);
+  const key = /subscription=(\S+)/.exec(stopped[0].body)[1];
+  assert.equal((await call('GET', `/api/subscriptions/${subscriptionId}.${'0'.repeat(64)}/restart`)).status, 404, 'a wrong token is refused');
+  const cancelled = await call('POST', `/api/subscriptions/${key}/cancel`);
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal(cancelled.json.decision, 'cancelled');
+  assert.equal((await call('POST', `/api/subscriptions/${key}/cancel`)).status, 200, 'confirming twice is harmless');
+  assert.ok(!(await openAttention()).some((entry) => entry.kind === 'subscription-ended' && entry.subscriptionId === subscriptionId), 'staff need do nothing');
+  assert.equal((await call('GET', `/api/subscriptions/${key}/restart`)).json.code, 'payments_cancelled');
+});
+
+await test('a failed bank payment emails links to retry the same basket or cancel the order', async () => {
+  const failedOrder = async (payer, firstName) => {
+    const started = await checkout(payer, build(['membership-adult'], [adultDetails({ firstName, lastName: 'Bank', email: payer })]));
+    assert.equal(started.status, 200, started.text);
+    const order = await orderData(started.json.orderRef);
+    assert.equal((await sendWebhook({ type: 'checkout.session.async_payment_failed', data: { object: {
+      id: order.stripe.sessionId, metadata: { order_ref: started.json.orderRef } } } })).status, 200);
+    const mail = (await db.collection('testMail').where('orderRef', '==', started.json.orderRef).get()).docs.map((document) => document.data())
+      .find((entry) => entry.kind === 'payment-failed');
+    return { orderRef: started.json.orderRef, retryKey: /retry=(\S+)/.exec(mail.body)[1], cancelKey: /payment-issue\?order=(\S+)/.exec(mail.body)[1] };
+  };
+  const payer = email('retry-bank');
+  const { orderRef, retryKey, cancelKey } = await failedOrder(payer, 'Rory');
+  assert.equal(retryKey, cancelKey);
+  const retry = await call('GET', `/api/orders/${retryKey}/retry`);
+  assert.equal(retry.status, 200, retry.text);
+  assert.equal(retry.json.email, payer);
+  assert.deepEqual(retry.json.items.map((item) => item.id), ['membership-adult']);
+  assert.equal(retry.json.people[0].firstName, 'Rory');
+  assert.ok(!('membershipId' in retry.json.people[0]));
+
+  const again = await checkout(payer, { lines: retry.json.items, people: retry.json.people }, { retryOf: retryKey });
+  assert.equal(again.status, 200, again.text);
+  assert.equal((await orderData(again.json.orderRef)).retryOf, orderRef);
+  assert.equal((await pay(again.json.orderRef)).status, 200);
+  assert.equal((await orderData(orderRef)).retriedAs, again.json.orderRef);
+  assert.ok(!(await openAttention()).some((entry) => entry.kind === 'payment-failed' && entry.orderRef === orderRef), 'paying again settles it for staff');
+  assert.equal((await call('GET', `/api/orders/${retryKey}/retry`)).json.code, 'order_retried');
+  const twice = await checkout(payer, { lines: retry.json.items, people: retry.json.people }, { retryOf: retryKey });
+  assert.equal(twice.status, 409);
+  assert.equal(twice.json.code, 'already_paid');
+  assert.equal((await call('POST', `/api/orders/${cancelKey}/cancel`)).json.code, 'order_retried', 'a paid retry cannot be cancelled');
+
+  const other = await failedOrder(email('cancel-bank'), 'Cara');
+  const cancelled = await call('POST', `/api/orders/${other.cancelKey}/cancel`);
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal((await orderData(other.orderRef)).status, 'cancelled');
+  assert.equal((await call('POST', `/api/orders/${other.cancelKey}/cancel`)).status, 200, 'cancelling twice is harmless');
+  assert.equal((await call('GET', `/api/orders/${other.retryKey}/retry`)).json.code, 'order_cancelled');
+  assert.ok(!(await openAttention()).some((entry) => entry.kind === 'payment-failed' && entry.orderRef === other.orderRef));
+  assert.equal((await call('GET', `/api/orders/${other.orderRef}.${'0'.repeat(64)}/retry`)).status, 404, 'a wrong token is refused');
+});
+
 await test('a delayed bank payment backdates the subscription to its missed 1st', async () => {
   // Checkout 40 days ago, paid only now: the first 1st has passed.
   const checkedOut = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);

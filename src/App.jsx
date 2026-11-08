@@ -40,6 +40,7 @@ const MyDetailsPage = lazy(pageModules['my-details']);
 const CheckoutPage = lazy(pageModules.checkout);
 const OrderLookupPage = lazy(pageModules['order-lookup']);
 const PaymentSuccessPage = lazy(pageModules['payment-success']);
+const PaymentIssuePage = lazy(pageModules['payment-issue']);
 
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -56,6 +57,12 @@ const choiceLabel = (choice) => {
     : choice === 'next' ? `Next club year (${clubYearLabel(year + 1)})`
     : `Both (${clubYearLabel(year)} and ${clubYearLabel(year + 1)})`;
 };
+
+const BASKET_LINKS = [
+  { param: 'renew', path: (token) => `/api/renewals/${token}`, failure: 'Could not load your renewal. Add your membership to the basket instead.' },
+  { param: 'retry', path: (key) => `/api/orders/${key}/retry`, resumes: 'retryOf', failure: 'Could not load your order. Add what you need to the basket instead.' },
+  { param: 'restart', path: (key) => `/api/subscriptions/${key}/restart`, resumes: 'restartOf', failure: 'Could not load your monthly payments. Add what you need to the basket instead.' }
+];
 
 export default function App() {
   const [initialDraft] = useState(loadDraft);
@@ -93,6 +100,8 @@ export default function App() {
   const [volunteerTiers, setVolunteerTiers] = useState([]);
   const [checkoutErrors, setCheckoutErrors] = useState([]);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  // The failed order or stopped subscription this basket pays for again, from an emailed link.
+  const [resumeLink, setResumeLink] = useState(initialDraft?.resumeLink || null);
 
   const [toast, setToast] = useState(null);
   const showToast = (message) => {
@@ -165,34 +174,42 @@ export default function App() {
       .filter(Boolean));
   }, [products]);
 
-  // A renewal email link (/membership?renew=TOKEN) replaces the basket with next year's renewal; the token leaves the address bar.
+  // Emailed links replace the basket and then leave the address bar: a renewal (?renew=TOKEN) with next year's items, a
+  // retry of a bank payment that did not clear (?retry=KEY) and a restart of monthly payments Stripe stopped (?restart=KEY).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('renew');
-    if (!token) return;
-    params.delete('renew');
+    const link = BASKET_LINKS.find(({ param }) => params.get(param));
+    if (!link) return;
+    const value = params.get(link.param);
+    params.delete(link.param);
     window.history.replaceState(null, '', `${window.location.pathname}${params.size ? `?${params}` : ''}`);
     setCurrentPage((page) => (page === 'home' ? 'membership' : page));
-    apiFetch(apiUrl(`/api/renewals/${encodeURIComponent(token)}`), { cache: 'no-store' })
+    apiFetch(apiUrl(link.path(encodeURIComponent(value))), { cache: 'no-store' })
       .then(async (response) => ({ ok: response.ok, result: await response.json().catch(() => null) }))
       .then(({ ok, result }) => {
-        if (!ok || !result) throw new Error(result?.error || 'Could not load your renewal. Add your membership to the basket instead.');
+        if (!ok || !result) throw new Error(result?.error || link.failure);
         const lines = result.items.map((item) => {
           const product = productsRef.current.find((candidate) => candidate.id === item.id);
-          return product ? { ...withClubYear(normaliseProduct(product), item.clubYearChoice), lineId: item.lineId } : null;
+          return product ? { ...withClubYear(normaliseProduct(product), item.clubYearChoice), lineId: item.lineId, ...(item.size ? { size: item.size } : {}) } : null;
         }).filter(Boolean);
         setCart(lines);
-        setPeople(result.people.map((person) => ({ ...blankPerson(person.id), ...person, verifiedDob: person.dob,
-          verifiedEmail: result.email.trim().toLowerCase(), verifiedName: normaliseName(`${person.firstName} ${person.lastName}`) })));
+        setPeople(result.people.map((person) => ({ ...blankPerson(person.id), ...person, ...(person.returning ? { verifiedDob: person.dob,
+          verifiedEmail: result.email.trim().toLowerCase(), verifiedName: normaliseName(`${person.firstName} ${person.lastName}`) } : {}) })));
         setCheckoutEmail(result.email);
         setIsAnnual(result.billingMode !== 'monthly');
+        setResumeLink(link.resumes ? { [link.resumes]: value } : null);
+        if (result.discountCode) {
+          setPromoInput(result.discountCode);
+          handleApplyPromo(result.discountCode);
+        }
         setCheckoutError('');
       })
       .catch((error) => setCheckoutError(error.message))
       .finally(() => setIsCartOpen(true));
-  }, []);
+  }, [currentPage]);
 
   useEffect(() => { setPeople((prev) => assignLines(prev, cart, newId)); }, [cart]);
+  useEffect(() => { if (!cart.length) setResumeLink(null); }, [cart.length]);
   // A checkout refusal (e.g. "needs a membership") describes the basket it was given, so it goes once the basket changes.
   const cartKey = cart.map((line) => line.lineId).join('|');
   const refusedCartKey = useRef(cartKey);
@@ -207,11 +224,12 @@ export default function App() {
       setCart([]);
       setPeople([]);
       setCheckoutEmail('');
+      setResumeLink(null);
       return;
     }
     if (!cart.length && !people.length && !checkoutEmail) clearDraft();
-    else saveDraft({ email: checkoutEmail, people, cart: cart.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), isAnnual });
-  }, [currentPage, cart, people, checkoutEmail, isAnnual]);
+    else saveDraft({ email: checkoutEmail, people, cart: cart.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), isAnnual, resumeLink });
+  }, [currentPage, cart, people, checkoutEmail, isAnnual, resumeLink]);
 
   const handleStartCheckout = () => {
     setCheckoutError('');
@@ -262,6 +280,7 @@ export default function App() {
           people,
           discountCode: activePromo?.code || '',
           billingMode: annualBilling ? 'annual' : 'monthly',
+          ...(resumeLink || {}),
           noticeVersions
         })
       });
@@ -286,8 +305,8 @@ export default function App() {
     }
   };
 
-  const handleApplyPromo = async () => {
-    const code = promoInput.trim().toUpperCase();
+  const handleApplyPromo = async (value = promoInput) => {
+    const code = String(value).trim().toUpperCase();
 
     try {
       const validation = await validateDiscountCode(code);
@@ -361,6 +380,7 @@ export default function App() {
   const renderPage = () => {
     if (currentPage === 'order-lookup') return <OrderLookupPage />;
     if (currentPage === 'payment-success') return <PaymentSuccessPage />;
+    if (currentPage === 'payment-issue') return <PaymentIssuePage />;
     if (currentPage === 'checkout') {
       return cart.length ? (
         <CheckoutPage
@@ -592,7 +612,7 @@ export default function App() {
                         className={`FormCodeInput ${promoError ? 'FormCodeInputError' : activePromo ? 'FormCodeInputSuccess' : 'FormCodeInputIdle'}`}
                       />
                       <button
-                        onClick={handleApplyPromo}
+                        onClick={() => handleApplyPromo()}
                         className="PrimaryActionButtonCompact"
                       >
                         Apply

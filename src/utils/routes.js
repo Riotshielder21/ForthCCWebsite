@@ -13,7 +13,7 @@ export const PUBLIC_ROUTES = {
 
 const PRIVATE_ROUTES = {
   admin: '/admin', 'admin-reports': '/admin/reports', 'club-night': '/check-ins',
-  'my-details': '/my-details', checkout: '/checkout', 'payment-success': '/payment-success'
+  'my-details': '/my-details', checkout: '/checkout', 'payment-success': '/payment-success', 'payment-issue': '/payment-issue'
 };
 export const LEGACY_REDIRECTS = { '/home': '/', '/activites': '/disciplines', '/activities': '/disciplines', '/contact': '/contact-us', '/club-night': '/check-ins' };
 const CLUB_HOSTS = new Set(['forthcanoeclub.co.uk', 'www.forthcanoeclub.co.uk', 'new.forthcanoeclub.co.uk']);

@@ -10,7 +10,9 @@ const VOLUNTEER_KINDS = new Set([
 
 const PAYMENT_KINDS = new Set([
   'order-receipt',
-  'payment-failed'
+  'payment-failed',
+  'invoice-failed',
+  'subscription-stopped'
 ]);
 
 export const isVolunteerEmail = (record = {}) => VOLUNTEER_KINDS.has(record.kind)

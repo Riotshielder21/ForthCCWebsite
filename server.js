@@ -70,6 +70,8 @@ import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemA
 import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
 import { isClubEmail } from './src/utils/adminAccess.js';
 import { createAttention, registerAttentionRoutes } from './src/server/attention.js';
+import { RETRY_LINK_DAYS, invoiceFailureEmail, invoicePeriodStart, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
+  subscriptionStoppedEmail, treasurerFailureEmail } from './src/utils/failedPayments.js';
 import { writePurchaseTerms, loadTerms, loadEntitlements, loadPurchases, endTermItems } from './src/server/membershipTerms.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -468,7 +470,7 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
   }
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, noticeAgreement = null, subscriptionPlan = null }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, noticeAgreement = null, subscriptionPlan = null, retryOf = '', restartOf = '' }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     schemaVersion: CURRENT_ORDER_VERSION,
@@ -488,6 +490,8 @@ const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discou
     receiptTokenHash,
     ...newOrderGroups(stripeSessionId),
     ...(subscriptionPlan ? { subscriptionPlan } : {}),
+    ...(retryOf ? { retryOf } : {}),
+    ...(restartOf ? { restartOf } : {}),
     createdAt: Timestamp.now(),
     expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
   });
@@ -926,10 +930,70 @@ const setUpSubscriptions = async (orderRef, { force = false } = {}) => {
   return { failed: true };
 };
 
+const subscriptionItemNames = (record) => {
+  const active = (record.items || []).filter((item) => item.status === 'active');
+  return [...new Set((active.length ? active : record.items || []).map((item) => item.name).filter(Boolean))];
+};
+
+/** New restart and cancel links for a subscription that has stopped; any earlier link stops working. */
+const subscriptionLinks = async (reference, record) => {
+  const token = createAccessToken();
+  await reference.update({ restartTokenHash: hashAccessToken(token) });
+  const order = record.orderRef ? (await adminDb.collection('orders').doc(record.orderRef).get()).data() : null;
+  const site = publicSite(order?.siteUrl);
+  const key = `${reference.id}.${token}`;
+  return { restartUrl: `${site}/membership?restart=${key}`, cancelUrl: `${site}/payment-issue?subscription=${key}` };
+};
+
+/**
+ * Stripe retries a failed monthly debit on its own schedule (see DEVELOPMENT.md). Each failure emails the member when
+ * Stripe will try again; the final one (no retry scheduled) tells them the payments have stopped, with links to restart
+ * or confirm they are stopping, copies the treasurer and is raised for staff. Stripe can send an event more than
+ * once, so each invoice attempt is emailed once.
+ */
+const recordInvoiceFailed = async (invoice) => {
+  const subscriptionId = stripeId(invoice.subscription || invoice.parent?.subscription_details?.subscription);
+  const final = !invoice.next_payment_attempt;
+  const attempt = invoice.attempt_count || 1;
+  const amount = `£${((invoice.amount_due || 0) / 100).toFixed(2)}`;
+  const reference = subscriptionId && adminDb ? adminDb.collection('subscriptions').doc(subscriptionId) : null;
+  const notice = `${invoice.id}-${attempt}`;
+  const record = reference ? await adminDb.runTransaction(async (transaction) => {
+    const document = await transaction.get(reference);
+    if (!document.exists) return null;
+    if ((document.data().failureNotices || []).includes(notice)) return { ...document.data(), noticeSent: true };
+    transaction.update(reference, { failureNotices: FieldValue.arrayUnion(notice),
+      lastFailedInvoice: { id: invoice.id, attempt, final, at: Timestamp.now() }, updatedAt: Timestamp.now() });
+    return document.data();
+  }) : null;
+  const email = record?.email || invoice.customer_email || '';
+  const paidUntil = invoicePeriodStart(invoice);
+  const details = { names: record?.names || [], itemNames: record ? subscriptionItemNames(record) : [], amountDuePence: invoice.amount_due || 0, attempt };
+  if (record && !record.noticeSent && email) {
+    const links = final ? await subscriptionLinks(reference, record) : {};
+    await sendEmail({ to: email, ...invoiceFailureEmail({ ...details, nextAttempt: invoice.next_payment_attempt || null, paidUntil, ...links, contact: TREASURER_REPLY_TO }),
+      record: { kind: 'invoice-failed', subscriptionId, invoiceId: invoice.id, attempt, final } })
+      .catch((error) => console.error('Could not email the failed debit %s: %s', invoice.id, error.message));
+    if (final) {
+      await sendEmail({ to: TREASURER_REPLY_TO, ...treasurerFailureEmail({ ...details, email, subscriptionId, invoiceId: invoice.id, paidUntil }),
+        record: { kind: 'treasurer-copy', subscriptionId, invoiceId: invoice.id } })
+        .catch((error) => console.error('Could not copy the treasurer on the failed debit %s: %s', invoice.id, error.message));
+      await reference.update({ finalFailureEmailedAt: Timestamp.now(), finalFailedInvoiceId: invoice.id });
+    }
+  }
+  if (final) {
+    await attention.raise('invoice-failed', invoice.id, { subscriptionId, email, alert: false,
+      detail: `A monthly debit of ${amount} failed ${attempt} time${attempt === 1 ? '' : 's'} and Stripe has stopped retrying, so it cancels the subscription.`
+        + (record ? ' The member was emailed links to restart the payments or confirm they are stopping, and the treasurer was copied. The monthly items end at the paid-up date once Stripe cancels.'
+          : ' This subscription is not recorded on the website; check it in Stripe.') });
+  }
+};
+
 /**
  * Subscriptions are cancelled at the club-year end. Stripe stops retrying a failed 1 February debit then, so its
  * unpaid invoice is voided (no later collection) and the subscription is flagged for staff. Any other ending (Stripe
- * giving up on failed payments, or a cancellation outside this site) is flagged too.
+ * giving up on failed payments, or a cancellation outside this site) ends the monthly items at the date
+ * they were paid up to, emails the member links to restart or confirm, and is flagged too.
  */
 const recordSubscriptionEnded = async (subscription) => {
   if (!adminDb) return;
@@ -946,18 +1010,47 @@ const recordSubscriptionEnded = async (subscription) => {
     }
   }
   const data = document.data();
+  const endedEarly = !atCutoff && data.status === 'active';
+  const reason = subscription.cancellation_details?.reason || 'reason not given';
+  let paidUntil = null;
+  if (endedEarly) {
+    const unpaid = [];
+    for (const status of ['open', 'uncollectible']) {
+      unpaid.push(...((await stripeRequest(`invoices?${new URLSearchParams({ subscription: subscription.id, status, limit: '20' })}`, null, 'GET')).data || []));
+    }
+    const paidUpSeconds = paidUpTo(unpaid, periodEnd(subscription));
+    paidUntil = paidUpSeconds ? Timestamp.fromMillis(paidUpSeconds * 1000) : null;
+    const active = activeSubscriptionItems(data);
+    // Stripe has already cancelled it, so the cut needs no further Stripe calls.
+    const request = (path, body, method, options) => method === 'GET' && path === `subscriptions/${encodeURIComponent(subscription.id)}`
+      ? Promise.resolve({ ...subscription, status: 'canceled' }) : stripeRequest(path, body, method, options);
+    if (active.length) {
+      await stopSubscriptionItems(reference, data, active, { email: 'stripe' }, 'cancel-subscription',
+        `Stripe cancelled the monthly payments (${reason})`, request, { paidUntil });
+    }
+  }
   const now = Timestamp.now();
   await reference.set({
     ...(data.status === 'active' ? { status: 'ended' } : {}),
     endedAt: subscription.ended_at ? Timestamp.fromMillis(subscription.ended_at * 1000) : now, endedAtCutoff: atCutoff, updatedAt: now,
     ...(voided.length ? { voidedInvoices: voided } : {}),
-    ...((voided.length || (!atCutoff && data.status === 'active')) ? { needsStaff: true } : {})
+    ...(paidUntil ? { paidUntil } : {}),
+    ...((voided.length || endedEarly) ? { needsStaff: true } : {})
   }, { merge: true });
-  if (voided.length || (!atCutoff && data.status === 'active')) {
+  let emailed = false;
+  if (endedEarly && !data.finalFailureEmailedAt && data.email) {
+    const links = await subscriptionLinks(reference, data);
+    emailed = await sendEmail({ to: data.email, ...subscriptionStoppedEmail({ names: data.names || [], itemNames: subscriptionItemNames(data),
+      paidUntil: paidUntil ? paidUntil.seconds : 0, ...links, contact: TREASURER_REPLY_TO }), record: { kind: 'subscription-stopped', subscriptionId: subscription.id } })
+      .catch((error) => console.error('Could not email the stopped subscription %s: %s', subscription.id, error.message));
+  }
+  if (voided.length || endedEarly) {
+    const paidUpText = paidUntil ? ` Its monthly items were ended at the date they were paid up to, ${paidUntil.toDate().toISOString().slice(0, 10)}.` : '';
     await attention.raise('subscription-ended', subscription.id, { subscriptionId: subscription.id, email: data.email || '',
       detail: voided.length
         ? `The club year ended with unpaid monthly debits (${voided.map((invoice) => `£${invoice.amountDue.toFixed(2)}`).join(', ')}); they were voided so the member is not chased later. Decide whether to ask for payment.`
-        : `Monthly payments for ${(data.names || []).join(', ') || data.email} ended before the club-year end (${subscription.cancellation_details?.reason || 'reason not given'}), usually because Stripe gave up on failed debits. What they bought may still show as active.` });
+        : `Monthly payments for ${(data.names || []).join(', ') || data.email} ended before the club-year end (${reason}), usually because Stripe gave up on failed debits.${paidUpText}`
+          + ((data.finalFailureEmailedAt || emailed) ? ' The member was emailed links to restart the payments or confirm they are stopping.' : '') });
   }
 };
 
@@ -1045,18 +1138,25 @@ const reconcileCheckout = async (orderRef, sessionId) => {
   else if (session.status === 'complete') await recordPaymentProcessing(session);
 };
 
-/** Tells the customer a bank payment failed to clear, and staff, once. */
+const publicSite = (siteUrl) => siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
+
+/**
+ * Tells the customer a bank payment failed to clear, with links to retry it (the same basket, checked out again) or
+ * cancel the order, and tells staff, once.
+ */
 const reportPaymentFailed = async (order) => {
-  const site = order.siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
-  const itemNames = [...new Set((order.items || []).map((item) => item.name))].join(', ');
-  await sendEmail({ to: order.email, subject: `Your Forth Canoe Club payment did not go through - ${order.orderRef}`,
-    body: [`Your payment for ${itemNames} (order ${order.orderRef}) did not clear, so nothing has been taken and the order has not gone through.`, '',
-      `Please place the order again at ${site}/membership. Any discount code used has been released for you to use again.`, '',
-      `If your bank account details were wrong, check them before trying again. For help, contact ${TREASURER_REPLY_TO}.`].join('\n'),
-    record: { orderRef: order.orderRef, kind: 'payment-failed' } })
+  const site = publicSite(order.siteUrl);
+  const itemNames = [...new Set((order.items || []).map((item) => item.name))];
+  const token = createAccessToken();
+  await updateFirestoreOrder(order.orderRef, { retryTokenHash: hashAccessToken(token),
+    retryExpiresAt: Timestamp.fromMillis(Date.now() + RETRY_LINK_DAYS * 24 * 60 * 60 * 1000) });
+  const key = `${order.orderRef}.${token}`;
+  await sendEmail({ to: order.email, ...orderFailureEmail({ orderRef: order.orderRef, itemNames, retryUrl: `${site}/membership?retry=${key}`,
+    cancelUrl: `${site}/payment-issue?order=${key}`, retryDays: RETRY_LINK_DAYS, contact: TREASURER_REPLY_TO }),
+  record: { orderRef: order.orderRef, kind: 'payment-failed' } })
     .catch((error) => console.error('Could not email the payment failure for %s: %s', order.orderRef, error.message));
   await attention.raise('payment-failed', order.orderRef, { orderRef: order.orderRef, email: order.email, alert: false,
-    detail: `The bank payment for ${itemNames} did not clear. The customer has been emailed to place the order again; the items and any code were released.` });
+    detail: `The bank payment for ${itemNames.join(', ')} did not clear. The items and any code were released and the customer was emailed links to retry the payment or cancel the order. This clears when they pay again or cancel.` });
 };
 
 /**
@@ -1077,6 +1177,7 @@ const completeCheckout = async (session) => {
     throw error;
   }
   await attention.settle('order-unrecorded', orderRef);
+  await linkResumedPayment(orderRef).catch((error) => console.error('Could not close what order %s replaces: %s', orderRef, error.message));
   // Monthly payments go first: a receipt email failing must not stop them being set up.
   const setup = await setUpSubscriptions(orderRef);
   if (fields) {
@@ -1146,10 +1247,7 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
       return res.json({ received: true });
     }
     if (event.type === 'invoice.payment_failed') {
-      const invoice = event.data.object;
-      const subscriptionId = stripeId(invoice.subscription || invoice.parent?.subscription_details?.subscription);
-      await attention.raise('invoice-failed', invoice.id, { subscriptionId, email: invoice.customer_email || '', alert: false,
-        detail: `A monthly debit of £${((invoice.amount_due || 0) / 100).toFixed(2)} failed (attempt ${invoice.attempt_count || 1}). Stripe retries it and emails the customer${invoice.next_payment_attempt ? '' : '; no more retries are scheduled'}.` });
+      await recordInvoiceFailed(event.data.object);
       return res.json({ received: true });
     }
     if (event.type === 'invoice.paid') {
@@ -1452,11 +1550,15 @@ const cancelSubscriptionLines = async (req, res, pick, action) => {
   res.json(result);
 };
 
-const stopSubscriptionItems = async (reference, record, ending, admin, action, reason, request = stripeRequest) => {
+/**
+ * Stops monthly items and ends what they pay for. A membership paid by the whole subscription ends at the date it was
+ * paid up to: the end of the current period, or `paidUntil` when given (Stripe cancelled it with debits unpaid).
+ */
+const stopSubscriptionItems = async (reference, record, ending, admin, action, reason, request = stripeRequest, { paidUntil: paidUntilGiven = null } = {}) => {
   const document = { id: reference.id };
   const active = activeSubscriptionItems(record);
   const stripeSubscription = await request(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
-  const paidUntil = periodEnd(stripeSubscription) ? Timestamp.fromMillis(periodEnd(stripeSubscription) * 1000) : null;
+  const paidUntil = paidUntilGiven || (periodEnd(stripeSubscription) ? Timestamp.fromMillis(periodEnd(stripeSubscription) * 1000) : null);
   const wholeSubscription = ending.length === active.length;
   // A schedule (a volunteer's pending change) would add cancelled items back at its next phase, so it is edited instead.
   const scheduleId = stripeId(stripeSubscription.schedule);
@@ -1513,7 +1615,7 @@ const stopSubscriptionItems = async (reference, record, ending, admin, action, r
   for (const member of members.filter((entry) => entry.exists)) {
     const data = member.data();
     const linkedMembership = endsMembership && data.stripeMembershipSubscriptionId === document.id;
-    endTermItems(batch, terms.get(member.id) || [], (item) => isEnding(item), now);
+    endTermItems(batch, terms.get(member.id) || [], (item) => isEnding(item), paidUntilGiven && paidUntilGiven.toMillis() < now.toMillis() ? paidUntilGiven : now);
     const cutShort = linkedMembership && paidUntil && (!data.validUntil || data.validUntil.toMillis() > paidUntil.toMillis());
     if (cutShort) {
       for (const term of terms.get(member.id) || []) {
@@ -2311,6 +2413,17 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     }
 
     if (!adminDb) return res.status(503).json({ error: 'Order storage is not configured.' });
+    // A retry or restart link's checkout records what it replaces, and is refused once that has been paid again.
+    const retried = req.body.retryOf ? await linkedOrder(req.body.retryOf) : null;
+    if (retried?.order.retriedAs) {
+      return res.status(409).json({ code: 'already_paid', error: `Your payment for this order already went through as order ${retried.order.retriedAs}, so you do not need to pay again.` });
+    }
+    const restarted = req.body.restartOf ? splitLinkKey(req.body.restartOf) : null;
+    const restartRecord = restarted ? (await adminDb.collection('subscriptions').doc(restarted.id).get()).data() : null;
+    const restartOf = restartRecord && tokenMatches(restarted.token, restartRecord.restartTokenHash) ? restarted.id : '';
+    if (restartOf && restartRecord.restartedAs) {
+      return res.status(409).json({ code: 'already_paid', error: `Your monthly payments were already restarted with order ${restartRecord.restartedAs}, so you do not need to pay again.` });
+    }
     const catalogSnapshot = await adminDb.collection('products').get();
     const catalog = resolveCatalogue(PRODUCTS, catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
     const lineIds = requestedItems.map((item) => typeof item?.lineId === 'string' ? item.lineId.slice(0, 64) : '');
@@ -2549,11 +2662,13 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     await createFirestoreOrder({ orderRef, email, items, totalPence, discountPence: toPence(pricing.promoDiscountValue), status: 'pending',
       discountCode: discountDocument?.id || '', stripeSessionId: freeSessionId,
       people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptTokenHash: hashAccessToken(receiptToken), stockProductIds: reservedStockIds, policyVersions,
-      noticeAgreement: notices.versions.length ? { versions: notices.versions, agreedAt: Timestamp.now() } : null, subscriptionPlan });
+      noticeAgreement: notices.versions.length ? { versions: notices.versions, agreedAt: Timestamp.now() } : null, subscriptionPlan,
+      retryOf: retried && retried.order.status === 'payment_failed' ? retried.reference.id : '', restartOf });
     orderCreated = true;
     if (free) {
       const fields = await fulfilOrder({ orderRef, sessionId: freeSessionId, amountTotal: 0, receiptToken });
       await updateFirestoreOrder(orderRef, { paymentMethod: 'free' });
+      await linkResumedPayment(orderRef).catch((error) => console.error('Could not close what order %s replaces: %s', orderRef, error.message));
       try { if (fields) await deliverOrder(orderRef, fields); }
       catch (error) {
         console.error('Free order completed but the receipt email failed:', error.message);
@@ -2693,6 +2808,154 @@ app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => 
     res.status(500).json({ error: 'Could not retrieve order.' });
   }
 });
+
+/** The order an emailed retry/cancel link (`ORDERREF.TOKEN`) is for, or null. */
+const linkedOrder = async (key) => {
+  const parts = splitLinkKey(key);
+  if (!parts || !adminDb) return null;
+  const reference = adminDb.collection('orders').doc(parts.id);
+  const document = await reference.get();
+  return document.exists && tokenMatches(parts.token, document.data().retryTokenHash) ? { reference, order: document.data() } : null;
+};
+/** Why a failed order can no longer be retried or cancelled, or null. */
+const retryRefusal = (orderRef, order) => {
+  if (order.retriedAs) return { status: 410, code: 'order_retried', error: `Your payment for this order went through as order ${order.retriedAs}, so there is nothing more to do.` };
+  if (order.status === 'cancelled') return { status: 410, code: 'order_cancelled', error: `Order ${orderRef} was cancelled. Add what you need to your basket to buy it again.` };
+  if (order.status !== 'payment_failed') return { status: 409, code: 'order_not_failed', error: `Order ${orderRef} has no failed payment to retry.` };
+  if (order.retryExpiresAt && order.retryExpiresAt.toMillis() < Date.now()) return { status: 410, code: 'link_expired', error: 'This link has expired. Add what you need to your basket to buy it again.' };
+  return null;
+};
+const orderSummary = (orderRef, order) => ({ orderRef, itemNames: [...new Set((order.items || []).map((item) => item.name))], totalPence: order.totalPence || 0 });
+
+/** The basket a retry link fills: the failed order's items and details, checked out again as a new order. */
+app.get('/api/orders/:key/retry', rateLimit(20, 60 * 1000), async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const linked = await linkedOrder(req.params.key);
+    if (!linked) return res.status(404).json({ error: 'This link is not valid.' });
+    const { reference, order } = linked;
+    const refusal = retryRefusal(reference.id, order);
+    if (refusal) return res.status(refusal.status).json({ code: refusal.code, error: refusal.error, ...orderSummary(reference.id, order) });
+    const basket = retryBasket(order, clubYearOf(requestNow(req)));
+    if (!basket.items.length) return res.status(410).json({ code: 'link_expired', error: 'What this order was for is no longer on sale.', ...orderSummary(reference.id, order) });
+    res.json({ ...orderSummary(reference.id, order), email: order.email, billingMode: order.billingMode === 'monthly' ? 'monthly' : 'annual',
+      discountCode: order.discountCode || '', ...basket });
+  } catch (error) {
+    console.error('Could not load a retry link:', error.message);
+    res.status(500).json({ error: 'Could not load this order.' });
+  }
+});
+
+/** Closes a failed order. Its stock and any discount code were released when the payment failed; this makes sure. */
+app.post('/api/orders/:key/cancel', rateLimit(10, 60 * 1000), async (req, res) => {
+  try {
+    const linked = await linkedOrder(req.params.key);
+    if (!linked) return res.status(404).json({ error: 'This link is not valid.' });
+    const orderRef = linked.reference.id;
+    const result = await adminDb.runTransaction(async (transaction) => {
+      const order = (await transaction.get(linked.reference)).data();
+      if (order.status === 'cancelled') return { order, already: true };
+      const refusal = retryRefusal(orderRef, { ...order, retryExpiresAt: null });
+      if (refusal) return { order, refusal };
+      const discountDocument = order.discountCode ? adminDb.collection('discountCodes').doc(order.discountCode) : null;
+      const discount = discountDocument ? (await transaction.get(discountDocument)).data() : null;
+      const stock = await readStock(transaction, order.stockProductIds || []);
+      stock.forEach((snapshot) => dropHold(transaction, snapshot, orderRef));
+      if (discount?.reservedByOrder === orderRef && discount.status !== 'used') transaction.update(discountDocument, { reservedByOrder: null, reservedUntil: null });
+      transaction.update(linked.reference, { status: 'cancelled', cancelledAt: Timestamp.now(), cancelledBy: 'customer' });
+      return { order };
+    });
+    if (result.refusal) return res.status(result.refusal.status).json({ code: result.refusal.code, error: result.refusal.error });
+    await attention.settle('payment-failed', orderRef, result.order.email, 'The customer cancelled the order.');
+    res.json({ cancelled: true, ...orderSummary(orderRef, result.order) });
+  } catch (error) {
+    console.error('Could not cancel an order:', error.message);
+    res.status(500).json({ error: 'Could not cancel this order. Please try again.' });
+  }
+});
+
+/** The subscription an emailed restart/cancel link (`SUBSCRIPTIONID.TOKEN`) is for, brought up to date with Stripe, or a refusal. */
+const linkedSubscription = async (key) => {
+  const parts = splitLinkKey(key);
+  if (!parts || !adminDb) return { refusal: { status: 404, error: 'This link is not valid.' } };
+  const reference = adminDb.collection('subscriptions').doc(parts.id);
+  let document = await reference.get();
+  if (!document.exists || !tokenMatches(parts.token, document.data().restartTokenHash)) return { refusal: { status: 404, error: 'This link is not valid.' } };
+  // The link is sent with the final failed debit; Stripe cancels the subscription straight after, which may not be recorded yet.
+  if (document.data().status === 'active') {
+    const live = await stripeRequest(`subscriptions/${encodeURIComponent(parts.id)}`, null, 'GET');
+    if (!['canceled', 'incomplete_expired'].includes(live.status)) {
+      return { refusal: { status: 409, code: 'payments_running', error: 'These monthly payments are still running, so there is nothing to restart. If a debit failed, Stripe will try it again.' } };
+    }
+    await recordSubscriptionEnded(live);
+    document = await reference.get();
+  }
+  const record = document.data();
+  const summary = { subscriptionId: parts.id, names: record.names || [], itemNames: subscriptionItemNames(record),
+    paidUntil: record.paidUntil?.toDate?.().toISOString() || null, decision: record.memberDecision || (record.restartedAs ? 'restarted' : '') };
+  return { reference, record, summary };
+};
+
+/** The basket a restart link fills: the stopped items again, monthly, for the same people. */
+app.get('/api/subscriptions/:key/restart', rateLimit(20, 60 * 1000), async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const { refusal, record, summary } = await linkedSubscription(req.params.key);
+    if (refusal) return res.status(refusal.status).json(refusal);
+    if (record.restartedAs) return res.status(410).json({ code: 'payments_restarted', error: `Your monthly payments were restarted with order ${record.restartedAs}.`, ...summary });
+    if (record.memberDecision === 'cancelled') return res.status(410).json({ code: 'payments_cancelled', error: 'You confirmed these monthly payments are stopping. Add what you need to your basket to buy it again.', ...summary });
+    const memberIds = [...new Set(record.membershipIds || [])];
+    const members = memberIds.length ? (await adminDb.getAll(...memberIds.map((id) => adminDb.collection('memberships').doc(id))))
+      .filter((document) => document.exists).map((document) => ({ ...document.data(), id: document.id })) : [];
+    let index = 0;
+    const now = requestNow(req);
+    const stopped = { ...record, items: (record.items || []).filter((item) => item.cancelledBy === 'stripe') };
+    const basket = restartBasket(stopped, members, clubYearOf(now), () => `restart-${++index}`, now);
+    if (!basket?.items.length) return res.status(410).json({ code: 'link_expired', error: 'The club year these payments were for has ended. Add what you need to your basket instead.', ...summary });
+    res.json({ ...summary, email: record.email, billingMode: 'monthly', items: basket.items, people: basket.people });
+  } catch (error) {
+    console.error('Could not load a restart link:', error.message);
+    res.status(500).json({ error: 'Could not load these monthly payments.' });
+  }
+});
+
+/** The member confirms stopped monthly payments are not to be restarted, which closes them for staff. */
+app.post('/api/subscriptions/:key/cancel', rateLimit(10, 60 * 1000), async (req, res) => {
+  try {
+    const { refusal, reference, record, summary } = await linkedSubscription(req.params.key);
+    if (refusal) return res.status(refusal.status).json(refusal);
+    if (record.restartedAs) return res.status(409).json({ code: 'payments_restarted', error: `Your monthly payments were restarted with order ${record.restartedAs}. Contact ${TREASURER_REPLY_TO} to cancel them.` });
+    if (record.memberDecision !== 'cancelled') {
+      await reference.update({ memberDecision: 'cancelled', memberDecisionAt: Timestamp.now(), updatedAt: Timestamp.now() });
+      const note = 'The member confirmed the monthly payments are stopping.';
+      if (record.finalFailedInvoiceId) await attention.settle('invoice-failed', record.finalFailedInvoiceId, record.email, note);
+      await attention.settle('subscription-ended', reference.id, record.email, note);
+    }
+    res.json({ cancelled: true, ...summary, decision: 'cancelled' });
+  } catch (error) {
+    console.error('Could not record a cancellation:', error.message);
+    res.status(500).json({ error: 'Could not record this. Please try again.' });
+  }
+});
+
+/** A paid retry or restart closes the failed order or stopped subscription it replaces. */
+const linkResumedPayment = async (orderRef) => {
+  const order = (await adminDb.collection('orders').doc(orderRef).get()).data();
+  if (!order || order.status !== 'paid') return;
+  const note = `Paid again as order ${orderRef}.`;
+  if (order.retryOf) {
+    await adminDb.collection('orders').doc(order.retryOf).update({ retriedAs: orderRef, retriedAt: Timestamp.now() });
+    await attention.settle('payment-failed', order.retryOf, order.email, note);
+  }
+  if (order.restartOf) {
+    const reference = adminDb.collection('subscriptions').doc(order.restartOf);
+    const record = (await reference.get()).data();
+    if (!record) return;
+    await reference.update({ restartedAs: orderRef, restartedAt: Timestamp.now() });
+    if (record.finalFailedInvoiceId) await attention.settle('invoice-failed', record.finalFailedInvoiceId, order.email, `Restarted as order ${orderRef}.`);
+    await attention.settle('subscription-ended', order.restartOf, order.email, `Restarted as order ${orderRef}.`);
+  }
+};
 
 const SAFEGUARDING_PDF_MAX_BYTES = 20 * 1024 * 1024;
 
