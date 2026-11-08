@@ -72,7 +72,9 @@ export default function AdminPage({ products, onNavigate }) {
     if (field === 'category' && value === 'SERVICES' && current.category !== 'SERVICES') next.pricingMode = 'fixed';
     if (field === 'pricingMode' && value === 'subscription' && current.pricingMode !== 'subscription') next.allowMonthly = true;
     const terms = normaliseProduct(next);
-    return { ...terms, ...(terms.pricingMode === 'subscription' ? {} : { hasAnnualDiscount: false }) };
+    // normaliseProduct drops the schedule from non-events; the form keeps it so switching to Events still has one.
+    return { ...terms, eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...current.eventSchedule },
+      ...(terms.pricingMode === 'subscription' ? {} : { hasAnnualDiscount: false }) };
   });
   const updateVariant = (index, field, value) => setDraft((current) => ({ ...current,
     variants: (current.variants || []).map((variant, position) => position === index ? { ...variant, [field]: value } : variant)
