@@ -7,6 +7,7 @@ export const PUBLIC_ROUTES = {
   about: { path: '/about', title: 'About', content: 'about' },
   'contact-us': { path: '/contact-us', title: 'Contact Us', content: 'contact' },
   safeguarding: { path: '/safeguarding', title: 'Safeguarding' },
+  notices: { path: '/notices', title: 'Notices' },
   'access-project': { path: '/access-project', title: 'Access Project', content: 'access-project' }
 };
 

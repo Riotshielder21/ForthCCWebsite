@@ -45,6 +45,8 @@ import { registerGdprRoutes } from './src/server/gdpr.js';
 import { rebaseBranch, rebaseWarning } from './src/server/githubRebase.js';
 import { readContentDrafts } from './src/server/contentDrafts.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
+import { loadNotices, registerNoticeRoutes } from './src/server/notices.js';
+import { checkNoticeAgreement } from './src/utils/notices.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
 import { allowedOrigins, isAllowedOrigin } from './src/utils/cors.js';
 import { registerVolunteerRoutes } from './src/server/volunteers.js';
@@ -447,7 +449,9 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
       // Consent is recorded against the wording version shown at checkout; the disclaimer is re-accepted on every purchase.
       consents: {
         disclaimer: { ...order.policyVersions?.disclaimer, acceptedAt: paidAt, by: person.junior ? 'guardian' : 'self' },
-        ...(existingMember ? {} : { photoVideo: { ...order.policyVersions?.photoVideo, accepted: person.photoConsent === true, recordedAt: paidAt, by: person.junior ? 'guardian' : 'self' } })
+        ...(existingMember ? {} : { photoVideo: { ...order.policyVersions?.photoVideo, accepted: person.photoConsent === true, recordedAt: paidAt, by: person.junior ? 'guardian' : 'self' } }),
+        // The person paying agrees to the club notices for everyone on the order; the latest agreement replaces the last.
+        ...(order.noticeAgreement ? { notices: { ...order.noticeAgreement, orderRef, by: 'purchaser' } } : {})
       },
       ...(membershipLine || includedLine ? { status: 'active', validUntil, clubYears: FieldValue.arrayUnion(...new Set([...(person.heldClubYears || []), ...coveredYears])), membershipTier: membershipLine ? membershipLine.membershipTier || '' : grantedTier, justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
       ...(membershipLine || includedLine ? { membershipAccessEndsAt: FieldValue.delete() } : {}),
@@ -464,7 +468,7 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
   }
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, subscriptionPlan = null }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, noticeAgreement = null, subscriptionPlan = null }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     schemaVersion: CURRENT_ORDER_VERSION,
@@ -473,6 +477,7 @@ const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discou
     people,
     stockProductIds,
     policyVersions,
+    ...(noticeAgreement ? { noticeAgreement } : {}),
     totalPence,
     subtotalPence: totalPence + discountPence,
     discountPence,
@@ -1671,6 +1676,7 @@ registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, 
     if (ending.length) await stopSubscriptionItems(reference, record, ending, admin, 'gdpr-erasure', `GDPR erasure: ${reason}`, request);
   } });
 registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
+registerNoticeRoutes(app, { requireAdmin, db: () => adminDb });
 const { settleKeyAccess, notifyKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message) });
 const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, stripeSubscriptionIsActive, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
@@ -2341,6 +2347,8 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
         : person);
     const detailErrors = validateCheckout({ lines: selected, people, now });
     if (detailErrors.length) return res.status(400).json({ error: detailErrors[0], details: detailErrors });
+    const notices = checkNoticeAgreement(await loadNotices(adminDb), req.body.noticeVersions);
+    if (notices.error) return res.status(400).json({ code: notices.code, error: notices.error });
     // From here each line covers one club year; a 'both' line becomes this year's line and a next-year line.
     const lines = expandClubYearLines(selected);
     const linePeople = expandPeopleLines(people, selected);
@@ -2541,7 +2549,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     await createFirestoreOrder({ orderRef, email, items, totalPence, discountPence: toPence(pricing.promoDiscountValue), status: 'pending',
       discountCode: discountDocument?.id || '', stripeSessionId: freeSessionId,
       people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptTokenHash: hashAccessToken(receiptToken), stockProductIds: reservedStockIds, policyVersions,
-      subscriptionPlan });
+      noticeAgreement: notices.versions.length ? { versions: notices.versions, agreedAt: Timestamp.now() } : null, subscriptionPlan });
     orderCreated = true;
     if (free) {
       const fields = await fulfilOrder({ orderRef, sessionId: freeSessionId, amountTotal: 0, receiptToken });
@@ -2745,6 +2753,10 @@ const recordPolicyVersions = async () => {
     const recorded = await syncPolicies(adminDb, { distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL });
     if (recorded.length) console.log('Recorded policy versions:', recorded.map(({ key, version }) => `${key}@${version}`).join(', '));
     const currentVersions = Object.fromEntries((await adminDb.collection('policies').get()).docs.map((document) => [document.id, document.data().currentVersion || 0]));
+    // The privacy notice and retention policy are written on the Notices page, under these notice IDs.
+    for (const notice of await loadNotices(adminDb)) {
+      if (!notice.archived && notice.currentVersion > 0) currentVersions[notice.id] = Math.max(currentVersions[notice.id] || 0, notice.currentVersion);
+    }
     liveReadinessProblems({ currentVersions }).forEach((problem) => console.warn(`Not ready for live: ${problem}`));
   } catch (error) {
     console.error('Policy sync failed:', error.message);

@@ -31,6 +31,7 @@ const VolunteeringPage = lazy(pageModules.volunteering);
 const AboutPage = lazy(pageModules.about);
 const ContactUsPage = lazy(pageModules['contact-us']);
 const SafeguardingPage = lazy(pageModules.safeguarding);
+const NoticesPage = lazy(pageModules.notices);
 const AccessProjectPage = lazy(pageModules['access-project']);
 const AdminPage = lazy(pageModules.admin);
 const AdminReportsPage = lazy(pageModules['admin-reports']);
@@ -236,7 +237,7 @@ export default function App() {
     setIsCartOpen(true);
   };
 
-  const handlePay = async () => {
+  const handlePay = async (noticeVersions = {}) => {
     if (!navigator.onLine) {
       setCheckoutErrors(['You are offline. Reconnect before checking availability and making a payment.']);
       return;
@@ -260,7 +261,8 @@ export default function App() {
           items: cart.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })),
           people,
           discountCode: activePromo?.code || '',
-          billingMode: annualBilling ? 'annual' : 'monthly'
+          billingMode: annualBilling ? 'annual' : 'monthly',
+          noticeVersions
         })
       });
       const order = await response.json();
@@ -419,6 +421,8 @@ export default function App() {
         return <ContactUsPage />;
       case 'safeguarding':
         return <SafeguardingPage />;
+      case 'notices':
+        return <NoticesPage />;
       case 'access-project':
         return <AccessProjectPage />;
       default:
@@ -464,6 +468,7 @@ export default function App() {
             <a href="https://www.oscr.org.uk/about-charities/search-the-register/charity-details?number=SC050275" target="_blank" rel="noreferrer" className="FooterLink">Charity Register</a>
             <a href="/contact-us" className="FooterLink">Contact</a>
             <a href="/safeguarding" className="FooterLink">Safeguarding</a>
+            <a href="/notices" className="FooterLink">Notices</a>
             <a href="/check-ins" onClick={(event) => {
               if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
               event.preventDefault();

@@ -1763,6 +1763,49 @@
 .SafeguardingDownloads > li::before { display: none; }
 .SafeguardingDownloads > li > div { display: grid; gap: 0.5rem; }
 .SafeguardingDocumentActions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem; }
+
+/* Notices: a row of tabs along the top; the selected tab joins the document panel below. */
+.NoticesPage { max-width: 76rem; }
+.NoticeAdminBar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin: 1rem 0; }
+.NoticeLayout { margin-top: 2rem; }
+.NoticePanel { position: relative; min-height: 28rem; padding: 2rem 2.25rem 2.5rem; background: var(--fcc-color-surface);
+  border: 1px solid var(--fcc-color-border); border-radius: 0 0.75rem 0.75rem 0.75rem; box-shadow: 0 10px 30px -18px rgba(0, 33, 71, 0.45); }
+.NoticePanel:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: 2px; }
+.NoticePanelHeader { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 1rem;
+  padding-bottom: 1rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--fcc-color-border); }
+.NoticeTitle { font-family: var(--fcc-font-display); font-weight: 900; font-size: 1.6rem; letter-spacing: var(--fcc-letter-tight); color: var(--fcc-color-ink); }
+.NoticeMeta { margin-top: 0.25rem; font-size: 0.8rem; color: var(--fcc-color-copy); }
+.NoticeDocument { color: #334155; line-height: 1.65; max-width: 48rem; }
+.NoticeDocument > * + * { margin-top: 0.85rem; }
+.NoticeDocument .NoticeHeading { margin-top: 1.75rem; font-weight: 800; font-size: 1.15rem; color: var(--fcc-color-ink); }
+.NoticeDocument .NoticeSubheading { margin-top: 1.25rem; font-weight: 800; font-size: 1rem; color: var(--fcc-color-ink); }
+.NoticeDocument ul { list-style: disc; padding-left: 1.5rem; }
+.NoticeDocument ol { list-style: decimal; padding-left: 1.5rem; }
+.NoticeDocument li + li { margin-top: 0.35rem; }
+.NoticeDocument a { color: #0369a1; text-decoration: underline; text-underline-offset: 2px; }
+.NoticeTabs { position: relative; z-index: 1; display: flex; gap: 0.25rem; overflow-x: auto; margin-bottom: -1px; padding-top: 0.25rem; }
+.NoticeTab { position: relative; flex: 0 0 auto; max-width: 16rem; padding: 0.75rem 1.1rem; text-align: left; font-weight: 700;
+  font-size: 0.85rem; line-height: 1.25; color: var(--fcc-color-copy); background: var(--fcc-color-surface-subtle);
+  border: 1px solid var(--fcc-color-border); border-bottom: none; border-radius: 0.6rem 0.6rem 0 0; box-shadow: inset 0 -1px 0 var(--fcc-color-border);
+  transition: background-color 120ms ease, color 120ms ease; }
+.NoticeTab:hover { color: var(--fcc-color-ink); background: #e2e8f0; }
+.NoticeTab:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: -3px; z-index: 2; }
+.NoticeTab[aria-selected="true"] { z-index: 1; color: var(--fcc-color-ink); font-weight: 800; background: var(--fcc-color-surface);
+  box-shadow: inset 0 3px 0 var(--fcc-color-accent); }
+.NoticeEditor { display: grid; gap: 0.75rem; margin-bottom: 1rem; }
+.NoticeTextarea { min-height: 18rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; line-height: 1.5; }
+.NoticeEditorHelp { font-size: 0.8rem; color: var(--fcc-color-copy); }
+.NoticeEditorHelp code { padding: 0 0.2rem; border-radius: 0.25rem; background: var(--fcc-color-surface-subtle); }
+.NoticeEditorActions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+.NoticeAddForm { display: grid; max-width: 28rem; margin-top: 1.5rem; gap: 0.5rem; padding: 0.75rem; border: 1px dashed #94a3b8; border-radius: 0.6rem; }
+.NoticeHistory { margin: 0 0 1.5rem; padding: 0.75rem 1rem; border: 1px solid var(--fcc-color-border); border-radius: 0.6rem; background: var(--fcc-color-surface-subtle); font-size: 0.85rem; }
+.NoticesPage > .NoticeHistory { margin-top: 1.5rem; }
+.NoticeHistory summary { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-weight: 800; }
+.NoticeHistoryList { display: grid; gap: 0.4rem; margin-top: 0.75rem; }
+.NoticeHistoryList li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; }
+@media (max-width: 760px) {
+  .NoticePanel { padding: 1.5rem 1.25rem 2rem; }
+}
 .CheckoutGrid input.FormInput, .CheckoutGrid select.FormInput,
 .FormFieldGrid input.FormInput, .FormFieldGrid select.FormInput { min-height: 3rem; }
 .CheckoutFieldset { border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 0.75rem; padding: 0.75rem; }

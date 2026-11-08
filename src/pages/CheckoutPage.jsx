@@ -7,6 +7,8 @@ import {
 } from '../utils/checkout';
 import { apiUrl, apiFetch } from '../utils/api';
 import { applyTripDiscounts, isTripEvent } from '../utils/tripDiscount';
+import { noticeVersionMap } from '../utils/notices';
+import { watchPublishedNotices } from '../utils/noticesClient';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -22,6 +24,13 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   const validatedSteps = useRef({});
   const lookupVersion = useRef(0);
   const receiptEmailCopied = useRef(false);
+  const [noticeState, setNoticeState] = useState({ notices: null, error: '' });
+  // The tick belongs to the exact versions shown; a notice published or changed meanwhile clears it.
+  const [agreedNotices, setAgreedNotices] = useState('');
+  useEffect(() => watchPublishedNotices(setNoticeState), []);
+  const noticeVersions = noticeState.notices ? noticeVersionMap(noticeState.notices) : null;
+  const noticeKey = JSON.stringify(noticeVersions);
+  const noticesAgreed = Boolean(noticeVersions) && (!noticeState.notices.length || agreedNotices === noticeKey);
 
   // Family members are filled in on their family membership's page, so they get no step of their own.
   const stepPeople = useMemo(() => people.filter((candidate) => familyRole(candidate, people, lines) !== 'member'), [people, lines]);
@@ -173,10 +182,14 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
         const finalErrors = [
           ...(!EMAIL.test(email.trim()) ? ['Enter a valid receipt email address.'] : []),
           ...validateCheckout({ lines, people }),
-          ...people.filter((candidate) => !returningVerificationMatches(candidate, email)).map(() => 'Verify the email and date of birth again before continuing.')
+          ...people.filter((candidate) => !returningVerificationMatches(candidate, email)).map(() => 'Verify the email and date of birth again before continuing.'),
+          ...(noticeState.error ? []
+            : !noticeVersions ? ['The club notices are still loading. Try again in a moment.']
+              : !noticesAgreed ? ['Tick to agree to the club notices before continuing to payment.'] : [])
         ];
         if (finalErrors.length) { setErrors(finalErrors); return; }
-        return onPay();
+        // If the notices could not be loaded here, the server still refuses payment while any are unagreed.
+        return onPay(noticeVersions || {});
       }
       validatedSteps.current[current] = checkoutStepSnapshot(current, email, people, lines);
     } else {
@@ -449,6 +462,13 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                 ))}
               </div>
             )}
+            {noticeState.notices?.length > 0 && <div className="CheckoutSection">
+              <label className="CheckoutCheck"><input type="checkbox" checked={noticesAgreed} onChange={(event) => setAgreedNotices(event.target.checked ? noticeKey : '')} />
+                <span>I agree to the club's Notices, published <a href="/notices" target="_blank" rel="noopener">here</a>.</span></label>
+              <p className="CartItemMeta">{noticeState.notices.map((notice) => `${notice.title} (version ${notice.currentVersion})`).join(', ')}</p>
+            </div>}
+            {noticeState.notices === null && !noticeState.error && <p className="CartItemMeta" role="status">Loading the club notices…</p>}
+            {noticeState.error && <p className="CartItemMeta" role="status">The club notices could not be loaded. If payment is refused, reload the page and agree to the <a href="/notices" target="_blank" rel="noopener">Notices</a>.</p>}
             <p className="CartSummaryTotal">Total £{total.toFixed(2)}{lines.some(isTripEvent) ? ' before trip discounts' : ''}</p>
           </div>
         )}
