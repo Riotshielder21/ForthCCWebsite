@@ -6,6 +6,12 @@ import { webcrypto, createHash } from 'node:crypto';
 
 const source = readFileSync(new URL('../service-worker.js', import.meta.url), 'utf8');
 
+// Firebase Hosting (cleanUrls) answers /index.html with a redirect to /, so fetch returns a redirected response.
+const redirectedFrom = (url, response) => {
+  if (url.endsWith('/index.html')) Object.defineProperty(response, 'redirected', { value: true });
+  return response;
+};
+
 function worker(overrides = {}) {
   const handlers = {};
   const stores = new Map();
@@ -28,12 +34,12 @@ function worker(overrides = {}) {
   let deployed = 'public-file';
   const self = { location: { origin: 'https://club.test' }, addEventListener: (type, handler) => { handlers[type] = handler; }, clients: { claim: async () => {} } };
   vm.runInNewContext(source.replace('__PUBLIC_SITE_MANIFEST__', JSON.stringify(manifest)), {
-    self, caches, URL, crypto: webcrypto, Uint8Array, console: { error() {} },
+    self, caches, URL, Response, crypto: webcrypto, Uint8Array, console: { error() {} },
     fetch: async (input) => {
       const url = typeof input === 'string' ? input : input.url;
       fetched.push(url);
       if (!online) throw new Error('Offline');
-      return new Response(url.endsWith('.json') ? '{}' : deployed, { headers: { 'content-type': url.endsWith('.json') ? 'application/json' : 'text/plain' } });
+      return redirectedFrom(url, new Response(url.endsWith('.json') ? '{}' : deployed, { headers: { 'content-type': url.endsWith('.json') ? 'application/json' : 'text/plain' } }));
     }
   });
   const dispatch = async (type, props = {}) => {
@@ -74,6 +80,27 @@ test('an evicted page still loads from the network after a newer deployment chan
   site.deploy('new-deployment');
   assert.equal(await (await site.dispatch('fetch', { request: request('/') })).text(), 'new-deployment');
   assert.equal(site.stores.get('fcc-public-test').has('https://club.test/index.html'), false);
+});
+
+test('a page load never gets a redirected response, which browsers reject', async () => {
+  const site = worker();
+  await site.dispatch('install');
+  await site.dispatch('activate');
+  const page = await site.dispatch('fetch', { request: request('/') });
+  assert.equal(page.redirected, false);
+  assert.equal(await page.text(), 'public-file');
+});
+
+test('a redirected page saved by an older worker is repaired when served', async () => {
+  const site = worker();
+  await site.dispatch('install');
+  await site.dispatch('activate');
+  const store = site.stores.get('fcc-public-test');
+  store.set('https://club.test/index.html', redirectedFrom('/index.html', new Response('old-copy')));
+  const page = await site.dispatch('fetch', { request: request('/') });
+  assert.equal(page.redirected, false);
+  assert.equal(await page.text(), 'old-copy');
+  assert.equal(store.get('https://club.test/index.html').redirected, false);
 });
 
 test('readiness checks actual cache entries, not just worker activation', async () => {

@@ -4,16 +4,22 @@ const absolute = (path) => new URL(path, self.location.origin).href;
 const allowed = new Set([...manifest.files, ...manifest.images].map(absolute));
 const privatePath = /^\/(?:api|admin|order|my-details|checkout|check-ins|club-night|payment-success|_preview)(?:\/|$)/;
 
+// Firebase redirects /index.html to /. Browsers reject a redirected response for a page load ("This site can't be
+// reached"), so keep only the body and headers.
+const unredirected = async (response) => response?.redirected
+  ? new Response(await response.blob(), { status: response.status, statusText: response.statusText, headers: response.headers })
+  : response;
+
 async function download(cache, path) {
   const url = absolute(path);
   if (privatePath.test(new URL(url).pathname)) throw new Error(`Private routes cannot be saved for offline reading: ${url}`);
   const external = new URL(url).origin !== self.location.origin;
-  const response = await fetch(url, {
+  const response = await unredirected(await fetch(url, {
     cache: path.startsWith('/assets/') ? 'force-cache' : 'no-cache',
     priority: 'low',
     credentials: 'omit',
     mode: external ? 'no-cors' : 'same-origin'
-  });
+  }));
   if (!response.ok && response.type !== 'opaque') throw new Error(`Public offline download failed: ${url} (${response.status})`);
   if (path.endsWith('.json') && !response.headers.get('content-type')?.includes('application/json')) throw new Error(`Invalid public content: ${url}`);
   if (manifest.digests[path]) {
@@ -89,6 +95,12 @@ self.addEventListener('fetch', (event) => {
     const cache = await caches.open(cacheName);
     const key = publicNavigation ? absolute('/index.html') : url.href;
     const cached = await cache.match(key);
+    if (cached?.redirected) {
+      // Saved by an earlier version of this worker; repair it so the page loads.
+      const repaired = await unredirected(cached);
+      await cache.put(key, repaired.clone());
+      return repaired;
+    }
     if (cached) return cached;
     // A missing entry means storage was evicted; do not claim readiness based on this response.
     try {
