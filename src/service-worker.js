@@ -91,7 +91,14 @@ self.addEventListener('fetch', (event) => {
     const cached = await cache.match(key);
     if (cached) return cached;
     // A missing entry means storage was evicted; do not claim readiness based on this response.
-    await download(cache, publicNavigation ? '/index.html' : (url.origin === self.location.origin ? url.pathname + url.search : url.href));
-    return cache.match(key);
+    try {
+      await download(cache, publicNavigation ? '/index.html' : (url.origin === self.location.origin ? url.pathname + url.search : url.href));
+      const saved = await cache.match(key);
+      if (saved) return saved;
+    } catch (error) {
+      console.error('Public offline copy unavailable, loading from the network:', error);
+    }
+    // A newer deployment fails this worker's checks; the site must still load normally rather than fail.
+    return fetch(request);
   })());
 });
