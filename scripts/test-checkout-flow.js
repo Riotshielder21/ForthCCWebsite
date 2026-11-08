@@ -1946,7 +1946,7 @@ await test('failed monthly debits email the member each time; when Stripe gives 
   const final = (await mails('invoice-failed')).find((mail) => mail.final);
   assert.match(final.body, /stopped/);
   const key = /restart=(\S+)/.exec(final.body)[1];
-  assert.match(final.body, new RegExp(`/payment-issue\\?subscription=${key.replace('.', '\\.')}`));
+  assert.ok(final.body.includes(`/payment-issue?subscription=${key}`));
   const [copy] = await mails('treasurer-copy');
   assert.equal(copy.email, 'treasurer@forthcanoeclub.co.uk');
   assert.match(copy.body, new RegExp(payer.replace(/[.]/g, '\\.')));

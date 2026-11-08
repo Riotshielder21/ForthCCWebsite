@@ -995,11 +995,13 @@ const recordInvoiceFailed = async (invoice) => {
     const links = final ? await subscriptionLinks(reference, record) : {};
     await sendEmail({ to: email, ...invoiceFailureEmail({ ...details, nextAttempt: invoice.next_payment_attempt || null, paidUntil, ...links, contact: TREASURER_REPLY_TO }),
       record: { kind: 'invoice-failed', subscriptionId, invoiceId: invoice.id, attempt, final } })
-      .catch((error) => console.error('Could not email the failed debit %s: %s', invoice.id, error.message));
+      .catch((error) => console.error('Could not email the failed debit %s: %s',
+        String(invoice.id).replace(/[\r\n]/g, ' '), String(error.message).replace(/[\r\n]/g, ' ')));
     if (final) {
       await sendEmail({ to: TREASURER_REPLY_TO, ...treasurerFailureEmail({ ...details, email, subscriptionId, invoiceId: invoice.id, paidUntil }),
         record: { kind: 'treasurer-copy', subscriptionId, invoiceId: invoice.id } })
-        .catch((error) => console.error('Could not copy the treasurer on the failed debit %s: %s', invoice.id, error.message));
+        .catch((error) => console.error('Could not copy the treasurer on the failed debit %s: %s',
+          String(invoice.id).replace(/[\r\n]/g, ' '), String(error.message).replace(/[\r\n]/g, ' ')));
       await reference.update({ finalFailureEmailedAt: Timestamp.now(), finalFailedInvoiceId: invoice.id });
     }
   }
@@ -1064,7 +1066,8 @@ const recordSubscriptionEnded = async (subscription) => {
     const links = await subscriptionLinks(reference, data);
     emailed = await sendEmail({ to: data.email, ...subscriptionStoppedEmail({ names: data.names || [], itemNames: subscriptionItemNames(data),
       paidUntil: paidUntil ? paidUntil.seconds : 0, ...links, contact: TREASURER_REPLY_TO }), record: { kind: 'subscription-stopped', subscriptionId: subscription.id } })
-      .catch((error) => console.error('Could not email the stopped subscription %s: %s', subscription.id, error.message));
+      .catch((error) => console.error('Could not email the stopped subscription %s: %s',
+        String(subscription.id).replace(/[\r\n]/g, ' '), String(error.message).replace(/[\r\n]/g, ' ')));
   }
   if (voided.length || endedEarly) {
     const paidUpText = paidUntil ? ` Its monthly items were ended at the date they were paid up to, ${paidUntil.toDate().toISOString().slice(0, 10)}.` : '';
@@ -1199,7 +1202,8 @@ const completeCheckout = async (session) => {
     throw error;
   }
   await attention.settle('order-unrecorded', orderRef);
-  await linkResumedPayment(orderRef).catch((error) => console.error('Could not close what order %s replaces: %s', orderRef, error.message));
+  await linkResumedPayment(orderRef).catch((error) => console.error('Could not close what order %s replaces: %s',
+    String(orderRef).replace(/[\r\n]/g, ' '), String(error.message).replace(/[\r\n]/g, ' ')));
   // Monthly payments go first: a receipt email failing must not stop them being set up.
   const setup = await setUpSubscriptions(orderRef);
   if (fields) {
