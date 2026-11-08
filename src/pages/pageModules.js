@@ -15,5 +15,6 @@ export const pageModules = {
   'my-details': () => import('./MyDetailsPage'),
   checkout: () => import('./CheckoutPage'),
   'order-lookup': () => import('./OrderLookupPage'),
-  'payment-success': () => import('./PaymentSuccessPage')
+  'payment-success': () => import('./PaymentSuccessPage'),
+  'payment-issue': () => import('./PaymentIssuePage')
 };

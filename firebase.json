@@ -75,7 +75,7 @@
         ]
       },
       {
-        "source": "/{admin,api,order,my-details,check-ins,club-night,checkout,payment-success,_preview}{,/**}",
+        "source": "/{admin,api,order,my-details,check-ins,club-night,checkout,payment-success,payment-issue,_preview}{,/**}",
         "headers": [
           {
             "key": "X-Robots-Tag",
@@ -107,6 +107,19 @@
       },
       {
         "source": "/payment-success",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "no-referrer"
+          }
+        ]
+      },
+      {
+        "source": "/payment-issue",
         "headers": [
           {
             "key": "Cache-Control",

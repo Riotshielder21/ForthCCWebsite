@@ -150,6 +150,16 @@ stripe listen --events checkout.session.completed,checkout.session.async_payment
 
 Restart the API with a test `STRIPE_SECRET_KEY` and the CLI's `STRIPE_WEBHOOK_SECRET`. Use card `4242 4242 4242 4242`, a future expiry and any CVC; cancel sandbox subscriptions afterwards. Dashboard endpoints need the same events and their own mode-specific signing secret. Never commit or share keys.
 
+### Failed payments
+
+Stripe does the retrying. In each mode's Dashboard, under **Billing → Revenue recovery → Retries**, use Smart Retries (or a fixed schedule), set **If all retries for a payment fail** to **Cancel the subscription**, and include Bacs Direct Debit. Turn off Stripe's own failed-payment customer emails so members are not emailed twice.
+
+- **Monthly debit fails** (`invoice.payment_failed`): the member is emailed each attempt once, with the date Stripe tries again. On the final attempt (no retry scheduled) the email says the payments have stopped and links to restart (`/membership?restart=…`, the same items and people refilled in the basket for a new monthly checkout; missed months are not collected) or confirm they are stopping (`/payment-issue?subscription=…`). The treasurer gets a copy, and it is listed under Needs attention.
+- **Stripe cancels the subscription** (`customer.subscription.deleted` before the club-year cut-off): its monthly items, and any membership paid with it, end at the paid-up date (the start of the earliest unpaid month). The member is emailed the links if the final-failure email was not sent. Restarting or confirming settles the Needs-attention entries.
+- **A one-off bank payment fails** (`checkout.session.async_payment_failed`): the member is emailed links to retry (`/membership?retry=…`, the same basket as a new order) or cancel the order (`/payment-issue?order=…`). Retry links last 30 days. Once a retry is paid the old order records `retriedAs`; a second retry is refused.
+
+Links are `ID.TOKEN`; only the token's hash is stored, and a new email replaces the earlier link. Opening a link never changes anything; cancelling needs the button on the page. To try it in the sandbox, attach card `4000 0000 0000 0341` (attaches, then declines) to a customer with a subscription and use **Advance time** on a Test Clock, or resend an `invoice.payment_failed` event from the Dashboard. Locally, payer emails starting `debit-fail.` give the mocked subscription an unpaid next debit (see `scripts/mock-stripe.mjs`).
+
 ## Data migrations
 
 Export Firestore first, inspect the dry run, then apply. Already-converted records are skipped; incomplete guardian data must be corrected before retrying.
