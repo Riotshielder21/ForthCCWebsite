@@ -1746,7 +1746,7 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
     if (!collection || !req.params.id || req.params.id.includes('/') || req.params.id.length > 1500) {
       return res.status(400).json({ error: 'Invalid report record.' });
     }
-    if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Type the exact record ID to confirm deletion.' });
+    if (req.body.confirmId !== req.params.id) return res.status(400).json({ error: 'Tick the box to confirm deleting this record.' });
     const reason = requiredReason(req.body);
     if (!reason) return res.status(400).json({ error: REASON_REQUIRED });
     const activeMonthly = await activeMonthlyPaymentsFor(req.params.kind, req.params.id);
