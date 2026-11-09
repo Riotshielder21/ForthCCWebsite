@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyTripDiscounts, currentPrivilegeIds, tripDiscountFor, isTripEvent, isLockedProduct } from './tripDiscount.js';
+import { applyTripDiscounts, currentPrivilegeIds, tripDiscountFor, tripDiscountText, isTripEvent, isLockedProduct } from './tripDiscount.js';
 import { calculateCart } from './pricing.js';
 import { normaliseProduct, resolveCatalogue } from './catalogue.js';
 
@@ -65,4 +65,11 @@ test('the trip discount products cannot be deleted from the shop', () => {
   const defaults = [{ id: 'boat-hire', name: 'Hire', basePrice: 85 }, { id: 'keyhire', name: 'Key', basePrice: 50 }];
   const catalogue = resolveCatalogue(defaults, [{ id: 'boat-hire', active: false, basePrice: 90 }, { id: 'keyhire', active: false }]);
   assert.deepEqual(catalogue, [normaliseProduct({ id: 'boat-hire', name: 'Hire', basePrice: 90, active: true })]);
+});
+
+test('trip discounts are named briefly at checkout', () => {
+  assert.equal(tripDiscountText(['annual boat hire']), 'Kit hire discount applied');
+  assert.equal(tripDiscountText(['a coaching subscription']), 'Subscription discount applied');
+  assert.equal(tripDiscountText(['annual boat hire', 'a coaching subscription']), 'Kit hire and subscription discounts applied');
+  assert.equal(tripDiscountText([]), '');
 });

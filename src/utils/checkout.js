@@ -107,7 +107,7 @@ export const returningVerificationMatches = (person, email) => !person.returning
 
 // Boxes ticked from the matched record go with the match, so they never carry over to someone else.
 export const invalidatePersonVerification = (person) => ({
-  ...person, verifiedDob: '', verifiedEmail: '', verifiedName: '', volunteerPreview: null,
+  ...person, verifiedDob: '', verifiedEmail: '', verifiedName: '', volunteerPreview: null, tripHeld: [],
   ...(person.prefill ? { prefill: null, disclaimerAccepted: false, photoConsent: false } : {})
 });
 

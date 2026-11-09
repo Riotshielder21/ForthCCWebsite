@@ -6,9 +6,16 @@ import { clubYearOf, recordClubYear } from './clubYear.js';
  * the same basket. The qualifying products are locked so admins cannot delete them and silently switch the discount off.
  */
 export const TRIP_DISCOUNTS = [
-  { id: 'boat-hire', productIds: ['boat-hire'], amount: 10, label: 'annual boat hire' },
-  { id: 'subscription', productIds: ['blue-sub', 'gold-sub'], amount: 10, label: 'a coaching subscription' }
+  { id: 'boat-hire', productIds: ['boat-hire'], amount: 10, label: 'annual boat hire', short: 'Kit hire' },
+  { id: 'subscription', productIds: ['blue-sub', 'gold-sub'], amount: 10, label: 'a coaching subscription', short: 'Subscription' }
 ];
+
+/** "Kit hire discount applied", "Subscription discount applied" or both, from a line's `tripDiscountReasons`. */
+export const tripDiscountText = (reasons = []) => {
+  const names = TRIP_DISCOUNTS.filter((discount) => reasons.includes(discount.label)).map((discount) => discount.short);
+  if (!names.length) return '';
+  return names.length === 1 ? `${names[0]} discount applied` : `${names[0]} and ${names.slice(1).join(' and ').toLowerCase()} discounts applied`;
+};
 
 export const LOCKED_PRODUCT_IDS = [...new Set(TRIP_DISCOUNTS.flatMap((discount) => discount.productIds))];
 export const isLockedProduct = (id) => LOCKED_PRODUCT_IDS.includes(id);

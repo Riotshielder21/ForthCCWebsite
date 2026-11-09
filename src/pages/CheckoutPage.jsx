@@ -1,19 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import {
   addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, personKind, familyRole, resolvedKind, FAMILY_ADULT_MAX,
   displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT, requiresMembership, grantsMembership,
   returningVerificationMatches, invalidatePersonVerification, checkoutStepSnapshot, validateCheckout
 } from '../utils/checkout';
 import { apiUrl, apiFetch } from '../utils/api';
-import { applyTripDiscounts, isTripEvent } from '../utils/tripDiscount';
+import { tripDiscountText } from '../utils/tripDiscount';
+
+const money = (value) => `£${value.toFixed(2)}`;
 import { noticeVersionMap } from '../utils/notices';
 import { applyConsentPrefill, sameNoticeVersions } from '../utils/consents';
 import { watchPublishedNotices } from '../utils/noticesClient';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, onBack, onReset, onPay, makeId }) {
+export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, pricedItems = [], onBack, onReset, onPay, makeId }) {
   const addOnLines = lines.filter((line) => needsPerson(line) && !isMembership(line));
   const openToNonMembers = addOnLines.some((line) => !requiresMembership(line));
   const [stepKey, setStepKey] = useState('email');
@@ -118,7 +120,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
         onPeopleChange(people.map((entry) => entry.id === personId ? applyConsentPrefill({
           ...entry, email: email.trim().toLowerCase(), guardian: { ...entry.guardian, email: email.trim().toLowerCase() },
           verifiedDob: dob, verifiedEmail: email.trim().toLowerCase(), verifiedName: normaliseName(`${match.firstName} ${match.lastName}`),
-          volunteerPreview: match.volunteer ? { volunteer: match.volunteer, firstName: match.firstName, lastName: match.lastName, dob } : null
+          volunteerPreview: match.volunteer ? { volunteer: match.volunteer, firstName: match.firstName, lastName: match.lastName, dob } : null,
+          tripHeld: match.tripHeld || []
         }, match.prefill) : entry));
       }
     } catch (error) {
@@ -249,15 +252,17 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
       </>
     );
   };
-  const verificationButton = (candidate) => (
-    <>
-      <button type="button" className="PrimaryActionButtonCompact" disabled={checking || !candidate.dob || !EMAIL.test(email.trim()) || returningVerificationMatches(candidate, email)}
-        onClick={() => checkDob(candidate.id)}>
-        {dobChecks[candidate.id]?.busy ? 'Checking…' : returningVerificationMatches(candidate, email) ? 'Verified' : 'Verify'}
-      </button>
-      {!returningVerificationMatches(candidate, email) && <p className="CartItemMeta" role="status">Verify this date of birth with your receipt email again before continuing.</p>}
-    </>
-  );
+  const verificationButton = (candidate) => returningVerificationMatches(candidate, email)
+    ? <p className="VerifiedStatus" role="status"><Check className="IconSm" aria-hidden="true" /> Verified</p>
+    : (
+      <>
+        <button type="button" className="PrimaryActionButtonCompact" disabled={checking || !candidate.dob || !EMAIL.test(email.trim())}
+          onClick={() => checkDob(candidate.id)}>
+          {dobChecks[candidate.id]?.busy ? 'Checking…' : 'Verify'}
+        </button>
+        <p className="CartItemMeta" role="status">Verify this date of birth with your receipt email again before continuing.</p>
+      </>
+    );
 
   return (
     <div className="CheckoutPage PageFadeIn">
@@ -304,7 +309,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                         onClick={() => update(person.id, (candidate) => applyConsentPrefill({ ...candidate, returning: true, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob, verifiedDob: dobCheck.dob,
                           email: email.trim().toLowerCase(), guardian: { ...candidate.guardian, email: email.trim().toLowerCase() },
                           verifiedEmail: email.trim().toLowerCase(), verifiedName: normaliseName(`${name.firstName} ${name.lastName}`),
-                          volunteerPreview: name.volunteer ? { volunteer: name.volunteer, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob } : null }, name.prefill))}>
+                          volunteerPreview: name.volunteer ? { volunteer: name.volunteer, firstName: name.firstName, lastName: name.lastName, dob: dobCheck.dob } : null,
+                          tripHeld: name.tripHeld || [] }, name.prefill))}>
                         {name.firstName} {name.lastName}
                       </button>
                     ))}
@@ -461,21 +467,27 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
           <div className="CheckoutDetails">
             <h2 className="page_heading_bold_1">Review and pay</h2>
             <p className="text_container">Receipt email: <strong>{email}</strong></p>
-            {people.map((candidate) => (
-              <div key={candidate.id} className="CheckoutSection">
-                <h4 className="CartItemTitle">{personLabel(candidate)}</h4>
-                <p className="CartItemMeta">{held(candidate).map(lineLabel).join(', ')}</p>
-              </div>
-            ))}
-            {lines.filter((line) => !needsPerson(line)).map((line) => <p key={line.lineId} className="text_container">{line.name}</p>)}
-            {lines.some(isTripEvent) && (
-              <div className="CheckoutSection">
-                <p className="text_container">Single-day trips are £10 cheaper for each attendee with annual boat hire, and another £10 with a coaching subscription, bought this club year or in this basket. The discount is applied on the payment page; if it covers the whole order there is nothing to pay and your booking is confirmed straight away.</p>
-                {applyTripDiscounts(lines, people).filter((line) => line.tripDiscount).map((line) => (
-                  <p key={line.lineId} className="CartItemMeta">{personLabel(people.find((candidate) => candidate.lineIds.includes(line.lineId)))}: £{line.tripDiscount} off {line.name} ({line.tripDiscountReasons.join(' and ')} in this basket)</p>
-                ))}
-              </div>
-            )}
+            <div className="CheckoutSection ReviewItems">
+              {lines.map((line) => {
+                const parts = pricedItems.filter((item) => item.sourceLineId === line.lineId);
+                const trip = parts.reduce((sum, item) => sum + (item.tripSaving || 0), 0);
+                const promo = parts.reduce((sum, item) => sum + (item.promoSaving || 0), 0);
+                const price = parts.reduce((sum, item) => sum + item.displayPrice, 0) + trip + promo;
+                const monthly = parts.reduce((sum, item) => sum + (item.recurringMonthlyCost || 0), 0);
+                const holders = people.filter((candidate) => candidate.lineIds.includes(line.lineId)).map(personLabel);
+                return (
+                  <div key={line.lineId} className="ReviewItem">
+                    <div className="ReviewRow">
+                      <span className="CartItemTitle">{lineLabel(line)}{line.size ? ` (${line.size})` : ''}</span>
+                      <span className="ReviewPrice">{money(price)}</span>
+                    </div>
+                    {(holders.length > 0 || monthly > 0) && <p className="CartItemMeta">{[holders.join(', '), monthly > 0 ? `then ${money(monthly)} a month` : ''].filter(Boolean).join(' · ')}</p>}
+                    {trip > 0 && <div className="ReviewRow ReviewDiscount"><span>{tripDiscountText(parts.flatMap((item) => item.tripDiscountReasons || []))}</span><span>-{money(trip)}</span></div>}
+                    {promo > 0 && <div className="ReviewRow ReviewDiscount"><span>Discount code applied</span><span>-{money(promo)}</span></div>}
+                  </div>
+                );
+              })}
+            </div>
             {noticeState.notices?.length > 0 && <div className="CheckoutSection">
               <label className="CheckoutCheck"><input type="checkbox" checked={noticesAgreed} onChange={(event) => setAgreedNotices(event.target.checked ? noticeKey : '')} />
                 <span>I agree to the club's Notices, published <a href="/notices" target="_blank" rel="noopener">here</a>.</span></label>
@@ -484,7 +496,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
             </div>}
             {noticeState.notices === null && !noticeState.error && <p className="CartItemMeta" role="status">Loading the club notices…</p>}
             {noticeState.error && <p className="CartItemMeta" role="status">The club notices could not be loaded. If payment is refused, reload the page and agree to the <a href="/notices" target="_blank" rel="noopener">Notices</a>.</p>}
-            <p className="CartSummaryTotal">Total £{total.toFixed(2)}{lines.some(isTripEvent) ? ' before trip discounts' : ''}</p>
+            <p className="CartSummaryTotal">Total {money(total)}</p>
           </div>
         )}
 
