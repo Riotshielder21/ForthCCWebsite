@@ -8,6 +8,7 @@ import { volunteerProfileLabels } from './volunteering.js';
 import { hasKeyAccess } from './keyAccess.js';
 import { orderLineId } from './itemActions.js';
 import { eventSessions } from './catalogue.js';
+import { creditMethodLabel } from './credits.js';
 
 export const reportDate = (value) => {
   if (!value) return null;
@@ -117,6 +118,12 @@ export const orderReport = (id, fields, members = new Map()) => ({
   stripeSubscriptionId: [...new Set([fields.stripeSubscriptionId, ...(Array.isArray(fields.stripeSubscriptionIds) ? fields.stripeSubscriptionIds : [])].filter(Boolean))].join(', '),
   ...(fields.subscriptionSetupNeedsStaff === true ? { monthlyPaymentSetupFailed: true } : {}),
   stripePaymentIntentId: fields.stripe?.paymentIntentId || '',
+  // Credited orders were paid outside the website (or given free) and are not in Stripe's takings.
+  paidVia: fields.payment ? creditMethodLabel(fields.payment.method) : fields.paymentMethod === 'free' ? 'Nothing to pay' : 'Stripe',
+  ...(fields.payment ? {
+    credited: true, amountReceived: (Number(fields.payment.amountPence) || 0) / 100, receivedAt: reportDate(fields.payment.receivedAt),
+    paymentReference: fields.payment.reference || '', paymentNote: fields.payment.note || '', creditedBy: fields.payment.creditedBy || ''
+  } : {}),
   subscriptionWarning: subscriptionWarning(fields),
   items: (Array.isArray(fields.items) ? fields.items : []).map((item, index) => ({
     lineId: orderLineId(item, index), productId: item.id || '',
@@ -228,6 +235,24 @@ export const reportCsv = (headers, rows) => [headers, ...rows].map((row) => row.
   const safe = /^[\s]*[=+@-]/.test(text) || /^[\t\r\n]/.test(text) ? `'${text}` : text;
   return `"${safe.replace(/"/g, '""')}"`;
 }).join(',')).join('\r\n');
+const TAKEN_STATUSES = ['paid', 'partially_refunded'];
+/**
+ * Paid orders' money split by where it went: Stripe (order totals, before any refunds) and credited by staff (the amount
+ * received outside the website), so each reconciles with its own statement.
+ */
+export const takingsSummary = (records) => {
+  const pence = (pounds) => Math.round((Number(pounds) || 0) * 100);
+  const sum = { stripe: 0, stripeOrders: 0, credited: 0, creditedOrders: 0 };
+  for (const record of records.filter((candidate) => TAKEN_STATUSES.includes(candidate.status))) {
+    if (record.credited) { sum.credited += pence(record.amountReceived); sum.creditedOrders += 1; }
+    else if (record.paidVia === 'Stripe') { sum.stripe += pence(record.total); sum.stripeOrders += 1; }
+  }
+  return { ...sum, stripe: sum.stripe / 100, credited: sum.credited / 100 };
+};
+
+export const PAID_VIA = [['stripe', 'Stripe'], ['credited', 'Credited by staff']];
+export const paidViaMatches = (record, via) => via === 'all' || (via === 'credited' ? record.credited === true : record.paidVia === 'Stripe');
+
 // Report filters. Each works on loaded records, so CSV and email exports follow whatever is shown.
 export const PURCHASE_TYPES = [['membership', 'Membership'], ['subscriptions', 'Subscriptions'], ['events', 'Events'],
   ['merchandise', 'Merchandise'], ['services', 'Services'], ['vouchers', 'Vouchers']];

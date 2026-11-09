@@ -18,6 +18,8 @@ export const orderSubscriptions = async (db, orderRef) => {
   return [...new Map(pages.flatMap((page) => page.docs).map((document) => [document.id, document])).values()];
 };
 
+const CREDITED_REFUND = 'This order was credited by staff and paid outside Stripe, so it cannot be refunded here. Refund the customer directly and tell the treasurer; you can still revoke the items.';
+
 export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest, stopMonthlyItem }) => {
   const load = async (req) => {
     if (!db()) throw fail(503, 'Purchase storage is not configured.');
@@ -114,6 +116,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
     try {
       if (!await requireAdmin(req, res)) return;
       const loaded = await load(req);
+      if (req.query.action !== 'revoke' && loaded.order.payment && !loaded.order.itemActionPending) throw fail(409, CREDITED_REFUND);
       res.set('Cache-Control', 'no-store');
       res.json({ payments: req.query.action === 'revoke' ? [] : await paymentsFor({ ...loaded, refreshRefunds: true, order: { ...loaded.order, id: loaded.reference.id } }),
         pending: loaded.order.itemActionPending || null });
@@ -196,6 +199,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       const { error, value } = validateItemAction(req.body);
       if (error) throw fail(400, error);
       const loaded = await load(req);
+      if (value.action === 'refund' && loaded.order.payment) throw fail(409, CREDITED_REFUND);
       const { reference, index } = loaded;
       const operation = db().collection('auditLog').doc(`item_${value.operationId}`);
       const by = admin.email || admin.uid;

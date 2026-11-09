@@ -3,6 +3,7 @@ import { itemLabel } from './inventory.js';
 import { toPounds } from './orders.js';
 import { joiningText } from './pricing.js';
 import { TREASURER_REPLY_TO } from './emailReplyTo.js';
+import { creditPaymentWording } from './credits.js';
 
 const money = (value) => `${Number(value) < 0 ? '-' : ''}£${Math.abs(Number(value || 0)).toFixed(2)}`;
 
@@ -139,7 +140,10 @@ export const buildReceiptSummary = (orderRef, order, { personFields = [] } = {})
     code: String(voucher.code || ''), name: String(voucher.name || 'Voucher'), value: Number(voucher.value || 0),
     expiresAt: voucher.expiresAt?.toDate?.().toISOString() || (voucher.expiresAt ? new Date(voucher.expiresAt).toISOString() : '')
   }));
-  return { orderRef, payerEmail: order.email || '', total: toPounds(order.totalPence), people, otherItems, vouchers };
+  // A credited order shows what the club received, and how, rather than the shop price.
+  const paidOutside = creditPaymentWording(order.payment);
+  return { orderRef, payerEmail: order.email || '', total: toPounds(paidOutside ? order.payment.amountPence : order.totalPence),
+    ...(paidOutside ? { paymentMethod: paidOutside } : {}), people, otherItems, vouchers };
 };
 
 const itemLines = (label, items) => items.length
@@ -158,6 +162,7 @@ export const receiptEmailCopy = (receipt) => [
   ...(receipt.payerEmail ? [`Paid by: ${receipt.payerEmail}`] : []),
   ...(receipt.summary || []).map((entry) => `${entry.label}: ${entry.value}`),
   `Total paid: ${money(receipt.total)}`,
+  ...(receipt.paymentMethod ? [receipt.paymentMethod] : []),
   '',
   ...receipt.people.flatMap((person) => [
     `${person.name}`,
@@ -186,12 +191,13 @@ export const buildLinkedReceipt = (orderRef, order) => {
   const itemFields = ['id', 'lineId', 'name', 'category', 'type', 'pricePence', 'size', 'monthly', 'eventSchedule', 'imageUrl'];
   const linked = (Array.isArray(order.items) ? order.items : [])
     .map((item) => Object.fromEntries(itemFields.filter((field) => item[field] !== undefined).map((field) => [field, item[field]])));
+  const summary = buildReceiptSummary(orderRef, { items: linked, people, totalPence: order.totalPence, billingMode: order.billingMode, payment: order.payment });
   const items = linked.map(({ pricePence, ...item }) => ({
     ...item, ...(pricePence !== undefined ? { price: toPounds(pricePence) } : {}), personNames: receiptItemNames(item, people)
   }));
   return {
-    orderRef, items, total: toPounds(order.totalPence),
-    copy: receiptEmailCopy(buildReceiptSummary(orderRef, { items: linked, people, totalPence: order.totalPence, billingMode: order.billingMode }))
+    orderRef, items, total: summary.total, ...(summary.paymentMethod ? { paymentMethod: summary.paymentMethod } : {}),
+    copy: receiptEmailCopy(summary)
   };
 };
 
@@ -263,6 +269,7 @@ export const receiptEmailHtml = (receipt, retrievalUrl) => `<!doctype html>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:1px solid #e2e8f0">
           <tr><td style="padding-top:20px;font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#64748b">Total paid</td>
           <td style="padding-top:20px;text-align:right;font-size:28px;font-weight:900;white-space:nowrap">${escapeHtml(money(receipt.total))}</td></tr>
+          ${receipt.paymentMethod ? `<tr><td colspan="2" style="text-align:right;color:#64748b">${escapeHtml(receipt.paymentMethod)}</td></tr>` : ''}
         </table>
         ${retrievalUrl ? `<p style="margin:28px 0 0;text-align:center"><a href="${escapeHtml(retrievalUrl)}" style="display:inline-block;padding:14px 24px;background:#002147;color:#ffffff;text-decoration:none;border-radius:12px;font-weight:700">View your receipt</a></p>` : ''}
       </td></tr>

@@ -15,7 +15,8 @@ import { watchPublishedNotices } from '../utils/noticesClient';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, pricedItems = [], tripDiscounts = [], onBack, onReset, onPay, makeId }) {
+export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, pricedItems = [], tripDiscounts = [], onBack, onReset, onPay, makeId, labels = {} }) {
+  const text = { back: 'Back to basket', review: 'Review and pay', submit: 'Continue to payment', submitting: 'Starting payment…', ...labels };
   const addOnLines = lines.filter((line) => needsPerson(line) && !isMembership(line));
   const openToNonMembers = addOnLines.some((line) => !requiresMembership(line));
   const [stepKey, setStepKey] = useState('email');
@@ -267,7 +268,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   return (
     <div className="CheckoutPage PageFadeIn">
       <div className="CheckoutPageTop">
-        <button type="button" className="PrimaryActionButtonCompact" onClick={onBack} disabled={busy || checking}><ArrowLeft className="IconSm" /> Back to basket</button>
+        <button type="button" className="PrimaryActionButtonCompact" onClick={onBack} disabled={busy || checking}><ArrowLeft className="IconSm" /> {text.back}</button>
         <button type="button" className="CartRemoveButton" onClick={() => { setErrors([]); setStepKey('email'); onReset(); }} disabled={busy || checking}>Clear my details</button>
         <span className="tile_eyebrow">Step {index + 1} of {steps.length}</span>
       </div>
@@ -465,7 +466,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
 
         {current === 'review' && (
           <div className="CheckoutDetails">
-            <h2 className="page_heading_bold_1">Review and pay</h2>
+            <h2 className="page_heading_bold_1">{text.review}</h2>
             <p className="text_container">Receipt email: <strong>{email}</strong></p>
             <div className="CheckoutSection ReviewItems">
               {lines.map((line) => {
@@ -505,7 +506,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
         <div className="CheckoutNav">
           <button type="button" className="PrimaryActionButtonCompact" onClick={() => go(-1)} disabled={busy || checking || index === 0}><ArrowLeft className="IconSm" /> Previous</button>
           <button type="button" className="CheckoutButton" onClick={() => go(1)} disabled={busy || checking || Boolean(person && [person, ...familyMembers].some((candidate) => !returningVerificationMatches(candidate, email)))}>
-            {current === 'review' ? (busy ? 'Starting payment…' : 'Continue to payment') : checking ? 'Checking…' : <>Next <ArrowRight className="IconSm" /></>}
+            {current === 'review' ? (busy ? text.submitting : text.submit) : checking ? 'Checking…' : <>Next <ArrowRight className="IconSm" /></>}
           </button>
         </div>
       </div>
