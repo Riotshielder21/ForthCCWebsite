@@ -18,7 +18,7 @@ try {
   };
   await syncApiMonitoring({ request, project, apiUrl, emails, log: (message) => console.log(message) });
 } catch (error) {
-  const hint = error.message.includes(' failed: ') ? ' Check the deploy service account has the Monitoring Editor role and the Cloud Monitoring API is enabled (DEVELOPMENT.md, "API outage alerts").' : '';
+  const hint = error.message.includes(' failed: ') ? ' Check the deploy service account has the Monitoring Editor role and the Cloud Monitoring API is enabled.' : '';
   console.error(`::error title=API outage alert not configured::${error.message}${hint}`);
   process.exitCode = 1;
 }

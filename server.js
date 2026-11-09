@@ -967,7 +967,7 @@ const subscriptionLinks = async (reference, record) => {
 };
 
 /**
- * Stripe retries a failed monthly debit on its own schedule (see DEVELOPMENT.md). Each failure emails the member when
+ * Stripe retries a failed monthly debit on its own schedule (set in the Stripe Dashboard). Each failure emails the member when
  * Stripe will try again; the final one (no retry scheduled) tells them the payments have stopped, with links to restart
  * or confirm they are stopping, copies the treasurer and is raised for staff. Stripe can send an event more than
  * once, so each invoice attempt is emailed once.
