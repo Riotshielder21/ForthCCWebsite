@@ -1569,8 +1569,8 @@ app.get('/api/admin/subscriptions', rateLimit(60, 60 * 1000), async (req, res) =
 /**
  * Stops monthly payments for some or all items on a payer's subscription, straight away and without a refund; the
  * debit drops by those items from the next payment, and the subscription is cancelled once nothing is left on it.
- * What was bought stays in the history and the stopped items' benefits end now. Membership and anything else paid
- * for separately (annual services, other monthly items) are unaffected.
+ * What was bought stays in the history and the stopped items' benefits run to the date they are paid up to. Membership
+ * and anything else paid for separately (annual services, other monthly items) are unaffected.
  */
 const cancelSubscriptionLines = async (req, res, pick, action) => {
   const admin = await requireAdmin(req, res);
@@ -1590,13 +1590,15 @@ const cancelSubscriptionLines = async (req, res, pick, action) => {
 };
 
 /**
- * Stops monthly items and ends what they pay for, now (or at `paidUntil` when Stripe cancelled it with debits unpaid).
- * A membership is paid annually, never on a subscription, so it is not changed here.
+ * Stops monthly items. What they pay for runs to the paid-up date: the end of the period already paid, or `paidUntil`
+ * when Stripe cancelled it with debits unpaid. A membership is paid annually, never on a subscription, so it is not
+ * changed here; the subscription's member links stay so staff and GDPR erasure can see who held what.
  */
 const stopSubscriptionItems = async (reference, record, ending, admin, action, reason, request = stripeRequest, { paidUntil: paidUntilGiven = null } = {}) => {
   const document = { id: reference.id };
   const active = activeSubscriptionItems(record);
   const stripeSubscription = await request(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
+  const paidUntil = paidUntilGiven || (periodEnd(stripeSubscription) ? Timestamp.fromMillis(periodEnd(stripeSubscription) * 1000) : null);
   const wholeSubscription = ending.length === active.length;
   // A schedule (a volunteer's pending change) would add cancelled items back at its next phase, so it is edited instead.
   const scheduleId = stripeId(stripeSubscription.schedule);
@@ -1649,7 +1651,7 @@ const stopSubscriptionItems = async (reference, record, ending, admin, action, r
   const terms = await loadTerms(adminDb, memberIds);
   for (const member of members.filter((entry) => entry.exists)) {
     const data = member.data();
-    endTermItems(batch, terms.get(member.id) || [], (item) => isEnding(item), paidUntilGiven && paidUntilGiven.toMillis() < now.toMillis() ? paidUntilGiven : now);
+    endTermItems(batch, terms.get(member.id) || [], (item) => isEnding(item), paidUntil || now);
     batch.update(member.ref, {
       subscriptionItems: (data.subscriptionItems || []).map((item) => isEnding(item) && item.status === 'active'
         ? { ...item, status: 'cancelled', cancelledAt: now } : item),
@@ -2247,7 +2249,7 @@ app.get('/api/admin/customer', rateLimit(30, 60 * 1000), async (req, res) => {
           id: document.id, name: `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.name || 'Unnamed',
           membershipTier: data.membershipTier || '', status: data.status === 'active' && data.validUntil?.toMillis() <= now ? 'expired' : data.status || 'unknown',
           validUntil: data.validUntil?.toMillis() || 0, affiliationNumber: data.affiliationNumber || '', membershipNumber: data.membershipNumber || '',
-          privileges: (entitlements.get(document.id) || []).filter((item) => !item.endedAt).map((item) => item.name)
+          privileges: (entitlements.get(document.id) || []).filter((item) => !(item.endedAt?.toMillis?.() <= now)).map((item) => item.name)
         };
       }),
       orders: orderSnapshot.docs.map((document) => {

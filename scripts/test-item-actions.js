@@ -139,6 +139,8 @@ const checkMainServer = async () => {
     assert.equal((await holder.get()).data().subscriptionItems[0].status, 'cancelled');
     assert.ok((await purchase.get()).data().items[0].monthlyCancelledAt);
     assert.ok((await purchase.get()).data().items[0].revokedAt);
+    const revokedEnd = (await db.doc(`membershipTerms/${holder.id}_2026`).get()).data().items[0].endedAt;
+    assert.ok(revokedEnd && revokedEnd.toMillis() <= Date.now(), 'revoking ends access now, not at the paid-up date');
     const audit = await db.collection('auditLog').where('orderRefs', 'array-contains', purchase.id).get();
     for (const document of audit.docs) created.add(document.ref.path);
     assert.equal(audit.size, 1);

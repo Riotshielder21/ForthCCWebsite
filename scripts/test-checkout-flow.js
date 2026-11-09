@@ -1771,7 +1771,8 @@ await test('a payer has one monthly subscription per club year for everyone they
   assert.equal(benCancelled.json.subscription.status, 'active', 'the payer keeps paying for everyone else');
   assert.deepEqual(benCancelled.json.subscription.items.filter((item) => item.status === 'active').map((item) => item.productId).sort(), [lessonId, 'gold-sub'].sort());
   const benAfter = (await db.collection('memberships').doc(benId).get()).data();
-  assert.ok((await entitlementsOf(benId)).find((privilege) => privilege.productId === 'gold-sub').endedAt, 'Ben\'s gold entitlement ends');
+  const benGoldEnds = (await entitlementsOf(benId)).find((privilege) => privilege.productId === 'gold-sub').endedAt;
+  assert.ok(benGoldEnds && benGoldEnds.toMillis() > Date.now(), 'Ben\'s gold entitlement runs to the date it is paid up to');
   assert.equal(benAfter.subscriptionItems[0].status, 'cancelled');
   assert.ok(!(await entitlementsOf(monaId)).find((privilege) => privilege.productId === 'gold-sub').endedAt);
   const benAudit = (await db.collection('auditLog').where('stripeSubscriptionId', '==', subscriptionId).get()).docs.map((document) => document.data());
