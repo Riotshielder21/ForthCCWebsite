@@ -1,5 +1,5 @@
 // End-to-end checkout test: API -> Stripe webhook -> Firestore records -> admin reports.
-// Needs the Firebase emulators and an API server (Stripe mocked) already running; see DEVELOPMENT.md.
+// Needs the Firebase emulators and an API server (Stripe mocked) already running. Run it through the integration suite in DEVELOPMENT.md, which starts that API.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createHash, createHmac } from 'node:crypto';
