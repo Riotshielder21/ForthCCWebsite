@@ -595,39 +595,28 @@ await test('an active member cannot buy a second membership, and JustGo members 
   assert.equal((await checkout(email('synced'), build(['keyhire'], [synced]))).status, 200, 'add-ons are still allowed');
 });
 
-await test('Stripe subscription status is checked before treating a member as active', async () => {
+await test('a paid membership stays active for its club year whatever happens to any subscription', async () => {
   const coachingEmail = email('coaching-cancelled');
   const coachingDetails = adultDetails({ firstName: 'Coaching', lastName: 'Cancelled', email: coachingEmail });
   await buy(coachingEmail, build(['membership-adult', 'blue-sub'], [coachingDetails]), { billingMode: 'monthly' });
   const [coachingMember] = await membershipsFor(coachingEmail);
-  assert.equal(coachingMember.stripeMembershipSubscriptionId, '', 'a coaching subscription is not the member subscription');
+  assert.ok(!coachingMember.stripeMembershipSubscriptionId, 'a coaching subscription is not linked to the membership');
   assert.equal((await checkout(coachingEmail, build(['keyhire'], [coachingDetails]))).status, 200,
-    'a canceled coaching plan does not invalidate the separately paid membership');
+    'the separately paid membership counts as active');
 
-  const activeEmail = email('stripe-active');
-  const activeDetails = adultDetails({ firstName: 'Stripe', lastName: 'Active', email: activeEmail });
-  await db.collection('memberships').doc(`stripe-active-${run}`).set({
-    firstName: activeDetails.firstName, lastName: activeDetails.lastName, dob: activeDetails.dob, email: activeEmail,
+  // Older records may still name a Bookwhen subscription (scripts/migrate-schema.js); it is kept only so erasure can stop that billing.
+  const legacyEmail = email('stripe-cancelled');
+  const legacyDetails = adultDetails({ firstName: 'Stripe', lastName: 'Cancelled', email: legacyEmail });
+  await db.collection('memberships').doc(`stripe-cancelled-${run}`).set({
+    firstName: legacyDetails.firstName, lastName: legacyDetails.lastName, dob: legacyDetails.dob, email: legacyEmail,
     status: 'active', validUntil: new Date('2099-03-01T00:00:00Z'), source: 'website', renewalMethod: 'website',
-    stripeMembershipSubscriptionId: 'sub_e2e_active', stripeMembershipMode: 'test'
+    stripeMembershipSubscriptionId: 'sub_e2e_cancelled', stripeMembershipMode: 'live'
   });
-  const duplicate = await checkout(activeEmail, build(['membership-adult'], [activeDetails]));
+  assert.equal((await checkout(legacyEmail, build(['keyhire'], [legacyDetails]))).status, 200,
+    'a cancelled or other-mode subscription does not end or block a paid membership');
+  const duplicate = await checkout(legacyEmail, build(['membership-adult'], [legacyDetails]));
   assert.equal(duplicate.status, 409);
   assert.equal(duplicate.json.code, 'membership_active');
-
-  const cancelledEmail = email('stripe-cancelled');
-  const cancelledDetails = adultDetails({ firstName: 'Stripe', lastName: 'Cancelled', email: cancelledEmail });
-  // Older records get their subscription reference from scripts/migrate-schema.js (see membershipTerms.test.js).
-  await db.collection('memberships').doc(`stripe-cancelled-${run}`).set({
-    firstName: cancelledDetails.firstName, lastName: cancelledDetails.lastName, dob: cancelledDetails.dob, email: cancelledEmail,
-    status: 'active', validUntil: new Date('2099-03-01T00:00:00Z'), source: 'website', renewalMethod: 'website',
-    stripeMembershipSubscriptionId: 'sub_e2e_cancelled', stripeMembershipMode: 'test'
-  });
-  const addOn = await checkout(cancelledEmail, build(['keyhire'], [cancelledDetails]));
-  assert.equal(addOn.status, 409);
-  assert.equal(addOn.json.code, 'membership_required');
-  assert.equal((await checkout(cancelledEmail, build(['membership-adult'], [cancelledDetails]))).status, 200,
-    'a canceled subscriber may buy a replacement membership');
 
   const noSubscriptionEmail = email('stripe-unlinked-history');
   const noSubscriptionDetails = adultDetails({ firstName: 'Legacy', lastName: 'Member', email: noSubscriptionEmail });

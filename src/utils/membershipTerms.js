@@ -81,7 +81,7 @@ export const legacyTerms = (membershipId, fields, orders = new Map(), defaultStr
     const purchase = bought.get(year);
     const term = termFor(year);
     const end = clubYearDates(year).end;
-    // A membership cut short (monthly payments stopped, or revoked) ends at the member's validUntil.
+    // A membership cut short (revoked) ends at the member's validUntil.
     const cutShort = year === years.at(-1) && validUntil && validUntil < end && validUntil > clubYearDates(year).start;
     Object.assign(term, {
       tier: purchase?.line?.membershipTier || fields.membershipTier || '',

@@ -53,7 +53,7 @@ What each item action changes (none deletes the order):
 | Revoke access | No | Removed now | Stopped now |
 | Refund one payment / Refund only | Yes, the chosen amount | Kept | Carries on |
 | Refund and cancel / Refund and revoke | Yes | Removed now | Stopped now |
-| Cancel item, member's items or subscription (Monthly payments) | No | Ends now; membership runs to its paid-up date | Stopped now |
+| Cancel item, member's items or subscription (Monthly payments) | No | Those items end now; membership and other items are unaffected | Stopped now |
 | Stop billing immediately (Subscriptions tab) | No | Ended once Stripe confirms | Whole subscription cancelled |
 
 A refund is made first, then billing stopped, then access removed. If a step fails, **Resume unfinished action** finishes the same request without refunding twice. Credited orders cannot be refunded through Stripe: refund the customer directly.

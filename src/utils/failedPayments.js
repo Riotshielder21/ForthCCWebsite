@@ -162,7 +162,7 @@ export const invoiceItemNames = (invoice) => {
 
 /**
  * The checkout receipt's layout for a monthly payment Stripe collected. Every item paid monthly on the subscription
- * is listed under the person it is for, whether it is a subscription product, a membership or kit hire paid monthly.
+ * is listed under the person it is for, whether it is a subscription product or a service such as kit hire paid monthly.
  * `items` are the subscription record's items (`stripeItemId`, `name`, `names`, `category`); each is priced from the
  * invoice lines for its Stripe item. Lines that match no item (or every line, for a subscription set up outside the
  * site) are listed by their Stripe description for `linkedNames`. A discount or credit makes up any difference so the

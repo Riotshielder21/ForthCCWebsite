@@ -66,7 +66,7 @@ export default function PurchasedItemActions({ order, adminUser, onChanged }) {
       <li><strong>Refund and cancel</strong> (monthly) or <strong>Refund and revoke</strong> (one-off) returns money, removes the benefit now and stops future monthly payments. If nothing else is on the Stripe subscription, the whole subscription is cancelled.</li>
       <li><strong>Resume unfinished action</strong> finishes a recorded action that was interrupted. It never issues a second refund.</li>
     </ul>
-    <p className="text_container">None of these deletes the order. To stop monthly payments without a refund and let access run to the paid-up date, use Monthly payments below or the Subscriptions tab.</p>
+    <p className="text_container">None of these deletes the order. To stop monthly payments without a refund (their benefits end now; membership is not affected), use Monthly payments below or the Subscriptions tab.</p>
     {order.credited && <p className="ReportWarning">This order was credited by staff and paid outside Stripe. Refund the customer directly and tell the treasurer; revoke the items here if needed.</p>}
     {order.items.map((item) => <div key={item.lineId} className="SpaceT4">
       <strong>{item.name}</strong>
