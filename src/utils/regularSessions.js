@@ -4,12 +4,12 @@ const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ID = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
 export const DEFAULT_REGULAR_SESSIONS = [
-  { id: 'slalom-tuesday', discipline: 'Slalom', name: '', weekday: 2, startTime: '19:00', endTime: '', season: '', location: 'Union Canal', timeZone: 'Europe/London', active: true },
-  { id: 'polo-friday-beginners', discipline: 'Polo', name: 'Beginner friendly', weekday: 5, startTime: '18:00', endTime: '', season: '', location: '', timeZone: 'Europe/London', active: true },
-  { id: 'polo-wednesday-intermediate', discipline: 'Polo', name: 'Intermediate', weekday: 3, startTime: '19:00', endTime: '', season: '', location: '', timeZone: 'Europe/London', active: true },
-  { id: 'polo-monday-advanced', discipline: 'Polo', name: 'Advanced', weekday: 1, startTime: '18:00', endTime: '', season: '', location: '', timeZone: 'Europe/London', active: true },
-  { id: 'sprint-thursday', discipline: 'Sprint & Marathon', name: 'Coached session', weekday: 4, startTime: '18:00', endTime: '', season: 'Summer', location: '', timeZone: 'Europe/London', active: true },
-  { id: 'sprint-sunday', discipline: 'Sprint & Marathon', name: 'Coached session', weekday: 0, startTime: '14:00', endTime: '', season: 'Winter', location: '', timeZone: 'Europe/London', active: true }
+  { id: 'slalom-tuesday', discipline: 'Slalom', name: '', weekday: 2, startTime: '19:00', endTime: '', season: '', location: 'Canal', timeZone: 'Europe/London', active: true },
+  { id: 'polo-friday-beginners', discipline: 'Polo', name: 'Beginner friendly', weekday: 5, startTime: '18:00', endTime: '', season: '', location: 'Canal', timeZone: 'Europe/London', active: true },
+  { id: 'polo-wednesday-intermediate', discipline: 'Polo', name: 'Intermediate', weekday: 3, startTime: '19:00', endTime: '', season: '', location: 'Canal', timeZone: 'Europe/London', active: true },
+  { id: 'polo-monday-advanced', discipline: 'Polo', name: 'Advanced', weekday: 1, startTime: '18:00', endTime: '', season: '', location: 'Canal', timeZone: 'Europe/London', active: true },
+  { id: 'sprint-thursday', discipline: 'Sprint & Marathon', name: 'Coached session', weekday: 4, startTime: '18:00', endTime: '', season: 'Summer Only', location: 'Canal', timeZone: 'Europe/London', active: true },
+  { id: 'sprint-sunday', discipline: 'Sprint & Marathon', name: 'Coached session', weekday: 0, startTime: '14:00', endTime: '', season: 'Winter Only', location: 'Canal', timeZone: 'Europe/London', active: true }
 ];
 
 const text = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
