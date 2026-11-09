@@ -22,8 +22,9 @@ import { createClubYearSubscription, clubYearCancelAt } from './src/server/clubY
 import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
 import { DISCOUNT_TYPES, discountDisplayStatus, discountFailure } from './src/utils/discountCodes.js';
 import { REASON_REQUIRED, auditEntry, requiredReason } from './src/utils/auditLog.js';
+import { validateCreditPayment, creditPaymentWording } from './src/utils/credits.js';
 import { applyTripDiscounts, currentPrivilegeIds, isTripEvent, lockedProductIds } from './src/utils/tripDiscount.js';
-import { bookingsClosed } from './src/utils/eventRoster.js';
+import { eventShopState } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, personInputErrors, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership, ageOn } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen, justgoUploadCanRetry } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
@@ -33,7 +34,7 @@ import { emailReplyTo, isVolunteerEmail, TREASURER_REPLY_TO } from './src/utils/
 import { buildReceiptSummary, buildLinkedReceipt, receiptEmailCopy, receiptEmailHtml } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, cancelStripeSubscription, stripeSubscriberReport } from './src/utils/stripeReports.js';
-import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
+import { resolveCatalogue, validateEventSchedule } from './src/utils/catalogue.js';
 import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProblem, withHold, itemLabel, isMerchandise } from './src/utils/inventory.js';
 import { deletionAuditEntry } from './src/utils/privacy.js';
 import { CURRENT_MEMBERSHIP_VERSION, CURRENT_ORDER_VERSION } from './src/utils/schema.js';
@@ -305,10 +306,6 @@ const checkoutSiteOrigin = (req) => {
   return siteOrigins.includes(requestedOrigin) ? requestedOrigin : defaultOrigin;
 };
 
-const clubYearEnd = () => {
-  const now = new Date();
-  return new Date(now.getMonth() >= 2 ? now.getFullYear() + 1 : now.getFullYear(), 2, 1);
-};
 
 // Returns the person's existing membership, or a conflict when the details contradict a record.
 const toMembershipRecord = (document) => {
@@ -492,7 +489,7 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
   }
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, noticeAgreement = null, subscriptionPlan = null, retryOf = '', restartOf = '', photoConsentAsked = false }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, noticeAgreement = null, subscriptionPlan = null, retryOf = '', restartOf = '', photoConsentAsked = false, payment = null }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   await adminDb.collection('orders').doc(orderRef).create({
     schemaVersion: CURRENT_ORDER_VERSION,
@@ -515,6 +512,7 @@ const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discou
     ...(subscriptionPlan ? { subscriptionPlan } : {}),
     ...(retryOf ? { retryOf } : {}),
     ...(restartOf ? { restartOf } : {}),
+    ...(payment ? { payment, paymentMethod: 'credit' } : {}),
     createdAt: Timestamp.now(),
     expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
   });
@@ -712,7 +710,7 @@ const deliverOrder = async (orderRef, given) => {
   catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
   try {
     const emailSent = await sendOrderEmail({ email: fields.email, orderRef, receiptToken: fields.receiptToken, items: fields.items, people: fields.people, totalPence: fields.totalPence,
-      vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode });
+      vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode, payment: fields.payment });
     await updateFirestoreOrder(orderRef, { 'fulfilment.emailSent': emailSent, 'fulfilment.emailSendingUntil': null, ...(emailSent ? { 'fulfilment.emailSentAt': Timestamp.now() } : {}) });
     if (!emailSent) throw new Error('Receipt email is not configured.');
   } catch (error) {
@@ -922,7 +920,7 @@ const setUpSubscriptions = async (orderRef, { force = false } = {}) => {
     await attention.settle('subscription-setup', orderRef);
     return { done: true };
   }
-  console.error('Could not set up the monthly payments on %s: %s', orderRef, failure.message);
+  console.error('Could not set up the monthly payments on %s: %s', String(orderRef).replace(/[\r\n]/g, ''), String(failure.message).replace(/[\r\n]/g, ' '));
   // Whatever Stripe already has is recorded, so staff can see and cancel it here.
   for (const [index, group] of (plan.groups || []).entries()) {
     if (!group.stripeSubscriptionId || group.recorded) continue;
@@ -969,7 +967,7 @@ const subscriptionLinks = async (reference, record) => {
 };
 
 /**
- * Stripe retries a failed monthly debit on its own schedule (see DEVELOPMENT.md). Each failure emails the member when
+ * Stripe retries a failed monthly debit on its own schedule (set in the Stripe Dashboard). Each failure emails the member when
  * Stripe will try again; the final one (no retry scheduled) tells them the payments have stopped, with links to restart
  * or confirm they are stopping, copies the treasurer and is raised for staff. Stripe can send an event more than
  * once, so each invoice attempt is emailed once.
@@ -2504,7 +2502,11 @@ app.get('/api/checkout-receipt', rateLimit(20, 60 * 1000), async (req, res) => {
   }
 });
 
-app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => {
+/**
+ * Validates, prices and records a basket. A checkout then goes to Stripe; a staff credit (`credit` holds how it was
+ * paid outside the website) runs the same checks and fulfilment with no Stripe payment.
+ */
+const startCheckout = async (req, res, credit = null) => {
   let reservedDocument;
   let reservedStockIds = [];
   let createdSessionId = '';
@@ -2513,19 +2515,21 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
   const orderRef = generateOrderRef();
   try {
     const email = normalizeEmail(req.body.email);
-    const { items: requestedItems, billingMode = 'annual' } = req.body;
-    if (!process.env.STRIPE_SECRET_KEY) return res.status(503).json({ error: 'Stripe test mode is not configured.' });
+    const { items: requestedItems } = req.body;
+    // Credits are priced as one payment: there is no Stripe subscription to take monthly debits.
+    const billingMode = credit ? 'annual' : req.body.billingMode ?? 'annual';
+    if (!credit && !process.env.STRIPE_SECRET_KEY) return res.status(503).json({ error: 'Stripe test mode is not configured.' });
     if (!isValidEmail(email) || !Array.isArray(requestedItems) || requestedItems.length === 0 || requestedItems.length > 20 || !['annual', 'monthly'].includes(billingMode)) {
       return res.status(400).json({ error: 'Enter a valid email address and include at least one item.' });
     }
 
     if (!adminDb) return res.status(503).json({ error: 'Order storage is not configured.' });
     // A retry or restart link's checkout records what it replaces, and is refused once that has been paid again.
-    const retried = req.body.retryOf ? await linkedOrder(req.body.retryOf) : null;
+    const retried = !credit && req.body.retryOf ? await linkedOrder(req.body.retryOf) : null;
     if (retried?.order.retriedAs) {
       return res.status(409).json({ code: 'already_paid', error: `Your payment for this order already went through as order ${retried.order.retriedAs}, so you do not need to pay again.` });
     }
-    const restarted = req.body.restartOf ? splitLinkKey(req.body.restartOf) : null;
+    const restarted = !credit && req.body.restartOf ? splitLinkKey(req.body.restartOf) : null;
     const restartRecord = restarted ? (await adminDb.collection('subscriptions').doc(restarted.id).get()).data() : null;
     const restartOf = restartRecord && tokenMatches(restarted.token, restartRecord.restartTokenHash) ? restarted.id : '';
     if (restartOf && restartRecord.restartedAs) {
@@ -2552,7 +2556,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       try { validateEventSchedule(item.eventSchedule); }
       catch (error) { return res.status(400).json({ error: `Invalid event schedule for ${item.name}.` }); }
       if (item.type !== 'event-ticket') return res.status(400).json({ error: 'Event tickets must use one-off event pricing.' });
-      if (bookingsClosed(item)) return res.status(400).json({ error: `Bookings for ${item.name} have closed. Remove it from your basket.` });
+      if (eventShopState(item) !== 'open') return res.status(400).json({ error: `Bookings for ${item.name} have closed. Remove it from your basket.` });
     }
     if (!Array.isArray(req.body.people) || req.body.people.length > 20) {
       return res.status(400).json({ error: 'Add the details for each person in your basket.' });
@@ -2704,7 +2708,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
         error: `A payment for ${clearing.itemNames.join(', ')} (order ${clearing.orderRef}) is still clearing. Bank payments take a few working days and you will get a receipt by email when it clears, so you do not need to pay again. If it fails we will email you. Questions: secretary@forthcanoeclub.co.uk.` });
     }
     let promo = null;
-    const code = typeof req.body.discountCode === 'string' ? req.body.discountCode.trim().toUpperCase() : '';
+    const code = !credit && typeof req.body.discountCode === 'string' ? req.body.discountCode.trim().toUpperCase() : '';
     const discountDocument = code ? await findDiscountCode(code) : null;
     if (code) {
       const message = discountFailure(discountDocument?.data());
@@ -2769,15 +2773,31 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
     });
     const subscriptionPlan = groups.length ? { status: 'pending', lineIds: debited.map((item) => item.lineId), groups } : null;
     // Stripe will not take a £0 payment, so a fully discounted basket with no monthly payments is completed here instead.
-    const free = !subscriptionPlan && totalPence === 0;
+    const free = !credit && !subscriptionPlan && totalPence === 0;
     const freeSessionId = free ? `cs_free_${crypto.randomBytes(16).toString('hex')}` : '';
+    const creditId = credit ? `credit_${crypto.randomBytes(16).toString('hex')}` : '';
     await createFirestoreOrder({ orderRef, email, items, totalPence, discountPence: toPence(pricing.promoDiscountValue), status: 'pending',
-      discountCode: discountDocument?.id || '', stripeSessionId: freeSessionId,
+      discountCode: discountDocument?.id || '', stripeSessionId: freeSessionId || creditId,
       people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptTokenHash: hashAccessToken(receiptToken), stockProductIds: reservedStockIds, policyVersions,
-      noticeAgreement: notices.versions.length ? { versions: notices.versions, agreedAt: Timestamp.now() } : null, subscriptionPlan,
-      photoConsentAsked: people.length > 0,
+      noticeAgreement: notices.versions.length ? { versions: notices.versions, agreedAt: Timestamp.now(), ...(credit ? { recordedBy: credit.creditedBy } : {}) } : null, subscriptionPlan,
+      photoConsentAsked: people.length > 0, payment: credit,
       retryOf: retried && retried.order.status === 'payment_failed' ? retried.reference.id : '', restartOf });
     orderCreated = true;
+    if (credit) {
+      const fields = await fulfilOrder({ orderRef, sessionId: creditId, amountTotal: totalPence, receiptToken });
+      await adminDb.collection('auditLog').add(auditEntry({ kind: 'item', action: 'credit-items', reason: credit.note || creditPaymentWording(credit),
+        actor: { uid: credit.creditedByUid, email: credit.creditedBy }, at: Timestamp.now(), orderRef, email,
+        membershipIds: [...new Set(storedPeople.map((person) => person.membershipId))], method: credit.method, amountPence: credit.amountPence,
+        lineIds: items.map((item) => item.lineId) }));
+      let receiptEmailed = true;
+      try { if (fields) await deliverOrder(orderRef, fields); }
+      catch (error) {
+        receiptEmailed = false;
+        console.error('Credited order completed but the receipt email failed:', error.message);
+        await attention.raise('receipt-email', orderRef, { orderRef, email, detail: `The receipt for credited order ${orderRef} could not be emailed: ${error.message}` });
+      }
+      return res.json({ success: true, credited: true, orderRef, receiptEmailed });
+    }
     if (free) {
       const fields = await fulfilOrder({ orderRef, sessionId: freeSessionId, amountTotal: 0, receiptToken });
       await updateFirestoreOrder(orderRef, { paymentMethod: 'free' });
@@ -2856,12 +2876,26 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       }).catch((updateError) => console.error('Could not mark the failed checkout %s: %s', orderRef, updateError.message));
     }
     // A free order that was completed keeps what it took.
-    if (paid) return res.status(500).json({ error: 'Your order is complete, but something went wrong afterwards. Check your email for the receipt.' });
+    if (paid) return res.status(500).json({ error: credit
+      ? `The items were credited as order ${orderRef}, but something went wrong afterwards. Check the order before trying again.`
+      : 'Your order is complete, but something went wrong afterwards. Check your email for the receipt.' });
     try { await releaseStock(orderRef, reservedStockIds); }
     catch (releaseError) { console.error('Could not release stock hold:', releaseError.message); }
     if (error.soldOut) return res.status(409).json({ code: 'sold_out', productId: error.productId, error: error.message });
-    res.status(500).json({ error: 'Could not start secure checkout.' });
+    res.status(500).json({ error: credit ? 'Could not credit the items.' : 'Could not start secure checkout.' });
   }
+};
+
+app.post('/api/checkout-session', rateLimit(10, 60 * 1000), (req, res) => startCheckout(req, res));
+
+// Staff credit items paid for outside the website (or given free) through the same checks and fulfilment as checkout.
+app.post('/api/admin/credits', rateLimit(10, 60 * 1000), async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const payment = validateCreditPayment(req.body?.payment, requestNow(req));
+  if (payment.error) return res.status(400).json({ error: payment.error });
+  return startCheckout(req, res, { ...payment.value, receivedAt: Timestamp.fromDate(payment.value.receivedAt),
+    creditedBy: admin.email || admin.uid, creditedByUid: admin.uid, creditedAt: Timestamp.now() });
 });
 
 /** Sends email through Workspace; the emulator stack writes it to `testMail` instead. */
@@ -2884,12 +2918,12 @@ const sendEmail = async ({ to, subject, body, html, replyTo: requestedReplyTo, r
   return true;
 };
 
-const sendOrderEmail = async ({ email, orderRef, receiptToken, items, people = [], totalPence, vouchers = [], siteUrl = '', billingMode = 'annual' }) => {
+const sendOrderEmail = async ({ email, orderRef, receiptToken, items, people = [], totalPence, vouchers = [], siteUrl = '', billingMode = 'annual', payment = null }) => {
   const orderSiteUrl = siteUrl || process.env.PUBLIC_SITE_URL || 'http://localhost:3000';
   // Admin-chosen person details go in the email only, never the shareable receipt link.
   const personFields = await loadReceiptPersonFields();
   const receiptPeople = personFields.length ? await receiptPeopleWithRecords(people, email) : people;
-  const receipt = buildReceiptSummary(orderRef, { email, items, people: receiptPeople, totalPence, vouchers, billingMode }, { personFields });
+  const receipt = buildReceiptSummary(orderRef, { email, items, people: receiptPeople, totalPence, vouchers, billingMode, payment }, { personFields });
   const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${receiptToken}`;
   const body = [receiptEmailCopy(receipt), '', `Retrieve your receipt and subscription information: ${retrievalUrl}`, '',
     `For help, contact ${TREASURER_REPLY_TO}.`].join('\n');

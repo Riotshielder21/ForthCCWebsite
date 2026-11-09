@@ -14,7 +14,7 @@ const wrap76 = (text) => text.match(/.{1,76}/g)?.join('\r\n') || '';
 export const buildRawEmail = ({ fromName, from, to, subject, body, html, replyTo }) => {
   const normalizeAddress = (value, label) => {
     const address = headerSafe(value);
-    if (!/^[^\s<>,;"]+@[^\s<>,;"]+$/.test(address) || address !== String(value).trim()) {
+    if (!/^[^\s<>,;"@]+@[^\s<>,;"@]+$/.test(address) || address !== String(value).trim()) {
       throw new Error(`Invalid ${label} address.`);
     }
     return address;

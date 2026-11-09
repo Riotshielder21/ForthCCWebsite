@@ -48,7 +48,7 @@ function TileButtonSettings({ tile, onChange }) {
 const fieldName = (key) => /title|heading/i.test(key) ? 'title'
   : /eyebrow/i.test(key) ? 'label'
     : /url/i.test(key) ? 'link URL'
-      : /action|link|label$/i.test(key) ? 'link text' : 'description';
+      : /action|link/i.test(key) || /label$/i.test(key) ? 'link text' : 'description';
 
 function insertEditableText(text) {
   const selection = window.getSelection();

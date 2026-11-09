@@ -71,3 +71,8 @@ test('saved stock fields are validated and tidied', () => {
   assert.throws(() => cleanStockFields({ category: 'EVENTS', capacity: '0' }), /at least 1/);
   assert.deepEqual(cleanStockFields({ category: 'SERVICES' }), { capacity: null });
 });
+
+test('a stock hold needs a plain order reference', () => {
+  for (const orderRef of ['', '__proto__', 'a.b', 'x'.repeat(65), null]) assert.throws(() => withHold({}, orderRef, { S: 1 }), /Invalid order reference/);
+  assert.deepEqual(Object.keys(withHold({}, 'FCC-0A1B2C3D', { S: 1 })), ['FCC-0A1B2C3D']);
+});

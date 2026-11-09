@@ -55,3 +55,10 @@ test('HTML emails use two alternative UTF-8 parts, not two displayed copies', ()
     assert.ok(part.split('\r\n\r\n')[1].trim().split('\r\n').every((line) => line.length <= 76));
   }
 });
+
+test('addresses with more than one @ are refused, quickly even when very long', () => {
+  assert.throws(() => buildRawEmail({ from: 'a@b.co', to: 'x@y@z.com', subject: 's', body: 'b' }), /Invalid/);
+  const started = Date.now();
+  assert.throws(() => buildRawEmail({ from: 'a@b.co', to: '!@'.repeat(20000), subject: 's', body: 'b' }), /Invalid/);
+  assert.ok(Date.now() - started < 200);
+});
