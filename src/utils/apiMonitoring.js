@@ -50,7 +50,7 @@ export const alertPolicy = (checkId, channelNames, apiUrl) => ({
       '1. Open Cloud Run → fcc-website-api → Logs for the error.',
       '2. If a recent deploy caused it, Cloud Run → Revisions → route traffic to the previous working revision.',
       '3. Check Secret Manager secrets, project billing and status.cloud.google.com.',
-      '4. See "API outage" in DEVELOPMENT.md. A resolved email follows when the check passes again.'
+      'A resolved email follows when the check passes again.'
     ].join('\n')
   }
 });

@@ -34,7 +34,7 @@ import { emailReplyTo, isVolunteerEmail, TREASURER_REPLY_TO } from './src/utils/
 import { buildReceiptSummary, buildLinkedReceipt, receiptEmailCopy, receiptEmailHtml } from './src/utils/receipt.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, cancelStripeSubscription, stripeSubscriberReport } from './src/utils/stripeReports.js';
-import { resolveCatalogue, validateEventSchedule, eventScheduleLabel } from './src/utils/catalogue.js';
+import { resolveCatalogue, validateEventSchedule } from './src/utils/catalogue.js';
 import { productLimits, remainingStock, isSoldOut, wantedQuantities, stockProblem, withHold, itemLabel, isMerchandise } from './src/utils/inventory.js';
 import { deletionAuditEntry } from './src/utils/privacy.js';
 import { CURRENT_MEMBERSHIP_VERSION, CURRENT_ORDER_VERSION } from './src/utils/schema.js';
@@ -306,10 +306,6 @@ const checkoutSiteOrigin = (req) => {
   return siteOrigins.includes(requestedOrigin) ? requestedOrigin : defaultOrigin;
 };
 
-const clubYearEnd = () => {
-  const now = new Date();
-  return new Date(now.getMonth() >= 2 ? now.getFullYear() + 1 : now.getFullYear(), 2, 1);
-};
 
 // Returns the person's existing membership, or a conflict when the details contradict a record.
 const toMembershipRecord = (document) => {
@@ -924,7 +920,7 @@ const setUpSubscriptions = async (orderRef, { force = false } = {}) => {
     await attention.settle('subscription-setup', orderRef);
     return { done: true };
   }
-  console.error('Could not set up the monthly payments on %s: %s', orderRef, failure.message);
+  console.error('Could not set up the monthly payments on %s: %s', String(orderRef).replace(/[\r\n]/g, ''), String(failure.message).replace(/[\r\n]/g, ' '));
   // Whatever Stripe already has is recorded, so staff can see and cancel it here.
   for (const [index, group] of (plan.groups || []).entries()) {
     if (!group.stripeSubscriptionId || group.recorded) continue;
@@ -971,7 +967,7 @@ const subscriptionLinks = async (reference, record) => {
 };
 
 /**
- * Stripe retries a failed monthly debit on its own schedule (see DEVELOPMENT.md). Each failure emails the member when
+ * Stripe retries a failed monthly debit on its own schedule (set in the Stripe Dashboard). Each failure emails the member when
  * Stripe will try again; the final one (no retry scheduled) tells them the payments have stopped, with links to restart
  * or confirm they are stopping, copies the treasurer and is raised for staff. Stripe can send an event more than
  * once, so each invoice attempt is emailed once.
