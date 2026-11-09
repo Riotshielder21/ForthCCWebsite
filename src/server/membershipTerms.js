@@ -79,14 +79,19 @@ export const writePurchaseTerms = (transaction, db, { membershipId, orderRef, pa
   }
 };
 
-/** Writes `endedAt` (and any extra fields) on the term items that match and have not ended yet. Returns how many ended. */
+const millisOf = (value) => value?.toMillis ? value.toMillis() : value ? new Date(value).getTime() : 0;
+
+/**
+ * Writes `endedAt` (and any extra fields) on the term items that match and have not ended by then. An item already set
+ * to end later (a cancelled monthly item running to its paid-up date) is brought forward, e.g. by a revoke. Returns how many ended.
+ */
 export const endTermItems = (writer, termDocuments, matches, endedAt, extra = {}) => {
   let ended = 0;
   for (const document of termDocuments) {
     const items = document.data().items || [];
     let changed = false;
     const next = items.map((item) => {
-      if (item.endedAt || !matches(item)) return item;
+      if ((item.endedAt && millisOf(item.endedAt) <= millisOf(endedAt)) || !matches(item)) return item;
       changed = true;
       ended += 1;
       return { ...item, endedAt, ...extra };

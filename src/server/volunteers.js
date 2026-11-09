@@ -16,7 +16,7 @@ import { memberOrders } from './membershipTerms.js';
 
 
 /** Public forms, yearly volunteer membership entitlements and privately emailed boathouse access codes. */
-export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembershipRecord, stripeSubscriptionIsActive, sendEmail, loadCatalogue, settleKeyAccess, requestNow = () => new Date(),
+export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembershipRecord, sendEmail, loadCatalogue, settleKeyAccess, requestNow = () => new Date(),
   adjustVolunteerSubscriptions = async () => [] }) => {
   const lists = () => db().collection('lists');
   const signupYear = (signup) => Number.isInteger(signup.clubYear) ? signup.clubYear : clubYearOf(signup.createdAt?.toDate() || new Date());
@@ -428,13 +428,7 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
   const memberIsActive = async (memberDocument) => {
     if (!memberDocument?.exists) return false;
     const member = toMembershipRecord(memberDocument);
-    if (membershipActivity(member) !== 'active') return false;
-    try {
-      return await stripeSubscriptionIsActive(member);
-    } catch (error) {
-      console.error('Volunteer membership check failed:', error.message);
-      return false;
-    }
+    return membershipActivity(member) === 'active';
   };
 
   /** The sign-up's membership, linking one by name and contact email if it was not known yet. */
