@@ -3,6 +3,7 @@ export const pageModules = {
   membership: () => import('./MembershipPage'),
   beginners: () => import('./BeginnersPage'),
   disciplines: () => import('./DisciplinesPage'),
+  timetable: () => import('./TimetablePage'),
   volunteering: () => import('./VolunteeringPage'),
   about: () => import('./AboutPage'),
   'contact-us': () => import('./ContactUsPage'),

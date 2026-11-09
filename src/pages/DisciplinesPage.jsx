@@ -1,8 +1,9 @@
 import React from 'react';
 import { usePageContent } from '../utils/PageContentContext';
 import EditablePage from '../components/EditablePage';
+import Timetable from '../components/Timetable';
 
-export default function DisciplinesPage() {
+export default function DisciplinesPage({ regularSessions, regularSessionsError }) {
   const copy = usePageContent('disciplines');
   const disciplines = ['slalom', 'polo', 'sprint', 'whitewater', 'touring', 'surf', 'canoe', 'paddleboarding'].map((id) => ({
     id,
@@ -29,6 +30,9 @@ export default function DisciplinesPage() {
             </div>
           ))}
         </div>
+      </div>
+      <div className="SectionBottom">
+        <Timetable sessions={regularSessions} scheduleError={regularSessionsError} />
       </div>
     </EditablePage>
   );

@@ -2,8 +2,9 @@ import React from 'react';
 import { ArrowRight, MapPin, ExternalLink, Heart } from 'lucide-react';
 import { usePageContent } from '../utils/PageContentContext';
 import EditablePage, { SupporterTiles } from '../components/EditablePage';
+import Timetable from '../components/Timetable';
 
-export default function HomePage({ onNavigate }) {
+export default function HomePage({ onNavigate, regularSessions, regularSessionsError }) {
   const copy = usePageContent('home');
   return (
     <EditablePage pageId="home">
@@ -125,6 +126,10 @@ export default function HomePage({ onNavigate }) {
             </a>
           </div>
         </div>
+      </div>
+
+      <div className="SectionContent">
+        <Timetable sessions={regularSessions} scheduleError={regularSessionsError} />
       </div>
 
       <div className="SectionContent">

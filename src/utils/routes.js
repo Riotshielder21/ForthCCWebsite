@@ -3,6 +3,7 @@ export const PUBLIC_ROUTES = {
   membership: { path: '/membership', title: 'Membership', content: 'membership' },
   beginners: { path: '/beginners', title: 'Beginners', content: 'beginners' },
   disciplines: { path: '/disciplines', title: 'Disciplines', content: 'disciplines' },
+  timetable: { path: '/timetable', title: 'Timetable' },
   volunteering: { path: '/volunteering', title: 'Volunteering' },
   about: { path: '/about', title: 'About', content: 'about' },
   'contact-us': { path: '/contact-us', title: 'Contact Us', content: 'contact' },

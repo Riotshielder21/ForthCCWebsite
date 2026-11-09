@@ -24,6 +24,8 @@ import './index.css';
 import fccCrest from './assets/fcc-crest.png';
 import { applyVolunteerBenefits } from './utils/volunteering';
 import { readPublicSnapshot, savePublicSnapshot } from './utils/publicSnapshots';
+import { DEFAULT_REGULAR_SESSIONS } from './utils/regularSessions';
+import { loadRegularSessions } from './utils/regularSessionsApi';
 
 const HomePage = lazy(pageModules.home);
 const MembershipPage = lazy(pageModules.membership);
@@ -43,6 +45,7 @@ const CheckoutPage = lazy(pageModules.checkout);
 const OrderLookupPage = lazy(pageModules['order-lookup']);
 const PaymentSuccessPage = lazy(pageModules['payment-success']);
 const PaymentIssuePage = lazy(pageModules['payment-issue']);
+const TimetablePage = lazy(pageModules.timetable);
 
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -75,6 +78,8 @@ export default function App() {
   const productsRef = useRef(products);
   productsRef.current = products;
   const [pageContent, setPageContent] = useState({});
+  const [regularSessions, setRegularSessions] = useState(DEFAULT_REGULAR_SESSIONS);
+  const [regularSessionsError, setRegularSessionsError] = useState('');
   const [restoredCart] = useState(() => restoreDraftLines(initialDraft?.cart, products, draftLine));
   const [cart, setCart] = useState(restoredCart.lines);
   // Saved lines the cached catalogue lacks (such as a new event) wait for the live catalogue rather than being dropped,
@@ -132,6 +137,20 @@ export default function App() {
   useEffect(() => loadPublishedPageContent((content) => setPageContent((current) => ({ ...current, ...content })), (error) => {
     console.error('Page content unavailable:', error);
   }, currentPage), [currentPage]);
+
+  useEffect(() => {
+    let active = true;
+    loadRegularSessions().then((sessions) => {
+      if (active) {
+        setRegularSessions(sessions);
+        setRegularSessionsError('');
+      }
+    }).catch((error) => {
+      console.error('Regular-session timetable unavailable:', error);
+      if (active) setRegularSessionsError(error.message);
+    });
+    return () => { active = false; };
+  }, [currentPage]);
 
   const refreshAvailability = () => apiFetch(apiUrl('/api/availability'), { cache: 'no-store' })
     .then((response) => (response.ok ? response.json() : null))
@@ -432,7 +451,7 @@ export default function App() {
 
     switch (currentPage) {
       case 'home':
-        return <HomePage onNavigate={setCurrentPage} />;
+        return <HomePage onNavigate={setCurrentPage} regularSessions={regularSessions} regularSessionsError={regularSessionsError} />;
       case 'membership':
         return (
           <MembershipPage
@@ -454,9 +473,11 @@ export default function App() {
       case 'admin-reports':
         return <AdminReportsPage onNavigate={setCurrentPage} />;
       case 'beginners':
-        return <BeginnersPage onNavigate={setCurrentPage} />;
+        return <BeginnersPage onNavigate={setCurrentPage} regularSessions={regularSessions} regularSessionsError={regularSessionsError} products={products} />;
       case 'disciplines':
-        return <DisciplinesPage />;
+        return <DisciplinesPage regularSessions={regularSessions} regularSessionsError={regularSessionsError} />;
+      case 'timetable':
+        return <TimetablePage regularSessions={regularSessions} regularSessionsError={regularSessionsError} />;
       case 'volunteering':
         return <VolunteeringPage products={products} />;
       case 'club-night':

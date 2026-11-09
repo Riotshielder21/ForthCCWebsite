@@ -30,6 +30,17 @@
 }
 
 @layer components {
+  .TimetableList { display: grid; gap: 12px; }
+  .TimetableItem { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-top: 1px solid var(--fcc-color-border); padding-top: 12px; }
+  .TimetableItem:first-child { border-top: 0; padding-top: 0; }
+  .TimetableItem .tile_heading_bold_2 { margin: 0 0 4px; }
+  .TimetableDetails { text-align: right; }
+  .TimetableDetails p + p { margin-top: 4px; }
+  .Timetable .text_container_note { margin-bottom: 0; }
+  .RegularSessionsEditor { display: grid; gap: 12px; }
+  .RegularSessionsEditor .CheckinSessionFields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); }
+  .RegularSessionsEditor .CheckinSessionOptions { align-items: center; }
+
   .SiteShell {
     @apply min-h-screen flex flex-col bg-slate-50 selection:bg-sky-100;
     min-height: 100dvh;

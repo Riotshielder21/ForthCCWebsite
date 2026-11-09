@@ -13,6 +13,7 @@ import TripDiscountsPanel from '../components/TripDiscountsPanel';
 import RenewalsPanel from '../components/RenewalsPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
 import CheckinSessionsPanel from '../components/CheckinSessionsPanel';
+import RegularSessionsPanel from '../components/RegularSessionsPanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
 import AdminAccessPanel from '../components/AdminAccessPanel';
 import PurchasedItemActions from '../components/PurchasedItemActions';
@@ -25,7 +26,8 @@ const RECORD_TABS = [[Users, 'members', 'Member register'], [ShoppingBag, 'order
 // Settings tabs show a single panel instead of a records table.
 const SETTINGS_TABS = [[Banknote, 'credit-items', 'Credit items', CreditItemsPanel], [Mail, 'receipt-emails', 'Receipt emails', ReceiptEmailPanel], [Percent, 'trip-discounts', 'Trip discounts', TripDiscountsPanel],
   [Repeat, 'renewals', 'Renewal emails', RenewalsPanel],
-  [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [CalendarClock, 'checkin-sessions', 'Check-in sessions', CheckinSessionsPanel],
+  [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [CalendarClock, 'regular-sessions', 'Regular timetable', RegularSessionsPanel],
+  [CalendarClock, 'checkin-sessions', 'Check-in sessions', CheckinSessionsPanel],
   [KeyRound, 'boathouse', 'Boathouse code', BoathouseCodePanel], [ShieldCheck, 'admins', 'Website admins', AdminAccessPanel]];
 
 const detailValue = (value) => {

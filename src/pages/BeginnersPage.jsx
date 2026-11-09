@@ -2,9 +2,15 @@ import React from 'react';
 import { ExternalLink } from 'lucide-react';
 import { usePageContent } from '../utils/PageContentContext';
 import EditablePage from '../components/EditablePage';
+import Timetable from '../components/Timetable';
+import { calculateCart } from '../utils/pricing';
 
-export default function BeginnersPage({ onNavigate }) {
+const money = (amount) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(amount);
+
+export default function BeginnersPage({ onNavigate, regularSessions, regularSessionsError, products = [] }) {
   const copy = usePageContent('beginners');
+  const hireProduct = products.find((product) => product.id === 'boat-hire' && product.active !== false);
+  const hirePrice = hireProduct ? calculateCart([{ ...hireProduct, clubYearChoice: 'this' }], true).items[0]?.displayPrice ?? null : null;
   return (
     <EditablePage pageId="beginners">
       <div className="SectionHero"><div data-tile-group="hero">
@@ -47,6 +53,12 @@ export default function BeginnersPage({ onNavigate }) {
             <p className="text_container text_container_grow AdminPreserveLines" data-content-field="essentialsBody">{copy.essentialsBody}</p>
           </div>
         </div>
+      </div>
+      {hirePrice !== null && <div className="SectionContent">
+        <p className="text_container">Annual boat &amp; kit hire for the current club year is {money(hirePrice)} at today’s catalogue price. See <a className="ContentLink" href="/membership">Membership</a> for current options.</p>
+      </div>}
+      <div className="SectionBottom">
+        <Timetable sessions={regularSessions} scheduleError={regularSessionsError} />
       </div>
     </EditablePage>
   );

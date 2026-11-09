@@ -59,6 +59,7 @@ import { allocateRecordIds, reserveRecordIds } from './src/utils/recordIds.js';
 import { registerEmailCodeRoutes } from './src/server/emailCodes.js';
 import { registerMyDetailsRoutes } from './src/server/myDetails.js';
 import { registerClubNightRoutes } from './src/server/clubNight.js';
+import { registerRegularSessionRoutes } from './src/server/regularSessions.js';
 import { volunteerCancellationPhases, scheduleWithoutPrices } from './src/utils/volunteerCancellation.js';
 import { monthlyAdjustment, volunteerPriceFor } from './src/utils/volunteerAdjustments.js';
 import { registerBoathouseRoutes } from './src/server/boathouse.js';
@@ -1838,6 +1839,7 @@ const { sendDueRosters, canViewEventRosters } = registerEventRosterRoutes(app, {
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerClubNightRoutes(app, { requireAdmin, db: () => adminDb, emailCodes, requestNow, live: () => isLive(), canViewEventRosters,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+registerRegularSessionRoutes(app, { requireAdmin, db: () => adminDb });
 registerAttentionRoutes(app, { requireAdmin, db: () => adminDb, retry: attentionRetry });
 registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
   stopMonthlyItem: async (orderRef, item, admin, reason, action = 'revoke-item') => {

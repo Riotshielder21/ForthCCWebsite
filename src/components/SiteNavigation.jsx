@@ -8,7 +8,8 @@ const PRIMARY_NAV_ITEMS = [
   { id: 'home', label: 'Home' },
   { id: 'membership', label: 'Membership' },
   { id: 'beginners', label: 'Beginners' },
-  { id: 'disciplines', label: 'Disciplines' }
+  { id: 'disciplines', label: 'Disciplines' },
+  { id: 'timetable', label: 'Timetable' }
 ];
 
 const MORE_NAV_ITEMS = [
