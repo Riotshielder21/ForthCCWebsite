@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import {
-  addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, personKind, familyRole, resolvedKind, FAMILY_ADULT_MAX,
+  addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, familyRole, resolvedKind, FAMILY_ADULT_MAX,
   displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT, requiresMembership, grantsMembership,
   returningVerificationMatches, invalidatePersonVerification, checkoutStepSnapshot, validateCheckout
 } from '../utils/checkout';
@@ -15,7 +15,8 @@ import { watchPublishedNotices } from '../utils/noticesClient';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, pricedItems = [], onBack, onReset, onPay, makeId }) {
+export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, pricedItems = [], tripDiscounts = [], onBack, onReset, onPay, makeId, labels = {} }) {
+  const text = { back: 'Back to basket', review: 'Review and pay', submit: 'Continue to payment', submitting: 'Starting payment…', ...labels };
   const addOnLines = lines.filter((line) => needsPerson(line) && !isMembership(line));
   const openToNonMembers = addOnLines.some((line) => !requiresMembership(line));
   const [stepKey, setStepKey] = useState('email');
@@ -267,7 +268,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
   return (
     <div className="CheckoutPage PageFadeIn">
       <div className="CheckoutPageTop">
-        <button type="button" className="PrimaryActionButtonCompact" onClick={onBack} disabled={busy || checking}><ArrowLeft className="IconSm" /> Back to basket</button>
+        <button type="button" className="PrimaryActionButtonCompact" onClick={onBack} disabled={busy || checking}><ArrowLeft className="IconSm" /> {text.back}</button>
         <button type="button" className="CartRemoveButton" onClick={() => { setErrors([]); setStepKey('email'); onReset(); }} disabled={busy || checking}>Clear my details</button>
         <span className="tile_eyebrow">Step {index + 1} of {steps.length}</span>
       </div>
@@ -465,7 +466,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
 
         {current === 'review' && (
           <div className="CheckoutDetails">
-            <h2 className="page_heading_bold_1">Review and pay</h2>
+            <h2 className="page_heading_bold_1">{text.review}</h2>
             <p className="text_container">Receipt email: <strong>{email}</strong></p>
             <div className="CheckoutSection ReviewItems">
               {lines.map((line) => {
@@ -482,7 +483,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                       <span className="ReviewPrice">{money(price)}</span>
                     </div>
                     {(holders.length > 0 || monthly > 0) && <p className="CartItemMeta">{[holders.join(', '), monthly > 0 ? `then ${money(monthly)} a month` : ''].filter(Boolean).join(' · ')}</p>}
-                    {trip > 0 && <div className="ReviewRow ReviewDiscount"><span>{tripDiscountText(parts.flatMap((item) => item.tripDiscountReasons || []))}</span><span>-{money(trip)}</span></div>}
+                    {trip > 0 && <div className="ReviewRow ReviewDiscount"><span>{tripDiscountText(parts.flatMap((item) => item.tripDiscountReasons || []), tripDiscounts)}</span><span>-{money(trip)}</span></div>}
                     {promo > 0 && <div className="ReviewRow ReviewDiscount"><span>Discount code applied</span><span>-{money(promo)}</span></div>}
                   </div>
                 );
@@ -505,7 +506,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
         <div className="CheckoutNav">
           <button type="button" className="PrimaryActionButtonCompact" onClick={() => go(-1)} disabled={busy || checking || index === 0}><ArrowLeft className="IconSm" /> Previous</button>
           <button type="button" className="CheckoutButton" onClick={() => go(1)} disabled={busy || checking || Boolean(person && [person, ...familyMembers].some((candidate) => !returningVerificationMatches(candidate, email)))}>
-            {current === 'review' ? (busy ? 'Starting payment…' : 'Continue to payment') : checking ? 'Checking…' : <>Next <ArrowRight className="IconSm" /></>}
+            {current === 'review' ? (busy ? text.submitting : text.submit) : checking ? 'Checking…' : <>Next <ArrowRight className="IconSm" /></>}
           </button>
         </div>
       </div>

@@ -18,6 +18,8 @@ export const orderSubscriptions = async (db, orderRef) => {
   return [...new Map(pages.flatMap((page) => page.docs).map((document) => [document.id, document])).values()];
 };
 
+const CREDITED_REFUND = 'This order was credited by staff and paid outside Stripe, so it cannot be refunded here. Refund the customer directly and tell the treasurer; you can still revoke the items.';
+
 export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest, stopMonthlyItem }) => {
   const load = async (req) => {
     if (!db()) throw fail(503, 'Purchase storage is not configured.');
@@ -114,6 +116,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
     try {
       if (!await requireAdmin(req, res)) return;
       const loaded = await load(req);
+      if (req.query.action !== 'revoke' && loaded.order.payment && !loaded.order.itemActionPending) throw fail(409, CREDITED_REFUND);
       res.set('Cache-Control', 'no-store');
       res.json({ payments: req.query.action === 'revoke' ? [] : await paymentsFor({ ...loaded, refreshRefunds: true, order: { ...loaded.order, id: loaded.reference.id } }),
         pending: loaded.order.itemActionPending || null });
@@ -196,6 +199,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       const { error, value } = validateItemAction(req.body);
       if (error) throw fail(400, error);
       const loaded = await load(req);
+      if (value.action === 'refund' && loaded.order.payment) throw fail(409, CREDITED_REFUND);
       const { reference, index } = loaded;
       const operation = db().collection('auditLog').doc(`item_${value.operationId}`);
       const by = admin.email || admin.uid;
@@ -209,7 +213,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       }
       const wantsRevoke = value.action === 'revoke' || value.revoke;
       if (!loaded.order.itemActionPending) {
-        if (wantsRevoke && loaded.item.revokedAt) throw fail(409, 'This item is already revoked. A refund without another revocation is still available.');
+        if (wantsRevoke && loaded.item.revokedAt) throw fail(409, 'This item is already revoked. A refund that keeps access is still available.');
         if (value.purpose && (loaded.item.refunds || []).some((refund) => refund.purpose === value.purpose && !['failed', 'canceled'].includes(refund.status))) {
           throw fail(409, 'The volunteer adjustment for this item has already been refunded.');
         }
@@ -259,7 +263,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
         }
         if (current.itemActionPending) {
           if (JSON.stringify(current.itemActionPending.request) !== JSON.stringify(value) || current.itemActionPending.lineId !== req.params.lineId) {
-            throw fail(409, 'An unfinished action is recorded on this order. Retry that exact action before making another change.');
+            throw fail(409, 'An unfinished action is recorded on this order. Use Resume unfinished action to finish it before making another change.');
           }
         } else {
           if (current.items[index].revokedAt && wantsRevoke) throw fail(409, 'Item already revoked.');
@@ -295,7 +299,8 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
         claimed = false;
         throw fail(409, `Stripe refund ${refund.id} is ${refund.status}. No entitlement was revoked. Review the payment before trying a new refund.`);
       }
-      if (wantsRevoke) await stopMonthlyItem(reference.id, loaded.item, admin, value.reason);
+      // Safe to repeat on a retry: only items still active on the subscription are stopped.
+      if (wantsRevoke) await stopMonthlyItem(reference.id, loaded.item, admin, value.reason, value.action === 'refund' ? 'refund-and-cancel' : 'revoke-item');
       await db().runTransaction(async (transaction) => {
         const current = (await transaction.get(reference)).data();
         const operationRecord = await transaction.get(operation);
@@ -309,7 +314,8 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
         transaction.update(operation, { status: 'complete', completedAt: at, ...(refund ? { refundId: refund.id, refundStatus: refund.status } : {}) });
       });
       res.set('Cache-Control', 'no-store');
-      res.json({ success: true, ...(refund ? { refundId: refund.id, refundStatus: refund.status } : {}) });
+      res.json({ success: true, ...(refund ? { refundId: refund.id, refundStatus: refund.status } : {}),
+        monthlyPaymentsStopped: Boolean(wantsRevoke && loaded.item.monthly) });
     } catch (error) {
       if (claimed && freshRefundRequest && error.stripeStatus >= 400 && error.stripeStatus < 500 && error.stripeCode !== 'idempotency_key_in_use') {
         // A definite Stripe rejection has no refund to reconcile. Network/5xx failures keep the claim.
@@ -331,7 +337,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
           console.error('Could not record the rejected Stripe refund:', reconciliationError.message);
         }
       }
-      if (claimed) error.message += ' This action is recorded as unfinished; retry the same action to reconcile it. Do not create a replacement refund.';
+      if (claimed) error.message += ' This action is recorded as unfinished. Use Resume unfinished action to finish it; that never issues a second refund.';
       sendError(res, error, claimed);
     }
   });

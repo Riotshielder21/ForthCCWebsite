@@ -3,8 +3,8 @@ import { ShoppingCart, Plus, Minus, ExternalLink, ChevronDown, Pencil } from 'lu
 import { DISCOUNTS, CATEGORIES } from '../constants/products';
 import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { eventScheduleLabel } from '../utils/catalogue';
-import { isTripEvent } from '../utils/tripDiscount';
-import { bookingsClosed, formatDate } from '../utils/eventRoster';
+import { isTripEvent, tripDiscountSummary } from '../utils/tripDiscount';
+import { eventShopState, formatDate, sessionsLeft } from '../utils/eventRoster';
 import { productLimits } from '../utils/inventory';
 import { scopeLabel, voucherScope } from '../utils/vouchers';
 import fccBurgee from '../assets/fcc-burgee.png';
@@ -27,7 +27,7 @@ function useGridColumns() {
   return columns;
 }
 
-export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, onNavigate }) {
+export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, onNavigate, tripDiscounts = [] }) {
   const copy = usePageContent('membership');
   const { adminUser } = usePageEditor();
   const [selectedTier, setSelectedTier] = useState('adult');
@@ -63,9 +63,10 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
     addToCart(selectedMembership);
   };
 
-  // Sold-out events and merchandise leave the shop until an admin frees a place.
+  // Sold-out events and merchandise leave the shop until an admin frees a place; events also leave once they are over.
   const displayProducts = nonMembershipProducts.filter(
     (p) => (activeCategory === 'ALL' || p.category === activeCategory) && !availability[p.id]?.soldOut
+      && !(p.category === 'EVENTS' && eventShopState(p) === 'hidden')
   );
   // A card without a picture gets a placeholder only when another card in its grid row has one, so that row lines up.
   const showMembershipTile = Boolean(selectedMembership) && (activeCategory === 'ALL' || activeCategory === 'MEMBERSHIP');
@@ -180,7 +181,8 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
             const inStock = (size) => !remaining || (remaining[size] ?? 0) > 0;
             const size = merchandise ? (sizeChoice[product.id] && inStock(sizeChoice[product.id]) ? sizeChoice[product.id] : sizes.find(inStock) || sizes[0] || '') : '';
             const placesLeft = product.category === 'EVENTS' ? remaining?.all : null;
-            const closed = product.category === 'EVENTS' && bookingsClosed(product);
+            const closed = product.category === 'EVENTS' && eventShopState(product) === 'closed';
+            const courseLeft = product.category === 'EVENTS' ? sessionsLeft(product) : null;
             return (
             <div key={product.id} className="shop_product_tile">
               {productImage(product, productIndex + (showMembershipTile ? 1 : 0))}
@@ -198,7 +200,8 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                 <p className="KitHireMonthlyLabel">Choose annual or monthly payment in the basket.</p>
               )}
               {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
-              {isTripEvent(product) && <p className="text_container text_container_note">£10 off with annual boat hire, and £10 off with a coaching subscription.</p>}
+              {courseLeft && <p className="text_container SpaceB4" role="status">Under way: {courseLeft.left} of {courseLeft.total} sessions left.</p>}
+              {isTripEvent(product) && tripDiscounts.length > 0 && <p className="text_container text_container_note">{tripDiscountSummary(tripDiscounts)}</p>}
               {product.category === 'EVENTS' && product.leaderName && <p className="text_container SpaceB4">Led by {product.leaderName}{product.leaderEmail && <> (<a className="ContentLink" href={`mailto:${product.leaderEmail}`}>{product.leaderEmail}</a>)</>}</p>}
               {product.membershipRule === 'none' && <p className="text_container text_container_note">Open to non-members.</p>}
               {product.membershipRule === 'included' && <p className="text_container text_container_note">Club membership included until 1 March.</p>}

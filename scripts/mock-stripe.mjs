@@ -11,6 +11,7 @@ const replies = new Map();
 const checkoutPayments = new Map();
 const checkoutSessions = new Map();
 const flakyFailures = new Set();
+const refunds = new Map();
 const emailOf = (customer) => Buffer.from(String(customer).slice('cus_e2e_'.length), 'base64url').toString();
 const now = () => Math.floor(Date.now() / 1000);
 const live = (subscription) => ['active', 'trialing'].includes(subscription.status);
@@ -21,6 +22,8 @@ const fail = (message, status = 400) => Response.json({ error: { message, ...(st
 // `paid-late.` has every Checkout Session paid straight away in Stripe, with the webhook never sent; `debit-fail.` has the
 // next monthly debit on each subscription fail and stay open, for the period starting at the end of the current one, and
 // Stripe cancel the subscription once the site looks for its uncollectible debits (as it does when Stripe gives up).
+// Payment intent `pi_charge_<pence>_<suffix>` is a paid card payment that purchased-item refunds can draw on, and
+// deleting a subscription item whose ID contains `_flaky_` fails with a temporary error the first time.
 const paymentMethodFor = (email) => email.startsWith('new-card.') ? `pm_e2e_${counter}` : 'pm_e2e';
 const itemsFrom = (params) => [...params.keys()].map((name) => /^items\[(\d+)\]\[price_data\]\[product\]$/.exec(name)?.[1]).filter(Boolean).map((index) => ({
   id: `si_e2e_${runId}_${counter}_${index}`,
@@ -90,6 +93,18 @@ globalThis.fetch = async (url, options) => {
     session.status = 'expired';
     return Response.json(session);
   }
+  const charged = /^\/v1\/payment_intents\/(pi_charge_(\d+)_\w+)$/.exec(parsed.pathname);
+  if (charged) {
+    const refunded = [...refunds.values()].filter((refund) => refund.payment_intent === charged[1]).reduce((sum, refund) => sum + refund.amount, 0);
+    return Response.json({ id: charged[1], latest_charge: { id: `ch_${charged[1]}`, paid: true, currency: 'gbp', amount: Number(charged[2]), amount_refunded: refunded } });
+  }
+  if (parsed.pathname === '/v1/refunds' && method === 'GET') {
+    return Response.json({ data: [...refunds.values()].filter((refund) => refund.payment_intent === parsed.searchParams.get('payment_intent')), has_more: false });
+  }
+  if (parsed.pathname.startsWith('/v1/refunds/')) {
+    const refund = refunds.get(parsed.pathname.split('/').at(-1));
+    return refund ? Response.json(refund) : fail('No such refund.', 404);
+  }
   if (/^\/v1\/(payment|setup)_intents\//.test(parsed.pathname)) {
     const id = parsed.pathname.split('/').at(-1);
     const payment = checkoutPayments.get(id.replace(/^(pi|seti)_/, ''));
@@ -111,6 +126,18 @@ globalThis.fetch = async (url, options) => {
   const key = options?.headers?.['Idempotency-Key'];
   if (key && replies.has(key)) return Response.json(replies.get(key));
   const remember = (body) => { if (key) replies.set(key, body); return Response.json(body); };
+  if (parsed.pathname === '/v1/refunds' && method === 'POST') {
+    const params = new URLSearchParams(options.body);
+    const charge = /^pi_charge_(\d+)_/.exec(params.get('payment_intent') || '');
+    const amount = Number(params.get('amount'));
+    const refunded = [...refunds.values()].filter((refund) => refund.payment_intent === params.get('payment_intent')).reduce((sum, refund) => sum + refund.amount, 0);
+    if (!charge || !(amount > 0) || refunded + amount > Number(charge[1])) return fail('The refund exceeds the charge.');
+    counter += 1;
+    const refund = { id: `re_e2e_${runId}_${counter}`, object: 'refund', status: 'succeeded', amount, payment_intent: params.get('payment_intent'),
+      metadata: Object.fromEntries([...params].filter(([name]) => name.startsWith('metadata[')).map(([name, value]) => [name.slice(9, -1), value])) };
+    refunds.set(refund.id, refund);
+    return remember(refund);
+  }
   if (/^\/v1\/invoices\/[^/]+\/void$/.test(parsed.pathname) && method === 'POST') {
     const invoice = invoices.get(parsed.pathname.split('/')[3]);
     if (!invoice || invoice.status !== 'open') return fail('Only an open invoice can be voided.');
@@ -213,6 +240,10 @@ globalThis.fetch = async (url, options) => {
   }
   if (parsed.pathname.startsWith('/v1/subscription_items/') && method === 'DELETE') {
     const id = parsed.pathname.split('/').at(-1);
+    if (id.includes('_flaky_') && !flakyFailures.has(id)) {
+      flakyFailures.add(id);
+      return fail('Stripe is temporarily unavailable.', 500);
+    }
     const owner = [...subscriptions.values()].find((subscription) => subscription.items.data.some((item) => item.id === id));
     if (!owner) return fail('No such subscription item.', 404);
     if (owner.items.data.length === 1) return fail('A subscription must keep at least one item.');

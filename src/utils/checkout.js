@@ -238,7 +238,6 @@ export const withFamilyContacts = (people, lines) => people.map((person) => {
 // the server then checks those against their stored record. Family members share the primary's contact details.
 export const personDetailErrors = (person, label, lines, now = new Date(), role = null) => {
   const errors = [];
-  const lineMap = new Map(lines.map((line) => [line.lineId, line]));
   if (!person.firstName || !person.lastName) errors.push(`${label}: first and last name are required.`);
   else if (!person.returning && !isValidPersonName(person.firstName)) errors.push(`${label}: enter a valid first name using letters, spaces, apostrophes or hyphens.`);
   else if (!person.returning && !isValidPersonName(person.lastName)) errors.push(`${label}: enter a valid last name using letters, spaces, apostrophes or hyphens.`);
@@ -367,4 +366,13 @@ export const saveDraft = (draft, storage = globalThis.sessionStorage) => {
 };
 export const clearDraft = (storage = globalThis.sessionStorage) => {
   try { storage?.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
+};
+
+/** A saved basket's lines that `products` has, in order, and whether every line was found. */
+export const restoreDraftLines = (draftLines, products, toLine) => {
+  const lines = (Array.isArray(draftLines) ? draftLines : []).map((line) => {
+    const product = products.find((candidate) => candidate.id === line?.id);
+    return product ? toLine(product, line) : null;
+  });
+  return { lines: lines.filter(Boolean), complete: lines.every(Boolean) };
 };

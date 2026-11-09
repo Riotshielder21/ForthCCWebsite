@@ -3,8 +3,9 @@ import { itemLabel } from './inventory.js';
 import { toPounds } from './orders.js';
 import { joiningText } from './pricing.js';
 import { TREASURER_REPLY_TO } from './emailReplyTo.js';
+import { creditPaymentWording } from './credits.js';
 
-const money = (value) => `£${Number(value || 0).toFixed(2)}`;
+const money = (value) => `${Number(value) < 0 ? '-' : ''}£${Math.abs(Number(value || 0)).toFixed(2)}`;
 
 export const receiptItemNames = (item, people = []) => {
   if (!item.lineId) return [];
@@ -139,19 +140,29 @@ export const buildReceiptSummary = (orderRef, order, { personFields = [] } = {})
     code: String(voucher.code || ''), name: String(voucher.name || 'Voucher'), value: Number(voucher.value || 0),
     expiresAt: voucher.expiresAt?.toDate?.().toISOString() || (voucher.expiresAt ? new Date(voucher.expiresAt).toISOString() : '')
   }));
-  return { orderRef, payerEmail: order.email || '', total: toPounds(order.totalPence), people, otherItems, vouchers };
+  // A credited order shows what the club received, and how, rather than the shop price.
+  const paidOutside = creditPaymentWording(order.payment);
+  return { orderRef, payerEmail: order.email || '', total: toPounds(paidOutside ? order.payment.amountPence : order.totalPence),
+    ...(paidOutside ? { paymentMethod: paidOutside } : {}), people, otherItems, vouchers };
 };
 
 const itemLines = (label, items) => items.length
   ? [`${label}:`, ...items.map((item) => `- ${item.name}: ${money(item.price)}${item.billing ? ` ${item.billing}` : ''}${item.schedule ? ` — ${item.schedule}` : ''}`)]
   : [];
 
+/**
+ * A receipt may override the purchase wording: `heading` (plain text), `title` and `thanks` (both), `referenceLabel`
+ * and `summary` (`[{ label, value }]` shown with the reference). The subscription payment receipt uses these.
+ */
 export const receiptEmailCopy = (receipt) => [
-  'Forth Canoe Club purchase receipt',
+  receipt.heading || 'Forth Canoe Club purchase receipt',
   '',
-  `Order reference: ${receipt.orderRef}`,
+  ...(receipt.intro ? [receipt.intro, ''] : []),
+  `${receipt.referenceLabel || 'Order reference'}: ${receipt.orderRef}`,
   ...(receipt.payerEmail ? [`Paid by: ${receipt.payerEmail}`] : []),
+  ...(receipt.summary || []).map((entry) => `${entry.label}: ${entry.value}`),
   `Total paid: ${money(receipt.total)}`,
+  ...(receipt.paymentMethod ? [receipt.paymentMethod] : []),
   '',
   ...receipt.people.flatMap((person) => [
     `${person.name}`,
@@ -169,7 +180,7 @@ export const receiptEmailCopy = (receipt) => [
     '  Valid on all items except membership. One use only; any unused value is forfeited.'
   ])] : []),
   '',
-  'Thank you for your purchase from Forth Canoe Club.'
+  receipt.thanks || 'Thank you for your purchase from Forth Canoe Club.'
 ].join('\n');
 
 /** Link receipts expose purchase data and assigned names, never the full submitted person or legacy receipt. */
@@ -180,12 +191,13 @@ export const buildLinkedReceipt = (orderRef, order) => {
   const itemFields = ['id', 'lineId', 'name', 'category', 'type', 'pricePence', 'size', 'monthly', 'eventSchedule', 'imageUrl'];
   const linked = (Array.isArray(order.items) ? order.items : [])
     .map((item) => Object.fromEntries(itemFields.filter((field) => item[field] !== undefined).map((field) => [field, item[field]])));
+  const summary = buildReceiptSummary(orderRef, { items: linked, people, totalPence: order.totalPence, billingMode: order.billingMode, payment: order.payment });
   const items = linked.map(({ pricePence, ...item }) => ({
     ...item, ...(pricePence !== undefined ? { price: toPounds(pricePence) } : {}), personNames: receiptItemNames(item, people)
   }));
   return {
-    orderRef, items, total: toPounds(order.totalPence),
-    copy: receiptEmailCopy(buildReceiptSummary(orderRef, { items: linked, people, totalPence: order.totalPence, billingMode: order.billingMode }))
+    orderRef, items, total: summary.total, ...(summary.paymentMethod ? { paymentMethod: summary.paymentMethod } : {}),
+    copy: receiptEmailCopy(summary)
   };
 };
 
@@ -229,13 +241,14 @@ export const receiptEmailHtml = (receipt, retrievalUrl) => `<!doctype html>
     <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:100%;max-width:640px">
       <tr><td style="text-align:center;padding:0 12px 28px">
         <span aria-hidden="true" style="display:inline-block;border:4px solid #10b981;border-radius:50%;width:48px;height:48px;line-height:48px;font-size:30px;font-weight:bold;color:#10b981">&#10003;</span>
-        <h1 style="font-size:26px;font-weight:900;text-transform:uppercase;letter-spacing:-1px;margin:16px 0 8px">Your purchase</h1>
-        <p style="margin:0;color:#64748b">Thank you for your purchase from Forth Canoe Club.</p>
+        <h1 style="font-size:26px;font-weight:900;text-transform:uppercase;letter-spacing:-1px;margin:16px 0 8px">${escapeHtml(receipt.title || 'Your purchase')}</h1>
+        <p style="margin:0;color:#64748b">${escapeHtml(receipt.intro || receipt.thanks || 'Thank you for your purchase from Forth Canoe Club.')}</p>
       </td></tr>
       <tr><td style="padding:28px 24px;background:#ffffff;border:1px solid #f1f5f9;border-radius:16px">
-        <p style="margin:0 0 4px;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#64748b">Order reference</p>
+        <p style="margin:0 0 4px;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#64748b">${escapeHtml(receipt.referenceLabel || 'Order reference')}</p>
         <p style="margin:0 0 24px;padding-bottom:24px;border-bottom:1px solid #f1f5f9"><strong>${escapeHtml(receipt.orderRef)}</strong>
-        ${receipt.payerEmail ? `<br><span style="color:#64748b">Paid by: ${escapeHtml(receipt.payerEmail)}</span>` : ''}</p>
+        ${receipt.payerEmail ? `<br><span style="color:#64748b">Paid by: ${escapeHtml(receipt.payerEmail)}</span>` : ''}
+        ${(receipt.summary || []).map((entry) => `<br><span style="color:#64748b">${escapeHtml(entry.label)}: ${escapeHtml(entry.value)}</span>`).join('')}</p>
         ${receipt.people.map((person) => `
           <h2 style="font-size:18px;margin:28px 0 4px">${escapeHtml(person.name)}</h2>
           ${person.email ? `<p style="margin:0;color:#64748b">Email: ${escapeHtml(person.email)}</p>` : ''}
@@ -256,11 +269,12 @@ export const receiptEmailHtml = (receipt, retrievalUrl) => `<!doctype html>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:1px solid #e2e8f0">
           <tr><td style="padding-top:20px;font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#64748b">Total paid</td>
           <td style="padding-top:20px;text-align:right;font-size:28px;font-weight:900;white-space:nowrap">${escapeHtml(money(receipt.total))}</td></tr>
+          ${receipt.paymentMethod ? `<tr><td colspan="2" style="text-align:right;color:#64748b">${escapeHtml(receipt.paymentMethod)}</td></tr>` : ''}
         </table>
-        <p style="margin:28px 0 0;text-align:center"><a href="${escapeHtml(retrievalUrl)}" style="display:inline-block;padding:14px 24px;background:#002147;color:#ffffff;text-decoration:none;border-radius:12px;font-weight:700">View your receipt</a></p>
+        ${retrievalUrl ? `<p style="margin:28px 0 0;text-align:center"><a href="${escapeHtml(retrievalUrl)}" style="display:inline-block;padding:14px 24px;background:#002147;color:#ffffff;text-decoration:none;border-radius:12px;font-weight:700">View your receipt</a></p>` : ''}
       </td></tr>
       <tr><td style="padding:20px 12px 0;text-align:center;font-size:12px;color:#64748b">
-        <p>Keep this email. Its secure link lets you retrieve your receipt and subscription information without creating an account. Anyone with the link can see the purchased items and their assigned names.</p>
+        ${retrievalUrl ? '<p>Keep this email. Its secure link lets you retrieve your receipt and subscription information without creating an account. Anyone with the link can see the purchased items and their assigned names.</p>' : ''}
         <p>For help, contact <a href="mailto:${TREASURER_REPLY_TO}" style="color:#002147">${TREASURER_REPLY_TO}</a>.</p>
       </td></tr>
     </table>

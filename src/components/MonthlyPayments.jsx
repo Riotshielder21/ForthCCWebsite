@@ -60,7 +60,7 @@ export default function MonthlyPayments({ adminUser, query }) {
   };
 
   const ask = (subscription, items, path, done) => { setReason(''); setConfirming({ subscription, path, done, needsReason: true,
-    text: `Stop ${money(items.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0))} a month for ${items.map((item) => `${item.name}${item.names?.length ? ` (${item.names.join(', ')})` : ''}`).join(', ')} on ${subscription.email}'s subscription ${subscription.id}? This takes effect in Stripe now, with no refund for the current month.${items.length === activeSubscriptionItems(subscription).length ? ' Nothing else is on it, so the whole subscription is cancelled.' : ' Everything else on it carries on.'}` }); };
+    text: `Stop ${money(items.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0))} a month for ${items.map((item) => `${item.name}${item.names?.length ? ` (${item.names.join(', ')})` : ''}`).join(', ')} on ${subscription.email}'s subscription ${subscription.id}? This takes effect in Stripe now. No money is returned. Benefits these items pay for end now; a membership runs to the date it is paid up to.${items.length === activeSubscriptionItems(subscription).length ? ' Nothing else is on it, so the whole subscription is cancelled.' : ' Everything else on it carries on.'} To return money as well, use Refund and cancel under Purchased item actions.` }); };
 
   if (state.loading) return <p className="ReportNotice">Loading monthly payments…</p>;
   if (!state.subscriptions.length && !state.failed.length) return state.error ? <p className="StatusTextError" role="alert">{state.error}</p> : null;

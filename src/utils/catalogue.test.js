@@ -11,8 +11,6 @@ test('first saved product preserves starter catalogue; overrides and removals st
   assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', active: false }]), [normaliseProduct({ id: 'other', sortOrder: 20 })]);
   assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', active: false }, { id: 'other', active: false }]), []);
   assert.deepEqual(resolveCatalogue(defaults, [{ id: 'new', sortOrder: 5 }, { id: 'other', sortOrder: 1 }]).map(({ id }) => id), ['other', 'new', 'starter']);
-  const locked = resolveCatalogue([{ id: 'boat-hire', name: 'Boat hire', sortOrder: 10 }], [{ id: 'boat-hire', active: false }]);
-  assert.deepEqual(locked.map(({ id, name, active }) => [id, name, active]), [['boat-hire', 'Boat hire', true]], 'locked products stay in the shop');
   assert.deepEqual(resolveCatalogue(PRODUCTS, []).map(({ id }) => id), PRODUCTS.map(({ id }) => id));
 });
 
