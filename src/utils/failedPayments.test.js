@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { invoiceCoverage, invoiceFailureEmail, invoicePeriodStart, monthlyReceiptEmail, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
+import { invoiceCoverage, invoiceFailureEmail, invoiceItemNames, invoicePeriodStart, monthlyReceiptEmail, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
   subscriptionStoppedEmail, treasurerFailureEmail } from './failedPayments.js';
 
 const token = 'a'.repeat(64);
@@ -116,6 +116,19 @@ test('monthly receipts say what was paid, for whom, and the days it covers', () 
   const recovered = monthlyReceiptEmail({ ...common, recovered: true });
   assert.match(recovered.body, /has now gone through, so there is nothing more to do/);
   assert.doesNotMatch(recovered.body, /Covers:|Paid:|Invoice:/, 'missing details are left out');
+});
+
+test('subscriptions set up outside the site name their items from the Stripe invoice lines', () => {
+  const lines = (...data) => ({ lines: { data } });
+  assert.deepEqual(invoiceItemNames(lines(
+    { description: '1 × Gold Subscription (at £30.00 / month)' },
+    { description: '2 × Boat storage (at £5.00 / month)' },
+    { description: '1 × Gold Subscription (at £30.00 / month)' },
+    { description: 'Remaining time on Blue Subscription after 15 Nov 2026', proration: true },
+    { description: '' })), ['Gold Subscription', 'Boat storage'], 'repeats and prorations are left out');
+  assert.deepEqual(invoiceItemNames(lines({ description: 'Remaining time on Blue Subscription after 15 Nov 2026', proration: true })),
+    ['Remaining time on Blue Subscription after 15 Nov 2026'], 'a proration-only invoice still says what it was for');
+  assert.deepEqual(invoiceItemNames({}), []);
 });
 
 test('a failed bank payment email links to retry or cancel the order', () => {

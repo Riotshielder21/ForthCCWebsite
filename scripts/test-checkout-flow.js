@@ -1951,7 +1951,7 @@ await test('a subscription ending at the club-year boundary voids an unpaid Febr
   assert.equal(early.needsStaff, true, 'an unexpected ending is flagged');
 });
 
-await test('each monthly payment Stripe collects is receipted once; a debit that failed first says it has now gone through', async () => {
+await test('each monthly payment Stripe collects is receipted once, including subscriptions set up outside the site; a debit that failed first says it has now gone through', async () => {
   const payer = email('monthly-receipt');
   const details = adultDetails({ firstName: 'Rhi', lastName: 'Receipt', email: payer });
   const order = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'this'), { billingMode: 'monthly' }, autumn));
@@ -1964,7 +1964,6 @@ await test('each monthly payment Stripe collects is receipted once; a debit that
 
   assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: invoice(`in_trial_${subscriptionId}`, { amount_paid: 0 }) } })).status, 200);
   assert.equal((await receipts()).length, 0, 'the free trial invoice at set-up is not a payment');
-  assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: invoice('in_not_ours', { subscription: 'sub_not_on_this_site' }) } })).status, 200);
 
   const first = `in_first_${subscriptionId}`;
   for (let resend = 0; resend < 2; resend += 1) assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: invoice(first) } })).status, 200);
@@ -1981,6 +1980,22 @@ await test('each monthly payment Stripe collects is receipted once; a debit that
   assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: invoice(late) } })).status, 200);
   const recovered = (await receipts()).find((mail) => mail.invoiceId === late);
   assert.match(recovered.body, /has now gone through, so there is nothing more to do/);
+
+  const outside = 'sub_set_up_outside_site';
+  const outsideReceipts = async () => (await db.collection('testMail').where('subscriptionId', '==', outside).get()).docs
+    .map((document) => document.data()).filter((mail) => mail.kind === 'invoice-paid');
+  await db.collection('stripeSubscriptions').doc(`FCC-test-${outside}`).set({ membershipIds: [order.people[0].membershipId] }, { merge: true });
+  const external = invoice('in_outside', { subscription: outside, customer_email: payer, livemode: false,
+    lines: { data: [{ description: '1 × Blue Subscription (at £25.00 / month)', period: { start, end: start + 30 * 24 * 60 * 60 } }] } });
+  for (let resend = 0; resend < 2; resend += 1) assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: external } })).status, 200);
+  const [outsideReceipt, ...outsideRepeats] = await outsideReceipts();
+  assert.equal(outsideRepeats.length, 0, 'a subscription set up outside the site is receipted once too');
+  assert.equal(outsideReceipt.email, payer, 'it goes to the payer email on the Stripe invoice');
+  assert.equal(outsideReceipt.setUpOutsideSite, true);
+  assert.match(outsideReceipt.body, /^Thank you\. Your monthly payment of £30\.00 for Blue Subscription \(Rhi Receipt\) has been paid\./,
+    'items come from the invoice lines and names from members the subscriber import linked');
+  assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: invoice('in_outside_no_email', { subscription: 'sub_no_payer_email' }) } })).status, 200);
+  assert.equal((await db.collection('testMail').where('invoiceId', '==', 'in_outside_no_email').get()).size, 0, 'no payer email, no receipt');
 });
 
 await test('failed monthly debits email the member each time; when Stripe gives up, benefits end at the paid-up date and can be restarted', async () => {

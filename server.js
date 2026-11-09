@@ -71,7 +71,7 @@ import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemA
 import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
 import { isClubEmail } from './src/utils/adminAccess.js';
 import { createAttention, registerAttentionRoutes } from './src/server/attention.js';
-import { RETRY_LINK_DAYS, invoiceCoverage, invoiceFailureEmail, invoicePeriodStart, monthlyReceiptEmail, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
+import { RETRY_LINK_DAYS, invoiceCoverage, invoiceFailureEmail, invoiceItemNames, invoicePeriodStart, monthlyReceiptEmail, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
   subscriptionStoppedEmail, treasurerFailureEmail } from './src/utils/failedPayments.js';
 import { writePurchaseTerms, loadTerms, loadEntitlements, loadPurchases, endTermItems } from './src/server/membershipTerms.js';
 
@@ -1013,26 +1013,44 @@ const recordInvoiceFailed = async (invoice) => {
 
 /**
  * Emails the member a club receipt for each monthly payment Stripe collects. The checkout receipt covers what was paid
- * at checkout, which is never a subscription invoice; a free trial invoice (£0) is skipped. Subscriptions not set up
- * through this site (no record) get Stripe's own emails only. Stripe can send an event more than once, so each
- * invoice is receipted once.
+ * at checkout, which is never a subscription invoice; a free trial invoice (£0) is skipped. Subscriptions set up
+ * outside this site (e.g. the old Bookwhen ones) have no record here, so their receipt goes to the payer's email on the
+ * invoice and names the items from the invoice lines. Stripe can send an event more than once, so each invoice is
+ * receipted once.
  */
 const recordInvoicePaid = async (invoice) => {
   const subscriptionId = stripeId(invoice.subscription || invoice.parent?.subscription_details?.subscription);
   if (!subscriptionId || !adminDb || !(invoice.amount_paid > 0)) return;
   const reference = adminDb.collection('subscriptions').doc(subscriptionId);
-  const record = await adminDb.runTransaction(async (transaction) => {
+  const claim = await adminDb.runTransaction(async (transaction) => {
     const document = await transaction.get(reference);
-    if (!document.exists || (document.data().receiptedInvoices || []).includes(invoice.id) || !document.data().email) return null;
+    if (!document.exists) return { record: null };
+    if ((document.data().receiptedInvoices || []).includes(invoice.id)) return null;
     transaction.update(reference, { receiptedInvoices: FieldValue.arrayUnion(invoice.id), updatedAt: Timestamp.now() });
-    return document.data();
+    return { record: document.data() };
   });
-  if (!record) return;
+  if (!claim) return;
+  const { record } = claim;
+  const email = record?.email || invoice.customer_email || '';
+  if (!email) return;
+  let details;
+  if (record) {
+    details = { names: record.names || [], itemNames: subscriptionItemNames(record), recovered: record.lastFailedInvoice?.id === invoice.id };
+  } else {
+    try {
+      await adminDb.collection('invoiceReceipts').doc(invoice.id).create({ subscriptionId, at: Timestamp.now() });
+    } catch (error) {
+      if (error.code === 6) return;
+      throw error;
+    }
+    const mirror = await adminDb.collection('stripeSubscriptions').doc(`FCC-${invoice.livemode ? 'live' : 'test'}-${subscriptionId}`).get();
+    const [linked] = mirror.exists ? await withMemberNames([mirror.data()]) : [{ names: [] }];
+    details = { names: linked.names, itemNames: invoiceItemNames(invoice), recovered: false };
+  }
   try {
-    await sendEmail({ to: record.email, ...monthlyReceiptEmail({ names: record.names || [], itemNames: subscriptionItemNames(record),
-      amountPaidPence: invoice.amount_paid, paidAt: invoice.status_transitions?.paid_at || 0, coverage: invoiceCoverage(invoice),
-      invoiceNumber: invoice.number || '', recovered: record.lastFailedInvoice?.id === invoice.id, contact: TREASURER_REPLY_TO }),
-      record: { kind: 'invoice-paid', subscriptionId, invoiceId: invoice.id } });
+    await sendEmail({ to: email, ...monthlyReceiptEmail({ ...details, amountPaidPence: invoice.amount_paid,
+      paidAt: invoice.status_transitions?.paid_at || 0, coverage: invoiceCoverage(invoice), invoiceNumber: invoice.number || '', contact: TREASURER_REPLY_TO }),
+      record: { kind: 'invoice-paid', subscriptionId, invoiceId: invoice.id, ...(record ? {} : { setUpOutsideSite: true }) } });
   } catch {
     console.error('Could not email the monthly payment receipt for %s.', invoice.id);
   }

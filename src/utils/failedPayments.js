@@ -138,6 +138,17 @@ export const invoiceCoverage = (invoice) => {
 };
 
 /**
+ * Item names from a Stripe invoice's own line descriptions ("1 × Gold Subscription (at £30.00 / month)" gives "Gold
+ * Subscription"), for subscriptions set up outside this site. Proration lines are only used when there is nothing else.
+ */
+export const invoiceItemNames = (invoice) => {
+  const lines = (invoice?.lines?.data || []).filter((line) => String(line?.description || '').trim());
+  const regular = lines.filter((line) => !line.proration);
+  return [...new Set((regular.length ? regular : lines)
+    .map((line) => line.description.trim().replace(/^\d+\s*[×x]\s*/, '').replace(/\s*\(at [^)]*\)$/, '').trim()).filter(Boolean))];
+};
+
+/**
  * The club receipt for a monthly payment Stripe collected. `recovered` when an earlier attempt at the same invoice
  * failed and the member was told so. `coverage.end` is exclusive, so the last day shown is the day before.
  */
