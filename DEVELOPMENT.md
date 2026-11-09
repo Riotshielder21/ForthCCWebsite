@@ -1,6 +1,6 @@
 # Development
 
-How to run the site on your own machine and test it. Everything runs against local Firebase emulators with made-up data; no real credentials are needed. For what each part does, see [README.md](README.md).
+How to run the site on your own machine and test it. Everything runs against local Firebase emulators with made-up data; no real credentials are needed. For what each part does, see [README.md](README.md); for deployment, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Install
 

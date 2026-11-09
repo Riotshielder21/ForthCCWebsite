@@ -1,6 +1,6 @@
 # Forth Canoe Club Website
 
-How the club website works: what each part does and where its code lives. To run it locally, see [DEVELOPMENT.md](DEVELOPMENT.md).
+How the club website works: what each part does and where its code lives. To run it locally, see [DEVELOPMENT.md](DEVELOPMENT.md); to deploy and configure it, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## The Parts
 
