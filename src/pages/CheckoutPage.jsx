@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import {
-  addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, personKind, familyRole, resolvedKind, FAMILY_ADULT_MAX,
+  addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, familyRole, resolvedKind, FAMILY_ADULT_MAX,
   displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT, requiresMembership, grantsMembership,
   returningVerificationMatches, invalidatePersonVerification, checkoutStepSnapshot, validateCheckout
 } from '../utils/checkout';
