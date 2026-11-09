@@ -344,8 +344,8 @@ await test('an email only reveals that a record exists, names need the matching 
   assert.deepEqual((await lookup({ email: shared.alex })).json, { exists: true, names: [] });
   assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(36) })).json, { exists: true, names: [] });
   const prefill = { disclaimer: true, disclaimerChanged: false, photoConsent: true, photoChanged: false, notices: await currentNoticeVersions() };
-  assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(35) })).json, { exists: true, names: [{ firstName: 'Alex', lastName: 'Adult', prefill }] },
-    'the matching date of birth also says which boxes checkout may tick in advance');
+  assert.deepEqual((await lookup({ email: shared.alex, dob: yearsAgo(35) })).json, { exists: true, names: [{ firstName: 'Alex', lastName: 'Adult', prefill, tripHeld: ['boat-hire'] }] },
+    'the matching date of birth also says which boxes checkout may tick in advance and which trip discounts are already held');
   assert.deepEqual((await lookup({ email: email('nobody'), dob: yearsAgo(35) })).json, { exists: false, names: [] });
 });
 

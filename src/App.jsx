@@ -6,7 +6,8 @@ import {
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
 import { calculateCart, debitRange, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
-import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName } from './utils/checkout';
+import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName, returningVerificationMatches } from './utils/checkout';
+import { applyTripDiscounts } from './utils/tripDiscount';
 import { applyConsentPrefill, checkoutWording, draftForCurrentWording } from './utils/consents';
 import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
 import { itemLabel, productLimits } from './utils/inventory';
@@ -347,8 +348,12 @@ export default function App() {
     const records = new Map(people.filter((person) => person.volunteerPreview
       && ['firstName', 'lastName', 'dob'].every((key) => person[key] === person.volunteerPreview[key]))
       .map((person) => [person.id, person.volunteerPreview]));
-    return calculateCart(applyVolunteerBenefits(expanded, holders, records, volunteerTiers), annualBilling, activePromo);
-  }, [cart, annualBilling, activePromo, people, volunteerTiers]);
+    // Trip discounts as the server applies them, from this basket and what verified members already hold this club year.
+    const year = clubYearOf(new Date());
+    const held = new Map(people.filter((person) => person.returning && person.tripHeld?.length && returningVerificationMatches(person, checkoutEmail))
+      .map((person) => [person.id, person.tripHeld.map((productId) => ({ productId, clubYear: year }))]));
+    return calculateCart(applyTripDiscounts(applyVolunteerBenefits(expanded, holders, records, volunteerTiers), holders, held), annualBilling, activePromo);
+  }, [cart, annualBilling, activePromo, people, volunteerTiers, checkoutEmail]);
 
   const cartGroups = useMemo(() => {
     const groups = new Map();
@@ -395,6 +400,7 @@ export default function App() {
           focusPersonId={focusPersonId}
           busy={checkoutBusy}
           total={calculations.total}
+          pricedItems={calculations.items}
           onBack={handleBackToBasket}
           onReset={handleResetDetails}
           onPay={handlePay}

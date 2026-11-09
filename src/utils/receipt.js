@@ -1,6 +1,7 @@
 import { eventScheduleLabel } from './catalogue.js';
 import { itemLabel } from './inventory.js';
 import { toPounds } from './orders.js';
+import { joiningText } from './pricing.js';
 import { TREASURER_REPLY_TO } from './emailReplyTo.js';
 
 const money = (value) => `£${Number(value || 0).toFixed(2)}`;
@@ -94,12 +95,14 @@ const personDetails = (person, keys) => RECEIPT_PERSON_FIELDS
   .map((field) => ({ label: field.label, value: String(field.value(person) ?? '').trim() }))
   .filter((detail) => detail.value);
 
-// Club-year items carry the label shown in the basket, e.g. "Rest of October now (20% of a month), then £25.00 a month: 4 payments, Nov 2026 – Feb 2027".
+// Club-year items carry the label shown in the basket, e.g. "Rest of October now (80% off), then £25.00 a month: 4 payments, Nov 2026 – Feb 2027".
 const receiptBilling = (item, order) => {
   const monthly = typeof item.monthly === 'boolean' ? item.monthly : order.billingMode === 'monthly' && item.type === 'subscription';
   if (item.label && item.clubYear) {
+    // Older orders' labels gave the share of the month charged rather than the discount.
+    const label = item.label.replace(/Rest of (\w+) now \((\d+)% of a month\)/, (_, month, percent) => joiningText(month, Number(percent) / 100));
     // Older orders' labels did not state the monthly amount.
-    return monthly && item.debits > 0 && !item.label.includes(' a month') ? `${item.label} at £${toPounds(item.monthlyPence).toFixed(2)} a month` : item.label;
+    return monthly && item.debits > 0 && !label.includes(' a month') ? `${label} at £${toPounds(item.monthlyPence).toFixed(2)} a month` : label;
   }
   return monthly ? 'per month' : '';
 };

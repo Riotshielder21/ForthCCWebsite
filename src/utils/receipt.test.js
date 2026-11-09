@@ -197,3 +197,10 @@ test('existing members get missing receipt details from their records only when 
   assert.deepEqual(junior.guardian, { name: 'Pat Parent', relationship: 'Parent/Guardian', phone: '07222 222222', email: 'parent@example.test' });
   assert.equal(junior.address, undefined, "a junior's receipt shows the guardian rather than repeating the household address as theirs");
 });
+
+test('receipts word the joining month as a discount, including on orders saved with the older wording', () => {
+  const item = { id: 'gold-sub', name: 'Gold Subscription', pricePence: 2400, monthlyPence: 3000, clubYear: 2026, monthly: true, debits: 3,
+    label: 'Rest of November now (80% of a month), then £30.00 a month: 3 payments, Dec 2026 – Feb 2027' };
+  const [line] = buildReceiptSummary('FCC-1', { items: [item], people: [], totalPence: 2400, billingMode: 'monthly' }).otherItems;
+  assert.equal(line.billing, 'Rest of November now (20% off), then £30.00 a month: 3 payments, Dec 2026 – Feb 2027');
+});

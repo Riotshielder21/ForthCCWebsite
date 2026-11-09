@@ -22,7 +22,7 @@ import { createClubYearSubscription, clubYearCancelAt } from './src/server/clubY
 import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
 import { DISCOUNT_TYPES, discountDisplayStatus, discountFailure } from './src/utils/discountCodes.js';
 import { REASON_REQUIRED, auditEntry, requiredReason } from './src/utils/auditLog.js';
-import { applyTripDiscounts, isTripEvent } from './src/utils/tripDiscount.js';
+import { applyTripDiscounts, currentPrivilegeIds, isLockedProduct, isTripEvent } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, personInputErrors, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership, ageOn } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen, justgoUploadCanRetry } from './src/utils/membership.js';
@@ -2353,19 +2353,24 @@ app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
     ]);
     const householdMembers = (await Promise.all(households.docs.map((household) =>
       adminDb.collection('memberships').where('householdId', '==', household.id).limit(50).get()
-    ))).flatMap((snapshot) => snapshot.docs.map((document) => document.data()));
-    const records = [...new Map([...legacy.docs.map((document) => document.data()), ...householdMembers]
+    ))).flatMap((snapshot) => snapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
+    const records = [...new Map([...legacy.docs.map((document) => ({ ...document.data(), id: document.id })), ...householdMembers]
       .filter(({ firstName, lastName }) => firstName && lastName)
       .map((record) => [`${record.firstName} ${record.lastName}|${record.dob || ''}`, record])).values()];
     const names = new Map();
     if (/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
       const matched = records.filter((record) => record.dob === dob);
       // Checkout ticks in advance only what a matched person agreed to the current wording; the server still checks on payment.
-      const [policies, noticeVersions] = matched.length
-        ? await Promise.all([currentCheckoutPolicies(adminDb, isLive()), loadNotices(adminDb).then(noticeVersionMap)]) : [];
+      const [policies, noticeVersions, entitlements, volunteerTiers] = matched.length
+        ? await Promise.all([currentCheckoutPolicies(adminDb, isLive()), loadNotices(adminDb).then(noticeVersionMap),
+          loadEntitlements(adminDb, matched.map((record) => record.id)), loadVolunteerBenefits()]) : [];
+      const now = requestNow(req);
       for (const record of matched) {
         const { firstName, lastName, volunteer } = record;
-        names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName,
+        // Only the products that discount single-day trips, so checkout can show the price the server will charge.
+        const tripHeld = [...new Set(currentPrivilegeIds([...(entitlements.get(record.id) || []), ...volunteerPrivileges(record, volunteerTiers, now)], now))]
+          .filter(isLockedProduct);
+        names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName, ...(tripHeld.length ? { tripHeld } : {}),
           ...(volunteer?.inducted ? { volunteer: { inducted: true, years: Object.fromEntries(Object.entries(volunteer.years || {})
             .map(([year, value]) => [year, { active: value.active === true, tier: value.tier }])) } } : {}),
           prefill: consentPrefill(record, policies, noticeVersions) });

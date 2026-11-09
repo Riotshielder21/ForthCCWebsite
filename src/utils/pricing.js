@@ -37,11 +37,17 @@ export const debitRange = ({ firstDebit, debits, subscriptionEnd }) => {
   return `${debits} payments, ${monthYear(firstDebit)} – ${monthYear(lastDebit)}`;
 };
 
-// e.g. "Rest of October now (20% of a month), then £25.00 a month: 4 payments, Nov 2026 – Feb 2027".
+/** The joining-month charge, worded as a discount on the full month, e.g. "Rest of October now (80% off)". */
+export const joiningText = (month, share) => {
+  const off = 100 - Math.round(share * 100);
+  return `Rest of ${month} now${off > 0 ? ` (${off}% off)` : ''}`;
+};
+
+// e.g. "Rest of October now (80% off), then £25.00 a month: 4 payments, Nov 2026 – Feb 2027".
 const monthlyLabel = ({ now, share, nextYear, schedule, monthlyRate, nextClubYearStart }) => {
   const rate = `£${monthlyRate.toFixed(2)} a month`;
   if (nextYear) return `${rate}: ${debitRange(schedule)}`;
-  const joining = `Rest of ${monthName(now)} now (${Math.round(share * 100)}% of a month)`;
+  const joining = joiningText(monthName(now), share);
   return schedule.debits ? `${joining}, then ${rate}: ${debitRange(schedule)}` : `${joining}; ends ${dayLabel(nextClubYearStart)}`;
 };
 
