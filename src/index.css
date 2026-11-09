@@ -30,16 +30,25 @@
 }
 
 @layer components {
-  .TimetableList { display: grid; gap: 12px; }
-  .TimetableItem { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-top: 1px solid var(--fcc-color-border); padding-top: 12px; }
-  .TimetableItem:first-child { border-top: 0; padding-top: 0; }
-  .TimetableItem .tile_heading_bold_2 { margin: 0 0 4px; }
-  .TimetableDetails { text-align: right; }
-  .TimetableDetails p + p { margin-top: 4px; }
+  .TimetableWeek { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+  .TimetableDay { min-width: 0; padding: 6px; border: 1px solid var(--fcc-color-border); border-radius: 6px; background: var(--fcc-color-surface-subtle); }
+  .TimetableDayHeading { min-height: 1.5rem; margin: 0 0 6px; color: var(--fcc-color-ink); font-size: 0.8rem; font-weight: 700; text-align: center; }
+  .TimetableDayEvents { display: grid; align-content: start; gap: 5px; }
+  .TimetableEvent { min-width: 0; padding: 6px; border: 1px solid var(--fcc-color-border); border-left: 3px solid var(--fcc-color-accent); border-radius: 4px; background: var(--fcc-color-surface); overflow-wrap: anywhere; }
+  .TimetableEventTitle { margin: 0 0 4px; color: var(--fcc-color-ink); font-size: 0.75rem; font-weight: 700; line-height: 1.25; }
+  .TimetableEventTime, .TimetableEventLocation, .TimetableEventSeason { margin: 0; color: var(--fcc-color-copy); font-size: 0.7rem; line-height: 1.3; }
+  .TimetableEventTime { color: var(--fcc-color-ink); font-weight: 600; }
+  .TimetableEventSeason { margin-top: 3px; font-style: italic; }
+  .TimetableEmptyDay { padding: 6px 0; color: var(--fcc-color-copy); font-size: 0.8rem; text-align: center; }
   .Timetable .text_container_note { margin-bottom: 0; }
+  .Timetable .ContentLink { display: inline; }
   .RegularSessionsEditor { display: grid; gap: 12px; }
   .RegularSessionsEditor .CheckinSessionFields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); }
   .RegularSessionsEditor .CheckinSessionOptions { align-items: center; }
+
+  @media (max-width: 767px) {
+    .TimetableWeek { grid-template-columns: repeat(7, minmax(112px, 1fr)); overflow-x: auto; padding-bottom: 4px; }
+  }
 
   .SiteShell {
     @apply min-h-screen flex flex-col bg-slate-50 selection:bg-sky-100;
