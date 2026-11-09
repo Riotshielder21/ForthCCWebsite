@@ -8,6 +8,7 @@
 
 /** A reservation outlives the one-hour Stripe Checkout session by a few minutes. */
 export const HOLD_MINUTES = 65;
+const ORDER_REF = /^[A-Za-z0-9_-]{1,64}$/;
 export const EVENT_KEY = 'all';
 
 export const isMerchandise = (item) => item?.category === 'MERCHANDISE';
@@ -82,6 +83,7 @@ export const stockProblem = (product, holds, wanted, now = Date.now()) => {
 
 /** Reservation for an order, replacing any expired holds so records do not accumulate. */
 export const withHold = (holds = {}, orderRef, lines, now = Date.now(), until = now + HOLD_MINUTES * 60 * 1000) => {
+  if (typeof orderRef !== 'string' || !ORDER_REF.test(orderRef) || orderRef === '__proto__') throw new Error('Invalid order reference for a stock hold.');
   const live = Object.fromEntries(Object.entries(holds).filter(([, hold]) => hold.until === null || hold.until > now));
   return { ...live, [orderRef]: { until, lines } };
 };

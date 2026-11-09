@@ -1,13 +1,15 @@
 import { rateLimit as expressRateLimit, ipKeyGenerator } from 'express-rate-limit';
 
 const MINUTE = 60 * 1000;
+// ip-address (used by ipKeyGenerator) is slow on long IPv6 zone identifiers; a real client address has none.
+export const clientKey = (ip) => ipKeyGenerator(String(ip || '').split('%')[0].slice(0, 45));
 
 const limiter = ({ limit, windowMs = MINUTE, perPath }) => expressRateLimit({
   windowMs,
   limit,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  keyGenerator: (req) => (perPath ? `${ipKeyGenerator(req.ip || '')}:${req.path}` : ipKeyGenerator(req.ip || '')),
+  keyGenerator: (req) => (perPath ? `${clientKey(req.ip)}:${req.path}` : clientKey(req.ip)),
   validate: { xForwardedForHeader: false },
   message: { error: 'Too many requests. Try again shortly.' }
 });
