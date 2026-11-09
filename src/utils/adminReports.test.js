@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, reportDetailEntries, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders, onlyEventPeriod, onlyEvent, reportEventNames } from './adminReports.js';
+import { membershipStatus, MEMBERSHIP_STATUSES, memberReport, membershipReport, orderReport, reportCsv, reportDate, reportDetailEntries, uniqueReportEmails, subscriptionWarning, eventAttendeeRows, eventAttendeeHeaders, justgoUploadRows, justgoUploadHeaders, onlyEventPeriod, onlyEvent, reportEventNames, takingsSummary, paidViaMatches } from './adminReports.js';
 
 test('membership status is one of No, Active, Awaiting renewal, Expired or Revoked, or a raw imported status', () => {
   const now = new Date('2026-10-10T12:00:00Z');
@@ -387,4 +387,27 @@ test('JustGo credentials show their own status with our expiry warning', () => {
   const report = membershipReport('cred-1', fields, now);
   assert.equal(report.pvg, 'Approved, Due to expire (01/08/2026)');
   assert.equal(report.safeguarding, 'Completed, Expired (01/01/2026)');
+});
+
+test('credited orders show how and when they were paid and are kept apart from Stripe takings', () => {
+  const at = { toDate: () => new Date('2026-05-09T12:00:00Z') };
+  const credited = orderReport('FCC-2', { status: 'paid', totalPence: 4500, paymentMethod: 'credit',
+    payment: { method: 'cash', amountPence: 4000, receivedAt: at, reference: '', note: 'Paid at the club night', creditedBy: 'a@forthcanoeclub.co.uk' } });
+  assert.equal(credited.paidVia, 'Cash');
+  assert.equal(credited.credited, true);
+  assert.equal(credited.amountReceived, 40);
+  assert.equal(credited.paymentNote, 'Paid at the club night');
+  assert.equal(credited.creditedBy, 'a@forthcanoeclub.co.uk');
+  const stripe = orderReport('FCC-1', { status: 'paid', totalPence: 2010 });
+  const free = orderReport('FCC-3', { status: 'paid', totalPence: 0, paymentMethod: 'free' });
+  assert.equal(stripe.paidVia, 'Stripe');
+  assert.equal(free.paidVia, 'Nothing to pay');
+  assert.equal('credited' in stripe, false);
+  const pending = orderReport('FCC-4', { status: 'pending', totalPence: 999 });
+  assert.deepEqual(takingsSummary([credited, stripe, free, pending, { ...stripe, total: 0.1 }]),
+    { stripe: 20.2, stripeOrders: 2, credited: 40, creditedOrders: 1 });
+  assert.equal(paidViaMatches(credited, 'credited'), true);
+  assert.equal(paidViaMatches(credited, 'stripe'), false);
+  assert.equal(paidViaMatches(stripe, 'stripe'), true);
+  assert.equal(paidViaMatches(free, 'all'), true);
 });

@@ -1,5 +1,5 @@
 // End-to-end checkout test: API -> Stripe webhook -> Firestore records -> admin reports.
-// Needs the Firebase emulators and an API server (Stripe mocked) already running; see DEVELOPMENT.md.
+// Needs the Firebase emulators and an API server (Stripe mocked) already running. Run it through the integration suite in DEVELOPMENT.md, which starts that API.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createHash, createHmac } from 'node:crypto';
@@ -10,7 +10,9 @@ import { getAuth, connectAuthEmulator, signInWithEmailAndPassword } from 'fireba
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { PRODUCTS } from '../src/constants/products.js';
 import { assignLines } from '../src/utils/checkout.js';
-import { eventAttendeeRows, justgoUploadRows } from '../src/utils/adminReports.js';
+import { DEFAULT_TRIP_DISCOUNTS, applyTripDiscounts } from '../src/utils/tripDiscount.js';
+import { calculateCart } from '../src/utils/pricing.js';
+import { eventAttendeeRows, justgoUploadRows, takingsSummary } from '../src/utils/adminReports.js';
 import { sha256 } from '../src/utils/emailCodes.js';
 import { applyConsentPrefill, checkoutWording } from '../src/utils/consents.js';
 import { activeSubscriptionItems } from '../src/utils/subscriptions.js';
@@ -1505,6 +1507,86 @@ await test('single-day trips are £10 off with annual boat hire and £10 off wit
     'the free booking email links with the payment-page token');
 });
 
+await test('admins set the trip discounts, checkout charges them, and own kit neither gives nor removes one', async () => {
+  const single = { mode: 'single', startDate: '2027-05-08', startTime: '09:00', endTime: '17:00', days: 1, timeZone: 'Europe/London' };
+  const tripId = `E2E-RULES-TRIP-${run}`;
+  await db.collection('products').doc(tripId).set({ name: 'E2E rules trip', category: 'EVENTS', type: 'event-ticket', basePrice: 35, eventSchedule: single });
+  const basket = (productIds, details, ownKit) => {
+    const lines = [...productIds.map(lineFor), { id: tripId, lineId: `${tripId}-${makeId()}`, name: tripId, category: 'EVENTS', type: 'event-ticket', basePrice: 35, eventSchedule: single }];
+    return { lines, people: assignLines([], lines, makeId).map((person) => ({ ...person, ...details, ownKitLineIds: ownKit ? [lines.at(-1).lineId] : [] })) };
+  };
+  // What Stripe is asked for: each line's price, and the order total.
+  const charged = async (emailAddress, productIds, details, ownKit) => {
+    const started = await checkout(emailAddress, basket(productIds, details, ownKit));
+    assert.equal(started.status, 200, started.text);
+    const order = (await db.collection('orders').doc(started.json.orderRef).get()).data();
+    const trip = order.items.find((item) => item.id === tripId);
+    assert.equal(trip.ownKit === true, ownKit);
+    assert.equal(order.totalPence, order.items.reduce((sum, item) => sum + item.pricePence, 0));
+    return { trip: trip.pricePence, reasons: trip.tripDiscountReasons };
+  };
+  // The basket's price for a returning member's trip, worked out as the browser does from the public rules and their lookup.
+  const basketPrice = async (emailAddress, details) => {
+    const { lines, people } = basket([], details, false);
+    const tripHeld = (await call('POST', '/api/membership-names', { body: { email: emailAddress, dob: details.dob } })).json.names[0].tripHeld || [];
+    const held = new Map([[people[0].id, tripHeld.map((productId) => ({ productId, clubYear: clubYearOf(new Date()) }))]]);
+    const rules = (await call('GET', '/api/trip-discounts')).json.rules;
+    return Math.round(calculateCart(applyTripDiscounts(lines, people, held, new Date(), rules), true, null).total * 100);
+  };
+  const settings = () => call('GET', '/api/admin/trip-discounts', { headers: admin });
+  const save = (rules, headers = admin) => call('PUT', '/api/admin/trip-discounts', { headers, body: { rules } });
+
+  const defaults = (await call('GET', '/api/trip-discounts')).json.rules;
+  assert.deepEqual(defaults, DEFAULT_TRIP_DISCOUNTS, 'until an admin saves, the starting discounts apply');
+  assert.equal((await call('GET', '/api/admin/trip-discounts')).status, 401);
+  assert.equal((await save(defaults, {})).status, 401);
+  const options = (await settings()).json.products;
+  assert.ok(options.some((product) => product.id === 'keyhire') && !options.some((product) => product.category === 'MEMBERSHIP'), 'services and subscriptions can qualify');
+
+  const holder = email('rules-holder');
+  const holderDetails = adultDetails({ firstName: 'Hal', lastName: 'Holder', email: holder });
+  const returningHolder = { returning: true, firstName: 'Hal', lastName: 'Holder', dob: holderDetails.dob, disclaimerAccepted: true };
+  assert.deepEqual(await charged(holder, ['membership-adult', 'boat-hire'], holderDetails, true), { trip: 2500, reasons: ['annual boat hire'] },
+    'buying boat hire with own kit ticked still gets the discount');
+  await buy(holder, build(['membership-adult', 'boat-hire'], [holderDetails]));
+  for (const ownKit of [false, true]) assert.equal((await charged(holder, [], returningHolder, ownKit)).trip, 2500, `held boat hire, own kit ${ownKit ? 'ticked' : 'unticked'}`);
+  assert.equal(await basketPrice(holder, returningHolder), 2500, 'the basket shows what checkout charges');
+
+  const owner = email('rules-owner');
+  const ownerDetails = adultDetails({ firstName: 'Oona', lastName: 'Owner', email: owner });
+  for (const ownKit of [false, true]) assert.equal((await charged(owner, ['membership-adult'], ownerDetails, ownKit)).trip, 3500, `no hire, own kit ${ownKit ? 'ticked' : 'unticked'}`);
+
+  for (const [rules, message] of [[[{ ...defaults[0], productIds: ['no-such-product'] }], /services or subscriptions in the shop/],
+    [[{ ...defaults[0], amount: 500 }], /between £0.01 and £100/], [[{ ...defaults[0], productIds: ['membership-adult'] }], /services or subscriptions/],
+    [[defaults[0], { ...defaults[1], productIds: ['boat-hire'] }], /one trip discount only/], ['all', /Keep up to/]]) {
+    const refused = await save(rules);
+    assert.equal(refused.status, 400, refused.text);
+    assert.match(refused.json.error, message);
+  }
+  assert.deepEqual((await call('GET', '/api/trip-discounts')).json.rules, defaults, 'a refused save changes nothing');
+
+  const changed = [{ ...defaults[0], amount: 12.5 }, { id: 'key-hire', productIds: ['keyhire'], amount: 5, label: 'key hire', short: 'Key hire' }];
+  const saved = await save(changed);
+  assert.equal(saved.status, 200, saved.text);
+  assert.deepEqual(saved.json.rules, changed);
+  assert.equal(saved.json.updatedBy, 'admin@forthcanoeclub.co.uk');
+  assert.deepEqual((await call('GET', '/api/trip-discounts')).json.rules, changed, 'the basket prices with the saved rules');
+  assert.deepEqual((await db.collection('settings').doc('tripDiscounts').get()).data().productIds, ['boat-hire', 'keyhire'], 'firestore.rules lock these products');
+  for (const ownKit of [false, true]) assert.equal((await charged(holder, [], returningHolder, ownKit)).trip, 2250, 'the new amount is charged');
+  assert.equal(await basketPrice(holder, returningHolder), 2250, 'and the basket shows it');
+  assert.equal((await charged(owner, ['membership-adult'], ownerDetails, true)).trip, 3500);
+  const keyBuyer = await charged(owner, ['membership-adult', 'keyhire'], ownerDetails, true);
+  assert.deepEqual([keyBuyer.trip, keyBuyer.reasons], [3000, ['key hire']], 'a newly qualifying product gives its discount');
+  const lookup = await call('POST', '/api/membership-names', { body: { email: holder, dob: holderDetails.dob } });
+  assert.deepEqual(lookup.json.names[0].tripHeld, ['boat-hire'], 'returning members are told which held products qualify now');
+
+  assert.equal((await save([])).status, 200);
+  assert.equal((await charged(holder, [], returningHolder, false)).trip, 3500, 'with no rules nobody gets a trip discount');
+  assert.equal(await basketPrice(holder, returningHolder), 3500);
+  assert.equal((await save(DEFAULT_TRIP_DISCOUNTS)).status, 200);
+  assert.equal((await charged(holder, [], returningHolder, true)).trip, 2500);
+});
+
 await test('events open to non-members keep them as contacts, close on time and email the leader an attendee list', async () => {
   const schedule = { mode: 'consecutive', startDate: '2027-06-05', startTime: '09:00', endTime: '16:00', days: 2, timeZone: 'Europe/London' };
   const openId = `E2E-OPEN-${run}`;
@@ -1527,6 +1609,20 @@ await test('events open to non-members keep them as contacts, close on time and 
   const closed = await checkout(visitor, basket(closedId, () => ({})));
   assert.equal(closed.status, 400);
   assert.match(closed.json.error, /Bookings for E2E closed day have closed/);
+
+  // Without a close date, an event can be booked until the end of its last date, so a course can be joined part way through.
+  const day = (offset) => new Date(Date.now() + offset * 86400000).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+  const overId = `E2E-OVER-${run}`;
+  const runningId = `E2E-RUNNING-${run}`;
+  await db.collection('products').doc(overId).set({ name: 'E2E finished course', category: 'EVENTS', type: 'event-ticket', basePrice: 20,
+    membershipRule: 'none', eventSchedule: { ...schedule, startDate: day(-3), days: 2 } });
+  await db.collection('products').doc(runningId).set({ name: 'E2E running course', category: 'EVENTS', type: 'event-ticket', basePrice: 20,
+    membershipRule: 'none', eventSchedule: { ...schedule, startDate: day(-2), days: 4 } });
+  const over = await checkout(email('over'), basket(overId, () => ({})));
+  assert.equal(over.status, 400);
+  assert.match(over.json.error, /Bookings for E2E finished course have closed/);
+  const running = await checkout(email('running'), basket(runningId, () => ({})));
+  assert.equal(running.status, 200, JSON.stringify(running.json));
 
   const orderRef = await buy(visitor, basket(openId, (lines) => ({ ownKitLineIds: [lines[0].lineId] })));
   const order = (await db.collection('orders').doc(orderRef).get()).data();
@@ -2398,6 +2494,123 @@ await test('checkout needs agreement to the current version of every published n
   } finally {
     await call('DELETE', `/api/admin/notices/${noticeId}`, { headers: admin });
   }
+});
+
+// Staff credits: items paid for outside the website, or given free, go through checkout's checks with no Stripe payment.
+const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const creditPayment = (over = {}) => ({ method: 'bank-transfer', amountPence: 4500, receivedAt: yesterday, reference: `FCC ${run}`, note: '', ...over });
+const credit = async (emailAddress, { lines, people }, payment = creditPayment(), headers = admin) => call('POST', '/api/admin/credits', { headers, body: {
+  email: emailAddress, items: lines.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), people,
+  noticeVersions: await currentNoticeVersions(), wording: checkoutWording(), payment } });
+
+await test('an admin credits items paid by bank transfer to an existing member, with a receipt and an audit entry', async () => {
+  const member = await newMember('credit-member');
+  const basket = build(['boat-hire'], [member.person]);
+  const result = await credit(member.email, basket);
+  assert.equal(result.status, 200, result.text);
+  assert.equal(result.json.credited, true);
+  assert.equal(result.json.receiptEmailed, true);
+  const orderRef = result.json.orderRef;
+  shared.creditOrder = orderRef;
+  const order = (await db.collection('orders').doc(orderRef).get()).data();
+  assert.equal(order.status, 'paid');
+  assert.equal(order.paymentMethod, 'credit');
+  assert.match(order.stripe.sessionId, /^credit_/);
+  assert.equal(order.stripe.paymentIntentId, '');
+  assert.equal(order.payment.method, 'bank-transfer');
+  assert.equal(order.payment.amountPence, 4500);
+  assert.equal(order.payment.reference, `FCC ${run}`);
+  assert.equal(order.payment.receivedAt.toDate().toISOString().slice(0, 10), yesterday);
+  assert.equal(order.payment.creditedBy, 'admin@forthcanoeclub.co.uk');
+  if (order.noticeAgreement) assert.equal(order.noticeAgreement.recordedBy, 'admin@forthcanoeclub.co.uk', 'the admin is recorded as ticking the notices for the customer');
+  const [record] = await membershipsFor(member.email);
+  assert.ok(record.entitlements.some((privilege) => privilege.productId === 'boat-hire'), 'the credited item is held like a bought one');
+  const mail = (await db.collection('testMail').where('orderRef', '==', orderRef).get()).docs.map((document) => document.data());
+  assert.equal(mail.length, 1);
+  assert.match(mail[0].body, /Total paid: £45\.00\nPaid by bank transfer/);
+  assert.match(mail[0].html, /Paid by bank transfer/);
+  const audit = (await db.collection('auditLog').where('orderRef', '==', orderRef).get()).docs.map((document) => document.data());
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].kind, 'item');
+  assert.equal(audit[0].action, 'credit-items');
+  assert.equal(audit[0].by, 'admin@forthcanoeclub.co.uk');
+  assert.equal(audit[0].method, 'bank-transfer');
+  assert.equal(audit[0].amountPence, 4500);
+  assert.deepEqual(audit[0].membershipIds, [record.id]);
+  const again = await credit(member.email, build(['boat-hire'], [member.person]));
+  assert.equal(again.status, 409);
+  assert.equal(again.json.code, 'already_held', 'a credit cannot give an item the member already holds');
+});
+
+await test('a credit follows checkout rules and needs an admin and a valid payment record', async () => {
+  const stranger = email('credit-stranger');
+  const basket = build(['boat-hire'], [adultDetails({ email: stranger })]);
+  assert.equal((await credit(stranger, basket, creditPayment(), {})).status, 401);
+  const refused = await credit(stranger, basket);
+  assert.equal(refused.status, 409);
+  assert.equal(refused.json.code, 'membership_required', 'a non-member cannot be credited members-only items without a membership');
+  for (const payment of [creditPayment({ reference: '' }), creditPayment({ method: 'complimentary', note: 'Gift' }), creditPayment({ amountPence: 0 }),
+    creditPayment({ method: 'card' }), creditPayment({ receivedAt: '2999-01-01' })]) {
+    assert.equal((await credit(stranger, basket, payment)).status, 400, JSON.stringify(payment));
+  }
+  assert.equal((await db.collection('orders').where('email', '==', stranger).get()).size, 0, 'refused credits leave no order');
+
+  const member = await newMember('credit-capacity');
+  const eventId = `E2E-CREDIT-CAP-${run}`;
+  const schedule = { mode: 'single', startDate: '2099-06-01', startTime: '10:00', endTime: '12:00', timeZone: 'Europe/London' };
+  await db.collection('products').doc(eventId).set({ name: 'Credit capacity course', category: 'EVENTS', type: 'event-ticket', basePrice: 20, eventSchedule: schedule, capacity: 1 });
+  const ticket = (n) => {
+    const line = { id: eventId, lineId: `${eventId}-${n}`, name: 'Credit capacity course', category: 'EVENTS', type: 'event-ticket', basePrice: 20 };
+    return { lines: [line], people: assignLines([], [line], makeId).map((person) => ({ ...person, ...member.person })) };
+  };
+  const cash = creditPayment({ method: 'cash', amountPence: 2000, reference: '' });
+  const first = await credit(member.email, ticket(1), cash);
+  assert.equal(first.status, 200, first.text);
+  const full = await credit(member.email, ticket(2), cash);
+  assert.equal(full.status, 409);
+  assert.equal(full.json.code, 'sold_out', 'a credit cannot oversell an event');
+});
+
+await test('a non-member is credited a membership with their items, recording the same details and consents as checkout', async () => {
+  const joiner = email('credit-joiner');
+  const details = adultDetails({ email: joiner, firstName: 'Credit', lastName: 'Joiner' });
+  const result = await credit(joiner, build(['membership-adult', 'keyhire'], [details]), creditPayment({ method: 'complimentary', amountPence: 0, reference: '', note: 'Committee thank you' }));
+  assert.equal(result.status, 200, result.text);
+  const [member] = await membershipsFor(joiner);
+  assert.ok(member, 'the membership is created');
+  assert.equal(member.firstName, 'Credit');
+  assert.equal(member.consents.disclaimer.policyKey, 'participation-disclaimer');
+  if (Object.keys(await currentNoticeVersions()).length) assert.equal(member.consents.notices.orderRef, result.json.orderRef);
+  assert.equal(member.consents.photoVideo.accepted, true);
+  assert.equal(member.medical, 'Asthma');
+  assert.ok(member.entitlements.some((privilege) => privilege.productId === 'keyhire'));
+  const mail = (await db.collection('testMail').where('orderRef', '==', result.json.orderRef).get()).docs[0].data();
+  assert.match(mail.body, /Total paid: £0\.00\nComplimentary \(no charge\)/);
+});
+
+await test('credited orders are reported apart from Stripe takings and cannot be refunded through Stripe', async () => {
+  const [creditRecord] = (await reportFor('orders', shared.creditOrder)).json.records;
+  assert.equal(creditRecord.credited, true);
+  assert.equal(creditRecord.paidVia, 'Bank transfer');
+  assert.equal(creditRecord.amountReceived, 45);
+  assert.equal(creditRecord.paymentReference, `FCC ${run}`);
+  assert.equal(creditRecord.creditedBy, 'admin@forthcanoeclub.co.uk');
+  const [stripeRecord] = (await reportFor('orders', shared.adultOrder)).json.records;
+  assert.equal(stripeRecord.paidVia, 'Stripe');
+  assert.equal('credited' in stripeRecord, false);
+  assert.deepEqual(takingsSummary([creditRecord, stripeRecord]), { stripe: stripeRecord.total, stripeOrders: 1, credited: 45, creditedOrders: 1 });
+
+  const order = (await db.collection('orders').doc(shared.creditOrder).get()).data();
+  const lineId = order.items[0].lineId;
+  const base = `/api/admin/orders/${shared.creditOrder}/items/${encodeURIComponent(lineId)}`;
+  const payments = await call('GET', `${base}/payments?action=refund`, { headers: admin });
+  assert.equal(payments.status, 409);
+  assert.match(payments.json.error, /credited by staff.*cannot be refunded here/);
+  const refund = await call('POST', `${base}/actions`, { headers: admin, body: { action: 'refund', reason: 'Asked for a refund', operationId: '00000000-0000-4000-8000-000000000085',
+    paymentIntent: 'pi_credit', amount: 100, revoke: false } });
+  assert.equal(refund.status, 409);
+  assert.match(refund.json.error, /credited by staff/);
+  assert.equal((await call('GET', `${base}/payments?action=revoke`, { headers: admin })).status, 200, 'credited items can still be revoked');
 });
 
 await test('every paid order produced a receipt email record', async () => {

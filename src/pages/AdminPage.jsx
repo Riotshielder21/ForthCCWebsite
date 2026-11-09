@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
 import { removeProduct, reserveProductId, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
-import { isLockedProduct } from '../utils/tripDiscount';
+import { isLockedProduct, tripDiscountForProduct } from '../utils/tripDiscount';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
 import DiscountCodesPanel from '../components/DiscountCodesPanel';
@@ -41,7 +41,7 @@ const MEMBERSHIP_RULE_NOTES = {
 const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description'];
 const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorated 60%: full price, then 60% from 1 October', subscription: 'Prorated monthly: monthly price for each month left to 1 March' };
 
-export default function AdminPage({ products, onNavigate }) {
+export default function AdminPage({ products, onNavigate, tripDiscounts }) {
   const editor = usePageEditor();
   const { adminUser, authReady, authError, authRetrying, retryAuth } = editor;
   const [attentionCount, setAttentionCount] = useState(0);
@@ -186,7 +186,7 @@ export default function AdminPage({ products, onNavigate }) {
   const handleDelete = async () => {
     if (!selectedProduct || !window.confirm('Remove this product from the shop?')) return;
     try {
-      await removeProduct(selectedProduct);
+      await removeProduct(selectedProduct, tripDiscounts);
       setDraft({ ...EMPTY_PRODUCT });
       setSelectedProduct(null);
       setMessage('Product removed.');
@@ -271,8 +271,8 @@ export default function AdminPage({ products, onNavigate }) {
             {!products.length && <p className="text_container">No products. Add a new item or restore the starter catalogue.</p>}
           </aside>
           <form className="main_tile AdminEditor" onSubmit={handleSave}>
-            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && !isLockedProduct(selectedProduct) && <button type="button" className="CartRemoveButton" disabled={uploading || saving} onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
-            {selectedProduct && isLockedProduct(selectedProduct) && <p className="text_container text_container_note">This product cannot be removed: holding it gives £10 off single-day trips at checkout.</p>}
+            <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && tripDiscounts && !isLockedProduct(selectedProduct, tripDiscounts) && <button type="button" className="CartRemoveButton" disabled={uploading || saving} onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
+            {selectedProduct && tripDiscounts && isLockedProduct(selectedProduct, tripDiscounts) && <p className="text_container text_container_note">This product cannot be removed: holding it gives £{tripDiscountForProduct(selectedProduct, tripDiscounts).amount} off single-day trips at checkout. To remove it, first take it out of Reports & records → Trip discounts.</p>}
             {EDITABLE_FIELDS.map((field) => (
               <label className="FormLabel" key={field}>{field === 'basePrice' ? (draft.pricingMode === 'subscription' ? 'Monthly price' : 'Price') : field}
                 {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{CATEGORIES.filter((category) => category !== 'ALL').map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required />}
@@ -305,7 +305,7 @@ export default function AdminPage({ products, onNavigate }) {
               <div className="AdminEventTimes"><label className="FormLabel">Start time<input className="FormInput" type="time" required value={draft.eventSchedule.startTime} onChange={(event) => updateEventSchedule('startTime', event.target.value)} /></label><label className="FormLabel">End time<input className="FormInput" type="time" required value={draft.eventSchedule.endTime} onChange={(event) => updateEventSchedule('endTime', event.target.value)} /></label></div>
               <p className="text_container">{eventScheduleLabel(draft.eventSchedule)}</p>
               <label className="FormLabel">Capacity (tickets available, blank for unlimited)<input className="FormInput" type="number" min="1" step="1" value={draft.capacity ?? ''} onChange={(event) => updateDraft('capacity', event.target.value)} /></label>
-              <p className="text_container text_container_note">When every ticket is sold the event leaves the shop. Delete a refunded order in Reports to free its place.</p>
+              <p className="text_container text_container_note">With a close date, bookings stop at the end of that day and the event leaves the shop after its first date. Without one, people can book until the end of the last date, so a course can be joined part way through. The event also leaves the shop when every ticket is sold; delete a refunded order in Reports to free its place.</p>
               <p className="text_container text_container_note">One ticket covers the whole event/course. Times are Europe/London.</p>
             </fieldset>}
             {draft.category === 'EVENTS' && <fieldset className="AdminEventSchedule">

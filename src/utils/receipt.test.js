@@ -204,3 +204,16 @@ test('receipts word the joining month as a discount, including on orders saved w
   const [line] = buildReceiptSummary('FCC-1', { items: [item], people: [], totalPence: 2400, billingMode: 'monthly' }).otherItems;
   assert.equal(line.billing, 'Rest of November now (20% off), then £30.00 a month: 3 payments, Dec 2026 – Feb 2027');
 });
+
+test('a credited order shows the amount received and how it was paid', () => {
+  const credited = { ...order, billingMode: 'annual', payment: { method: 'bank-transfer', amountPence: 7000, reference: 'FCC' } };
+  const summary = buildReceiptSummary('FCC-124', credited);
+  assert.equal(summary.total, 70);
+  assert.equal(summary.paymentMethod, 'Paid by bank transfer');
+  assert.match(receiptEmailCopy(summary), /Total paid: £70\.00\nPaid by bank transfer/);
+  assert.match(receiptEmailHtml(summary), /Paid by bank transfer/);
+  const linked = buildLinkedReceipt('FCC-124', { ...credited, payment: { method: 'complimentary', amountPence: 0 } });
+  assert.equal(linked.total, 0);
+  assert.equal(linked.paymentMethod, 'Complimentary (no charge)');
+  assert.equal('paymentMethod' in buildReceiptSummary('FCC-123', order), false);
+});

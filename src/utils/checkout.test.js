@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assignLines, addFamilyMember, validateCheckout, peopleNeedingMembership, membershipPartsNeeded, peopleGrantedMembership, requiresMembership, grantsMembership, blankPerson, ageOn, loadDraft, saveDraft, matchMembership, personDetailErrors, personKind, withFamilyContacts, ageProblem, displayName,
-  returningVerificationMatches, invalidatePersonVerification, checkoutStepSnapshot, normaliseName, assignLine
+  returningVerificationMatches, invalidatePersonVerification, checkoutStepSnapshot, normaliseName, assignLine, restoreDraftLines
 } from './checkout.js';
 
 const now = new Date(2026, 9, 11);
@@ -523,4 +523,13 @@ test('membership is needed per club year; from 8 February next year\'s membershi
   assert.deepEqual(membershipPartsNeeded(lines, person('m-next', 'h-this'), new Date(2027, 1, 8)), []);
   assert.deepEqual(membershipPartsNeeded(lines, person('m-this', 'm-next', 'h-this', 'h-next'), january), []);
   assert.equal(peopleNeedingMembership(lines, [person('h-next')], january).length, 1);
+});
+
+test('a saved basket keeps its order and reports lines the catalogue does not have yet', () => {
+  const toLine = (product, line) => ({ ...product, lineId: line.lineId });
+  const saved = [{ id: 'membership-adult', lineId: 'a' }, { id: 'new-trip', lineId: 'b' }, { id: 'boat-hire', lineId: 'c' }];
+  const cached = [{ id: 'membership-adult' }, { id: 'boat-hire' }];
+  assert.deepEqual(restoreDraftLines(saved, cached, toLine), { lines: [{ id: 'membership-adult', lineId: 'a' }, { id: 'boat-hire', lineId: 'c' }], complete: false });
+  assert.deepEqual(restoreDraftLines(saved, [...cached, { id: 'new-trip' }], toLine).lines.map((line) => line.lineId), ['a', 'b', 'c']);
+  assert.deepEqual(restoreDraftLines(undefined, cached, toLine), { lines: [], complete: true });
 });
