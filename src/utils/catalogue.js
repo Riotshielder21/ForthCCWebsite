@@ -1,4 +1,3 @@
-import { isLockedProduct } from './tripDiscount.js';
 
 /**
  * How a product is charged. Fixed is the full price whenever bought; prorated is the full price, or 60% from 1 October;
@@ -66,12 +65,11 @@ export const normaliseProduct = (product) => {
   return { ...rest, ...productTerms(product), ...(rule ? { membershipRule: rule, membershipRequired: rule !== 'none' } : {}) };
 };
 
-// Inactive products leave the shop, except locked ones (the trip discount depends on them). Sorted by `sortOrder`.
+// Inactive products leave the shop. Sorted by `sortOrder`. Trip discount products cannot be made inactive (firestore.rules).
 export const resolveCatalogue = (defaults, saved) => {
   const products = new Map(defaults.map((product) => [product.id, product]));
   for (const product of saved) {
-    if (product.active === false && isLockedProduct(product.id)) products.set(product.id, { ...products.get(product.id), ...product, active: true });
-    else if (product.active === false) products.delete(product.id);
+    if (product.active === false) products.delete(product.id);
     else products.set(product.id, product);
   }
   return [...products.values()].map(normaliseProduct).sort((a, b) => a.sortOrder - b.sortOrder);

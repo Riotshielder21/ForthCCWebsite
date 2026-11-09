@@ -31,13 +31,14 @@ let rejectRefund = false;
 let rejectLookup = false;
 let refundCalls = 0;
 const stopped = [];
-const invoice = { id: 'in_test', number: 'TEST', amount_paid: 2000, lines: { data: [
+let failStop = false;
+const invoices = [{ id: 'in_test', number: 'TEST', amount_paid: 2000, lines: { data: [
   { amount: 1200, subscription_item: 'si_target' }, { amount: 800, subscription_item: 'si_other' }
-]} };
+]} }];
 const stripeRequest = async (path, params, method = 'POST') => {
   const url = new URL(`https://stripe.invalid/${path}`);
   const form = new URLSearchParams(params || []);
-  if (url.pathname === '/invoices') return { data: [invoice], has_more: false };
+  if (url.pathname === '/invoices') return { data: invoices, has_more: false };
   if (url.pathname === '/invoice_payments') return { data: [{ payment: { payment_intent: 'pi_invoice' } }], has_more: false };
   if (url.pathname.startsWith('/payment_intents/')) return { latest_charge: charges.get(url.pathname.split('/')[2]) };
   if (url.pathname === '/refunds' && method === 'GET') {
@@ -63,7 +64,10 @@ const keyAccess = registerKeyAccessRoutes(app, { requireAdmin, db: () => db,
   sendEmail: async (message) => { if (failEmail) return false; emails.push(message); return true; } });
 registerBoathouseRoutes(app, { requireAdmin, db: () => db, onCodeChanged: keyAccess.notifyKeyAccess });
 registerItemActionRoutes(app, { requireAdmin, db: () => db, stripeRequest,
-  stopMonthlyItem: async (...args) => stopped.push(args) });
+  stopMonthlyItem: async (...args) => {
+    if (failStop) { failStop = false; throw new Error('Simulated Stripe outage while stopping monthly payments'); }
+    stopped.push(args);
+  } });
 const server = app.listen(0, '127.0.0.1');
 await new Promise((resolve) => server.once('listening', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -140,6 +144,45 @@ const checkMainServer = async () => {
     assert.equal(audit.size, 1);
     assert.equal(audit.docs[0].data().kind, 'subscription');
     assert.equal(audit.docs[0].data().reason, 'Stop monthly hire');
+    const post = async (reference, line, body) => {
+      const response = await fetch(`http://127.0.0.1:${port}${path(reference, line)}/actions`, { method: 'POST', headers, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() };
+    };
+    const payer = await put(`memberships/REFUND-${run}`, { source: 'website' });
+    const paymentIntent = `pi_charge_3000_${run}`;
+    const paid = await order('main-refund', [{ id: 'boat-hire', lineId: 'line', category: 'SERVICES', monthly: true, pricePence: 1500 },
+      { id: 'coaching', lineId: 'other', category: 'SERVICES', monthly: true, pricePence: 1500 }],
+    [{ membershipId: payer.id, lineIds: ['line', 'other'] }], { subscriptionPlan: { recordedAt: Timestamp.now() }, stripe: { paymentIntentId: paymentIntent } });
+    const billed = await put(`subscriptions/sub_refund_${run}`, { orderRef: paid.id, status: 'active', membershipIds: [payer.id], items: [
+      { lineId: 'line', orderRef: paid.id, stripeItemId: `si_flaky_${run}`, membershipIds: [payer.id], status: 'active' },
+      { lineId: 'other', orderRef: paid.id, stripeItemId: `si_other_${run}`, membershipIds: [payer.id], status: 'active' }] });
+    const refundOnly = await post(paid, 'line', refund(500, paymentIntent));
+    assert.equal(refundOnly.status, 200, JSON.stringify(refundOnly.body));
+    assert.equal(refundOnly.body.monthlyPaymentsStopped, false);
+    assert.deepEqual((await billed.get()).data().items.map((item) => item.status), ['active', 'active'], 'refunding one payment keeps billing');
+    assert.equal((await billed.get()).data().status, 'active');
+    assert.equal((await paid.get()).data().items[0].revokedAt, undefined);
+    const cancelLine = refund(1000, paymentIntent, true);
+    const interrupted = await post(paid, 'line', cancelLine);
+    assert.equal(interrupted.body.unfinished, true, 'a Stripe outage while stopping billing leaves the action to resume');
+    assert.equal((await billed.get()).data().items[0].status, 'active');
+    const resumed = await post(paid, 'line', cancelLine);
+    assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
+    assert.equal(resumed.body.refundId, (await db.doc(`auditLog/item_${cancelLine.operationId}`).get()).data().refund.id);
+    assert.equal(resumed.body.monthlyPaymentsStopped, true);
+    assert.deepEqual((await billed.get()).data().items.map((item) => item.status), ['cancelled', 'active'], 'refund and cancel stops only this item');
+    assert.equal((await billed.get()).data().status, 'active');
+    const cancelledLine = (await paid.get()).data().items[0];
+    assert.ok(cancelledLine.revokedAt && cancelledLine.monthlyCancelledAt);
+    assert.deepEqual(cancelledLine.refunds.map((entry) => entry.amountPence), [500, 1000], 'resuming does not refund twice');
+    const payments = await fetch(`http://127.0.0.1:${port}${path(paid)}/payments`, { headers });
+    assert.equal((await payments.json()).payments[0].available, 0, 'Stripe holds exactly the two refunds');
+    const cancelLast = await post(paid, 'other', refund(1500, paymentIntent, true));
+    assert.equal(cancelLast.status, 200, JSON.stringify(cancelLast.body));
+    assert.equal((await billed.get()).data().status, 'cancelled', 'refund and cancel of the last item cancels the subscription');
+    const billingAudit = await db.collection('auditLog').where('stripeSubscriptionId', '==', billed.id).get();
+    for (const document of billingAudit.docs) created.add(document.ref.path);
+    assert.deepEqual(billingAudit.docs.map((document) => document.data().action).sort(), ['cancel-subscription', 'refund-and-cancel']);
     await purchase.update({ itemActionPending: { request: { operationId: randomUUID() } } });
     const deletion = await fetch(`http://127.0.0.1:${port}/api/admin/records/orders/${purchase.id}`, {
       method: 'DELETE', headers, body: JSON.stringify({ confirmId: purchase.id, acknowledgeStripe: true, reason: 'Test order' })
@@ -253,7 +296,39 @@ try {
   assert.equal(available.status, 200);
   assert.equal(available.body.payments[0].available, 1200, 'merged subscriptions allocate only this item invoice share');
   assert.equal((await call(`${path(monthly)}/actions`, 'POST', refund(1201, 'pi_invoice'))).status, 400);
+  const stopsBefore = stopped.length;
   assert.equal((await call(`${path(monthly)}/actions`, 'POST', refund(1200, 'pi_invoice'))).status, 200);
+  assert.equal(stopped.length, stopsBefore, 'refunding one monthly payment leaves the subscription running');
+  assert.equal((await monthly.get()).data().items[0].revokedAt, undefined, 'refunding one monthly payment keeps access');
+
+  // Refund and cancel: Stripe accepts the refund, then stopping billing fails; resuming must not refund again.
+  invoices.push({ id: 'in_month2', number: 'TEST-2', amount_paid: 1200, payment_intent: 'pi_month2', lines: { data: [{ amount: 1200, subscription_item: 'si_target' }] } });
+  charge('pi_month2', 1200);
+  const cancelAction = refund(1200, 'pi_month2', true);
+  failStop = true;
+  const interrupted = await call(`${path(monthly)}/actions`, 'POST', cancelAction);
+  assert.equal(interrupted.status, 502);
+  assert.equal(interrupted.body.unfinished, true);
+  assert.match(interrupted.body.error, /Resume unfinished action.*never issues a second refund/);
+  const refundsBeforeResume = refundCalls;
+  assert.ok((await monthly.get()).data().itemActionPending, 'the interrupted refund and cancel stays recorded');
+  assert.equal((await monthly.get()).data().items[0].revokedAt, undefined);
+  assert.equal((await call(`${path(monthly)}/actions`, 'POST', refund(100, 'pi_month2'))).status, 409, 'another refund waits for the recorded action');
+  const resumed = await call(`${path(monthly)}/actions`, 'POST', cancelAction);
+  assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
+  assert.equal(refundCalls, refundsBeforeResume, 'resuming reuses the recorded refund');
+  assert.equal(resumed.body.refundId, `re_${refundsBeforeResume}`);
+  assert.equal(resumed.body.monthlyPaymentsStopped, true);
+  assert.equal(stopped.length, stopsBefore + 1, 'billing is stopped once');
+  assert.equal(stopped.at(-1)[4], 'refund-and-cancel');
+  const cancelledLine = (await monthly.get()).data().items[0];
+  assert.ok(cancelledLine.revokedAt, 'refund and cancel removes access');
+  assert.deepEqual(cancelledLine.refunds.map((entry) => [entry.paymentIntent, entry.amountPence]), [['pi_invoice', 1200], ['pi_month2', 1200]]);
+  assert.equal((await monthly.get()).data().itemActionPending, null);
+  const replayed = await call(`${path(monthly)}/actions`, 'POST', cancelAction);
+  assert.equal(replayed.body.alreadyCompleted, true);
+  assert.equal(refundCalls, refundsBeforeResume);
+  assert.equal(stopped.length, stopsBefore + 1, 'a completed refund and cancel is not repeated');
 
   const membership = await put(`memberships/FAMILY-${run}`, { source: 'website', status: 'active', validUntil: Timestamp.fromDate(new Date('2099-03-01')) });
   const membershipTerm = await put(`membershipTerms/FAMILY-${run}_2026`, { membershipId: membership.id, clubYear: 2026, source: 'website', tier: 'family',
@@ -297,7 +372,7 @@ try {
   assert.deepEqual(accessAudit.docs.map((document) => document.data()).filter((entry) => entry.kind === 'item').map((entry) => entry.reason).sort(),
     ['Key returned', 'New key issued'], 'key grants and revocations retain reasons in the audit trail');
   await checkMainServer();
-  console.log('Item action checks passed: key access, revocation override, refunds, pending refunds, retry reconciliation, vouchers, stock, membership and invoice allocation.');
+  console.log('Item action checks passed: key access, revocation override, refunds, refund and cancel, pending refunds, retry reconciliation, vouchers, stock, membership and invoice allocation.');
 } finally {
   await new Promise((resolve) => server.close(resolve));
   for (const path of created) await db.doc(path).delete();

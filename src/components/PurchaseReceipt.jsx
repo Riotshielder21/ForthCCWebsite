@@ -42,6 +42,7 @@ export default function PurchaseReceipt({ receipt, order }) {
   const validOrderDate = orderDate && Number.isFinite(orderDate.getTime());
   const orderRef = receipt?.orderRef || order?.orderRef || '';
   const total = receipt?.total ?? order?.total ?? 0;
+  const paymentMethod = receipt?.paymentMethod || order?.paymentMethod || '';
 
   return (
     <section className="ReceiptCard PurchaseReceipt" aria-label="Purchase receipt">
@@ -93,6 +94,7 @@ export default function PurchaseReceipt({ receipt, order }) {
           <span className="ReceiptTotalLabel">Total paid</span>
           <span className="ReceiptTotalValue">{money(total)}</span>
         </div>
+        {paymentMethod && <p className="ReceiptItemMeta">{paymentMethod}</p>}
       </div>
     </section>
   );

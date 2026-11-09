@@ -92,9 +92,9 @@ export const saveProduct = async (product) => {
   }, { merge: true });
 };
 
-export const removeProduct = async (id) => {
+export const removeProduct = async (id, tripDiscounts) => {
   if (!db) throw new Error('Content database is unavailable.');
-  if (isLockedProduct(id)) throw new Error('This product gives the automatic trip discount, so it cannot be removed.');
+  if (isLockedProduct(id, tripDiscounts)) throw new Error('This product gives the automatic trip discount, so it cannot be removed.');
   await setDoc(doc(db, 'products', id), { active: false, updatedAt: serverTimestamp() }, { merge: true });
 };
 

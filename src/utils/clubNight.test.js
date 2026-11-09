@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clubNightStatus, clubNightDescription, validateClubNight, validateCheckinSessions, checkinSessionsFrom, CLUB_NIGHT_ID, validateCheckinIdentity, validateGuestDetails, matchingCheckinRecords } from './clubNight.js';
+import { clubNightStatus, validateClubNight, validateCheckinSessions, checkinSessionsFrom, CLUB_NIGHT_ID, validateCheckinIdentity, validateGuestDetails, matchingCheckinRecords } from './clubNight.js';
 
 const wednesday = { weekday: 3, start: '18:30', end: '21:00' };
 

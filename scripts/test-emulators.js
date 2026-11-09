@@ -7,6 +7,7 @@ import { initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword } from 'firebase/auth';
+import { getFirestore as getBrowserFirestore, connectFirestoreEmulator, doc, setDoc, terminate } from 'firebase/firestore';
 import { getStorage, connectStorageEmulator, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { importStripeSubscribers } from '../src/utils/stripeReports.js';
@@ -24,6 +25,9 @@ const browserApp = initializeApp({ apiKey: 'demo-api-key', projectId, storageBuc
 const auth = getAuth(browserApp);
 connectAuthEmulator(auth, `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}`, { disableWarnings: true });
 const storage = getStorage(browserApp);
+const browserDb = getBrowserFirestore(browserApp);
+const [firestoreHost, firestorePort] = process.env.FIRESTORE_EMULATOR_HOST.split(':');
+connectFirestoreEmulator(browserDb, firestoreHost, Number(firestorePort));
 const [storageHost, storagePort] = process.env.FIREBASE_STORAGE_EMULATOR_HOST.split(':');
 connectStorageEmulator(storage, storageHost, Number(storagePort));
 const port = 3003;
@@ -282,11 +286,28 @@ try {
   assert.equal(new Set(records.map((record) => record.id)).size, records.length, 'pages never repeat an order');
   const pagingIds = records.filter((record) => /^PAGING-\d{3}$/.test(record.id)).map((record) => record.id).sort();
   assert.deepEqual(pagingIds, Array.from({ length: 105 }, (_, index) => `PAGING-${String(index).padStart(3, '0')}`), 'all seeded pagination fixtures are returned regardless of other orders');
-  console.log('Emulator smoke checks passed: catalogue preservation, event checkout/schedule snapshots/reports/deletion, subscriber imports, mocked Stripe immediate cancellation/audit, admin access, member expiry, pagination, deletion warnings, receipts, webhook and Storage rules.');
+
+  // Products in the trip discount rules cannot be removed in the admin's browser; the rules follow what admins save.
+  await db.collection('products').doc('TEST-HIRE').set({ name: 'Test hire', category: 'SERVICES', type: 'yearly-service', basePrice: 10 });
+  const boatHire = await db.collection('products').doc('boat-hire').get();
+  const removeHire = (productId) => setDoc(doc(browserDb, 'products', productId), { active: false }, { merge: true });
+  await assert.rejects(removeHire('boat-hire'), /permission/i, 'a default trip discount product is locked before any rules are saved');
+  await removeHire('TEST-HIRE');
+  await db.collection('products').doc('TEST-HIRE').set({ active: true }, { merge: true });
+  const rules = [{ id: 'test-hire', productIds: ['TEST-HIRE'], amount: 5, label: 'test hire', short: 'Test hire' }];
+  const saved = await request('/api/admin/trip-discounts', { method: 'PUT', headers, body: JSON.stringify({ rules }) });
+  assert.equal(saved.status, 200, JSON.stringify(saved.result));
+  await assert.rejects(removeHire('TEST-HIRE'), /permission/i, 'a product added to the rules is locked');
+  await removeHire('boat-hire');
+  await (boatHire.exists ? db.collection('products').doc('boat-hire').set(boatHire.data()) : db.collection('products').doc('boat-hire').delete());
+  await db.collection('settings').doc('tripDiscounts').delete();
+  await db.collection('products').doc('TEST-HIRE').delete();
+  console.log('Emulator smoke checks passed: catalogue preservation, event checkout/schedule snapshots/reports/deletion, subscriber imports, mocked Stripe immediate cancellation/audit, admin access, member expiry, pagination, deletion warnings, receipts, webhook, Storage rules and trip discount product locks.');
 } finally {
   const exited = once(server, 'exit');
   server.kill('SIGTERM');
   if (server.exitCode === null) await exited;
   await db.collection('memberships').doc('SMOKE-CONFIRMED-EXPIRED').delete();
   await db.terminate();
+  await terminate(browserDb);
 }

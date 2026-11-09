@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { validateItemAction, refundAvailable, minorUnits, orderLineId } from './itemActions.js';
+import { validateItemAction, refundAvailable, minorUnits, orderLineId, itemActionEffects, itemActionLabel, describeItemAction } from './itemActions.js';
 import { hasKeyAccess } from './keyAccess.js';
 import { membershipActivity } from './membership.js';
 import { buildRoster } from './eventRoster.js';
@@ -26,6 +26,23 @@ test('refund availability respects line allocation, external refunds and pending
   assert.equal(refundAvailable(item, 'pi_test', 1000, { amount: 3000, amount_refunded: 400 }), 600);
   assert.equal(refundAvailable(item, 'pi_test', 1000, { amount: 3000, amount_refunded: 2900 }), 100);
   assert.equal(refundAvailable(item, 'pi_test', 300, { amount: 3000, amount_refunded: 0 }), 0);
+});
+
+test('item action wording separates money back, access removal and stopping monthly billing', () => {
+  const monthly = { monthly: true };
+  assert.deepEqual(itemActionEffects({ action: 'revoke' }, monthly), { refunds: false, removesAccess: true, stopsBilling: true });
+  assert.deepEqual(itemActionEffects({ action: 'refund', revoke: false }, monthly), { refunds: true, removesAccess: false, stopsBilling: false },
+    'a single-payment refund leaves the subscription running');
+  assert.deepEqual(itemActionEffects({ action: 'refund', revoke: true }, monthly), { refunds: true, removesAccess: true, stopsBilling: true });
+  assert.deepEqual(itemActionEffects({ action: 'refund', revoke: true }), { refunds: true, removesAccess: true, stopsBilling: false });
+  assert.equal(itemActionLabel({ action: 'refund', revoke: true }, monthly), 'Refund and cancel');
+  assert.equal(itemActionLabel({ action: 'refund', revoke: true }), 'Refund and revoke');
+  assert.equal(itemActionLabel({ action: 'refund', revoke: false }, monthly), 'Refund one payment (billing continues)');
+  assert.equal(itemActionLabel({ action: 'revoke' }), 'Revoke access (no refund)');
+  assert.match(describeItemAction({ action: 'refund', revoke: false }, monthly, '£5.00'), /Returns £5\.00.*Access and benefits stay.*Monthly payments carry on/);
+  assert.match(describeItemAction({ action: 'refund', revoke: true }, monthly), /Removes.*Stops this item's future monthly payments/);
+  assert.match(describeItemAction({ action: 'revoke' }, {}), /^No money is returned\. Removes/);
+  assert.doesNotMatch(describeItemAction({ action: 'revoke' }, {}), /monthly/);
 });
 
 test('admin key-access revocation overrides induction and purchases', () => {

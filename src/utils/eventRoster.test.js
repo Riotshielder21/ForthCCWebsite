@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bookingsClosed, rosterDue, rosterViewable, lastEventDate, cleanRosterViewers, MAX_ROSTER_VIEWERS, cleanEventDetails, kitStatus, KIT, NO_PHOTOS, buildRoster, rosterEmail } from './eventRoster.js';
+import { bookingsClosed, eventShopState, sessionsLeft, rosterDue, rosterViewable, lastEventDate, cleanRosterViewers, MAX_ROSTER_VIEWERS, cleanEventDetails, kitStatus, KIT, NO_PHOTOS, buildRoster, rosterEmail } from './eventRoster.js';
 import { peopleNeedingMembership, requiresMembership } from './checkout.js';
 
 const schedule = { mode: 'single', startDate: '2027-05-10', startTime: '09:00', endTime: '17:00', days: 1, timeZone: 'Europe/London' };
@@ -116,4 +116,35 @@ test('extra roster viewers are unique, valid, lower-case emails', () => {
   assert.deepEqual(cleanRosterViewers(undefined), []);
   assert.throws(() => cleanRosterViewers(['not-an-email']), /not-an-email is not a valid email/);
   assert.throws(() => cleanRosterViewers(Array.from({ length: MAX_ROSTER_VIEWERS + 1 }, (_, index) => `p${index}@example.com`)), /up to 10/);
+});
+
+test('events with a close date are bookable to the end of it, shown as closed to the end of the first date, then hidden', () => {
+  assert.equal(eventShopState(event, new Date('2027-05-07T22:59:00Z')), 'open', '23:59 BST on the close date');
+  assert.equal(eventShopState(event, new Date('2027-05-07T23:00:00Z')), 'closed');
+  assert.equal(eventShopState(event, new Date('2027-05-10T22:59:00Z')), 'closed', 'still shown on the event day');
+  assert.equal(eventShopState(event, new Date('2027-05-10T23:00:00Z')), 'hidden');
+  const course = { ...event, eventSchedule: { ...schedule, mode: 'weekly', weeks: 4 } };
+  assert.equal(eventShopState(course, new Date('2027-05-11T12:00:00Z')), 'hidden', 'a closed course leaves after its first session');
+});
+
+test('events without a close date are bookable to the end of their last date', () => {
+  const open = { ...event, closeDate: '' };
+  assert.equal(eventShopState(open, new Date('2027-05-10T22:59:00Z')), 'open');
+  assert.equal(eventShopState(open, new Date('2027-05-10T23:00:00Z')), 'hidden');
+  const course = { ...open, eventSchedule: { ...schedule, mode: 'weekly', weeks: 4 } };
+  assert.equal(eventShopState(course, new Date('2027-05-20T12:00:00Z')), 'open', 'joinable part way through');
+  assert.equal(eventShopState(course, new Date('2027-05-31T22:59:00Z')), 'open', 'last session is 31 May');
+  assert.equal(eventShopState(course, new Date('2027-05-31T23:00:00Z')), 'hidden');
+  assert.equal(eventShopState({ ...open, eventSchedule: null }, new Date('2030-01-01')), 'open', 'a broken schedule falls back to the close date');
+});
+
+test('a course without a close date shows the sessions left once it has started', () => {
+  const course = { ...event, closeDate: '', eventSchedule: { ...schedule, mode: 'weekly', weeks: 4 } };
+  assert.equal(sessionsLeft(course, new Date('2027-05-09T12:00:00Z')), null, 'not started');
+  assert.equal(sessionsLeft(course, new Date('2027-05-10T12:00:00Z')), null, 'on the first day every session is still to come');
+  assert.deepEqual(sessionsLeft(course, new Date('2027-05-11T12:00:00Z')), { left: 3, total: 4 });
+  assert.deepEqual(sessionsLeft(course, new Date('2027-05-31T12:00:00Z')), { left: 1, total: 4 }, 'the session today counts');
+  assert.equal(sessionsLeft(course, new Date('2027-06-01T12:00:00Z')), null);
+  assert.equal(sessionsLeft({ ...course, closeDate: '2027-05-09' }, new Date('2027-05-11T12:00:00Z')), null);
+  assert.equal(sessionsLeft({ ...course, eventSchedule: schedule }, new Date('2027-05-10T12:00:00Z')), null, 'single-day events');
 });
