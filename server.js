@@ -24,7 +24,7 @@ import { DISCOUNT_TYPES, discountDisplayStatus, discountFailure } from './src/ut
 import { REASON_REQUIRED, auditEntry, requiredReason } from './src/utils/auditLog.js';
 import { validateCreditPayment, creditPaymentWording } from './src/utils/credits.js';
 import { applyTripDiscounts, currentPrivilegeIds, isTripEvent, lockedProductIds } from './src/utils/tripDiscount.js';
-import { bookingsClosed } from './src/utils/eventRoster.js';
+import { eventShopState } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, personInputErrors, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership, ageOn } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen, justgoUploadCanRetry } from './src/utils/membership.js';
 import { orderReport, membershipReport, subscriptionWarning } from './src/utils/adminReports.js';
@@ -2560,7 +2560,7 @@ const startCheckout = async (req, res, credit = null) => {
       try { validateEventSchedule(item.eventSchedule); }
       catch (error) { return res.status(400).json({ error: `Invalid event schedule for ${item.name}.` }); }
       if (item.type !== 'event-ticket') return res.status(400).json({ error: 'Event tickets must use one-off event pricing.' });
-      if (bookingsClosed(item)) return res.status(400).json({ error: `Bookings for ${item.name} have closed. Remove it from your basket.` });
+      if (eventShopState(item) !== 'open') return res.status(400).json({ error: `Bookings for ${item.name} have closed. Remove it from your basket.` });
     }
     if (!Array.isArray(req.body.people) || req.body.people.length > 20) {
       return res.status(400).json({ error: 'Add the details for each person in your basket.' });

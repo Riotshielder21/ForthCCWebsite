@@ -20,6 +20,30 @@ export const londonDate = (now) => new Intl.DateTimeFormat('en-CA', { timeZone: 
 /** Bookings are taken up to the end of the close date (UK time). */
 export const bookingsClosed = (product, now = new Date()) => DATE.test(product?.closeDate || '') && londonDate(now) > product.closeDate;
 
+/**
+ * Where an event stands in the shop: 'open' (bookable), 'closed' (shown, not bookable) or 'hidden'. With a close date it
+ * is bookable to the end of that day and shown as closed to the end of its first date. Without one it stays bookable to
+ * the end of its last date, so a course can be joined part way through. Days end at midnight UK time.
+ */
+export const eventShopState = (product, now = new Date()) => {
+  let dates;
+  try { dates = eventSessions(product?.eventSchedule).map((session) => session.date); }
+  catch { return bookingsClosed(product, now) ? 'closed' : 'open'; }
+  const today = londonDate(now);
+  if (DATE.test(product?.closeDate || '')) return today <= product.closeDate ? 'open' : today <= dates[0] ? 'closed' : 'hidden';
+  return today <= dates.at(-1) ? 'open' : 'hidden';
+};
+
+/** `{ left, total }` for a course with no close date that has started and still has sessions to come; otherwise null. */
+export const sessionsLeft = (product, now = new Date()) => {
+  if (DATE.test(product?.closeDate || '')) return null;
+  let dates;
+  try { dates = eventSessions(product?.eventSchedule).map((session) => session.date); } catch { return null; }
+  const today = londonDate(now);
+  const left = dates.filter((date) => date >= today).length;
+  return left > 0 && left < dates.length ? { left, total: dates.length } : null;
+};
+
 /** The automatic send: bookings have closed, there is a leader to send to, and the event has not already happened. */
 export const rosterDue = (product, now = new Date()) => product?.category === 'EVENTS' && Boolean(product.leaderEmail)
   && bookingsClosed(product, now) && (product.eventSchedule?.startDate || '') >= londonDate(now);

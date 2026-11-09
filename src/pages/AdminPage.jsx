@@ -305,7 +305,7 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
               <div className="AdminEventTimes"><label className="FormLabel">Start time<input className="FormInput" type="time" required value={draft.eventSchedule.startTime} onChange={(event) => updateEventSchedule('startTime', event.target.value)} /></label><label className="FormLabel">End time<input className="FormInput" type="time" required value={draft.eventSchedule.endTime} onChange={(event) => updateEventSchedule('endTime', event.target.value)} /></label></div>
               <p className="text_container">{eventScheduleLabel(draft.eventSchedule)}</p>
               <label className="FormLabel">Capacity (tickets available, blank for unlimited)<input className="FormInput" type="number" min="1" step="1" value={draft.capacity ?? ''} onChange={(event) => updateDraft('capacity', event.target.value)} /></label>
-              <p className="text_container text_container_note">When every ticket is sold the event leaves the shop. Delete a refunded order in Reports to free its place.</p>
+              <p className="text_container text_container_note">With a close date, bookings stop at the end of that day and the event leaves the shop after its first date. Without one, people can book until the end of the last date, so a course can be joined part way through. The event also leaves the shop when every ticket is sold; delete a refunded order in Reports to free its place.</p>
               <p className="text_container text_container_note">One ticket covers the whole event/course. Times are Europe/London.</p>
             </fieldset>}
             {draft.category === 'EVENTS' && <fieldset className="AdminEventSchedule">
