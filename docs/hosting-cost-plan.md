@@ -15,7 +15,7 @@ Prepared 6 November 2026. Prices are Google's published list prices on that date
 - The website is built to stay within Google's free allowances. At expected traffic (about 8,700 visits a year), photos, pages, the database and the server all cost **£0**.
 - The estimated charges today are for old server copies (about £4.90 a year) and required secret keys beyond the free allowance (about £1.10 a year). Clearing old server copies brings the expected bill to **about £1.12 a year**. The Stripe test keys are currently used by checkout and must not be deleted to save this charge.
 - With the new image handling, each visit uses about **3.3 MB** of photo downloads instead of **60 MB**. The free photo-download allowance of 100 GB a month therefore covers about **30,000 visits a month**, compared with about 1,700 if full-size photos were sent every time.
-- **Workspace for Nonprofits does not cover this.** It covers Gmail, Drive and other Workspace tools only. Firebase and Google Cloud are billed separately on the club's pay-as-you-go account (`01A259-19F173-FCCD61`). The free allowances below apply to every Google Cloud customer.
+- **Workspace for Nonprofits does not cover this.** It covers Gmail, Drive and other Workspace tools only. Firebase and Google Cloud are billed separately on the club's pay-as-you-go account. The free allowances below apply to every Google Cloud customer.
 
 ## What was checked
 
