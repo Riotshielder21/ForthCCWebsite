@@ -920,7 +920,7 @@ const setUpSubscriptions = async (orderRef, { force = false } = {}) => {
     await attention.settle('subscription-setup', orderRef);
     return { done: true };
   }
-  console.error('Could not set up the monthly payments on %s: %s', orderRef, String(failure.message).replace(/[\r\n]/g, ' '));
+  console.error('Could not set up the monthly payments on %s: %s', String(orderRef).replace(/[\r\n]/g, ''), String(failure.message).replace(/[\r\n]/g, ' '));
   // Whatever Stripe already has is recorded, so staff can see and cancel it here.
   for (const [index, group] of (plan.groups || []).entries()) {
     if (!group.stripeSubscriptionId || group.recorded) continue;
