@@ -30,3 +30,30 @@ export const refundAvailable = (item, paymentIntent, allocation, charge) => Math
   allocation - refundedForPayment(item, paymentIntent),
   charge.amount - charge.amount_refunded
 ));
+
+/**
+ * What a purchased-item action changes, so the controls, confirmations and docs say the same thing. `revoke` on a
+ * refund is the combined "refund and cancel" (monthly) or "refund and revoke" (one-off) action.
+ */
+export const itemActionEffects = ({ action, revoke = false }, { monthly = false } = {}) => {
+  const refunds = action === 'refund';
+  const removesAccess = action === 'revoke' || (refunds && revoke === true);
+  return { refunds, removesAccess, stopsBilling: monthly && removesAccess };
+};
+
+export const itemActionLabel = (request, item = {}) => {
+  const { refunds, removesAccess } = itemActionEffects(request, item);
+  if (!refunds) return 'Revoke access (no refund)';
+  if (!removesAccess) return item.monthly ? 'Refund one payment (billing continues)' : 'Refund only (access kept)';
+  return item.monthly ? 'Refund and cancel' : 'Refund and revoke';
+};
+
+export const describeItemAction = (request, item = {}, amountText = 'the chosen amount') => {
+  const { refunds, removesAccess, stopsBilling } = itemActionEffects(request, item);
+  return [
+    refunds ? `Returns ${amountText} to the payer through Stripe.` : 'No money is returned.',
+    removesAccess ? 'Removes the item\'s access or benefit now.' : 'Access and benefits stay as they are.',
+    stopsBilling ? 'Stops this item\'s future monthly payments; if nothing else is on the Stripe subscription, the whole subscription is cancelled.'
+      : item.monthly ? 'Monthly payments carry on.' : ''
+  ].filter(Boolean).join(' ');
+};

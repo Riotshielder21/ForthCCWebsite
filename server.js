@@ -1831,7 +1831,7 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
       const document = await transaction.get(reference);
       if (!document.exists) return { status: 404, error: 'Record not found.' };
       const fields = document.data();
-      if (fields.itemActionPending) return { status: 409, error: 'An item action is unfinished. Retry that exact action before deleting this order.' };
+      if (fields.itemActionPending) return { status: 409, error: 'An item action is unfinished. Use Resume unfinished action under Purchased item actions before deleting this order.' };
       const orderPeople = req.params.kind === 'orders' ? (await resolveOrderPeople(adminDb, fields)).people : undefined;
       let warning = subscriptionWarning(fields);
       if (fields.email) {
@@ -1888,12 +1888,12 @@ registerClubNightRoutes(app, { requireAdmin, db: () => adminDb, emailCodes, requ
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerAttentionRoutes(app, { requireAdmin, db: () => adminDb, retry: attentionRetry });
 registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
-  stopMonthlyItem: async (orderRef, item, admin, reason) => {
+  stopMonthlyItem: async (orderRef, item, admin, reason, action = 'revoke-item') => {
     const subscriptions = await orderSubscriptions(adminDb, orderRef);
     for (const document of subscriptions) {
       const record = document.data();
       const ending = activeSubscriptionItems(record).filter((entry) => entry.lineId === item.lineId && (entry.orderRef || record.orderRef) === orderRef);
-      if (ending.length) await stopSubscriptionItems(document.ref, record, ending, admin, 'revoke-item', reason);
+      if (ending.length) await stopSubscriptionItems(document.ref, record, ending, admin, action, reason);
     }
   } });
 registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });

@@ -123,6 +123,9 @@ export const orderReport = (id, fields, members = new Map()) => ({
     name: itemLabel(item), category: String(item.category || ''),
     type: String(item.type || ''), price: Number.isFinite(Number(item.pricePence)) ? Number(item.pricePence) / 100 : null,
     revokedAt: reportDate(item.revokedAt), revokedBy: item.revokedBy || '', revokeReason: item.revokeReason || '',
+    ...(item.monthly ? { monthly: true } : {}),
+    ...(item.monthlyCancelledAt ? { monthlyCancelledAt: reportDate(item.monthlyCancelledAt) } : {}),
+    ...(fields.itemActionPending?.lineId === orderLineId(item, index) ? { actionPending: true } : {}),
     ...(item.attendeeErased ? { attendeeErased: true } : {}),
     refunds: (item.refunds || []).map(({ amountPence, ...refund }) => ({ ...refund, amount: amountPence, at: reportDate(refund.at) })),
     ...(item.eventSchedule ? { eventSchedule: item.eventSchedule } : {})

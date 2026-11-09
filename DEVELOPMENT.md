@@ -262,7 +262,18 @@ Create Secret Manager secrets and grant the Cloud Run account access:
 
 Refunds need refund write and payment/invoice/charge/refund read permissions. Reporting uses a separate server-only `STRIPE_REPORT_SECRET_KEY`.
 
-Use purchased-item actions, not order deletion, for refunds/revocations. Refunds alone do not stop access or billing. Deleting a member record stops that member's monthly items straight away without a refund; others on the same subscription keep paying, and subscriptions set up directly in Stripe still need checking by hand. Deleting an order is refused while its monthly payments run. Retry unfinished actions with the exact recorded request, never a replacement refund. Shared physical boathouse codes must be rotated after disclosure if access needs retracting.
+Use purchased-item actions, not order deletion, for refunds/revocations. What each admin action changes (none deletes the order):
+
+| Action (where) | Money back | Access/benefit | Future monthly billing |
+| --- | --- | --- | --- |
+| **Revoke access** (Purchased item actions) | No | Removed now: membership recomputed without the item, its terms ended, key access revoked, event place released, voucher disabled | Monthly item: stopped now (Stripe subscription item deleted without proration; the whole subscription is cancelled if it was the last item) |
+| **Refund one payment** / **Refund only** (Purchased item actions) | Yes, the chosen amount from the chosen payment (each monthly invoice is listed separately) | Kept | Carries on |
+| **Refund and cancel** (monthly) / **Refund and revoke** (one-off) (Purchased item actions) | Yes, as above | Removed now, as for Revoke | Monthly item: stopped now, as for Revoke |
+| **Resume unfinished action** (Purchased item actions) | Only the refund already recorded for that action; never a second one | As the recorded action | As the recorded action |
+| **Cancel item / this member's items / whole subscription** (Monthly payments on an order or member) | No | The items' terms end now; a membership runs to the date it is paid up to | Stopped now for those items |
+| **Stop billing immediately** (Subscriptions tab) | No | For website subscriptions, ended as above once Stripe's cancellation webhook arrives (the payer is emailed); others need checking by hand | Whole subscription cancelled now |
+
+Refund and cancel issues the Stripe refund first (keyed by the operation ID, and saved on the audit record), then stops billing, then records the revocation. If any step fails the order keeps the action as unfinished and blocks other item actions; **Resume unfinished action** replays exactly that request, reusing the saved refund, and stopping billing only touches items still active, so neither the refund nor the cancellation happens twice. A refund that Stripe rejects outright is released so it can be corrected. Deleting a member record stops that member's monthly items straight away without a refund; others on the same subscription keep paying, and subscriptions set up directly in Stripe still need checking by hand. Deleting an order is refused while its monthly payments run. Shared physical boathouse codes must be rotated after disclosure if access needs retracting.
 
 GDPR erasure is irreversible; admin deletion retains a recovery snapshot. Erasure stops affected billing but preserves shared beneficiaries and anonymised financial history. Stripe history/mandates may need manual review; Google Sheets and JustGo cleanup are separate. Treat receipt links as private.
 
