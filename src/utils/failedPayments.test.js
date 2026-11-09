@@ -154,6 +154,12 @@ test('subscriptions set up outside the site name their items from the Stripe inv
   assert.deepEqual(invoiceItemNames(lines({ description: 'Remaining time on Blue Subscription after 15 Nov 2026', proration: true })),
     ['Remaining time on Blue Subscription after 15 Nov 2026'], 'a proration-only invoice still says what it was for');
   assert.deepEqual(invoiceItemNames({}), []);
+  assert.deepEqual(invoiceItemNames(lines({ description: 'Kit (spare) hire (at £5.00 / month)' }, { description: 'Kit store (no price)' })),
+    ['Kit (spare) hire', 'Kit store (no price)'], 'only a trailing "(at …)" price is removed');
+  const long = `1 × ${'(at '.repeat(20000)}${'\t'.repeat(20000)}x`;
+  const started = Date.now();
+  invoiceItemNames(lines({ description: long }));
+  assert.ok(Date.now() - started < 200, 'long descriptions are handled quickly');
 });
 
 test('a failed bank payment email links to retry or cancel the order', () => {

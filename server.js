@@ -1057,7 +1057,7 @@ const recordInvoicePaid = async (invoice) => {
       body: [receiptEmailCopy(receipt), '', `Questions about your monthly payments: ${TREASURER_REPLY_TO}.`].join('\n'), html: receiptEmailHtml(receipt, ''),
       record: { kind: 'invoice-paid', subscriptionId, invoiceId: invoice.id, receipt, ...(record ? {} : { setUpOutsideSite: true }) } });
   } catch {
-    console.error('Could not email the monthly payment receipt for %s.', invoice.id);
+    console.error('Could not email the monthly payment receipt for %s.', String(invoice.id).replace(/[\r\n]/g, ''));
   }
 };
 
