@@ -15,7 +15,7 @@ import { watchPublishedNotices } from '../utils/noticesClient';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, pricedItems = [], onBack, onReset, onPay, makeId }) {
+export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, pricedItems = [], tripDiscounts = [], onBack, onReset, onPay, makeId }) {
   const addOnLines = lines.filter((line) => needsPerson(line) && !isMembership(line));
   const openToNonMembers = addOnLines.some((line) => !requiresMembership(line));
   const [stepKey, setStepKey] = useState('email');
@@ -482,7 +482,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                       <span className="ReviewPrice">{money(price)}</span>
                     </div>
                     {(holders.length > 0 || monthly > 0) && <p className="CartItemMeta">{[holders.join(', '), monthly > 0 ? `then ${money(monthly)} a month` : ''].filter(Boolean).join(' · ')}</p>}
-                    {trip > 0 && <div className="ReviewRow ReviewDiscount"><span>{tripDiscountText(parts.flatMap((item) => item.tripDiscountReasons || []))}</span><span>-{money(trip)}</span></div>}
+                    {trip > 0 && <div className="ReviewRow ReviewDiscount"><span>{tripDiscountText(parts.flatMap((item) => item.tripDiscountReasons || []), tripDiscounts)}</span><span>-{money(trip)}</span></div>}
                     {promo > 0 && <div className="ReviewRow ReviewDiscount"><span>Discount code applied</span><span>-{money(promo)}</span></div>}
                   </div>
                 );

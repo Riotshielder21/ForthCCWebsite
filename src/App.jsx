@@ -6,7 +6,7 @@ import {
 import { initializeAuth, validateDiscountCode } from './utils/firebase';
 import { calculateCart, debitRange, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
-import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName, returningVerificationMatches } from './utils/checkout';
+import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName, returningVerificationMatches, restoreDraftLines } from './utils/checkout';
 import { applyTripDiscounts } from './utils/tripDiscount';
 import { applyConsentPrefill, checkoutWording, draftForCurrentWording } from './utils/consents';
 import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
@@ -52,6 +52,7 @@ const withClubYear = (product, choice) => {
   const { clubYearChoice: _previous, ...rest } = product;
   return resolved ? { ...rest, clubYearChoice: resolved } : rest;
 };
+const draftLine = (product, line) => ({ ...withClubYear(normaliseProduct(product), line.clubYearChoice), lineId: line.lineId, ...(line.size ? { size: line.size } : {}) });
 const groupKey = (line) => `${line.id}|${line.size || ''}|${line.clubYearChoice || ''}`;
 const choiceLabel = (choice) => {
   const year = clubYearOf(new Date());
@@ -74,9 +75,12 @@ export default function App() {
   const productsRef = useRef(products);
   productsRef.current = products;
   const [pageContent, setPageContent] = useState({});
-  const [cart, setCart] = useState(() => (initialDraft?.cart || [])
-    .map((line) => { const product = PRODUCTS.find((candidate) => candidate.id === line.id); return product ? { ...withClubYear(normaliseProduct(product), line.clubYearChoice), lineId: line.lineId, ...(line.size ? { size: line.size } : {}) } : null; })
-    .filter(Boolean));
+  const [restoredCart] = useState(() => restoreDraftLines(initialDraft?.cart, products, draftLine));
+  const [cart, setCart] = useState(restoredCart.lines);
+  // Saved lines the cached catalogue lacks (such as a new event) wait for the live catalogue rather than being dropped,
+  // and until then the attendees and draft are left as they are.
+  const waitingDraft = useRef(restoredCart.complete ? null : initialDraft.cart.filter((line) => line?.id));
+  const [catalogueLive, setCatalogueLive] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   useEffect(() => {
     if (!isCartOpen) return;
@@ -100,6 +104,7 @@ export default function App() {
   const pageBeforeCheckout = useRef('/membership');
   const [people, setPeople] = useState(initialDraft?.people || []);
   const [volunteerTiers, setVolunteerTiers] = useState([]);
+  const [tripDiscounts, setTripDiscounts] = useState(null);
   const [checkoutErrors, setCheckoutErrors] = useState([]);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   // The failed order or stopped subscription this basket pays for again, from an emailed link.
@@ -120,6 +125,7 @@ export default function App() {
 
   useEffect(() => subscribeToProducts((remoteProducts) => {
     setProducts(remoteProducts);
+    setCatalogueLive(true);
     savePublicSnapshot('products', remoteProducts);
   }, (error) => console.error('Product catalog unavailable:', error)), []);
 
@@ -167,14 +173,17 @@ export default function App() {
 
   // Refresh basket lines when the live catalogue loads; unavailable products and withdrawn sizes drop out.
   useEffect(() => {
-    setCart((prev) => prev
+    const waiting = waitingDraft.current;
+    if (waiting && !catalogueLive) return;
+    waitingDraft.current = null;
+    setCart((prev) => (waiting ? [...waiting, ...prev.filter((line) => !waiting.some((saved) => saved.lineId === line.lineId))] : prev)
       .map((line) => {
         const product = products.find((candidate) => candidate.id === line.id);
         if (!product || (product.category === 'MERCHANDISE' && !Object.hasOwn(productLimits(product) || {}, line.size))) return null;
         return { ...withClubYear(product, line.clubYearChoice), lineId: line.lineId, ...(line.size ? { size: line.size } : {}) };
       })
       .filter(Boolean));
-  }, [products]);
+  }, [products, catalogueLive]);
 
   // Emailed links replace the basket and then leave the address bar: a renewal (?renew=TOKEN) with next year's items, a
   // retry of a bank payment that did not clear (?retry=KEY) and a restart of monthly payments Stripe stopped (?restart=KEY).
@@ -194,6 +203,7 @@ export default function App() {
           const product = productsRef.current.find((candidate) => candidate.id === item.id);
           return product ? { ...withClubYear(normaliseProduct(product), item.clubYearChoice), lineId: item.lineId, ...(item.size ? { size: item.size } : {}) } : null;
         }).filter(Boolean);
+        waitingDraft.current = null;
         setCart(lines);
         setPeople(result.people.map((person) => applyConsentPrefill({ ...blankPerson(person.id), ...person, ...(person.returning ? { verifiedDob: person.dob,
           verifiedEmail: result.email.trim().toLowerCase(), verifiedName: normaliseName(`${person.firstName} ${person.lastName}`) } : {}) }, person.prefill)));
@@ -210,8 +220,8 @@ export default function App() {
       .finally(() => setIsCartOpen(true));
   }, [currentPage]);
 
-  useEffect(() => { setPeople((prev) => assignLines(prev, cart, newId)); }, [cart]);
-  useEffect(() => { if (!cart.length) setResumeLink(null); }, [cart.length]);
+  useEffect(() => { if (!waitingDraft.current) setPeople((prev) => assignLines(prev, cart, newId)); }, [cart]);
+  useEffect(() => { if (!cart.length && !waitingDraft.current) setResumeLink(null); }, [cart.length]);
   // A checkout refusal (e.g. "needs a membership") describes the basket it was given, so it goes once the basket changes.
   const cartKey = cart.map((line) => line.lineId).join('|');
   const refusedCartKey = useRef(cartKey);
@@ -222,6 +232,7 @@ export default function App() {
   // The draft lives in this tab's sessionStorage only, so a customer can return to add a membership.
   useEffect(() => {
     if (currentPage === 'payment-success') {
+      waitingDraft.current = null;
       clearDraft();
       setCart([]);
       setPeople([]);
@@ -229,6 +240,7 @@ export default function App() {
       setResumeLink(null);
       return;
     }
+    if (waitingDraft.current) return;
     if (!cart.length && !people.length && !checkoutEmail) clearDraft();
     else saveDraft({ email: checkoutEmail, people, cart: cart.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), isAnnual, resumeLink, wording: checkoutWording() });
   }, [currentPage, cart, people, checkoutEmail, isAnnual, resumeLink]);
@@ -341,6 +353,11 @@ export default function App() {
       if (!response.ok) throw new Error(result.error || 'Could not load volunteer pricing.');
       setVolunteerTiers(result.tiers);
     }).catch((error) => setCheckoutError(error.message));
+    apiFetch(apiUrl('/api/trip-discounts')).then(async (response) => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not load trip discounts.');
+      setTripDiscounts(result.rules);
+    }).catch((error) => setCheckoutError(error.message));
   }, []);
   const calculations = useMemo(() => {
     const expanded = expandClubYearLines(cart);
@@ -352,8 +369,9 @@ export default function App() {
     const year = clubYearOf(new Date());
     const held = new Map(people.filter((person) => person.returning && person.tripHeld?.length && returningVerificationMatches(person, checkoutEmail))
       .map((person) => [person.id, person.tripHeld.map((productId) => ({ productId, clubYear: year }))]));
-    return calculateCart(applyTripDiscounts(applyVolunteerBenefits(expanded, holders, records, volunteerTiers), holders, held), annualBilling, activePromo);
-  }, [cart, annualBilling, activePromo, people, volunteerTiers, checkoutEmail]);
+    return calculateCart(applyTripDiscounts(applyVolunteerBenefits(expanded, holders, records, volunteerTiers), holders, held, new Date(), tripDiscounts || []),
+      annualBilling, activePromo);
+  }, [cart, annualBilling, activePromo, people, volunteerTiers, tripDiscounts, checkoutEmail]);
 
   const cartGroups = useMemo(() => {
     const groups = new Map();
@@ -401,6 +419,7 @@ export default function App() {
           busy={checkoutBusy}
           total={calculations.total}
           pricedItems={calculations.items}
+          tripDiscounts={tripDiscounts || []}
           onBack={handleBackToBasket}
           onReset={handleResetDetails}
           onPay={handlePay}
@@ -427,10 +446,11 @@ export default function App() {
             getItemDisplayPrice={getItemDisplayPrice}
             products={products}
             onNavigate={setCurrentPage}
+            tripDiscounts={tripDiscounts || []}
           />
         );
       case 'admin':
-        return <AdminPage products={products} onNavigate={setCurrentPage} />;
+        return <AdminPage products={products} onNavigate={setCurrentPage} tripDiscounts={tripDiscounts} />;
       case 'admin-reports':
         return <AdminReportsPage onNavigate={setCurrentPage} />;
       case 'beginners':

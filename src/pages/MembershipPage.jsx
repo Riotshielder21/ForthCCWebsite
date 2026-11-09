@@ -3,7 +3,7 @@ import { ShoppingCart, Plus, Minus, ExternalLink, ChevronDown, Pencil } from 'lu
 import { DISCOUNTS, CATEGORIES } from '../constants/products';
 import { usePageContent, usePageEditor } from '../utils/PageContentContext';
 import { eventScheduleLabel } from '../utils/catalogue';
-import { isTripEvent } from '../utils/tripDiscount';
+import { isTripEvent, tripDiscountSummary } from '../utils/tripDiscount';
 import { bookingsClosed, formatDate } from '../utils/eventRoster';
 import { productLimits } from '../utils/inventory';
 import { scopeLabel, voucherScope } from '../utils/vouchers';
@@ -27,7 +27,7 @@ function useGridColumns() {
   return columns;
 }
 
-export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, onNavigate }) {
+export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, onNavigate, tripDiscounts = [] }) {
   const copy = usePageContent('membership');
   const { adminUser } = usePageEditor();
   const [selectedTier, setSelectedTier] = useState('adult');
@@ -198,7 +198,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                 <p className="KitHireMonthlyLabel">Choose annual or monthly payment in the basket.</p>
               )}
               {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
-              {isTripEvent(product) && <p className="text_container text_container_note">£10 off with annual boat hire, and £10 off with a coaching subscription.</p>}
+              {isTripEvent(product) && tripDiscounts.length > 0 && <p className="text_container text_container_note">{tripDiscountSummary(tripDiscounts)}</p>}
               {product.category === 'EVENTS' && product.leaderName && <p className="text_container SpaceB4">Led by {product.leaderName}{product.leaderEmail && <> (<a className="ContentLink" href={`mailto:${product.leaderEmail}`}>{product.leaderEmail}</a>)</>}</p>}
               {product.membershipRule === 'none' && <p className="text_container text_container_note">Open to non-members.</p>}
               {product.membershipRule === 'included' && <p className="text_container text_container_note">Club membership included until 1 March.</p>}

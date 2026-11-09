@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, CircleSlash, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat } from 'lucide-react';
+import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, CircleSlash, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat, Percent } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl, apiFetch } from '../utils/api';
 import { reportCsv, reportDetailEntries, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, reportOptions, reportEventNames, onlyEvent, onlyEventPeriod, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
@@ -9,6 +9,7 @@ import ReasonInput from '../components/ReasonInput';
 import MonthlyPayments from '../components/MonthlyPayments';
 import GdprErasurePanel from '../components/GdprErasurePanel';
 import ReceiptEmailPanel from '../components/ReceiptEmailPanel';
+import TripDiscountsPanel from '../components/TripDiscountsPanel';
 import RenewalsPanel from '../components/RenewalsPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
 import CheckinSessionsPanel from '../components/CheckinSessionsPanel';
@@ -21,7 +22,8 @@ import NeedsAttentionPanel from '../components/NeedsAttentionPanel';
 // Member register is the authoritative list, so it comes first.
 const RECORD_TABS = [[Users, 'members', 'Member register'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Repeat, 'subscribers', 'Stripe subscribers']];
 // Settings tabs show a single panel instead of a records table.
-const SETTINGS_TABS = [[Mail, 'receipt-emails', 'Receipt emails', ReceiptEmailPanel], [Repeat, 'renewals', 'Renewal emails', RenewalsPanel],
+const SETTINGS_TABS = [[Mail, 'receipt-emails', 'Receipt emails', ReceiptEmailPanel], [Percent, 'trip-discounts', 'Trip discounts', TripDiscountsPanel],
+  [Repeat, 'renewals', 'Renewal emails', RenewalsPanel],
   [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [CalendarClock, 'checkin-sessions', 'Check-in sessions', CheckinSessionsPanel],
   [KeyRound, 'boathouse', 'Boathouse code', BoathouseCodePanel], [ShieldCheck, 'admins', 'Website admins', AdminAccessPanel]];
 

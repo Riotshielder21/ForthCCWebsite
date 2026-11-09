@@ -9,11 +9,17 @@ service cloud.firestore {
         && request.auth.token.email.lower().matches('[^@\\s]+@forthcanoeclub[.]co[.]uk');
     }
 
+    // Products qualifying for a trip discount (the API keeps their ids on settings/tripDiscounts; these are the defaults).
+    function isTripDiscountProduct(productId) {
+      let settings = /databases/$(database)/documents/settings/tripDiscounts;
+      return exists(settings) ? productId in get(settings).data.get('productIds', []) : productId in ['boat-hire', 'blue-sub', 'gold-sub'];
+    }
+
     match /products/{productId} {
       allow read: if true;
       // The trip discount relies on these products, so they cannot be deleted.
       allow write: if isClubAdmin()
-        && !(productId in ['boat-hire', 'blue-sub', 'gold-sub'] && (request.resource == null || request.resource.data.get('active', true) == false));
+        && !((request.resource == null || request.resource.data.get('active', true) == false) && isTripDiscountProduct(productId));
     }
 
     // Published notices are public; they are written, versioned and archived only through the API.

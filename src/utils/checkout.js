@@ -368,3 +368,12 @@ export const saveDraft = (draft, storage = globalThis.sessionStorage) => {
 export const clearDraft = (storage = globalThis.sessionStorage) => {
   try { storage?.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
 };
+
+/** A saved basket's lines that `products` has, in order, and whether every line was found. */
+export const restoreDraftLines = (draftLines, products, toLine) => {
+  const lines = (Array.isArray(draftLines) ? draftLines : []).map((line) => {
+    const product = products.find((candidate) => candidate.id === line?.id);
+    return product ? toLine(product, line) : null;
+  });
+  return { lines: lines.filter(Boolean), complete: lines.every(Boolean) };
+};

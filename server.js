@@ -22,7 +22,7 @@ import { createClubYearSubscription, clubYearCancelAt } from './src/server/clubY
 import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
 import { DISCOUNT_TYPES, discountDisplayStatus, discountFailure } from './src/utils/discountCodes.js';
 import { REASON_REQUIRED, auditEntry, requiredReason } from './src/utils/auditLog.js';
-import { applyTripDiscounts, currentPrivilegeIds, isLockedProduct, isTripEvent } from './src/utils/tripDiscount.js';
+import { applyTripDiscounts, currentPrivilegeIds, isTripEvent, lockedProductIds } from './src/utils/tripDiscount.js';
 import { bookingsClosed } from './src/utils/eventRoster.js';
 import { sanitizePerson, validateCheckout, personInputErrors, membershipPartsNeeded, peopleGrantedMembership, lineMembershipRule, grantsMembership, contactEmail, isMembership, resolvedKind, withFamilyContacts, normaliseName, matchMembership, ageOn } from './src/utils/checkout.js';
 import { membershipActivity, renewalConfirmationOpen, justgoUploadCanRetry } from './src/utils/membership.js';
@@ -65,6 +65,7 @@ import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
 import { registerEventRosterRoutes } from './src/server/eventRosters.js';
 import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
 import { registerReceiptEmailRoutes } from './src/server/receiptEmail.js';
+import { registerTripDiscountRoutes } from './src/server/tripDiscounts.js';
 import { registerRenewalRoutes } from './src/server/renewals.js';
 import { registerKeyAccessRoutes } from './src/server/keyAccess.js';
 import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemActions.js';
@@ -1898,6 +1899,8 @@ registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
 registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });
 registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadReceiptPersonFields, receiptPeopleWithRecords } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
+const { loadTripDiscounts } = registerTripDiscountRoutes(app, { requireAdmin, db: () => adminDb,
+  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
   volunteerRenewalContent, sendVolunteerRenewals, live: () => isLive(),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
@@ -2412,15 +2415,15 @@ app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
       const matched = records.filter((record) => record.dob === dob);
       // Checkout ticks in advance only what a matched person agreed to the current wording; the server still checks on payment.
-      const [policies, noticeVersions, entitlements, volunteerTiers] = matched.length
+      const [policies, noticeVersions, entitlements, volunteerTiers, tripRules] = matched.length
         ? await Promise.all([currentCheckoutPolicies(adminDb, isLive()), loadNotices(adminDb).then(noticeVersionMap),
-          loadEntitlements(adminDb, matched.map((record) => record.id)), loadVolunteerBenefits()]) : [];
+          loadEntitlements(adminDb, matched.map((record) => record.id)), loadVolunteerBenefits(), loadTripDiscounts()]) : [];
       const now = requestNow(req);
       for (const record of matched) {
         const { firstName, lastName, volunteer } = record;
         // Only the products that discount single-day trips, so checkout can show the price the server will charge.
         const tripHeld = [...new Set(currentPrivilegeIds([...(entitlements.get(record.id) || []), ...volunteerPrivileges(record, volunteerTiers, now)], now))]
-          .filter(isLockedProduct);
+          .filter((id) => lockedProductIds(tripRules).includes(id));
         names.set(`${firstName} ${lastName}`.toLowerCase(), { firstName, lastName, ...(tripHeld.length ? { tripHeld } : {}),
           ...(volunteer?.inducted ? { volunteer: { inducted: true, years: Object.fromEntries(Object.entries(volunteer.years || {})
             .map(([year, value]) => [year, { active: value.active === true, tier: value.tier }])) } } : {}),
@@ -2708,9 +2711,9 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       if (message) return res.status(400).json({ error: message });
       promo = publicDiscount(discountDocument.data());
     }
-    // Single-day trips are discounted for attendees holding boat hire or a subscription this club year, or buying one now.
+    // Single-day trips are discounted for attendees holding a qualifying product this club year, or buying one now.
     const tripPrivileges = new Map();
-    const volunteerTiers = await loadVolunteerBenefits();
+    const [volunteerTiers, tripRules] = await Promise.all([loadVolunteerBenefits(), loadTripDiscounts()]);
     if (selected.some(isTripEvent)) {
       for (const person of storedPeople) if (memberData.has(person.membershipId)) {
         const data = memberData.get(person.membershipId);
@@ -2718,7 +2721,7 @@ app.post('/api/checkout-session', rateLimit(10, 60 * 1000), async (req, res) => 
       }
     }
     const volunteerLines = applyVolunteerBenefits(lines, storedPeople, memberData, volunteerTiers, now);
-    const pricing = calculateCart(applyTripDiscounts(volunteerLines, storedPeople, tripPrivileges, now), billingMode === 'annual', promo, now);
+    const pricing = calculateCart(applyTripDiscounts(volunteerLines, storedPeople, tripPrivileges, now, tripRules), billingMode === 'annual', promo, now);
     if (promo && pricing.promoDiscountValue <= 0) return res.status(400).json({ error: 'This code does not apply to the items in your basket.' });
     const siteUrl = checkoutSiteOrigin(req);
     const receiptToken = createAccessToken();
