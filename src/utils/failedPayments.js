@@ -137,33 +137,63 @@ export const invoiceCoverage = (invoice) => {
   return periods.length ? { start: Math.min(...periods.map((period) => period.start)), end: Math.max(...periods.map((period) => period.end)) } : null;
 };
 
+const invoiceLineName = (line) => String(line?.description || '').trim().replace(/^\d+\s*[×x]\s*/, '').replace(/\s*\(at [^)]*\)$/, '').trim();
+const invoiceLineItemId = (line) => {
+  const id = line?.subscription_item || line?.parent?.subscription_item_details?.subscription_item || '';
+  return typeof id === 'string' ? id : id?.id || '';
+};
+
 /**
  * Item names from a Stripe invoice's own line descriptions ("1 × Gold Subscription (at £30.00 / month)" gives "Gold
  * Subscription"), for subscriptions set up outside this site. Proration lines are only used when there is nothing else.
  */
 export const invoiceItemNames = (invoice) => {
-  const lines = (invoice?.lines?.data || []).filter((line) => String(line?.description || '').trim());
+  const lines = (invoice?.lines?.data || []).filter((line) => invoiceLineName(line));
   const regular = lines.filter((line) => !line.proration);
-  return [...new Set((regular.length ? regular : lines)
-    .map((line) => line.description.trim().replace(/^\d+\s*[×x]\s*/, '').replace(/\s*\(at [^)]*\)$/, '').trim()).filter(Boolean))];
+  return [...new Set((regular.length ? regular : lines).map(invoiceLineName))];
 };
 
 /**
- * The club receipt for a monthly payment Stripe collected. `recovered` when an earlier attempt at the same invoice
- * failed and the member was told so. `coverage.end` is exclusive, so the last day shown is the day before.
+ * The checkout receipt's layout for a monthly payment Stripe collected. Every item paid monthly on the subscription
+ * is listed under the person it is for, whether it is a subscription product, a membership or kit hire paid monthly.
+ * `items` are the subscription record's items (`stripeItemId`, `name`, `names`, `category`); each is priced from the
+ * invoice lines for its Stripe item. Lines that match no item (or every line, for a subscription set up outside the
+ * site) are listed by their Stripe description for `linkedNames`. A discount or credit makes up any difference so the
+ * lines add up to what was paid. `recovered` when an earlier attempt at the same invoice failed.
  */
-export const monthlyReceiptEmail = ({ names = [], itemNames = [], amountPaidPence = 0, paidAt = 0, coverage = null, invoiceNumber = '', recovered = false, contact }) => {
-  const who = listText(names);
-  const what = listText(itemNames) || 'your Forth Canoe Club monthly payments';
+export const subscriptionPaymentReceipt = ({ invoice, items = [], linkedNames = [], payerEmail = '', recovered = false }) => {
+  const lines = invoice?.lines?.data || [];
+  const priced = new Map(items.map((item) => [item, 0]));
+  const unmatched = [];
+  for (const line of lines) {
+    const item = items.find((candidate) => candidate.stripeItemId && candidate.stripeItemId === invoiceLineItemId(line))
+      || (items.length === 1 && !items[0].stripeItemId ? items[0] : null);
+    if (item) priced.set(item, priced.get(item) + (line.amount || 0));
+    else if (line.amount) unmatched.push(line);
+  }
+  const billed = [...priced].filter(([item, pence]) => pence !== 0 || lines.some((line) => item.stripeItemId && invoiceLineItemId(line) === item.stripeItemId));
+  const entry = (name, pence, personNames) => ({ name, personNames, price: pence / 100, billing: 'monthly payment', schedule: '' });
+  const people = [...new Set(billed.flatMap(([item]) => item.names || []))].map((name) => {
+    const own = billed.filter(([item]) => (item.names || []).includes(name)).map(([item, pence]) => ({ category: item.category, ...entry(item.name || 'Item', pence, item.names) }));
+    return { name, email: '', memberships: own.filter((item) => item.category === 'MEMBERSHIP'),
+      addOns: own.filter((item) => item.category !== 'MEMBERSHIP' && item.category !== 'EVENTS'), events: own.filter((item) => item.category === 'EVENTS') };
+  });
+  const otherItems = [
+    ...billed.filter(([item]) => !(item.names || []).length).map(([item, pence]) => entry(item.name || 'Item', pence, [])),
+    ...unmatched.map((line) => entry(invoiceLineName(line) || 'Monthly payment', line.amount, linkedNames))
+  ];
+  const listed = [...billed.map(([, pence]) => pence), ...unmatched.map((line) => line.amount)].reduce((sum, pence) => sum + pence, 0);
+  const paid = invoice?.amount_paid || 0;
+  if (listed !== paid) otherItems.push(entry(paid < listed ? 'Discount or account credit' : 'Adjustment', paid - listed, []));
+  const coverage = invoiceCoverage(invoice);
+  const paidAt = invoice?.status_transitions?.paid_at || 0;
   return {
-    subject: `Forth Canoe Club receipt: monthly payment of ${money(amountPaidPence)}`,
-    body: [recovered
-      ? `Your monthly payment of ${money(amountPaidPence)} for ${what}${who ? ` (${who})` : ''} has now gone through, so there is nothing more to do.`
-      : `Thank you. Your monthly payment of ${money(amountPaidPence)} for ${what}${who ? ` (${who})` : ''} has been paid.`, '',
-    ...(paidAt ? [`Paid: ${dateLabel(paidAt)}`] : []),
-    ...(coverage ? [`Covers: ${dateLabel(coverage.start)} to ${dateLabel(coverage.end - 1)}`] : []),
-    ...(invoiceNumber ? [`Invoice: ${invoiceNumber}`] : []), '',
-    `Questions about your monthly payments: ${contact}.`].join('\n')
+    orderRef: invoice?.number || invoice?.id || '', referenceLabel: 'Invoice', payerEmail, total: paid / 100, people, otherItems, vouchers: [],
+    summary: [...(paidAt ? [{ label: 'Paid', value: dateLabel(paidAt) }] : []),
+      ...(coverage ? [{ label: 'Covers', value: `${dateLabel(coverage.start)} to ${dateLabel(coverage.end - 1)}` }] : [])],
+    heading: 'Forth Canoe Club subscription payment receipt', title: 'Subscription payment',
+    ...(recovered ? { intro: 'Your monthly payment has now gone through, so there is nothing more to do.' } : {}),
+    thanks: 'Thank you for your monthly payment to Forth Canoe Club.'
   };
 };
 

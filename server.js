@@ -71,7 +71,7 @@ import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemA
 import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
 import { isClubEmail } from './src/utils/adminAccess.js';
 import { createAttention, registerAttentionRoutes } from './src/server/attention.js';
-import { RETRY_LINK_DAYS, invoiceCoverage, invoiceFailureEmail, invoiceItemNames, invoicePeriodStart, monthlyReceiptEmail, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
+import { RETRY_LINK_DAYS, invoiceFailureEmail, invoicePeriodStart, orderFailureEmail, subscriptionPaymentReceipt, paidUpTo, restartBasket, retryBasket, splitLinkKey,
   subscriptionStoppedEmail, treasurerFailureEmail } from './src/utils/failedPayments.js';
 import { writePurchaseTerms, loadTerms, loadEntitlements, loadPurchases, endTermItems } from './src/server/membershipTerms.js';
 
@@ -1033,9 +1033,14 @@ const recordInvoicePaid = async (invoice) => {
   const { record } = claim;
   const email = record?.email || invoice.customer_email || '';
   if (!email) return;
-  let details;
+  let receipt;
   if (record) {
-    details = { names: record.names || [], itemNames: subscriptionItemNames(record), recovered: record.lastFailedInvoice?.id === invoice.id };
+    // Items are listed under Membership or Additional items as on the checkout receipt, so take each one's category from its order.
+    const orderRefs = [...new Set((record.items || []).map((item) => item.orderRef).filter(Boolean))];
+    const orders = orderRefs.length ? await adminDb.getAll(...orderRefs.map((orderRef) => adminDb.collection('orders').doc(orderRef))) : [];
+    const categories = new Map(orders.flatMap((document) => (document.data()?.items || []).map((item) => [item.lineId, item.category])));
+    receipt = subscriptionPaymentReceipt({ invoice, payerEmail: email, recovered: record.lastFailedInvoice?.id === invoice.id, linkedNames: record.names || [],
+      items: (record.items || []).map((item) => ({ ...item, category: categories.get(item.lineId) || '' })) });
   } else {
     try {
       await adminDb.collection('invoiceReceipts').doc(invoice.id).create({ subscriptionId, at: Timestamp.now() });
@@ -1045,12 +1050,12 @@ const recordInvoicePaid = async (invoice) => {
     }
     const mirror = await adminDb.collection('stripeSubscriptions').doc(`FCC-${invoice.livemode ? 'live' : 'test'}-${subscriptionId}`).get();
     const [linked] = mirror.exists ? await withMemberNames([mirror.data()]) : [{ names: [] }];
-    details = { names: linked.names, itemNames: invoiceItemNames(invoice), recovered: false };
+    receipt = subscriptionPaymentReceipt({ invoice, payerEmail: email, linkedNames: linked.names });
   }
   try {
-    await sendEmail({ to: email, ...monthlyReceiptEmail({ ...details, amountPaidPence: invoice.amount_paid,
-      paidAt: invoice.status_transitions?.paid_at || 0, coverage: invoiceCoverage(invoice), invoiceNumber: invoice.number || '', contact: TREASURER_REPLY_TO }),
-      record: { kind: 'invoice-paid', subscriptionId, invoiceId: invoice.id, ...(record ? {} : { setUpOutsideSite: true }) } });
+    await sendEmail({ to: email, subject: `Your Forth Canoe Club subscription payment receipt - ${receipt.orderRef}`,
+      body: [receiptEmailCopy(receipt), '', `Questions about your monthly payments: ${TREASURER_REPLY_TO}.`].join('\n'), html: receiptEmailHtml(receipt, ''),
+      record: { kind: 'invoice-paid', subscriptionId, invoiceId: invoice.id, receipt, ...(record ? {} : { setUpOutsideSite: true }) } });
   } catch {
     console.error('Could not email the monthly payment receipt for %s.', invoice.id);
   }
