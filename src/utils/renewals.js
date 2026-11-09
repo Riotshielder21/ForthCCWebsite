@@ -95,7 +95,7 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character
 
 /**
  * The renewal email for one contact address: who is renewing, what the link puts in the basket, and when it expires.
- * The wording is a template until the club agrees the final text (see TODO.md).
+ * The wording is a template until the club agrees the final text (issue #43).
  */
 export const renewalEmail = ({ people, items, catalog, renewalYear, link, expiresAt, reminder = false, volunteering = { body: '', html: '' } }) => {
   const year = `${renewalYear}/${String((renewalYear + 1) % 100).padStart(2, '0')}`;
