@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { invoiceFailureEmail, invoicePeriodStart, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
+import { invoiceCoverage, invoiceFailureEmail, invoicePeriodStart, monthlyReceiptEmail, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
   subscriptionStoppedEmail, treasurerFailureEmail } from './failedPayments.js';
 
 const token = 'a'.repeat(64);
@@ -92,6 +92,30 @@ test('failed-debit emails say when Stripe retries, or that payments stopped with
   const copy = treasurerFailureEmail({ ...common, email: 'ann@example.test', attempt: 4, subscriptionId: 'sub_1', invoiceId: 'in_1', paidUntil: seconds('2025-12-01') });
   assert.match(copy.body, /£20\.00 from ann@example\.test after 4 attempts/);
   assert.match(copy.body, /sub_1/);
+});
+
+test('monthly receipts say what was paid, for whom, and the days it covers', () => {
+  const invoice = { lines: { data: [
+    { period: { start: seconds('2025-12-01T00:00:00Z'), end: seconds('2026-01-01T00:00:00Z') } },
+    { period: { start: seconds('2025-11-20T00:00:00Z'), end: seconds('2025-12-01T00:00:00Z') } },
+    { period: null }
+  ] } };
+  const coverage = invoiceCoverage(invoice);
+  assert.deepEqual(coverage, { start: seconds('2025-11-20T00:00:00Z'), end: seconds('2026-01-01T00:00:00Z') }, 'a prorated catch-up line widens it');
+  assert.equal(invoiceCoverage({ lines: { data: [] } }), null);
+
+  const common = { names: ['Ann', 'Ben'], itemNames: ['Gold Subscription'], amountPaidPence: 3000, contact: 'treasurer@example.test' };
+  const receipt = monthlyReceiptEmail({ ...common, paidAt: seconds('2025-12-01T09:00:00Z'), coverage, invoiceNumber: 'ABC-0001' });
+  assert.equal(receipt.subject, 'Forth Canoe Club receipt: monthly payment of £30.00');
+  assert.match(receipt.body, /^Thank you\. Your monthly payment of £30\.00 for Gold Subscription \(Ann and Ben\) has been paid\./);
+  assert.match(receipt.body, /Paid: 1 December 2025/);
+  assert.match(receipt.body, /Covers: 20 November 2025 to 31 December 2025/);
+  assert.match(receipt.body, /Invoice: ABC-0001/);
+  assert.match(receipt.body, /treasurer@example\.test/);
+
+  const recovered = monthlyReceiptEmail({ ...common, recovered: true });
+  assert.match(recovered.body, /has now gone through, so there is nothing more to do/);
+  assert.doesNotMatch(recovered.body, /Covers:|Paid:|Invoice:/, 'missing details are left out');
 });
 
 test('a failed bank payment email links to retry or cancel the order', () => {

@@ -71,7 +71,7 @@ import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemA
 import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
 import { isClubEmail } from './src/utils/adminAccess.js';
 import { createAttention, registerAttentionRoutes } from './src/server/attention.js';
-import { RETRY_LINK_DAYS, invoiceFailureEmail, invoicePeriodStart, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
+import { RETRY_LINK_DAYS, invoiceCoverage, invoiceFailureEmail, invoicePeriodStart, monthlyReceiptEmail, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
   subscriptionStoppedEmail, treasurerFailureEmail } from './src/utils/failedPayments.js';
 import { writePurchaseTerms, loadTerms, loadEntitlements, loadPurchases, endTermItems } from './src/server/membershipTerms.js';
 
@@ -1012,6 +1012,33 @@ const recordInvoiceFailed = async (invoice) => {
 };
 
 /**
+ * Emails the member a club receipt for each monthly payment Stripe collects. The checkout receipt covers what was paid
+ * at checkout, which is never a subscription invoice; a free trial invoice (£0) is skipped. Subscriptions not set up
+ * through this site (no record) get Stripe's own emails only. Stripe can send an event more than once, so each
+ * invoice is receipted once.
+ */
+const recordInvoicePaid = async (invoice) => {
+  const subscriptionId = stripeId(invoice.subscription || invoice.parent?.subscription_details?.subscription);
+  if (!subscriptionId || !adminDb || !(invoice.amount_paid > 0)) return;
+  const reference = adminDb.collection('subscriptions').doc(subscriptionId);
+  const record = await adminDb.runTransaction(async (transaction) => {
+    const document = await transaction.get(reference);
+    if (!document.exists || (document.data().receiptedInvoices || []).includes(invoice.id) || !document.data().email) return null;
+    transaction.update(reference, { receiptedInvoices: FieldValue.arrayUnion(invoice.id), updatedAt: Timestamp.now() });
+    return document.data();
+  });
+  if (!record) return;
+  try {
+    await sendEmail({ to: record.email, ...monthlyReceiptEmail({ names: record.names || [], itemNames: subscriptionItemNames(record),
+      amountPaidPence: invoice.amount_paid, paidAt: invoice.status_transitions?.paid_at || 0, coverage: invoiceCoverage(invoice),
+      invoiceNumber: invoice.number || '', recovered: record.lastFailedInvoice?.id === invoice.id, contact: TREASURER_REPLY_TO }),
+      record: { kind: 'invoice-paid', subscriptionId, invoiceId: invoice.id } });
+  } catch {
+    console.error('Could not email the monthly payment receipt for %s.', invoice.id);
+  }
+};
+
+/**
  * Subscriptions are cancelled at the club-year end. Stripe stops retrying a failed 1 February debit then, so its
  * unpaid invoice is voided (no later collection) and the subscription is flagged for staff. Any other ending (Stripe
  * giving up on failed payments, or a cancellation outside this site) ends the monthly items at the date
@@ -1274,6 +1301,7 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
     }
     if (event.type === 'invoice.paid') {
       await attention.settle('invoice-failed', event.data.object.id, 'stripe', 'The debit was paid.');
+      await recordInvoicePaid(event.data.object);
       return res.json({ received: true });
     }
     if (event.type === 'payment_intent.payment_failed') {

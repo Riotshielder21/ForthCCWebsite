@@ -131,6 +131,31 @@ export const invoiceFailureEmail = ({ names = [], itemNames = [], amountDuePence
   };
 };
 
+/** The days a paid monthly invoice covers, in seconds: the earliest line start to the latest line end. */
+export const invoiceCoverage = (invoice) => {
+  const periods = (invoice?.lines?.data || []).map((line) => line.period).filter((period) => period?.start > 0 && period?.end > period.start);
+  return periods.length ? { start: Math.min(...periods.map((period) => period.start)), end: Math.max(...periods.map((period) => period.end)) } : null;
+};
+
+/**
+ * The club receipt for a monthly payment Stripe collected. `recovered` when an earlier attempt at the same invoice
+ * failed and the member was told so. `coverage.end` is exclusive, so the last day shown is the day before.
+ */
+export const monthlyReceiptEmail = ({ names = [], itemNames = [], amountPaidPence = 0, paidAt = 0, coverage = null, invoiceNumber = '', recovered = false, contact }) => {
+  const who = listText(names);
+  const what = listText(itemNames) || 'your Forth Canoe Club monthly payments';
+  return {
+    subject: `Forth Canoe Club receipt: monthly payment of ${money(amountPaidPence)}`,
+    body: [recovered
+      ? `Your monthly payment of ${money(amountPaidPence)} for ${what}${who ? ` (${who})` : ''} has now gone through, so there is nothing more to do.`
+      : `Thank you. Your monthly payment of ${money(amountPaidPence)} for ${what}${who ? ` (${who})` : ''} has been paid.`, '',
+    ...(paidAt ? [`Paid: ${dateLabel(paidAt)}`] : []),
+    ...(coverage ? [`Covers: ${dateLabel(coverage.start)} to ${dateLabel(coverage.end - 1)}`] : []),
+    ...(invoiceNumber ? [`Invoice: ${invoiceNumber}`] : []), '',
+    `Questions about your monthly payments: ${contact}.`].join('\n')
+  };
+};
+
 /** The member's email when a subscription ended early without a final failed-debit email (e.g. cancelled in Stripe). */
 export const subscriptionStoppedEmail = ({ names = [], itemNames = [], paidUntil = 0, restartUrl = '', cancelUrl = '', contact }) => {
   const who = listText(names);

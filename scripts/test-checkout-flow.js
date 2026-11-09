@@ -1951,6 +1951,38 @@ await test('a subscription ending at the club-year boundary voids an unpaid Febr
   assert.equal(early.needsStaff, true, 'an unexpected ending is flagged');
 });
 
+await test('each monthly payment Stripe collects is receipted once; a debit that failed first says it has now gone through', async () => {
+  const payer = email('monthly-receipt');
+  const details = adultDetails({ firstName: 'Rhi', lastName: 'Receipt', email: payer });
+  const order = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'this'), { billingMode: 'monthly' }, autumn));
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const receipts = async () => (await db.collection('testMail').where('subscriptionId', '==', subscriptionId).get()).docs
+    .map((document) => document.data()).filter((mail) => mail.kind === 'invoice-paid');
+  const start = seconds(order.subscriptionPlan.groups[0].firstDebitAt.toDate());
+  const invoice = (id, fields = {}) => ({ id, subscription: subscriptionId, amount_paid: 3000, number: `RCPT-${id}`,
+    status_transitions: { paid_at: start }, lines: { data: [{ period: { start, end: start + 31 * 24 * 60 * 60 } }] }, ...fields });
+
+  assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: invoice(`in_trial_${subscriptionId}`, { amount_paid: 0 }) } })).status, 200);
+  assert.equal((await receipts()).length, 0, 'the free trial invoice at set-up is not a payment');
+  assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: invoice('in_not_ours', { subscription: 'sub_not_on_this_site' }) } })).status, 200);
+
+  const first = `in_first_${subscriptionId}`;
+  for (let resend = 0; resend < 2; resend += 1) assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: invoice(first) } })).status, 200);
+  const [receipt, ...repeats] = await receipts();
+  assert.equal(repeats.length, 0, 'Stripe resending the event does not send a second receipt');
+  assert.equal(receipt.email, payer);
+  assert.match(receipt.subject, /receipt: monthly payment of £30\.00/);
+  assert.match(receipt.body, /^Thank you\. Your monthly payment of £30\.00 for GOLD SUBSCRIPTION \(Rhi Receipt\) has been paid\./i);
+  assert.match(receipt.body, new RegExp(`Invoice: RCPT-${first}`));
+
+  const late = `in_late_${subscriptionId}`;
+  assert.equal((await sendWebhook({ type: 'invoice.payment_failed', data: { object: { id: late, subscription: subscriptionId, amount_due: 3000,
+    attempt_count: 1, next_payment_attempt: start + 3 * 24 * 60 * 60, customer_email: payer, lines: { data: [{ period: { start, end: start + 1 } }] } } } })).status, 200);
+  assert.equal((await sendWebhook({ type: 'invoice.paid', data: { object: invoice(late) } })).status, 200);
+  const recovered = (await receipts()).find((mail) => mail.invoiceId === late);
+  assert.match(recovered.body, /has now gone through, so there is nothing more to do/);
+});
+
 await test('failed monthly debits email the member each time; when Stripe gives up, benefits end at the paid-up date and can be restarted', async () => {
   const payer = email('debit-fail');
   const details = adultDetails({ firstName: 'Dee', lastName: 'Debit', email: payer });
