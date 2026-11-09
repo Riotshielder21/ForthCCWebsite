@@ -137,7 +137,14 @@ export const invoiceCoverage = (invoice) => {
   return periods.length ? { start: Math.min(...periods.map((period) => period.start)), end: Math.max(...periods.map((period) => period.end)) } : null;
 };
 
-const invoiceLineName = (line) => String(line?.description || '').trim().replace(/^\d+\s*[×x]\s*/, '').replace(/\s*\(at [^)]*\)$/, '').trim();
+// "1 × Gold Subscription (at £30.00 / month)" is "Gold Subscription". The price suffix is cut with string searches, not a
+// regular expression, so a long description from Stripe cannot make it slow.
+const invoiceLineName = (line) => {
+  let name = String(line?.description || '').trim().replace(/^\d+\s*[×x]\s*/, '');
+  const price = name.lastIndexOf('(at ');
+  if (price !== -1 && name.endsWith(')') && !name.slice(price, -1).includes(')')) name = name.slice(0, price);
+  return name.trim();
+};
 const invoiceLineItemId = (line) => {
   const id = line?.subscription_item || line?.parent?.subscription_item_details?.subscription_item || '';
   return typeof id === 'string' ? id : id?.id || '';
