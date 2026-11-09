@@ -2072,7 +2072,7 @@ await test('each monthly payment Stripe collects is receipted once, including su
   assert.equal(receipt.email, payer);
   assert.equal(receipt.subject, `Your Forth Canoe Club subscription payment receipt - RCPT-${first}`);
   assert.match(receipt.body, /^Forth Canoe Club subscription payment receipt\n/, 'the checkout receipt layout, headed as a subscription payment');
-  assert.match(receipt.body, new RegExp(`Invoice: RCPT-${first}\nPaid by: ${payer.replace(/[.+]/g, '\\$&')}\nPaid: `));
+  assert.match(receipt.body, new RegExp(`Invoice: RCPT-${first}\nPaid by: ${payer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\nPaid: `));
   assert.match(receipt.body, new RegExp(`Total paid: £${(amountPaid / 100).toFixed(2)}`));
   assert.match(receipt.body, /\nRhi Receipt\n/, 'items are listed under the person they are for');
   for (const item of items) assert.match(receipt.body, new RegExp(`- ${item.name}: £${item.monthlyAmount.toFixed(2)} monthly payment`), 'every item paid monthly is listed');

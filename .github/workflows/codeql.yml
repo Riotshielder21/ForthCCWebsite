@@ -14,8 +14,8 @@ name: "CodeQL Advanced"
 on:
   push:
     branches: [ "main" ]
+  # Every PR, including stacked PRs whose base is another feature branch.
   pull_request:
-    branches: [ "main" ]
   schedule:
     - cron: '16 18 * * 4'
 
