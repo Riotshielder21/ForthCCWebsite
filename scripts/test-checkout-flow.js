@@ -1,5 +1,5 @@
 // End-to-end checkout test: API -> Stripe webhook -> Firestore records -> admin reports.
-// Needs the Firebase emulators and an API server (Stripe mocked) already running; see DEVELOPMENT.md.
+// Needs the Firebase emulators and an API server (Stripe mocked) already running. Run it through the integration suite in DEVELOPMENT.md, which starts that API.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createHash, createHmac } from 'node:crypto';
@@ -1609,6 +1609,20 @@ await test('events open to non-members keep them as contacts, close on time and 
   const closed = await checkout(visitor, basket(closedId, () => ({})));
   assert.equal(closed.status, 400);
   assert.match(closed.json.error, /Bookings for E2E closed day have closed/);
+
+  // Without a close date, an event can be booked until the end of its last date, so a course can be joined part way through.
+  const day = (offset) => new Date(Date.now() + offset * 86400000).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+  const overId = `E2E-OVER-${run}`;
+  const runningId = `E2E-RUNNING-${run}`;
+  await db.collection('products').doc(overId).set({ name: 'E2E finished course', category: 'EVENTS', type: 'event-ticket', basePrice: 20,
+    membershipRule: 'none', eventSchedule: { ...schedule, startDate: day(-3), days: 2 } });
+  await db.collection('products').doc(runningId).set({ name: 'E2E running course', category: 'EVENTS', type: 'event-ticket', basePrice: 20,
+    membershipRule: 'none', eventSchedule: { ...schedule, startDate: day(-2), days: 4 } });
+  const over = await checkout(email('over'), basket(overId, () => ({})));
+  assert.equal(over.status, 400);
+  assert.match(over.json.error, /Bookings for E2E finished course have closed/);
+  const running = await checkout(email('running'), basket(runningId, () => ({})));
+  assert.equal(running.status, 200, JSON.stringify(running.json));
 
   const orderRef = await buy(visitor, basket(openId, (lines) => ({ ownKitLineIds: [lines[0].lineId] })));
   const order = (await db.collection('orders').doc(orderRef).get()).data();

@@ -59,7 +59,7 @@ export const validateCheckUpdate = (body) => {
   const keys = Object.keys(body);
   if (!keys.length || keys.some((key) => !Object.hasOwn(CHECK_TYPES, key))) return { error: 'Only PVG and safeguarding expiry dates can be saved.' };
   const value = {};
-  for (const key of keys) {
+  for (const key of Object.keys(CHECK_TYPES).filter((type) => keys.includes(type))) {
     const date = body[key];
     if (date === '' || date === null) {
       value[key] = '';

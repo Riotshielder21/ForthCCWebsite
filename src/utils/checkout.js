@@ -238,7 +238,6 @@ export const withFamilyContacts = (people, lines) => people.map((person) => {
 // the server then checks those against their stored record. Family members share the primary's contact details.
 export const personDetailErrors = (person, label, lines, now = new Date(), role = null) => {
   const errors = [];
-  const lineMap = new Map(lines.map((line) => [line.lineId, line]));
   if (!person.firstName || !person.lastName) errors.push(`${label}: first and last name are required.`);
   else if (!person.returning && !isValidPersonName(person.firstName)) errors.push(`${label}: enter a valid first name using letters, spaces, apostrophes or hyphens.`);
   else if (!person.returning && !isValidPersonName(person.lastName)) errors.push(`${label}: enter a valid last name using letters, spaces, apostrophes or hyphens.`);
