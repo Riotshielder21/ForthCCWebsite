@@ -64,7 +64,7 @@ export default function TimetablePanel({ adminUser }) {
     try {
       load(await request({ method: 'PUT', body: JSON.stringify({ sessions: sessions.map(({ key: _key, ...session }) => ({ ...session,
         weekday: Number(session.weekday), seasonStart: session.seasonStart ? Number(session.seasonStart) : null, seasonEnd: session.seasonEnd ? Number(session.seasonEnd) : null })) }) }));
-      setMessage('Timetable saved. The What\'s on and Disciplines pages show it straight away.');
+      setMessage('Timetable saved. The Disciplines page shows it straight away.');
     } catch (saveError) {
       setError(saveError.message);
     } finally {
