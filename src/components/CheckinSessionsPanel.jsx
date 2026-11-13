@@ -52,7 +52,7 @@ export default function CheckinSessionsPanel({ adminUser }) {
   const update = (index, changes) => setSessions(sessions.map((session, position) => position === index ? { ...session, ...changes } : session));
   const set = (index, field) => (event) => update(index, { [field]: event.target.type === 'checkbox' ? event.target.checked : event.target.value });
 
-  return <section className="main_tile">
+  return <section className="main_tile SpaceT6">
     <h3 className="tile_heading_bold_2">Check-in sessions</h3>
     <p className="text_container_note">Check-ins at /check-ins and volunteer access are open all day on each session date, until midnight UK time. Times describe the session, not the access window. Previous sessions are never shown to volunteers.</p>
     <form className="SpaceB4" onSubmit={save}>

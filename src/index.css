@@ -1831,6 +1831,30 @@
 .WelcomeEditorContent hr { border: 0; border-top: 1px solid var(--fcc-color-border); margin: 1rem 0; }
 .WelcomeEditorContent a { color: #0b3153; text-decoration: underline; }
 .WelcomePlaceholders { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.SettingsJumpList { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.SettingsJumpLink { display: inline-flex; align-items: center; min-height: 36px; padding: 0.35rem 0.9rem; border: 1px solid var(--fcc-color-border);
+  border-radius: 999px; background: var(--fcc-color-surface); color: var(--fcc-color-ink); font-size: 0.85rem; font-weight: 700; text-decoration: none; }
+.SettingsJumpLink:hover { background: var(--fcc-color-surface-subtle); border-color: var(--fcc-color-ink); }
+.SettingsJumpLink:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: 2px; }
+.SettingsSection { scroll-margin-top: calc(var(--site-header-height, 0px) + 1rem); }
+.SettingsSection:focus { outline: none; }
+.ProductChips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.ProductChip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.35rem 0.25rem 0.75rem; border: 1px solid var(--fcc-color-border);
+  border-radius: 999px; background: var(--fcc-color-surface-subtle); font-size: 0.85rem; font-weight: 700; }
+.ProductChipRemove { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 999px; }
+.ProductChipRemove:hover { background: var(--fcc-color-border); }
+.ProductChipRemove:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: 1px; }
+.LifetimeControl { border-top: 1px dashed var(--fcc-color-border); padding-top: 0.75rem; }
+.LifetimeControl > summary { cursor: pointer; font-size: 0.8rem; color: var(--fcc-color-copy); width: fit-content; }
+.TimetableDays { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; margin-top: 1rem; }
+.TimetableDay { padding: 1rem; border: 1px solid var(--fcc-color-border); border-radius: 0.75rem; background: var(--fcc-color-surface-subtle); }
+.TimetableDayName { margin-bottom: 0.5rem; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fcc-color-copy); }
+.TimetableSessions { display: grid; gap: 0.75rem; }
+.TimetableSession { display: grid; grid-template-columns: 6.5rem 1fr; gap: 0.75rem; line-height: 1.4; }
+.TimetableTime { font-weight: 800; font-variant-numeric: tabular-nums; }
+.TimetableDetails { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.TimetableTag { align-self: flex-start; padding: 0 0.5rem; border-radius: 999px; background: var(--fcc-color-surface); border: 1px solid var(--fcc-color-border); font-size: 0.75rem; font-weight: 700; }
+.TimetableMeta { font-size: 0.85rem; color: var(--fcc-color-copy); overflow-wrap: anywhere; }
 .WelcomePlaceholders .EditorCommand { min-height: 32px; padding: 4px 10px; font-size: 0.8rem; }
 .WelcomePreview { display: block; width: 100%; height: 28rem; border: 1px solid var(--fcc-color-border); border-radius: 0.6rem; background: #f8fafc; }
 .NoticeAddForm { display: grid; max-width: 28rem; margin-top: 1.5rem; gap: 0.5rem; padding: 0.75rem; border: 1px dashed #94a3b8; border-radius: 0.6rem; }

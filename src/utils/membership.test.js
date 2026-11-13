@@ -37,6 +37,13 @@ test('the confirmation window covers the first two weeks of the club year', () =
   assert.equal(renewalConfirmationOpen(new Date(2026, 9, 11)), false);
 });
 
+test('a lifetime membership is always active, even when JustGo has not confirmed it, unless revoked or not active', () => {
+  const lifetime = { ...synced, validUntil: undefined, lifetimeMembership: { reason: 'Committee' } };
+  assert.equal(membershipActivity(lifetime, new Date(2030, 2, 2)), 'active');
+  assert.equal(membershipActivity({ ...lifetime, status: 'Suspended' }, new Date()), 'inactive');
+  assert.equal(membershipActivity({ ...lifetime, membershipAccessEndsAt: new Date(2020, 0, 1) }, new Date()), 'inactive');
+});
+
 test('Firestore timestamps and millisecond values are understood', () => {
   const stamp = { toMillis: () => new Date(2027, 5, 1).getTime() };
   assert.equal(membershipActivity({ ...synced, validUntil: stamp, lastJustgoSync: new Date(2026, 4, 1).getTime() }, new Date(2026, 6, 1)), 'active');

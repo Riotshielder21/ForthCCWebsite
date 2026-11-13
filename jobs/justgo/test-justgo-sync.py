@@ -157,6 +157,14 @@ asyncio.run(sync.sync_snapshot_to_firestore(snapshot))
 assert website.get().to_dict().get("welcomeEmailDue") is False, "a repeat sync of the same term does not ask again"
 people.pop()
 
+# A lifetime membership keeps no expiry and stays active whatever JustGo says.
+website.update({"lifetimeMembership": {"reason": "Committee"}, "validUntil": gcf.DELETE_FIELD, "status": "active"})
+people[0] = {**people[0], "status": "expired", "validUntil": past}
+asyncio.run(sync.sync_snapshot_to_firestore(snapshot))
+lifer = website.get().to_dict()
+assert lifer["status"] == "active" and "validUntil" not in lifer and not lifer.get("welcomeEmailDue"), lifer
+assert lifer["lastJustgoSync"] and lifer["justgoProfile"]["clubLinked"] is True, "profile details still sync"
+
 # A Paddle Scotland suspension blocks club activity even while a website renewal waits for upload.
 people[1] = {**people[1], "suspended": True, "suspension": "Full", "status": "Suspended"}
 asyncio.run(sync.sync_snapshot_to_firestore(snapshot))

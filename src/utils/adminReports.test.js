@@ -8,6 +8,11 @@ test('membership status is one of No, Active, Awaiting renewal, Expired or Revok
   assert.equal(membershipStatus({ status: 'Active', expiry: '01/03/2026' }, now), 'Expired');
   assert.equal(membershipStatus({ status: 'Active', expiry: '01/03/2027' }, now), 'Active');
   assert.equal(membershipStatus({ status: 'Active' }, now), 'Active (no expiry)', 'lifetime members have no expiry');
+  assert.equal(membershipStatus({ status: 'active', renewalMethod: 'justgo', lifetimeMembership: { reason: 'x' } }, now), 'Active (lifetime)');
+  assert.equal(membershipStatus({ status: 'Suspended', lifetimeMembership: { reason: 'x' } }, now), 'Suspended');
+  assert.ok(MEMBERSHIP_STATUSES.includes('Active (lifetime)'));
+  assert.deepEqual(membershipReport('M1', { status: 'active', lifetimeMembership: { grantedBy: 'a@b.c', reason: 'Founder' } }, now).lifetime,
+    { grantedAt: reportDate(undefined), grantedBy: 'a@b.c', reason: 'Founder' });
   assert.equal(membershipStatus({ status: 'Cancelled', expiry: '01/03/2027' }, now), 'Cancelled');
   assert.equal(membershipStatus(null, now), 'No');
   assert.equal(membershipStatus({ contactOnly: true, status: 'active' }, now), 'No');

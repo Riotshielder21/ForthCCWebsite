@@ -25,6 +25,10 @@ export function prepareOfflineSite(onStatus) {
       if (!response.ok) throw new Error(`Could not download public volunteering information (${response.status}).`);
       savePublicSnapshot('volunteering', await response.json());
     }).catch((error) => console.error('Public volunteering information could not be saved:', error));
+    apiFetch(apiUrl('/api/timetable'), { credentials: 'omit', priority: 'low' }).then(async (response) => {
+      if (!response.ok) throw new Error(`Could not download the public timetable (${response.status}).`);
+      savePublicSnapshot('timetable', await response.json());
+    }).catch((error) => console.error('Public timetable could not be saved:', error));
     try {
       registration = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
       if (!active) return;

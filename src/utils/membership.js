@@ -30,6 +30,7 @@ export const justgoUploadCanRetry = (upload) => !['submitted', 'processing', 're
 export const membershipActivity = (fields, now = new Date()) => {
   if (fields.membershipAccessEndsAt !== undefined && fields.membershipAccessEndsAt !== null && millis(fields.membershipAccessEndsAt) <= now.getTime()) return 'inactive';
   if (!/^active$/i.test(String(fields.status || ''))) return 'inactive';
+  if (fields.lifetimeMembership) return 'active';
   const validUntil = fields.membershipAccessEndsAt !== undefined && fields.membershipAccessEndsAt !== null
     ? Math.min(millis(fields.validUntil) || Infinity, millis(fields.membershipAccessEndsAt)) : millis(fields.validUntil);
   if (validUntil && validUntil <= now.getTime()) return 'expired';

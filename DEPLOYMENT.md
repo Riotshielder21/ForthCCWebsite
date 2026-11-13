@@ -86,7 +86,7 @@ gcloud projects add-iam-policy-binding fccwebsite-23cfc --member serviceAccount:
   git fetch && git checkout live/web-admin-edit && git rebase origin/main && git push --force-with-lease
   ```
 
-- **Trip discounts.** Admins set the amount, qualifying products, checkout name and trip-card wording in **Reports & records → Trip discounts**, saved to `settings/tripDiscounts`. Until first saved, £10 off applies for annual boat hire and a coaching subscription.
+- **Service trip discounts.** Admins set the amount, qualifying products, checkout name and trip-card wording in **Reports & records → Credits & discounts → Service trip discounts**, saved to `settings/tripDiscounts`. Until first saved, £10 off applies for annual boat hire and a coaching subscription.
 - **Credits.** **Reports & records → Credit items** records items paid outside the website (bank transfer, cash, cheque, other) or given free. It calls `POST /api/admin/credits`, which runs the same checks and fulfilment as checkout. Credited orders cannot be refunded through Stripe.
 
 ## Live Mode

@@ -68,6 +68,8 @@ import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
 import { registerReceiptEmailRoutes } from './src/server/receiptEmail.js';
 import { registerWelcomeEmailRoutes } from './src/server/welcomeEmail.js';
 import { registerTripDiscountRoutes } from './src/server/tripDiscounts.js';
+import { registerTimetableRoutes } from './src/server/timetable.js';
+import { registerLifetimeMembershipRoutes } from './src/server/lifetimeMembership.js';
 import { registerRenewalRoutes } from './src/server/renewals.js';
 import { registerKeyAccessRoutes } from './src/server/keyAccess.js';
 import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemActions.js';
@@ -319,7 +321,7 @@ const toMembershipRecord = (document) => {
     justgo: data.justgoSyncStatus === 'synced' || data.renewalMethod === 'justgo',
     renewalMethod: data.renewalMethod || '', justgoSyncStatus: data.justgoSyncStatus || '', lastJustgoSync: data.lastJustgoSync?.toMillis() || 0,
     stripeMembershipSubscriptionId: data.stripeMembershipSubscriptionId || '', stripeMembershipMode: data.stripeMembershipMode || '',
-    familyTier: data.membershipTier === 'family'
+    familyTier: data.membershipTier === 'family', lifetimeMembership: Boolean(data.lifetimeMembership)
   };
 };
 
@@ -363,7 +365,7 @@ const findMembership = async (person, now = new Date()) => {
     conflict: result.conflict, reason: result.reason,
     contactHouseholdId: matchingHouseholds.length === 1 ? matchingHouseholds[0].id : '',
     existing: match ? { id: match.id, householdId: match.householdId, family: Boolean(match.familyTier && match.householdId),
-      active: activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil, clubYears: match.clubYears || [], contactOnly: match.contactOnly } : null
+      active: activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil, lifetime: match.lifetimeMembership, clubYears: match.clubYears || [], contactOnly: match.contactOnly } : null
   };
 };
 
@@ -1830,6 +1832,7 @@ registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, 
 registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
 registerNoticeRoutes(app, { requireAdmin, db: () => adminDb });
 const { settleKeyAccess, notifyKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message) });
+registerLifetimeMembershipRoutes(app, { requireAdmin, db: () => adminDb });
 const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
   adjustVolunteerSubscriptions: (membershipId) => adjustVolunteerSubscriptions(membershipId),
@@ -1858,6 +1861,7 @@ registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => 
 registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadReceiptPersonFields, receiptPeopleWithRecords } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
 const { sendDueWelcomeEmails } = registerWelcomeEmailRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), attention });
+registerTimetableRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadTripDiscounts } = registerTripDiscountRoutes(app, { requireAdmin, db: () => adminDb,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
@@ -2568,9 +2572,9 @@ const startCheckout = async (req, res, credit = null) => {
       // bought next year (which covers this year too from 8 February). Records from before club years were recorded
       // count as this year's.
       const currentClubYear = clubYearOf(now);
-      const coversNextYear = Boolean(existing?.active && existing.validUntil >= nextYearEnd);
+      const coversNextYear = Boolean(existing?.active && (existing.lifetime || existing.validUntil >= nextYearEnd));
       const heldYears = existing?.clubYears || [];
-      const coversThisYear = Boolean(existing?.active && (!heldYears.length || heldYears.some((year) => year <= currentClubYear)
+      const coversThisYear = Boolean(existing?.active && (existing.lifetime || !heldYears.length || heldYears.some((year) => year <= currentClubYear)
         || (coversNextYear && now >= clubYearDates(currentClubYear).membershipSaleEnds)));
       const covers = (part) => part === 'this' ? coversThisYear : coversNextYear;
       const neededParts = membershipPartsNeeded(lines, person, now).filter((part) => !covers(part));
@@ -2586,7 +2590,9 @@ const startCheckout = async (req, res, credit = null) => {
         const renewalOpen = now >= clubYearDates(clubYearOf(now)).renewalOpens;
         return res.status(409).json({
           code: existing.justgo ? 'renews_via_justgo' : 'membership_active', personIds: [person.id],
-          error: existing.justgo
+          error: existing.lifetime
+            ? `${name} has a lifetime membership, so no membership is needed. Remove the membership from your basket; add-ons can still be bought.`
+            : existing.justgo
             ? `${name} is already an active member and renews through JustGo, so no membership is needed here. Remove the membership from your basket; add-ons can still be bought.`
             : `${name} is already an active member until ${new Date(existing.validUntil).toLocaleDateString('en-GB', { timeZone: 'Europe/London' })}. ${renewalOpen && !coversNextYear
               ? `To renew, choose club year ${clubYearLabel(clubYearOf(now) + 1)} only for the membership in your basket.`

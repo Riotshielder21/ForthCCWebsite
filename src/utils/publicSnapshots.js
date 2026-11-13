@@ -1,6 +1,7 @@
 const validators = {
   products: (value) => Array.isArray(value) && value.every((product) => product && typeof product.id === 'string'),
-  volunteering: (value) => value && typeof value.content?.title === 'string' && Array.isArray(value.tiers)
+  volunteering: (value) => value && typeof value.content?.title === 'string' && Array.isArray(value.tiers),
+  timetable: (value) => value && Array.isArray(value.days)
 };
 
 export function readPublicSnapshot(key) {

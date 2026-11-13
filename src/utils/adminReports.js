@@ -37,9 +37,9 @@ const statusDate = (value) => {
   return iso ? new Date(iso) : null;
 };
 
-export const MEMBERSHIP_STATUSES = ['Active', 'Active (no expiry)', 'Awaiting renewal', 'Pending', 'Unavailable', 'Expired', 'Suspended', 'No FCC membership', 'Revoked', 'No'];
+export const MEMBERSHIP_STATUSES = ['Active', 'Active (lifetime)', 'Active (no expiry)', 'Awaiting renewal', 'Pending', 'Unavailable', 'Expired', 'Suspended', 'No FCC membership', 'Revoked', 'No'];
 
-const CONTROLLED_DETAIL_FIELDS = new Set(['items', 'people', 'history', 'keyAccess', 'keyAccessReason']);
+const CONTROLLED_DETAIL_FIELDS = new Set(['items', 'people', 'history', 'keyAccess', 'keyAccessReason', 'lifetime']);
 export const reportDetailEntries = (record) => Object.entries(record || {}).filter(([key]) => !CONTROLLED_DETAIL_FIELDS.has(key));
 
 /**
@@ -55,6 +55,7 @@ export const membershipStatus = (fields, now = new Date(), justgoSync = { health
   if (accessEnds && accessEnds <= now) return 'Revoked';
   const recorded = String(fields.status || '');
   if (recorded && !/^(active|expired)$/i.test(recorded)) return recorded;
+  if (fields.lifetimeMembership && /^active$/i.test(recorded)) return 'Active (lifetime)';
   const expiry = statusDate(fields.validUntil || fields.expiry);
   if (!recorded && !expiry) return 'No';
   const managedByJustgo = fields.renewalMethod === 'justgo' || fields.justgoSyncStatus === 'synced';
@@ -176,6 +177,8 @@ export const membershipReport = (id, fields, now = new Date(), household = field
     id, name: `${fields.firstName || ''} ${fields.lastName || ''}`.trim() || fields.name || '', email: household.email || fields.email || '',
     keyAccess: hasKeyAccess(fields) ? 'Granted' : fields.keyAccess?.revokedAt ? 'Revoked' : 'Not granted',
     keyAccessReason: fields.keyAccess?.reason || '',
+    lifetime: fields.lifetimeMembership ? { grantedAt: reportDate(fields.lifetimeMembership.grantedAt), grantedBy: fields.lifetimeMembership.grantedBy || '',
+      reason: fields.lifetimeMembership.reason || '' } : null,
     affiliationNumber: fields.affiliationNumber || '', membershipNumber: fields.membershipNumber || '', tier: fields.membershipTier || '',
     includedWith: fields.membershipIncludedWith?.name || '',
     status: membershipStatus(fields, now, justgoSync),
