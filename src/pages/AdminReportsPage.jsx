@@ -10,7 +10,6 @@ import MonthlyPayments from '../components/MonthlyPayments';
 import GdprErasurePanel from '../components/GdprErasurePanel';
 import EmailSettingsPanel from '../components/EmailSettingsPanel';
 import TripDiscountsPanel from '../components/TripDiscountsPanel';
-import RenewalsPanel from '../components/RenewalsPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
 import CheckinSessionsPanel from '../components/CheckinSessionsPanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
@@ -24,7 +23,6 @@ import CreditItemsPanel from '../components/CreditItemsPanel';
 const RECORD_TABS = [[Users, 'members', 'Member register'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Repeat, 'subscribers', 'Stripe subscribers']];
 // Settings tabs show a single panel instead of a records table.
 const SETTINGS_TABS = [[Banknote, 'credit-items', 'Credit items', CreditItemsPanel], [Mail, 'emails', 'Emails', EmailSettingsPanel], [Percent, 'trip-discounts', 'Trip discounts', TripDiscountsPanel],
-  [Repeat, 'renewals', 'Renewal emails', RenewalsPanel],
   [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [CalendarClock, 'checkin-sessions', 'Check-in sessions', CheckinSessionsPanel],
   [KeyRound, 'boathouse', 'Boathouse code', BoathouseCodePanel], [ShieldCheck, 'admins', 'Website admins', AdminAccessPanel]];
 
