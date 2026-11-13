@@ -13,6 +13,7 @@ test('sessions are cleaned and checked before saving', () => {
   for (const [bad, message] of [
     [[session({ name: ' ' })], /needs a name/], [[session({ weekday: 7 })], /Choose a day/], [[session({ start: '25:00' })], /start time/],
     [[session({ end: '17:00' })], /end after/], [[session({ seasonStart: 4 })], /both the first and last month/], ['nope', /not valid/],
+    [[session({ seasonStart: 13, seasonEnd: 14 })], /valid season months/], [[session({ seasonStart: true, seasonEnd: true })], /valid season months/],
     [Array.from({ length: TIMETABLE_LIMITS.sessions + 1 }, () => session()), /or fewer/]
   ]) assert.match(validateTimetable(bad).error, message);
 });

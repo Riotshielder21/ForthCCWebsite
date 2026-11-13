@@ -454,7 +454,7 @@ export default function App() {
       case 'admin-reports':
         return <AdminReportsPage onNavigate={setCurrentPage} />;
       case 'beginners':
-        return <BeginnersPage onNavigate={setCurrentPage} />;
+        return <BeginnersPage onNavigate={setCurrentPage} products={products} />;
       case 'disciplines':
         return <DisciplinesPage />;
       case 'volunteering':

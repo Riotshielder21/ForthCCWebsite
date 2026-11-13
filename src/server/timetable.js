@@ -8,8 +8,15 @@ import { rateLimit } from './rateLimit.js';
  */
 export const registerTimetableRoutes = (app, { requireAdmin, db }) => {
   const reference = () => db().collection('settings').doc('timetable');
-  const adminView = (data = {}) => ({ sessions: Array.isArray(data.sessions) ? data.sessions : DEFAULT_TIMETABLE,
-    updatedAt: data.updatedAt?.toMillis?.() || 0, updatedBy: data.updatedBy || '' });
+  const adminView = (data = {}) => {
+    const result = validateTimetable(data.sessions === undefined ? DEFAULT_TIMETABLE : data.sessions);
+    if (result.error) throw new Error(`Saved timetable is invalid: ${result.error}`);
+    return {
+      sessions: result.value,
+      updatedAt: data.updatedAt?.toMillis?.() || 0,
+      updatedBy: data.updatedBy || ''
+    };
+  };
 
   app.get('/api/timetable', rateLimit(60, 60 * 1000), async (req, res) => {
     try {

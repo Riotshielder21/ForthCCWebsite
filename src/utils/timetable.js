@@ -18,7 +18,12 @@ export const DEFAULT_TIMETABLE = [
 ];
 
 const text = (value, max) => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '';
-const month = (value) => Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 12 ? Number(value) : null;
+const month = (value) => {
+  if (value === '' || value === null || value === undefined) return { value: null };
+  if (typeof value !== 'number' && typeof value !== 'string') return { error: true };
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 12 ? { value: parsed } : { error: true };
+};
 
 /** Checks the admin's regular sessions; returns `{ value }` with clean sessions or `{ error }`. */
 export function validateTimetable(sessions) {
@@ -35,8 +40,11 @@ export function validateTimetable(sessions) {
     if (!TIME.test(session.start || '')) return { error: `Enter a start time for ${name}.` };
     const end = session.end || '';
     if (end && (!TIME.test(end) || end <= session.start)) return { error: `${name} must end after it starts.` };
-    const seasonStart = month(session.seasonStart);
-    const seasonEnd = month(session.seasonEnd);
+    const parsedSeasonStart = month(session.seasonStart);
+    const parsedSeasonEnd = month(session.seasonEnd);
+    if (parsedSeasonStart.error || parsedSeasonEnd.error) return { error: `Choose valid season months for ${name}.` };
+    const seasonStart = parsedSeasonStart.value;
+    const seasonEnd = parsedSeasonEnd.value;
     if (Boolean(seasonStart) !== Boolean(seasonEnd)) return { error: `Choose both the first and last month for ${name}, or neither for all year.` };
     value.push({ name, discipline: text(session.discipline, TIMETABLE_LIMITS.discipline), weekday, start: session.start, end,
       seasonStart, seasonEnd, location: text(session.location, TIMETABLE_LIMITS.location), notes: text(session.notes, TIMETABLE_LIMITS.notes),

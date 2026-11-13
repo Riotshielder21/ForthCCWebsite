@@ -96,7 +96,7 @@ export const PAGE_CONTENT = {
       openUrl: field('Open night booking URL', 'https://events.humanitix.com/host/forth-canoe-club'),
       clubEyebrow: field('Club night tile label', 'Members Only'),
       clubTitle: field('Club night tile heading', 'Club Night'),
-      clubBody: field('Club night tile text', "After joining, come down for regular uncoached paddling sessions on Thursdays between April and October. Works best if you've attended an intro course or several open nights first. Boat hire £10 per session, or £70 per year for regular paddlers.", true),
+      clubBody: field('Club night tile text', "After joining, come down for regular uncoached paddling sessions on Thursdays between April and October. Works best if you've attended an intro course or several open nights first.", true),
       clubNote: field('Club night note', 'No need to book — just check club emails to confirm sessions are running.', true),
       coursesEyebrow: field('Courses tile label', 'Guided Learning'),
       coursesTitle: field('Courses tile heading', 'Paddle Courses'),

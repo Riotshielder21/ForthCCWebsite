@@ -15,6 +15,7 @@ export default function TimetablePanel({ adminUser }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const request = useCallback(async (options = {}) => {
     const token = await adminUser.getIdToken();
@@ -23,16 +24,37 @@ export default function TimetablePanel({ adminUser }) {
     const result = await response.json().catch(() => null);
     if (!result) throw new Error('The API server did not respond. For local development set VITE_API_BASE_URL (see DEVELOPMENT.md).');
     if (!response.ok) throw new Error(result.error || 'Timetable request failed.');
+    if (!Array.isArray(result.sessions)) throw new Error('Invalid timetable response.');
     return result;
   }, [adminUser]);
   const load = (result) => {
     setSaved(result);
     setSessions(withKeys(result.sessions));
+    setError('');
   };
 
   useEffect(() => {
-    request().then(load).catch((loadError) => setError(loadError.message));
+    let active = true;
+    request().then((result) => {
+      if (active) load(result);
+    }).catch((loadError) => {
+      if (active) setError(loadError.message);
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
   }, [request]);
+
+  const retryLoad = async () => {
+    setLoading(true);
+    try {
+      load(await request());
+    } catch (loadError) {
+      setError(loadError.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const save = async (event) => {
     event.preventDefault();
@@ -90,10 +112,14 @@ export default function TimetablePanel({ adminUser }) {
       {!sessions.length && saved && <p className="text_container">No regular sessions yet, so the Disciplines page does not show a timetable.</p>}
       {saved?.updatedAt > 0 && <p className="text_container text_container_note SpaceT4">Last changed {new Date(saved.updatedAt).toLocaleString('en-GB')} by {saved.updatedBy}.</p>}
       {saved && !saved.updatedAt && <p className="text_container text_container_note SpaceT4">These are the starting sessions, taken from the old Disciplines tile text; nothing has been saved yet. Check the summer and winter months for Sprint & marathon.</p>}
-      {message && <p className="StatusText StatusTextSuccess">{message}</p>}{error && <p className="StatusText StatusTextError">{error}</p>}
+      {message && <p className="StatusText StatusTextSuccess">{message}</p>}
+      {error && <div>
+        <p className="StatusText StatusTextError" role="alert">{error}</p>
+        {!saved && <button type="button" className="EditorCommand" disabled={loading} onClick={retryLoad}>{loading ? 'Loading…' : 'Try again'}</button>}
+      </div>}
       <div className="CheckinSessionSaveActions">
-        <button type="button" className="EditorCommand" disabled={!saved || busy || sessions.length >= TIMETABLE_LIMITS.sessions} onClick={() => setSessions((current) => [...current, blankSession()])}>Add session</button>
-        <button type="submit" className="EditorCommand" disabled={!saved || busy}><CalendarClock size={16} /> {busy ? 'Saving…' : 'Save timetable'}</button>
+      <button type="button" className="EditorCommand" disabled={!saved || busy || loading || sessions.length >= TIMETABLE_LIMITS.sessions} onClick={() => setSessions((current) => [...current, blankSession()])}>Add session</button>
+      <button type="submit" className="EditorCommand" disabled={!saved || busy || loading}><CalendarClock size={16} /> {busy ? 'Saving…' : 'Save timetable'}</button>
       </div>
     </form>
   </section>;
