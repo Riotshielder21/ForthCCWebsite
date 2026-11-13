@@ -8,7 +8,7 @@ import CustomerVouchers from '../components/CustomerVouchers';
 import ReasonInput from '../components/ReasonInput';
 import MonthlyPayments from '../components/MonthlyPayments';
 import GdprErasurePanel from '../components/GdprErasurePanel';
-import ReceiptEmailPanel from '../components/ReceiptEmailPanel';
+import EmailSettingsPanel from '../components/EmailSettingsPanel';
 import TripDiscountsPanel from '../components/TripDiscountsPanel';
 import RenewalsPanel from '../components/RenewalsPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
@@ -23,7 +23,7 @@ import CreditItemsPanel from '../components/CreditItemsPanel';
 // Member register is the authoritative list, so it comes first.
 const RECORD_TABS = [[Users, 'members', 'Member register'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Repeat, 'subscribers', 'Stripe subscribers']];
 // Settings tabs show a single panel instead of a records table.
-const SETTINGS_TABS = [[Banknote, 'credit-items', 'Credit items', CreditItemsPanel], [Mail, 'receipt-emails', 'Receipt emails', ReceiptEmailPanel], [Percent, 'trip-discounts', 'Trip discounts', TripDiscountsPanel],
+const SETTINGS_TABS = [[Banknote, 'credit-items', 'Credit items', CreditItemsPanel], [Mail, 'emails', 'Emails', EmailSettingsPanel], [Percent, 'trip-discounts', 'Trip discounts', TripDiscountsPanel],
   [Repeat, 'renewals', 'Renewal emails', RenewalsPanel],
   [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [CalendarClock, 'checkin-sessions', 'Check-in sessions', CheckinSessionsPanel],
   [KeyRound, 'boathouse', 'Boathouse code', BoathouseCodePanel], [ShieldCheck, 'admins', 'Website admins', AdminAccessPanel]];

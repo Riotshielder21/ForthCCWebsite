@@ -66,6 +66,7 @@ import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
 import { registerEventRosterRoutes } from './src/server/eventRosters.js';
 import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
 import { registerReceiptEmailRoutes } from './src/server/receiptEmail.js';
+import { registerWelcomeEmailRoutes } from './src/server/welcomeEmail.js';
 import { registerTripDiscountRoutes } from './src/server/tripDiscounts.js';
 import { registerRenewalRoutes } from './src/server/renewals.js';
 import { registerKeyAccessRoutes } from './src/server/keyAccess.js';
@@ -452,7 +453,7 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
         ...(order.noticeAgreement ? { notices: { ...order.noticeAgreement, orderRef, by: 'purchaser' } } : {})
       },
       ...(membershipLine || includedLine ? { status: 'active', validUntil, clubYears: FieldValue.arrayUnion(...new Set([...(person.heldClubYears || []), ...coveredYears])), membershipTier: membershipLine ? membershipLine.membershipTier || '' : grantedTier, justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
-      ...(membershipLine || includedLine ? { membershipAccessEndsAt: FieldValue.delete() } : {}),
+      ...(membershipLine || includedLine ? { membershipAccessEndsAt: FieldValue.delete(), welcomeEmailDue: true } : {}),
       ...(previous && previous.source !== 'website' && previous.validUntil && !previous.membershipBeforeWebsite
         ? { membershipBeforeWebsite: { validUntil: previous.validUntil, source: previous.source || 'imported' } } : {}),
       ...(includedLine ? { membershipIncludedWith: { productId: includedLine.id, name: includedLine.name, orderRef } } : {}),
@@ -681,6 +682,7 @@ const deliverOrder = async (orderRef, given) => {
     }
   }
   catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
+  let receiptError = null;
   try {
     const emailSent = await sendOrderEmail({ email: fields.email, orderRef, receiptToken: fields.receiptToken, items: fields.items, people: fields.people, totalPence: fields.totalPence,
       vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode, payment: fields.payment });
@@ -688,8 +690,12 @@ const deliverOrder = async (orderRef, given) => {
     if (!emailSent) throw new Error('Receipt email is not configured.');
   } catch (error) {
     await updateFirestoreOrder(orderRef, { 'fulfilment.emailSendingUntil': null });
-    throw error;
+    receiptError = error;
   }
+  // Sent after the receipt; a member whose welcome cannot go now is picked up by the scheduled job.
+  await sendDueWelcomeEmails({ membershipIds: (fields.people || []).map((person) => person.membershipId) })
+    .catch((error) => console.error('Could not send welcome emails for %s: %s', orderRef, error.message));
+  if (receiptError) throw receiptError;
 };
 
 // While a club-year subscription waits for its first debit, its period ends at that debit.
@@ -1851,6 +1857,7 @@ registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
 registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });
 registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadReceiptPersonFields, receiptPeopleWithRecords } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
+const { sendDueWelcomeEmails } = registerWelcomeEmailRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), attention });
 const { loadTripDiscounts } = registerTripDiscountRoutes(app, { requireAdmin, db: () => adminDb,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),

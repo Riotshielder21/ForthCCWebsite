@@ -57,6 +57,8 @@ def person(number, first, last, dob, email, valid_until, member_id, *, guardian=
     }
 
 
+make_person = person
+
 ids = {key: str(uuid.uuid4()) for key in ("alex", "ahead", "new", "junior", "missing", "gone", "bad")}
 far, past = datetime.date(2099, 3, 1), datetime.date(2020, 3, 1)
 people = [
@@ -138,6 +140,23 @@ assert "justgoProfile" not in bad.get().to_dict(), "an unusable but still listed
 beat = heartbeat.get().to_dict()
 assert beat["problemCount"] == 1 and beat["problems"][0]["justgoMemberId"] == ids["bad"] and beat["membersUnlinked"] == 0, beat
 
+# Welcome emails: the first sync is a baseline import; later renewals and new joiners are flagged once per term.
+assert not alex.get("welcomeEmailDue") and not june.get("welcomeEmailDue"), "the first sync imports existing members without welcome emails"
+number_joiner, joiner_email = f"{base}7", f"joiner.{run}@example.test"
+joiner = make_person(number_joiner, "Jo", "Joiner", "1992-04-04", joiner_email, far, str(uuid.uuid4()))
+people[0] = {**people[0], "validUntil": datetime.date(2100, 3, 1)}
+people.append(joiner)
+snapshot["listedIds"].add(joiner["memberId"])
+asyncio.run(sync.sync_snapshot_to_firestore(snapshot))
+assert website.get().to_dict().get("welcomeEmailDue") is True, "a JustGo renewal after the first sync is due a welcome email"
+joiner_record = only_record(number_joiner)
+assert joiner_record.to_dict().get("welcomeEmailDue") is True, "someone who joins through JustGo is due a welcome email"
+assert not ahead.get().to_dict().get("welcomeEmailDue"), "a membership JustGo has not renewed is not flagged"
+website.update({"welcomeEmailDue": False})
+asyncio.run(sync.sync_snapshot_to_firestore(snapshot))
+assert website.get().to_dict().get("welcomeEmailDue") is False, "a repeat sync of the same term does not ask again"
+people.pop()
+
 # A Paddle Scotland suspension blocks club activity even while a website renewal waits for upload.
 people[1] = {**people[1], "suspended": True, "suspension": "Full", "status": "Suspended"}
 asyncio.run(sync.sync_snapshot_to_firestore(snapshot))
@@ -152,4 +171,6 @@ created.delete()
 sync.db.collection("households").document(person["householdId"]).delete()
 junior_record.reference.delete()
 sync.db.collection("households").document(june["householdId"]).delete()
+sync.db.collection("households").document(joiner_record.to_dict()["householdId"]).delete()
+joiner_record.reference.delete()
 print("JustGo sync checks passed: linking, no duplicates, website data preserved, gaps filled, credentials, unlinks, suspensions, repeatable.")

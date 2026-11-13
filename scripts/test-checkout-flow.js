@@ -2622,6 +2622,62 @@ await test('replaying a webhook does not duplicate records or emails', async () 
   assert.equal((await db.collection('testMail').where('orderRef', '==', shared.familyOrder).get()).size, 1);
 });
 
+await test('new and renewing members get the admin-written welcome email once per term', async () => {
+  const path = '/api/admin/welcome-email';
+  const welcomeMail = async (membershipId) => (await db.collection('testMail').where('membershipId', '==', membershipId).get()).docs
+    .map((document) => document.data()).filter((mail) => mail.kind === 'welcome-email');
+  const paragraph = (content) => ({ type: 'doc', content: [{ type: 'paragraph', content }] });
+  assert.equal((await call('GET', path)).status, 401);
+  assert.equal((await call('POST', path, { headers: admin, body: { enabled: true, subject: 'Hi', doc: { type: 'doc', content: [{ type: 'image', attrs: { src: 'https://x.test/a.png' } }] } } })).status, 400);
+  const saved = await call('POST', path, { headers: admin, body: { enabled: true, subject: 'Welcome {{firstName}}',
+    doc: paragraph([{ type: 'text', text: 'Hello {{firstName}} <script>', marks: [{ type: 'bold' }, { type: 'link', attrs: { href: 'javascript:alert(1)' } }] }]) } });
+  assert.equal(saved.status, 200, saved.text);
+  assert.deepEqual(saved.json.doc.content[0].content[0].marks, [{ type: 'bold' }], 'unsafe links are dropped when saved');
+  const draft = await call('POST', `${path}/test`, { headers: admin, body: { subject: 'Draft {{firstName}}', doc: paragraph([{ type: 'text', text: 'Draft' }]) } });
+  assert.equal(draft.status, 200, draft.text);
+  assert.equal(draft.json.sentTo, 'admin@forthcanoeclub.co.uk');
+  try {
+    const address = email('welcome');
+    await buy(address, build(['membership-adult'], [adultDetails({ email: address, firstName: 'Wendy' })]));
+    const [member] = await membershipsFor(address);
+    const [mail] = await welcomeMail(member.id);
+    assert.equal(mail.subject, 'Welcome Wendy');
+    assert.equal(mail.email, address);
+    assert.match(mail.html, /<strong>Hello Wendy &lt;script&gt;<\/strong>/);
+    assert.doesNotMatch(mail.html, /<script|javascript:/);
+    assert.equal(member.welcomeEmailDue, false);
+    assert.equal(member.welcomeEmail.sentFor, member.validUntil.toMillis());
+
+    // The JustGo sync flags the same term again (for example on a repeat run): nothing more is sent.
+    const job = (secret = process.env.RENEWAL_JOB_TOKEN) => call('POST', '/api/jobs/welcome-emails', { body: {}, headers: { Authorization: `Bearer ${secret}` } });
+    assert.equal((await job('wrong-token-wrong-token-wrong-token-00')).status, 401);
+    await db.collection('memberships').doc(member.id).update({ welcomeEmailDue: true });
+    assert.equal((await job()).status, 200);
+    assert.equal((await welcomeMail(member.id)).length, 1, 'one welcome per term');
+    assert.equal((await db.collection('memberships').doc(member.id).get()).data().welcomeEmailDue, false);
+
+    // Someone who joins through JustGo is flagged by the sync and welcomed by the job, at the household (guardian) email.
+    const guardianEmail = email('welcome-guardian');
+    const household = await db.collection('households').add({ contactName: 'Guardian Person', email: guardianEmail });
+    const joiner = await db.collection('memberships').add({ firstName: 'Jess', lastName: 'Joiner', householdId: household.id, status: 'active',
+      membershipTier: 'junior', validUntil: new Date(Date.now() + 200 * 24 * 60 * 60 * 1000), source: 'justgo', welcomeEmailDue: true });
+    assert.equal((await job()).status, 200);
+    const [joined] = await welcomeMail(joiner.id);
+    assert.equal(joined.email, guardianEmail);
+    assert.equal(joined.subject, 'Welcome Jess');
+
+    // Switched off: due members are cleared rather than emailed later when it is switched back on.
+    assert.equal((await call('POST', path, { headers: admin, body: { ...saved.json, enabled: false } })).status, 200);
+    const later = await db.collection('memberships').add({ firstName: 'Late', lastName: 'Joiner', householdId: household.id, status: 'active',
+      validUntil: new Date(Date.now() + 200 * 24 * 60 * 60 * 1000), welcomeEmailDue: true });
+    assert.equal((await job()).status, 200);
+    assert.equal((await welcomeMail(later.id)).length, 0);
+    assert.equal((await later.get()).data().welcomeEmailDue, false);
+  } finally {
+    await db.collection('settings').doc('welcomeEmail').delete();
+  }
+});
+
 const failed = results.filter((entry) => !entry.ok);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
 if (failed.length) { for (const entry of failed) console.log(`\n${entry.name}\n${entry.error.stack}`); process.exit(1); }

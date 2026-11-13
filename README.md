@@ -10,7 +10,7 @@ How the club website works: what each part does and where its code lives. To run
 | API | Cloud Run (`europe-west2`) | Express ([server.js](server.js), [src/server/](src/server/)). Answers only `/api/...` and `/health`: payments, webhooks, emails, reports and every private read or write. |
 | Database | Firestore | All records. Browsers can read only `products` and `notices`, and only club admins can write `products` ([firestore.rules](firestore.rules)). Everything else goes through the API. |
 | Files | Firebase Storage | Uploaded images ([storage.rules](storage.rules)). |
-| Scheduled jobs | Cloud Scheduler + Cloud Run jobs | `fcc-renewals` (renewal emails, 1 and 15 February), `fcc-justgo-sync` (daily) and `fcc-justgo-upload` (hourly). See [scheduled-jobs.sh](scripts/scheduled-jobs.sh). The API also runs two hourly tasks itself: event attendee lists and policy wording versions. |
+| Scheduled jobs | Cloud Scheduler + Cloud Run jobs | `fcc-renewals` (renewal emails, 1 and 15 February), `fcc-welcome-emails` (daily welcome emails for JustGo joiners and renewals), `fcc-justgo-sync` (daily) and `fcc-justgo-upload` (hourly). See [scheduled-jobs.sh](scripts/scheduled-jobs.sh). The API also runs two hourly tasks itself: event attendee lists and policy wording versions. |
 | Payments | Stripe | Checkout (card and Bacs Direct Debit), monthly subscriptions, refunds. Results arrive through the Stripe webhook. Only test keys are accepted for now. |
 | Email, forms | Google Workspace | Sends all emails; admin-created forms save to Google Sheets in a club-year folder on the Shared Drive. |
 | Page content | GitHub | Admin page edits become a review pull request into `main`. |

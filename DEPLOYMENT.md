@@ -59,6 +59,7 @@ scripts/scheduled-jobs.sh setup <deploy-account-email>
 This enables the APIs, creates the `fcc-scheduled-jobs` service account (Firestore access, starts the jobs), creates `renewal-job-token` if missing and grants the API and deploy accounts access. The deploy account also gets Cloud Scheduler admin and permission to act as the jobs account. Then add the real JustGo secret with `gcloud secrets versions add justgo-api-secret --data-file=-` before enabling JustGo.
 
 Cloud Scheduler job `fcc-renewals` posts to `/api/jobs/renewals` at 09:00 London on 1 and 15 February with the `renewal-job-token`.
+Cloud Scheduler job `fcc-welcome-emails` posts to `/api/jobs/welcome-emails` at 06:00 London daily (after the JustGo sync) with the same token, sending the welcome email to members who joined or renewed through JustGo.
 
 **Outage alerts.** Every deployment sets up the **FCC API health** uptime check and **FCC API outage** email policy. The deploy account first needs:
 
