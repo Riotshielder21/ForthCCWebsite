@@ -54,7 +54,7 @@ export default function TimetablePanel({ adminUser }) {
 
   return <section className="main_tile SpaceT6">
     <div className="AdminListHeader"><div><span className="tile_eyebrow">Public website</span><h3 className="tile_heading_bold_2">Weekly timetable</h3></div></div>
-    <p className="text_container SpaceB4">The club's regular sessions, shown to everyone on the What's on page and at the bottom of the Disciplines page, grouped by day in time order. Untick "Show on the website" to hide a session without deleting it. This does not change check-ins; one-off events and courses stay in the shop.</p>
+    <p className="text_container SpaceB4">The club's regular sessions, shown to everyone at the bottom of the Disciplines page, grouped by day in time order. Untick "Show on the website" to hide a session without deleting it. This does not change check-ins; one-off events and courses stay in the shop.</p>
     <form onSubmit={save}>
       {sessions.map((session, index) => <fieldset className="CheckinSessionCard" key={session.key}>
         <legend className="FormLabel">{session.name || 'New session'}{!session.active && ' (hidden)'}</legend>

@@ -29,7 +29,6 @@ const HomePage = lazy(pageModules.home);
 const MembershipPage = lazy(pageModules.membership);
 const BeginnersPage = lazy(pageModules.beginners);
 const DisciplinesPage = lazy(pageModules.disciplines);
-const WhatsOnPage = lazy(pageModules['whats-on']);
 const VolunteeringPage = lazy(pageModules.volunteering);
 const AboutPage = lazy(pageModules.about);
 const ContactUsPage = lazy(pageModules['contact-us']);
@@ -458,8 +457,6 @@ export default function App() {
         return <BeginnersPage onNavigate={setCurrentPage} />;
       case 'disciplines':
         return <DisciplinesPage />;
-      case 'whats-on':
-        return <WhatsOnPage />;
       case 'volunteering':
         return <VolunteeringPage products={products} />;
       case 'club-night':
