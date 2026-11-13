@@ -42,7 +42,7 @@ export default function TimetablePanel({ adminUser }) {
     try {
       load(await request({ method: 'PUT', body: JSON.stringify({ sessions: sessions.map(({ key: _key, ...session }) => ({ ...session,
         weekday: Number(session.weekday), seasonStart: session.seasonStart ? Number(session.seasonStart) : null, seasonEnd: session.seasonEnd ? Number(session.seasonEnd) : null })) }) }));
-      setMessage('Timetable saved. The Disciplines page shows it straight away.');
+      setMessage('Timetable saved. The What\'s on and Disciplines pages show it straight away.');
     } catch (saveError) {
       setError(saveError.message);
     } finally {
@@ -54,7 +54,7 @@ export default function TimetablePanel({ adminUser }) {
 
   return <section className="main_tile SpaceT6">
     <div className="AdminListHeader"><div><span className="tile_eyebrow">Public website</span><h3 className="tile_heading_bold_2">Weekly timetable</h3></div></div>
-    <p className="text_container SpaceB4">The club's regular sessions, shown to everyone at the bottom of the Disciplines page, grouped by day in time order. Untick "Show on the website" to hide a session without deleting it. This does not change check-ins; one-off events and courses stay in the shop.</p>
+    <p className="text_container SpaceB4">The club's regular sessions, shown to everyone on the What's on page and at the bottom of the Disciplines page, grouped by day in time order. Untick "Show on the website" to hide a session without deleting it. This does not change check-ins; one-off events and courses stay in the shop.</p>
     <form onSubmit={save}>
       {sessions.map((session, index) => <fieldset className="CheckinSessionCard" key={session.key}>
         <legend className="FormLabel">{session.name || 'New session'}{!session.active && ' (hidden)'}</legend>
@@ -89,6 +89,7 @@ export default function TimetablePanel({ adminUser }) {
       </fieldset>)}
       {!sessions.length && saved && <p className="text_container">No regular sessions yet, so the Disciplines page does not show a timetable.</p>}
       {saved?.updatedAt > 0 && <p className="text_container text_container_note SpaceT4">Last changed {new Date(saved.updatedAt).toLocaleString('en-GB')} by {saved.updatedBy}.</p>}
+      {saved && !saved.updatedAt && <p className="text_container text_container_note SpaceT4">These are the starting sessions, taken from the old Disciplines tile text; nothing has been saved yet. Check the summer and winter months for Sprint & marathon.</p>}
       {message && <p className="StatusText StatusTextSuccess">{message}</p>}{error && <p className="StatusText StatusTextError">{error}</p>}
       <div className="CheckinSessionSaveActions">
         <button type="button" className="EditorCommand" disabled={!saved || busy || sessions.length >= TIMETABLE_LIMITS.sessions} onClick={() => setSessions((current) => [...current, blankSession()])}>Add session</button>

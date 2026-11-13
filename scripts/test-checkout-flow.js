@@ -2669,7 +2669,11 @@ await test('admins publish the weekly timetable and the public sees only active 
   } finally {
     await db.collection('settings').doc('timetable').delete();
   }
-  assert.deepEqual((await call('GET', '/api/timetable')).json.days, []);
+  const fallback = (await call('GET', '/api/timetable')).json.days;
+  assert.deepEqual(fallback.map((day) => day.day), ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sunday'], 'until saved, the starting timetable is shown');
+  const unsaved = await call('GET', path, { headers: admin });
+  assert.equal(unsaved.json.updatedAt, 0);
+  assert.equal(unsaved.json.sessions.length, 6);
 });
 
 await test('new and renewing members get the admin-written welcome email once per term', async () => {

@@ -5,6 +5,18 @@ export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', '
 export const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+const regular = (name, discipline, weekday, start, extra = {}) => ({ name, discipline, weekday, start, end: '', seasonStart: null, seasonEnd: null,
+  location: '', notes: '', active: true, ...extra });
+/** Used until admins first save the timetable: the times previously written into the Disciplines tiles. */
+export const DEFAULT_TIMETABLE = [
+  regular('Advanced polo', 'Canoe polo', 1, '18:00'),
+  regular('Slalom training', 'Slalom', 2, '19:00', { location: 'On the canal' }),
+  regular('Intermediate polo', 'Canoe polo', 3, '19:00'),
+  regular('Sprint & marathon', 'Sprint & Marathon', 4, '18:00', { seasonStart: 4, seasonEnd: 9 }),
+  regular('Beginner-friendly polo', 'Canoe polo', 5, '18:00'),
+  regular('Sprint & marathon', 'Sprint & Marathon', 0, '14:00', { seasonStart: 10, seasonEnd: 3 })
+];
+
 const text = (value, max) => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '';
 const month = (value) => Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 12 ? Number(value) : null;
 

@@ -5,7 +5,7 @@ import { readPublicSnapshot, savePublicSnapshot } from '../utils/publicSnapshots
 import { seasonLabel, timeLabel } from '../utils/timetable';
 
 /** The club's regular weekly sessions, as set by admins under Reports & records → Sessions & timetable. */
-export default function Timetable() {
+export default function Timetable({ emptyMessage = '' }) {
   const [snapshot] = useState(() => readPublicSnapshot('timetable'));
   const [days, setDays] = useState(snapshot?.days || null);
   const [offline, setOffline] = useState(false);
@@ -28,7 +28,7 @@ export default function Timetable() {
 
   if (days === null) return offline ? null : <p className="text_container SpaceT6" role="status">Loading timetable…</p>;
   // Nothing to show until admins publish sessions, so the section stays hidden rather than looking empty.
-  if (!days.length) return null;
+  if (!days.length) return emptyMessage ? <p className="text_container SpaceT6">{emptyMessage}</p> : null;
 
   return <section className="main_tile SpaceT6 Timetable" aria-labelledby="timetable-heading">
     <span className="tile_eyebrow"><CalendarClock className="IconSm" /> Regular sessions</span>

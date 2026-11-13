@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { publicTimetable, seasonLabel, timeLabel, TIMETABLE_LIMITS, validateTimetable } from './timetable.js';
+import { readFileSync } from 'node:fs';
+import { DEFAULT_TIMETABLE, publicTimetable, seasonLabel, timeLabel, TIMETABLE_LIMITS, validateTimetable } from './timetable.js';
 
 const session = (over = {}) => ({ name: 'Polo training', weekday: 1, start: '18:00', ...over });
 
@@ -23,6 +24,14 @@ test('the public timetable lists active sessions by day, Monday first, in time o
   ]).value);
   assert.deepEqual(days.map((day) => [day.day, day.sessions.map((entry) => entry.name)]), [['Monday', ['Early polo', 'Late polo']], ['Sunday', ['Sunday paddle']]]);
   assert.equal('active' in days[0].sessions[0], false);
+});
+
+test('the starting timetable is valid and holds the times that used to be in the Disciplines tiles', () => {
+  assert.deepEqual(validateTimetable(DEFAULT_TIMETABLE).value, DEFAULT_TIMETABLE);
+  const [monday] = publicTimetable(DEFAULT_TIMETABLE);
+  assert.deepEqual(monday.sessions.map((entry) => [entry.name, entry.start]), [['Advanced polo', '18:00']]);
+  const disciplines = JSON.parse(readFileSync(new URL('../../public/content/pages/disciplines.json', import.meta.url), 'utf8'));
+  for (const key of ['slalomBody', 'poloBody', 'sprintBody']) assert.doesNotMatch(disciplines[key], /\d{1,2}:\d{2}/, `${key} has no session times`);
 });
 
 test('seasons and times read naturally', () => {

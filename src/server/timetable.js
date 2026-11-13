@@ -1,5 +1,5 @@
 import { Timestamp } from 'firebase-admin/firestore';
-import { publicTimetable, validateTimetable } from '../utils/timetable.js';
+import { DEFAULT_TIMETABLE, publicTimetable, validateTimetable } from '../utils/timetable.js';
 import { rateLimit } from './rateLimit.js';
 
 /**
@@ -8,7 +8,7 @@ import { rateLimit } from './rateLimit.js';
  */
 export const registerTimetableRoutes = (app, { requireAdmin, db }) => {
   const reference = () => db().collection('settings').doc('timetable');
-  const adminView = (data = {}) => ({ sessions: Array.isArray(data.sessions) ? data.sessions : [],
+  const adminView = (data = {}) => ({ sessions: Array.isArray(data.sessions) ? data.sessions : DEFAULT_TIMETABLE,
     updatedAt: data.updatedAt?.toMillis?.() || 0, updatedBy: data.updatedBy || '' });
 
   app.get('/api/timetable', rateLimit(60, 60 * 1000), async (req, res) => {
