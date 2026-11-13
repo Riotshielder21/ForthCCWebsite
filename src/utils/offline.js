@@ -32,11 +32,9 @@ export function prepareOfflineSite(onStatus) {
         const worker = registration.installing;
         worker?.addEventListener('statechange', () => {
           if (worker.state === 'redundant') notify('unavailable');
-          if (worker.state === 'installed' && registration.waiting) notify('update');
         });
       });
-      if (registration.waiting) notify('update');
-      else check();
+      check();
     } catch (error) {
       console.error('Offline public-page setup failed:', error);
       notify('unavailable');

@@ -3,7 +3,6 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PUBLIC_ROUTES, relativeClubLink } from '../src/utils/routes.js';
 
-const publicPageNames = ['HomePage', 'MembershipPage', 'BeginnersPage', 'DisciplinesPage', 'VolunteeringPage', 'AboutPage', 'ContactUsPage', 'AccessProjectPage'];
 const contentIds = Object.values(PUBLIC_ROUTES).map((route) => route.content).filter(Boolean);
 
 function localImages(directory, root = directory) {
@@ -12,6 +11,15 @@ function localImages(directory, root = directory) {
     const path = join(directory, entry.name);
     return entry.isDirectory() ? localImages(path, root)
       : /\.(webp|png|jpe?g|svg)$/i.test(entry.name) ? [`/images/${path.slice(root.length + 1)}`] : [];
+  });
+}
+
+/** The page component behind every public route, read from pageModules.js so the two lists cannot drift apart. */
+export function publicPageNames(source = readFileSync('src/pages/pageModules.js', 'utf8')) {
+  const modules = Object.fromEntries([...source.matchAll(/'?([\w-]+)'?\s*:\s*\(\)\s*=>\s*import\('\.\/(\w+)'\)/g)].map(([, page, name]) => [page, name]));
+  return Object.keys(PUBLIC_ROUTES).map((page) => {
+    if (!modules[page]) throw new Error(`Public route "${page}" has no entry in src/pages/pageModules.js.`);
+    return modules[page];
   });
 }
 
@@ -49,8 +57,11 @@ export default function publicSiteBuild() {
         }
       };
       Object.values(bundle).filter((file) => file.type === 'chunk' && file.isEntry).forEach((file) => include(file.fileName));
-      for (const name of publicPageNames) {
-        Object.values(bundle).filter((file) => file.type === 'chunk' && file.name === name).forEach((file) => include(file.fileName));
+      for (const name of publicPageNames()) {
+        const chunks = Object.values(bundle).filter((file) => file.type === 'chunk' && file.name === name);
+        // Every public route must be readable offline, so refuse to build rather than ship a page without its code.
+        if (!chunks.length) throw new Error(`No build chunk for public page ${name}; it would not be available offline.`);
+        chunks.forEach((file) => include(file.fileName));
       }
       const imageUrls = new Set(localImages('public/images'));
       for (const id of contentIds) {
