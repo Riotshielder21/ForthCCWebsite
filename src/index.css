@@ -1831,13 +1831,9 @@
 .WelcomeEditorContent hr { border: 0; border-top: 1px solid var(--fcc-color-border); margin: 1rem 0; }
 .WelcomeEditorContent a { color: #0b3153; text-decoration: underline; }
 .WelcomePlaceholders { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-.SettingsJumpList { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
-.SettingsJumpLink { display: inline-flex; align-items: center; min-height: 36px; padding: 0.35rem 0.9rem; border: 1px solid var(--fcc-color-border);
-  border-radius: 999px; background: var(--fcc-color-surface); color: var(--fcc-color-ink); font-size: 0.85rem; font-weight: 700; text-decoration: none; }
-.SettingsJumpLink:hover { background: var(--fcc-color-surface-subtle); border-color: var(--fcc-color-ink); }
-.SettingsJumpLink:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: 2px; }
-.SettingsSection { scroll-margin-top: calc(var(--site-header-height, 0px) + 1rem); }
-.SettingsSection:focus { outline: none; }
+.BinderPanel > * { margin-top: 0; border: 1px solid var(--fcc-color-border); border-radius: 0 0.75rem 0.75rem 0.75rem;
+  box-shadow: 0 10px 30px -18px rgba(0, 33, 71, 0.45); }
+.BinderPanel[hidden] { display: none; }
 .ProductChips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .ProductChip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.35rem 0.25rem 0.75rem; border: 1px solid var(--fcc-color-border);
   border-radius: 999px; background: var(--fcc-color-surface-subtle); font-size: 0.85rem; font-weight: 700; }

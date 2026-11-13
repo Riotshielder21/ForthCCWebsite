@@ -31,23 +31,35 @@ const SETTINGS_TABS = [[Banknote, 'credits-discounts', 'Credits & discounts', [[
   [HeartHandshake, 'volunteers', 'Volunteers', [['volunteers', 'Volunteers', VolunteersPanel]]], [CalendarClock, 'sessions', 'Sessions & timetable', [['checkin-sessions', 'Check-in sessions', CheckinSessionsPanel], ['timetable', 'Weekly timetable', TimetablePanel]]],
   [KeyRound, 'boathouse', 'Boathouse code', [['boathouse', 'Boathouse code', BoathouseCodePanel]]], [ShieldCheck, 'admins', 'Website admins', [['admins', 'Website admins', AdminAccessPanel]]]];
 
-/** A tab's configurators; with more than one, a heading lists them as links that scroll to each. */
+/** A tab's configurators; with more than one, binder-style sub-tabs show one at a time (the others stay mounted to keep unsaved edits). */
 const SettingsSections = ({ title, sections, adminUser }) => {
-  const jump = (event, id) => {
-    event.preventDefault();
-    const section = document.getElementById(`settings-${id}`);
-    section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    section?.focus({ preventScroll: true });
+  const [selected, setSelected] = useState(sections[0][0]);
+  const tabs = useRef({});
+  if (sections.length === 1) {
+    const [[, , Panel]] = sections;
+    return <Panel adminUser={adminUser} />;
+  }
+  const choose = (index) => {
+    const [id] = sections[(index + sections.length) % sections.length];
+    setSelected(id);
+    tabs.current[id]?.focus();
   };
-  return <>
-    {sections.length > 1 && <nav className="SettingsJump SpaceT6" aria-label={`${title} sections`}>
-      <h3 className="tile_heading_bold_2">{title}</h3>
-      <ul className="SettingsJumpList">{sections.map(([id, label]) => <li key={id}>
-        <a className="SettingsJumpLink" href={`#settings-${id}`} onClick={(event) => jump(event, id)}>{label}</a>
-      </li>)}</ul>
-    </nav>}
-    {sections.map(([id, label, Panel]) => <section key={id} id={`settings-${id}`} className="SettingsSection" tabIndex={-1} aria-label={label}><Panel adminUser={adminUser} /></section>)}
-  </>;
+  const onKeyDown = (event, index) => {
+    const moves = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: sections.length - 1 };
+    if (!Object.hasOwn(moves, event.key)) return;
+    event.preventDefault();
+    choose(moves[event.key]);
+  };
+  return <div className="SpaceT6">
+    <div className="NoticeTabs" role="tablist" aria-label={`${title} settings`}>
+      {sections.map(([id, label], index) => <button key={id} ref={(node) => { tabs.current[id] = node; }} id={`settings-tab-${id}`} type="button" role="tab"
+        className="NoticeTab" aria-selected={selected === id} aria-controls={`settings-${id}`} tabIndex={selected === id ? 0 : -1}
+        onClick={() => setSelected(id)} onKeyDown={(event) => onKeyDown(event, index)}>{label}</button>)}
+    </div>
+    {sections.map(([id, , Panel]) => <div key={id} id={`settings-${id}`} role="tabpanel" aria-labelledby={`settings-tab-${id}`} className="BinderPanel" hidden={selected !== id}>
+      <Panel adminUser={adminUser} />
+    </div>)}
+  </div>;
 };
 
 const detailValue = (value) => {
@@ -351,7 +363,7 @@ export default function AdminReportsPage({ onNavigate }) {
         setKind(id); setSourceFilter('all'); setTierFilter('all'); setIncludesFilter('all'); setRenewalFilter('all'); setEventFilter('all'); setEventPeriod('current'); setPlanFilter('all'); setPurchaseType('all'); setPaidVia('all'); setStatus(id === 'members' ? 'Active' : id === 'subscribers' ? 'Active' : 'all'); setPurchaseType('all'); setSearch(''); setMessage('');
       }}><Icon size={18} /> {label}</button>)}
     </div>
-    {settingsSections ? <SettingsSections title={settingsTab[2]} sections={settingsSections} adminUser={adminUser} /> : <>
+    {settingsSections ? <SettingsSections key={kind} title={settingsTab[2]} sections={settingsSections} adminUser={adminUser} /> : <>
     {kind === 'events' && <div className="ReportsTabs" role="tablist" aria-label="Event period">
       {[['current', 'Current events'], ['past', 'Past events']].map(([id, label]) => <button key={id} role="tab" aria-selected={eventPeriod === id} className={eventPeriod === id ? 'is-selected' : ''} onClick={() => {
         setEventPeriod(id); setEventFilter('all');
