@@ -34,10 +34,29 @@ function publishedImages(value) {
   });
 }
 
+/**
+ * Served as /sw.js by the dev server. A browser that once ran a production build on the same localhost port still has
+ * that worker serving old pages; its next update check installs this one, which clears the offline copy and removes itself.
+ */
+export const DEV_WORKER_REMOVER = `self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => event.waitUntil((async () => {
+  for (const name of await caches.keys()) if (name.startsWith('fcc-public-')) await caches.delete(name);
+  await self.registration.unregister();
+  for (const client of await self.clients.matchAll({ type: 'window' })) client.navigate(client.url);
+})()));
+`;
+
 export default function publicSiteBuild() {
   return {
     name: 'public-site-offline-build',
     enforce: 'post',
+    configureServer(server) {
+      server.middlewares.use('/sw.js', (req, res) => {
+        res.setHeader('Content-Type', 'text/javascript');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(DEV_WORKER_REMOVER);
+      });
+    },
     generateBundle() {
       for (const id of contentIds) {
         const name = `content/pages/${id}.json`;

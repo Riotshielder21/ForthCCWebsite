@@ -2,7 +2,17 @@ import { apiUrl, apiFetch } from './api';
 import { savePublicSnapshot } from './publicSnapshots';
 
 export function prepareOfflineSite(onStatus) {
-  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return () => {};
+  if (!('serviceWorker' in navigator)) return () => {};
+  if (!import.meta.env.PROD) {
+    // A worker left by a production build on this localhost port would keep serving that build instead of the dev server.
+    navigator.serviceWorker.getRegistrations().then(async (registrations) => {
+      if (!registrations.length) return;
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+      for (const name of await caches.keys()) if (name.startsWith('fcc-public-')) await caches.delete(name);
+      window.location.reload();
+    }).catch((error) => console.error('Could not remove a leftover service worker:', error));
+    return () => {};
+  }
   let active = true;
   let timer;
   let registration;
