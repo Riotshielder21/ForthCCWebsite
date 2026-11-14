@@ -22,22 +22,25 @@ import KeyAccessControl from '../components/KeyAccessControl';
 import LifetimeMembershipControl from '../components/LifetimeMembershipControl';
 import NeedsAttentionPanel from '../components/NeedsAttentionPanel';
 import CreditItemsPanel from '../components/CreditItemsPanel';
+import DiscountCodesPanel from '../components/DiscountCodesPanel';
+import FormsPanel from '../components/FormsPanel';
 
 // Member register is the authoritative list, so it comes first.
 const RECORD_TABS = [[Users, 'members', 'Member register'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Repeat, 'subscribers', 'Stripe subscribers']];
 // Settings tabs show their configurators instead of a records table: [section id, label, panel].
-const SETTINGS_TABS = [[Banknote, 'credits-discounts', 'Credits & discounts', [['credit-items', 'Credit items', CreditItemsPanel], ['trip-discounts', 'Service trip discounts', TripDiscountsPanel]]],
+const SETTINGS_TABS = [[Banknote, 'credits-discounts', 'Credits & discounts', [['credit-items', 'Credit items', CreditItemsPanel], ['discount-codes', 'Discount codes', DiscountCodesPanel], ['trip-discounts', 'Service trip discounts', TripDiscountsPanel]]],
+  [FileText, 'forms', 'Forms', [['forms', 'Forms', FormsPanel]]],
   [Mail, 'emails', 'Emails', [['welcome-email', 'Welcome email', WelcomeEmailPanel], ['renewal-emails', 'Renewal emails', RenewalsPanel], ['receipt-email', 'Receipt email details', ReceiptEmailPanel]]],
   [HeartHandshake, 'volunteers', 'Volunteers', [['volunteers', 'Volunteers', VolunteersPanel]]], [CalendarClock, 'sessions', 'Sessions & timetable', [['checkin-sessions', 'Check-in sessions', CheckinSessionsPanel], ['timetable', 'Weekly timetable', TimetablePanel]]],
   [KeyRound, 'boathouse', 'Boathouse code', [['boathouse', 'Boathouse code', BoathouseCodePanel]]], [ShieldCheck, 'admins', 'Website admins', [['admins', 'Website admins', AdminAccessPanel]]]];
 
 /** A tab's configurators; with more than one, binder-style sub-tabs show one at a time (the others stay mounted to keep unsaved edits). */
-const SettingsSections = ({ title, sections, adminUser }) => {
+const SettingsSections = ({ title, sections, adminUser, products }) => {
   const [selected, setSelected] = useState(sections[0][0]);
   const tabs = useRef({});
   if (sections.length === 1) {
     const [[, , Panel]] = sections;
-    return <Panel adminUser={adminUser} />;
+    return <Panel adminUser={adminUser} products={products} />;
   }
   const choose = (index) => {
     const [id] = sections[(index + sections.length) % sections.length];
@@ -57,7 +60,7 @@ const SettingsSections = ({ title, sections, adminUser }) => {
         onClick={() => setSelected(id)} onKeyDown={(event) => onKeyDown(event, index)}>{label}</button>)}
     </div>
     {sections.map(([id, , Panel]) => <div key={id} id={`settings-${id}`} role="tabpanel" aria-labelledby={`settings-tab-${id}`} className="BinderPanel" hidden={selected !== id}>
-      <Panel adminUser={adminUser} />
+      <Panel adminUser={adminUser} products={products} />
     </div>)}
   </div>;
 };
@@ -85,7 +88,7 @@ const download = (name, text) => {
 
 const justgoSyncWarning = (sync) => `JustGo sync ${sync.lastSuccessAt ? `last completed on ${new Date(sync.lastSuccessAt).toLocaleString('en-GB')}` : 'has not reported a completed run'}, so it may have stopped working. JustGo members it has not confirmed this club year show as Unavailable rather than Expired, because their renewal cannot be checked. Check the JustGo sync job and API.`;
 
-export default function AdminReportsPage({ onNavigate }) {
+export default function AdminReportsPage({ onNavigate, products }) {
   const { adminUser, authReady } = usePageEditor();
   const [kind, setKind] = useState('members');
   const [records, setRecords] = useState([]);
@@ -363,7 +366,7 @@ export default function AdminReportsPage({ onNavigate }) {
         setKind(id); setSourceFilter('all'); setTierFilter('all'); setIncludesFilter('all'); setRenewalFilter('all'); setEventFilter('all'); setEventPeriod('current'); setPlanFilter('all'); setPurchaseType('all'); setPaidVia('all'); setStatus(id === 'members' ? 'Active' : id === 'subscribers' ? 'Active' : 'all'); setPurchaseType('all'); setSearch(''); setMessage('');
       }}><Icon size={18} /> {label}</button>)}
     </div>
-    {settingsSections ? <SettingsSections key={kind} title={settingsTab[2]} sections={settingsSections} adminUser={adminUser} /> : <>
+    {settingsSections ? <SettingsSections key={kind} title={settingsTab[2]} sections={settingsSections} adminUser={adminUser} products={products} /> : <>
     {kind === 'events' && <div className="ReportsTabs" role="tablist" aria-label="Event period">
       {[['current', 'Current events'], ['past', 'Past events']].map(([id, label]) => <button key={id} role="tab" aria-selected={eventPeriod === id} className={eventPeriod === id ? 'is-selected' : ''} onClick={() => {
         setEventPeriod(id); setEventFilter('all');

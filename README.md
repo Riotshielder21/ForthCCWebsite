@@ -28,6 +28,8 @@ Deployment is [.github/workflows/firebase-hosting.yml](.github/workflows/firebas
 
 **Service trip discounts.** Single-day trips are cheaper for each attendee who holds, or is buying, a qualifying service or subscription this club year. Admins set the rules in **Reports & records → Credits & discounts → Service trip discounts**; the basket and checkout both price through the API, so the total shown is what Stripe charges ([tripDiscount.js](src/utils/tripDiscount.js)). Qualifying products cannot be removed from the shop.
 
+**Discount codes and forms.** Discount codes and voucher spending rules are managed under **Reports & records → Credits & discounts → Discount codes**. The existing form creator is under **Reports & records → Forms**; it creates a response spreadsheet in the current club-year folder on the Shared Drive. These forms currently appear on the Contact page; configurable placement and richer form editing are future work.
+
 **Monthly receipts.** Each paid monthly debit emails the payer a club receipt listing the items paid under the person each is for, once per Stripe invoice. Subscriptions set up outside this site on the same Stripe account are receipted too.
 
 **Failed payments.** Stripe retries. The site emails the member on each failure, and on the last one sends links to restart the monthly payments or confirm they are stopping. A failed one-off bank payment gets retry and cancel links. Each case appears under **Needs attention** for staff ([attention.js](src/server/attention.js)).

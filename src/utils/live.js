@@ -9,6 +9,7 @@ export const REQUIRED_LIVE_POLICIES = [
   ['privacy-notice', 'privacy notice'],
   ['data-retention', 'data retention policy'],
   ['first-aid-and-safety', 'first aid and safety statement'],
+  ['terms-of-sale', 'terms of sale'],
   ['participation-disclaimer', 'participation disclaimer']
 ];
 

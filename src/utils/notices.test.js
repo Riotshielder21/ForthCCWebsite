@@ -49,9 +49,9 @@ const notices = [
   { id: 'draft', title: 'Draft', order: 3, currentVersion: 0 }
 ];
 
-test('only published, active notices are shown and agreed to, in order', () => {
-  assert.deepEqual(publishedNotices(notices).map((notice) => notice.id), ['privacy-notice', 'terms']);
-  assert.deepEqual(noticeVersionMap(notices), { 'privacy-notice': 3, terms: 2 });
+test('all published notices remain shown and agreed to, in order', () => {
+  assert.deepEqual(publishedNotices(notices).map((notice) => notice.id), ['privacy-notice', 'terms', 'old']);
+  assert.deepEqual(noticeVersionMap(notices), { 'privacy-notice': 3, terms: 2, old: 1 });
 });
 
 test('checkout agreement must match the current versions', () => {
@@ -64,6 +64,10 @@ test('checkout agreement must match the current versions', () => {
   assert.match(changed.error, /Privacy/);
   assert.equal(checkNoticeAgreement(notices, { terms: 2 }).code, 'notices_changed');
   assert.deepEqual(checkNoticeAgreement(notices, { 'privacy-notice': 3, terms: 2, old: 1 }), {
-    versions: [{ noticeId: 'privacy-notice', version: 3, title: 'Privacy' }, { noticeId: 'terms', version: 2, title: 'Terms' }]
+    versions: [
+      { noticeId: 'privacy-notice', version: 3, title: 'Privacy' },
+      { noticeId: 'terms', version: 2, title: 'Terms' },
+      { noticeId: 'old', version: 1, title: 'Old' }
+    ]
   });
 });

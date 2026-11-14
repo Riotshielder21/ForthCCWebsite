@@ -47,6 +47,13 @@ export function relativeClubLink(value) {
   return resolveRoute(url.href).url;
 }
 
+export function isSamePageHashLink(currentHref, targetHref) {
+  const current = new URL(currentHref, 'https://forthcanoeclub.co.uk');
+  const target = new URL(targetHref, current);
+  return target.origin === current.origin && target.pathname === current.pathname
+    && target.search === current.search && Boolean(target.hash);
+}
+
 export function interceptLink(event, origin) {
   if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return null;
   const anchor = event.target.closest?.('a[href]');
@@ -54,6 +61,7 @@ export function interceptLink(event, origin) {
     || anchor.closest('[contenteditable="true"], [data-editor-control]')) return null;
   const url = new URL(anchor.href);
   if (url.origin !== origin || !['http:', 'https:'].includes(url.protocol)) return null;
+  if (isSamePageHashLink(window.location.href, url.href)) return null;
   const route = resolveRoute(url.href);
   if (route.page === 'not-found' || route.preview) return null;
   return route;
