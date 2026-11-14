@@ -41,7 +41,7 @@ function VersionHistory({ adminUser, notice }) {
   </details>;
 }
 
-function NoticeEditor({ notice, draft, preLive, tabs, onDraft, onDiscard, busy, onPublish }) {
+function NoticeEditor({ adminUser, notice, draft, preLive, tabs, onDraft, onDiscard, busy, onPublish }) {
   const textarea = useRef(null);
   const dirty = draft.isNew || draft.title !== notice?.title || draft.body !== notice?.body;
   const nextVersion = preLive ? 1 : (notice?.currentVersion || 0) + 1;
@@ -74,11 +74,13 @@ function NoticeEditor({ notice, draft, preLive, tabs, onDraft, onDiscard, busy, 
     </details>
     <p className="NoticeEditorHelp">Leave a blank line between paragraphs. Start a line with <code>## </code> for a heading, <code>### </code> for a smaller heading,
       <code>- </code> for a bullet or <code>1. </code> for a numbered item. Links: <code>[link text](https://…)</code>, <code>[text](/membership)</code> or <code>[email us](mailto:…)</code>.</p>
-    <div className="NoticeEditorActions">
+    <div className="NoticeVersionControls" data-editor-control="true">
+      <span className="NoticeControlLabel">Version and changes</span>
       <button type="button" className="EditorCommand EditorPublish" disabled={busy || !dirty || !draft.title.trim() || !draft.body.trim()} onClick={onPublish}>
         <Send size={16} /> {preLive ? 'Save version 1' : `Publish version ${nextVersion}`}
       </button>
       <button type="button" className="EditorCommand" disabled={busy || !dirty} onClick={onDiscard}><RotateCcw size={16} /> {draft.isNew ? 'Remove draft' : 'Discard changes'}</button>
+      {notice && !preLive && <VersionHistory adminUser={adminUser} notice={notice} />}
     </div>
     {dirty && <p className="NoticeEditorHelp">{preLive
       ? 'Preview below. Until the website goes live, each save replaces the working version 1. Version history starts at launch.'
@@ -126,6 +128,10 @@ export default function NoticesPage() {
   const shownTitle = canEdit && draft ? draft.title : selected?.title;
   const shownBody = ticked ? selected.body : canEdit && draft ? draft.body : notice?.body || '';
   const preLive = notice ? notice.preLive === true : liveMode !== true;
+
+  useEffect(() => {
+    if (selected) tabRefs.current[selected.id]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [selected?.id, tabs.length]);
 
   const select = (id, focus = false) => {
     setSelectedId(id);
@@ -187,10 +193,11 @@ export default function NoticesPage() {
     [ids[index], ids[target]] = [ids[target], ids[index]];
     run(() => reorderNotices(adminUser, ids), 'Order saved.');
   };
-  const loadDrafts = () => {
-    setDrafts((current) => ({ ...current, ...Object.fromEntries(missingDrafts.map((item) => [item.id, { title: item.title, body: item.body, isNew: true }])) }));
-    setStatus({ message: `${missingDrafts.length} drafted notice${missingDrafts.length === 1 ? '' : 's'} added. Check each one, edit it if needed and save it.`, error: '' });
-    if (missingDrafts[0]) select(missingDrafts[0].id);
+  const openDraft = (item) => {
+    const saved = state.all.find((noticeItem) => noticeItem.id === item.id);
+    setDraft(item.id, { title: saved?.title || item.title, body: saved?.body || item.body, isNew: true });
+    setStatus({ message: '', error: '' });
+    select(item.id);
   };
 
   return <div className="SectionContent PageFadeIn NoticesPage">
@@ -200,9 +207,13 @@ export default function NoticesPage() {
 
     {adminUser && <div className="NoticeAdminBar" data-editor-control="true">
       <label className="EditorModeSwitch"><input type="checkbox" checked={editing} onChange={(event) => setEditing(event.target.checked)} /> Edit notices</label>
-      {canEdit && missingDrafts.length > 0 && <button type="button" className="EditorCommand" disabled={busy} onClick={loadDrafts}>
-        <FilePlus2 size={16} /> Add drafted notices ({missingDrafts.map((item) => item.title).join(', ')})
-      </button>}
+      {canEdit && missingDrafts.length > 0 && <details className="NoticeDraftPicker" data-editor-control="true">
+        <summary><FilePlus2 size={16} /> Drafted notices ({missingDrafts.length})</summary>
+        <p className="NoticeEditorHelp">Choose a draft to view and edit it. Save it when you are ready.</p>
+        <div className="WelcomePlaceholders">
+          {missingDrafts.map((item) => <button key={item.id} type="button" className="EditorCommand" onClick={() => openDraft(item)}>{item.title}</button>)}
+        </div>
+      </details>}
       {busy && <span className="EditorStatus" role="status">Saving…</span>}
       {!busy && (status.message || status.error) && <span className={status.error ? 'EditorStatus EditorError' : 'EditorStatus'} role={status.error ? 'alert' : 'status'}>{status.error || status.message}</span>}
     </div>}
@@ -232,13 +243,18 @@ export default function NoticesPage() {
           </a>}
         </header>
         {canEdit && !ticked && <>
-          <NoticeEditor notice={notice} draft={draft || { title: shownTitle || '', body: shownBody }} preLive={preLive} tabs={tabs} busy={busy}
+          {notice && <fieldset className="NoticeOrderControls" data-editor-control="true">
+            <legend>Notice tab order</legend>
+            <span>These buttons change where this notice appears in the tab list.</span>
+            <button type="button" className="EditorCommand" disabled={busy || state.notices[0]?.id === notice.id} onClick={() => move(-1)}>
+              <ArrowLeft size={16} /> Move tab earlier
+            </button>
+            <button type="button" className="EditorCommand" disabled={busy || state.notices.at(-1)?.id === notice.id} onClick={() => move(1)}>
+              <ArrowRight size={16} /> Move tab later
+            </button>
+          </fieldset>}
+          <NoticeEditor adminUser={adminUser} notice={notice} draft={draft || { title: shownTitle || '', body: shownBody }} preLive={preLive} tabs={tabs} busy={busy}
             onDraft={(value) => setDraft(selected.id, value)} onDiscard={() => dropDraft(selected.id)} onPublish={publish} />
-          {notice && <div className="NoticeEditorActions" data-editor-control="true">
-            <button type="button" className="EditorIconButton" title="Move left" aria-label={`Move ${notice.title} left`} disabled={busy || state.notices[0]?.id === notice.id} onClick={() => move(-1)}><ArrowLeft size={18} /></button>
-            <button type="button" className="EditorIconButton" title="Move right" aria-label={`Move ${notice.title} right`} disabled={busy || state.notices.at(-1)?.id === notice.id} onClick={() => move(1)}><ArrowRight size={18} /></button>
-          </div>}
-          {notice && !preLive && <VersionHistory adminUser={adminUser} notice={notice} />}
         </>}
         {shownBody ? <NoticeDocument body={shownBody} /> : canEdit && <p className="NoticeEditorHelp">Write the notice above to see a preview here.</p>}
       </section>
