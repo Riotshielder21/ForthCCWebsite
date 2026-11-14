@@ -16,6 +16,7 @@ import { useSiteRoute } from './utils/useSiteRoute';
 import PageLoadBoundary from './components/PageLoadBoundary';
 import OfflineStatus from './components/OfflineStatus';
 import { loadPublishedPageContent } from './utils/publicContent';
+import { subscribeToProducts } from './utils/content';
 import { validateDiscountCode } from './utils/discountCodeApi';
 import { PageContentProvider } from './utils/PageContentContext';
 import { apiUrl, apiFetch } from './utils/api';
@@ -119,6 +120,13 @@ export default function App() {
   useEffect(() => loadPublishedPageContent((content) => setPageContent((current) => ({ ...current, ...content })), (error) => {
     console.error('Page content unavailable:', error);
   }, currentPage), [currentPage]);
+
+  // Admins see their own product saves straight away; public visitors use the availability response below.
+  const adminPage = currentPage === 'admin' || currentPage === 'admin-reports';
+  useEffect(() => adminPage ? subscribeToProducts((remoteProducts) => {
+    setProducts(remoteProducts);
+    setCatalogueLive(true);
+  }, (error) => console.error('Product catalog unavailable:', error)) : undefined, [adminPage]);
 
   const refreshAvailability = () => apiFetch(apiUrl('/api/availability'), { cache: 'no-store' })
     .then((response) => (response.ok ? response.json() : null))

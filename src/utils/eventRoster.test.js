@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bookingsClosed, eventShopState, sessionsLeft, rosterDue, rosterViewable, lastEventDate, cleanRosterViewers, MAX_ROSTER_VIEWERS, cleanEventDetails, kitStatus, KIT, NO_PHOTOS, buildRoster, rosterEmail } from './eventRoster.js';
+import { bookingsClosed, eventShopState, sessionsLeft, rosterDue, rosterViewable, lastEventDate, cleanRosterViewers, MAX_ROSTER_VIEWERS, cleanEventDetails, kitStatus, KIT, NO_PHOTOS, buildRoster, rosterEmail, isEventEmail } from './eventRoster.js';
 import { peopleNeedingMembership, requiresMembership } from './checkout.js';
 
 const schedule = { mode: 'single', startDate: '2027-05-10', startTime: '09:00', endTime: '17:00', days: 1, timeZone: 'Europe/London' };
@@ -114,6 +114,8 @@ test('leaders and named viewers can open the list while the event is in the shop
 test('extra roster viewers are unique, valid, lower-case emails', () => {
   assert.deepEqual(cleanRosterViewers([' Amy@Example.com', 'amy@example.com', '', 'bo@example.org']), ['amy@example.com', 'bo@example.org']);
   assert.deepEqual(cleanRosterViewers(undefined), []);
+  assert.equal(isEventEmail(' jack.watt@sky.com '), true);
+  for (const bad of ['', 'jack', 'jack@sky', '@sky.com', undefined]) assert.equal(isEventEmail(bad), false);
   assert.throws(() => cleanRosterViewers(['not-an-email']), /not-an-email is not a valid email/);
   assert.throws(() => cleanRosterViewers(Array.from({ length: MAX_ROSTER_VIEWERS + 1 }, (_, index) => `p${index}@example.com`)), /up to 10/);
 });

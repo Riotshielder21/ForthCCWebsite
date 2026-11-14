@@ -314,7 +314,7 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
               <label className="FormLabel">Leader email (shown in the shop)<input className="FormInput" type="email" maxLength={254} value={draft.leaderEmail || ''} onChange={(event) => updateDraft('leaderEmail', event.target.value)} /></label>
               <label className="FormLabel">Bookings close (end of this day)<input className="FormInput" type="date" max={draft.eventSchedule.startDate || undefined} value={draft.closeDate || ''} onChange={(event) => updateDraft('closeDate', event.target.value)} /></label>
               <p className="text_container text_container_note">When bookings close, the leader is emailed the attendee list once, with emergency contacts, medical details and who needs boat hire. Leave blank to keep bookings open.</p>
-              {selectedProduct && <EventRosterControl adminUser={adminUser} productId={selectedProduct} saved={Boolean(products.find((product) => product.id === selectedProduct)?.leaderEmail)} />}
+              {selectedProduct && <EventRosterControl adminUser={adminUser} productId={selectedProduct} leaderEmail={draft.leaderEmail} />}
             </fieldset>}
             {draft.category === 'MERCHANDISE' && <fieldset className="AdminEventSchedule">
               <legend className="tile_heading_bold_1">Sizes and stock</legend>
