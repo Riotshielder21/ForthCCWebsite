@@ -1822,7 +1822,7 @@
 .SafeguardingDownloads > li > div { display: grid; gap: 0.5rem; }
 .SafeguardingDocumentActions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem; }
 
-/* Notices: a row of tabs along the top; the selected tab joins the document panel below. */
+/* Notices: wrapping tabs and clearly separated editing controls. */
 .NoticesPage { max-width: 76rem; }
 .NoticeAdminBar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin: 1rem 0; }
 .NoticeLayout { margin-top: 2rem; }
@@ -1841,8 +1841,8 @@
 .NoticeDocument ol { list-style: decimal; padding-left: 1.5rem; }
 .NoticeDocument li + li { margin-top: 0.35rem; }
 .NoticeDocument a { color: #0369a1; text-decoration: underline; text-underline-offset: 2px; }
-.NoticeTabs { position: relative; z-index: 1; display: flex; gap: 0.25rem; overflow-x: auto; margin-bottom: -1px; padding-top: 0.25rem; }
-.NoticeTab { position: relative; flex: 0 0 auto; max-width: 16rem; padding: 0.75rem 1.1rem; text-align: left; font-weight: 700;
+.NoticeTabs { position: relative; z-index: 1; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.35rem 0.25rem; margin-bottom: -1px; padding-top: 0.25rem; }
+.NoticeTab { position: relative; flex: 0 1 auto; min-width: 0; max-width: min(16rem, 100%); padding: 0.75rem 1.1rem; text-align: left; white-space: normal; overflow-wrap: anywhere; font-weight: 700;
   font-size: 0.85rem; line-height: 1.25; color: var(--fcc-color-copy); background: var(--fcc-color-surface-subtle);
   border: 1px solid var(--fcc-color-border); border-bottom: none; border-radius: 0.6rem 0.6rem 0 0; box-shadow: inset 0 -1px 0 var(--fcc-color-border);
   transition: background-color 120ms ease, color 120ms ease; }
@@ -1854,7 +1854,12 @@
 .NoticeTextarea { min-height: 18rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; line-height: 1.5; }
 .NoticeEditorHelp { font-size: 0.8rem; color: var(--fcc-color-copy); }
 .NoticeEditorHelp code { padding: 0 0.2rem; border-radius: 0.25rem; background: var(--fcc-color-surface-subtle); }
-.NoticeEditorActions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+.NoticeVersionControls, .NoticeOrderControls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.NoticeVersionControls { padding: 0.75rem; border: 1px solid var(--fcc-color-border); border-radius: 0.6rem; background: var(--fcc-color-surface-subtle); }
+.NoticeControlLabel { width: 100%; font-size: 0.75rem; font-weight: 800; color: var(--fcc-color-copy); text-transform: uppercase; letter-spacing: 0.08em; }
+.NoticeOrderControls { margin: 0; padding: 0.75rem; border: 1px solid var(--fcc-color-border); border-radius: 0.6rem; }
+.NoticeOrderControls legend { padding: 0 0.35rem; font-size: 0.8rem; font-weight: 800; }
+.NoticeOrderControls > span { flex-basis: 100%; font-size: 0.8rem; color: var(--fcc-color-copy); }
 .WelcomeEditor { border: 1px solid var(--fcc-color-border); border-radius: 0.6rem; background: var(--fcc-color-surface); overflow: hidden; }
 .WelcomeEditorToolbar { display: flex; flex-wrap: wrap; gap: 0.25rem; padding: 0.5rem; border-bottom: 1px solid var(--fcc-color-border); background: var(--fcc-color-surface-subtle); }
 .WelcomeEditorToolbar .EditorIconButton { width: 36px; min-height: 36px; }
@@ -1894,13 +1899,17 @@
 .WelcomePlaceholders .EditorCommand { min-height: 32px; padding: 4px 10px; font-size: 0.8rem; }
 .WelcomePreview { display: block; width: 100%; height: 28rem; border: 1px solid var(--fcc-color-border); border-radius: 0.6rem; background: #f8fafc; }
 .NoticeAddForm { display: grid; max-width: 28rem; margin-top: 1.5rem; gap: 0.5rem; padding: 0.75rem; border: 1px dashed #94a3b8; border-radius: 0.6rem; }
-.NoticeHistory { margin: 0 0 1.5rem; padding: 0.75rem 1rem; border: 1px solid var(--fcc-color-border); border-radius: 0.6rem; background: var(--fcc-color-surface-subtle); font-size: 0.85rem; }
+.NoticeHistory { margin: 0; padding: 0.5rem 0.75rem; border: 1px solid var(--fcc-color-border); border-radius: 0.6rem; background: var(--fcc-color-surface); font-size: 0.85rem; }
 .NoticesPage > .NoticeHistory { margin-top: 1.5rem; }
 .NoticeHistory summary { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-weight: 800; }
 .NoticeHistoryList { display: grid; gap: 0.4rem; margin-top: 0.75rem; }
 .NoticeHistoryList li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; }
 @media (max-width: 760px) {
   .NoticePanel { padding: 1.5rem 1.25rem 2rem; }
+  .NoticeTabs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.35rem; margin-bottom: 0; }
+  .NoticeTab { justify-self: start; max-width: calc(100% - 1rem); border-bottom: 1px solid var(--fcc-color-border); border-radius: 0.6rem; box-shadow: none; }
+  .NoticeTab:nth-child(even) { justify-self: end; }
+  .NoticeTab[aria-selected="true"] { box-shadow: inset 0 3px 0 var(--fcc-color-accent); }
 }
 .CheckoutGrid input.FormInput, .CheckoutGrid select.FormInput,
 .FormFieldGrid input.FormInput, .FormFieldGrid select.FormInput { min-height: 3rem; }
