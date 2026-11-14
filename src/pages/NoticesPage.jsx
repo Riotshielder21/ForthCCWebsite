@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArrowLeft, ArrowRight, Download, FilePlus2, History, RotateCcw, Send } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Download, FilePlus2, History, RotateCcw, Send } from 'lucide-react';
 import { NoticeDocument } from '../components/NoticeDocument';
 import { usePageEditor } from '../utils/PageContentContext';
-import { NOTICE_ID_PATTERN, NOTICE_LIMITS, noticeIdFromTitle, sortNotices } from '../utils/notices';
-import { archiveNotice, loadNoticeVersions, noticePdfUrl, publishNotice, reorderNotices, watchPublishedNotices } from '../utils/noticesClient';
+import { NOTICE_ID_PATTERN, NOTICE_LIMITS, noticeIdFromTitle } from '../utils/notices';
+import { loadNoticeMode, loadNoticeVersions, noticePdfUrl, publishNotice, reorderNotices, watchPublishedNotices } from '../utils/noticesClient';
 import { DISCLAIMER, PHOTO_CONSENT } from '../constants/consentWording';
 import { NOTICE_DRAFTS } from '../constants/noticeDrafts';
 
@@ -41,9 +41,9 @@ function VersionHistory({ adminUser, notice }) {
   </details>;
 }
 
-function NoticeEditor({ notice, draft, onDraft, onDiscard, busy, onPublish }) {
+function NoticeEditor({ notice, draft, preLive, onDraft, onDiscard, busy, onPublish }) {
   const dirty = draft.isNew || draft.title !== notice?.title || draft.body !== notice?.body;
-  const nextVersion = (notice?.currentVersion || 0) + 1;
+  const nextVersion = preLive ? 1 : (notice?.currentVersion || 0) + 1;
   return <div className="NoticeEditor" data-editor-control="true">
     <label className="FormLabel">Title<input className="FormInput" maxLength={NOTICE_LIMITS.title} value={draft.title}
       onChange={(event) => onDraft({ ...draft, title: event.target.value })} /></label>
@@ -55,11 +55,13 @@ function NoticeEditor({ notice, draft, onDraft, onDiscard, busy, onPublish }) {
       <code>- </code> for a bullet or <code>1. </code> for a numbered item. Links: <code>[link text](https://…)</code>, <code>[text](/membership)</code> or <code>[email us](mailto:…)</code>.</p>
     <div className="NoticeEditorActions">
       <button type="button" className="EditorCommand EditorPublish" disabled={busy || !dirty || !draft.title.trim() || !draft.body.trim()} onClick={onPublish}>
-        <Send size={16} /> Publish version {nextVersion}
+        <Send size={16} /> {preLive ? 'Save version 1' : `Publish version ${nextVersion}`}
       </button>
       <button type="button" className="EditorCommand" disabled={busy || !dirty} onClick={onDiscard}><RotateCcw size={16} /> {draft.isNew ? 'Remove draft' : 'Discard changes'}</button>
     </div>
-    {dirty && <p className="NoticeEditorHelp">Preview below. Publishing makes version {nextVersion} live straight away, and people agree to it at their next checkout.</p>}
+    {dirty && <p className="NoticeEditorHelp">{preLive
+      ? 'Preview below. Until the website goes live, each save replaces the working version 1. Version history starts at launch.'
+      : `Preview below. Publishing makes version ${nextVersion} live straight away, and people agree to it at their next checkout.`}</p>}
   </div>;
 }
 
@@ -72,9 +74,16 @@ export default function NoticesPage() {
   const [newTitle, setNewTitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState({ message: '', error: '' });
+  const [liveMode, setLiveMode] = useState(null);
   const tabRefs = useRef({});
 
   useEffect(() => watchPublishedNotices(setState), []);
+  useEffect(() => {
+    let active = true;
+    loadNoticeMode().then((live) => { if (active) setLiveMode(live); })
+      .catch((error) => { if (active) setStatus({ message: '', error: error.message }); });
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     const follow = () => setSelectedId(hashId());
     window.addEventListener('hashchange', follow);
@@ -87,14 +96,15 @@ export default function NoticesPage() {
   const newDrafts = Object.entries(drafts).filter(([id, draft]) => draft.isNew && !publishedIds.has(id)).map(([id, draft]) => ({ id, title: draft.title || 'New notice', draft: true }));
   const tabs = useMemo(() => state.notices ? [...state.notices, ...(canEdit ? newDrafts : []), ...TICKED_STATEMENTS.filter((item) => !publishedIds.has(item.id))] : [],
     [state.notices, canEdit, drafts]);
-  const archived = sortNotices(state.all.filter((notice) => notice.archived));
-  const missingDrafts = NOTICE_DRAFTS.filter((item) => !publishedIds.has(item.id) && !drafts[item.id] && !archived.some((old) => old.id === item.id));
+  const allNoticeIds = new Set(state.all.map((item) => item.id));
+  const missingDrafts = NOTICE_DRAFTS.filter((item) => !allNoticeIds.has(item.id) && !drafts[item.id]);
   const selected = tabs.find((tab) => tab.id === selectedId) || tabs[0];
   const ticked = selected?.ticked === true;
   const notice = state.notices?.find((item) => item.id === selected?.id);
   const draft = selected && !ticked && drafts[selected.id];
   const shownTitle = canEdit && draft ? draft.title : selected?.title;
   const shownBody = ticked ? selected.body : canEdit && draft ? draft.body : notice?.body || '';
+  const preLive = notice ? notice.preLive === true : liveMode !== true;
 
   const select = (id, focus = false) => {
     setSelectedId(id);
@@ -115,8 +125,8 @@ export default function NoticesPage() {
     setBusy(true);
     setStatus({ message: '', error: '' });
     try {
-      await action();
-      setStatus({ message, error: '' });
+      const result = await action();
+      setStatus({ message: typeof message === 'function' ? message(result) : message, error: '' });
     } catch (error) {
       setStatus({ message: '', error: error.message });
     } finally {
@@ -131,37 +141,34 @@ export default function NoticesPage() {
     const title = newTitle.trim();
     const base = noticeIdFromTitle(title);
     if (!base) return setStatus({ message: '', error: 'Give the new notice a title with some letters or numbers.' });
-    const taken = new Set([...(state.notices || []).map((item) => item.id), ...Object.keys(drafts)]);
+    const taken = new Set([...allNoticeIds, ...Object.keys(drafts)]);
     let id = base;
     for (let suffix = 2; taken.has(id); suffix += 1) id = `${base.slice(0, 55)}-${suffix}`;
     if (!NOTICE_ID_PATTERN.test(id)) return setStatus({ message: '', error: 'Choose a shorter title for the new notice.' });
-    const previous = archived.find((item) => item.id === id);
-    setDraft(id, { title, body: previous?.body || '', isNew: true });
+    setDraft(id, { title, body: '', isNew: true });
     setNewTitle('');
-    setStatus({ message: previous ? `An archived notice used this name. Its last wording is loaded; publishing brings it back as a new version.` : '', error: '' });
+    setStatus({ message: '', error: '' });
     select(id);
   };
   const publish = () => run(async () => {
     const result = await publishNotice(adminUser, selected.id, draft);
     dropDraft(selected.id);
-    if (!result.changed) throw new Error('The wording is the same as the published version, so no new version was made.');
-  }, `${draft.title.trim()} published.`);
+    if (!result.changed) throw new Error('The wording is unchanged; nothing was saved.');
+    return result;
+  }, (result) => result.preLive
+    ? `${draft.title.trim()} saved as the editable version 1.`
+    : `${draft.title.trim()} published as version ${result.version}.`);
   const move = (direction) => {
     const ids = state.notices.map((item) => item.id);
     const index = ids.indexOf(notice.id);
     const target = index + direction;
     if (target < 0 || target >= ids.length) return;
     [ids[index], ids[target]] = [ids[target], ids[index]];
-    run(() => reorderNotices(adminUser, [...ids, ...archived.map((item) => item.id)]), 'Order saved.');
+    run(() => reorderNotices(adminUser, ids), 'Order saved.');
   };
-  const archive = () => {
-    if (!window.confirm(`Archive "${notice.title}"? It disappears from this page and from checkout. Its versions and everyone's agreement records are kept.`)) return;
-    run(async () => { await archiveNotice(adminUser, notice.id); dropDraft(notice.id); }, `${notice.title} archived.`);
-  };
-  const restore = (item) => run(() => publishNotice(adminUser, item.id, item), `${item.title} restored.`);
   const loadDrafts = () => {
     setDrafts((current) => ({ ...current, ...Object.fromEntries(missingDrafts.map((item) => [item.id, { title: item.title, body: item.body, isNew: true }])) }));
-    setStatus({ message: `${missingDrafts.length} drafted notice${missingDrafts.length === 1 ? '' : 's'} added. Check each one, edit it if needed and publish it.`, error: '' });
+    setStatus({ message: `${missingDrafts.length} drafted notice${missingDrafts.length === 1 ? '' : 's'} added. Check each one, edit it if needed and save it.`, error: '' });
     if (missingDrafts[0]) select(missingDrafts[0].id);
   };
 
@@ -196,22 +203,21 @@ export default function NoticesPage() {
         <header className="NoticePanelHeader">
           <div>
             <h2 className="NoticeTitle">{shownTitle || 'New notice'}</h2>
-            {notice && <p className="NoticeMeta">Version {notice.currentVersion}{formatDate(notice.publishedAt) ? ` · Published ${formatDate(notice.publishedAt)}` : ''}</p>}
+            {notice && <p className="NoticeMeta">{preLive ? 'Working version 1 · Pre-launch' : `Version ${notice.currentVersion}${formatDate(notice.publishedAt) ? ` · Published ${formatDate(notice.publishedAt)}` : ''}`}</p>}
             {ticked && <p className="NoticeMeta">Ticked for each person at checkout and check-in{selected.id === PHOTO_CONSENT.id ? ' (optional)' : ''}. Every change to this wording is recorded as a new version.</p>}
           </div>
-          {notice && <a className="PrimaryActionButtonCompact" href={noticePdfUrl(notice.id, notice.currentVersion)} aria-label={`Download ${notice.title} as a PDF`}>
+          {notice && !preLive && <a className="PrimaryActionButtonCompact" href={noticePdfUrl(notice.id, notice.currentVersion)} aria-label={`Download ${notice.title} as a PDF`}>
             <Download className="IconSm" /> PDF
           </a>}
         </header>
         {canEdit && !ticked && <>
-          <NoticeEditor notice={notice} draft={draft || { title: notice.title, body: notice.body }} busy={busy}
+          <NoticeEditor notice={notice} draft={draft || { title: shownTitle || '', body: shownBody }} preLive={preLive} busy={busy}
             onDraft={(value) => setDraft(selected.id, value)} onDiscard={() => dropDraft(selected.id)} onPublish={publish} />
           {notice && <div className="NoticeEditorActions" data-editor-control="true">
             <button type="button" className="EditorIconButton" title="Move left" aria-label={`Move ${notice.title} left`} disabled={busy || state.notices[0]?.id === notice.id} onClick={() => move(-1)}><ArrowLeft size={18} /></button>
             <button type="button" className="EditorIconButton" title="Move right" aria-label={`Move ${notice.title} right`} disabled={busy || state.notices.at(-1)?.id === notice.id} onClick={() => move(1)}><ArrowRight size={18} /></button>
-            <button type="button" className="EditorCommand" disabled={busy} onClick={archive}><Archive size={16} /> Archive</button>
           </div>}
-          {notice && <VersionHistory adminUser={adminUser} notice={notice} />}
+          {notice && !preLive && <VersionHistory adminUser={adminUser} notice={notice} />}
         </>}
         {shownBody ? <NoticeDocument body={shownBody} /> : canEdit && <p className="NoticeEditorHelp">Write the notice above to see a preview here.</p>}
       </section>
@@ -226,13 +232,5 @@ export default function NoticesPage() {
       <button type="submit" className="EditorCommand" disabled={!newTitle.trim()}><FilePlus2 size={16} /> Add notice</button>
     </form>}
 
-    {canEdit && archived.length > 0 && <details className="NoticeHistory" data-editor-control="true">
-      <summary><Archive size={16} /> Archived notices ({archived.length})</summary>
-      <ul className="NoticeHistoryList">{archived.map((item) => <li key={item.id}>
-        <span><strong>{item.title}</strong> · version {item.currentVersion}</span>
-        <span><a className="ContentLink" href={noticePdfUrl(item.id, item.currentVersion)}>PDF</a>{' '}
-          <button type="button" className="EditorCommand" disabled={busy} onClick={() => restore(item)}>Restore</button></span>
-      </li>)}</ul>
-    </details>}
   </div>;
 }

@@ -20,7 +20,7 @@ initializeAdminApp({ projectId });
 const db = getFirestore();
 // Agrees to whichever notices are published, as the checkout page does.
 const currentNoticeVersions = async () => Object.fromEntries((await db.collection('notices').get()).docs
-  .filter((document) => !document.data().archived && document.data().currentVersion > 0).map((document) => [document.id, document.data().currentVersion]));
+  .filter((document) => document.data().currentVersion > 0).map((document) => [document.id, document.data().currentVersion]));
 const oldPaging = db.batch();
 for (let index = 0; index < 105; index += 1) oldPaging.delete(db.collection('orders').doc(`PAGING-${String(index).padStart(3, '0')}`));
 await oldPaging.commit();

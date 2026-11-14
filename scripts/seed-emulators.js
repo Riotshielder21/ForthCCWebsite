@@ -9,7 +9,7 @@ import { termId } from '../src/utils/membershipTerms.js';
 import { CURRENT_ORDER_VERSION } from '../src/utils/schema.js';
 import { newOrderGroups, orderPersonReference, toPence } from '../src/utils/orders.js';
 import { NOTICE_DRAFTS } from '../src/constants/noticeDrafts.js';
-import { publishNotice } from '../src/server/notices.js';
+import { savePreLiveNotice } from '../src/server/notices.js';
 
 const projectId = assertLocalFirebase(process.env);
 initializeApp({ projectId });
@@ -207,6 +207,6 @@ const londonWeekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
   .indexOf(new Date().toLocaleDateString('en-GB', { timeZone: 'Europe/London', weekday: 'long' }));
 batch.set(db.collection('settings').doc('clubNight'), { weekday: londonWeekday, start: '18:30', end: '21:00' });
 await batch.commit();
-// The drafted notices, published as they would be from the Notices page. Unchanged wording keeps its version.
-for (const notice of NOTICE_DRAFTS) await publishNotice(db, notice.id, notice, { uid: 'local-seed', email: 'admin@forthcanoeclub.co.uk' });
+// Local notice edits replace the working version 1 until the site goes live.
+for (const notice of NOTICE_DRAFTS) await savePreLiveNotice(db, notice.id, notice, { uid: 'local-seed', email: 'admin@forthcanoeclub.co.uk' });
 console.log('Seeded local demo products, households, members, mixed baskets, course attendees, list submissions, today\'s club night and test admin. No production services contacted.');

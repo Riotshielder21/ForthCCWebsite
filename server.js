@@ -46,7 +46,7 @@ import { registerGdprRoutes } from './src/server/gdpr.js';
 import { rebaseBranch, rebaseWarning } from './src/server/githubRebase.js';
 import { readContentDrafts } from './src/server/contentDrafts.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
-import { loadNotices, registerNoticeRoutes } from './src/server/notices.js';
+import { freezePreLiveNotices, loadNotices, registerNoticeRoutes } from './src/server/notices.js';
 import { checkNoticeAgreement, noticeVersionMap } from './src/utils/notices.js';
 import { consentPrefill, photoConsentRecord, photoHistoryAdditions, retryConsentPrefill, wordingMatches } from './src/utils/consents.js';
 import { isLive, liveReadinessProblems } from './src/utils/live.js';
@@ -1830,7 +1830,7 @@ registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, 
     if (ending.length) await stopSubscriptionItems(reference, record, ending, admin, 'gdpr-erasure', `GDPR erasure: ${reason}`, request);
   } });
 registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
-registerNoticeRoutes(app, { requireAdmin, db: () => adminDb });
+registerNoticeRoutes(app, { requireAdmin, db: () => adminDb, live: isLive });
 const { settleKeyAccess, notifyKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message) });
 registerLifetimeMembershipRoutes(app, { requireAdmin, db: () => adminDb });
 const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
@@ -3142,7 +3142,7 @@ const recordPolicyVersions = async () => {
     const currentVersions = Object.fromEntries((await adminDb.collection('policies').get()).docs.map((document) => [document.id, document.data().currentVersion || 0]));
     // The privacy notice and retention policy are written on the Notices page, under these notice IDs.
     for (const notice of await loadNotices(adminDb)) {
-      if (!notice.archived && notice.currentVersion > 0) currentVersions[notice.id] = Math.max(currentVersions[notice.id] || 0, notice.currentVersion);
+      if (notice.currentVersion > 0) currentVersions[notice.id] = Math.max(currentVersions[notice.id] || 0, notice.currentVersion);
     }
     liveReadinessProblems({ currentVersions }).forEach((problem) => console.warn(`Not ready for live: ${problem}`));
   } catch (error) {
@@ -3150,7 +3150,9 @@ const recordPolicyVersions = async () => {
   }
 };
 if (adminDb && isLive()) {
-  recordPolicyVersions();
+  const frozenNotices = await freezePreLiveNotices(adminDb);
+  if (frozenNotices) console.log(`Recorded initial live versions for ${frozenNotices} notices.`);
+  await recordPolicyVersions();
   setInterval(recordPolicyVersions, 60 * 60 * 1000).unref();
 } else if (adminDb) {
   console.log('WEBSITE_ISLIVE is not true: consent and policy wording is not versioned and consent records show pre-live.');

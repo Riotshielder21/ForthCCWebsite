@@ -81,7 +81,7 @@ const build = (productIds, fillers) => {
 };
 // Agrees to whichever notices are published, as the checkout page does, unless a test sends its own noticeVersions.
 const currentNoticeVersions = async () => Object.fromEntries((await db.collection('notices').get()).docs
-  .filter((document) => !document.data().archived && document.data().currentVersion > 0).map((document) => [document.id, document.data().currentVersion]));
+  .filter((document) => document.data().currentVersion > 0).map((document) => [document.id, document.data().currentVersion]));
 const checkout = async (emailAddress, { lines, people }, extra = {}, headers = {}) => call('POST', '/api/checkout-session', { body: {
   email: emailAddress, items: lines.map(({ id, lineId, size, clubYearChoice }) => ({ id, lineId, ...(size ? { size } : {}), ...(clubYearChoice ? { clubYearChoice } : {}) })), people, billingMode: 'annual',
   noticeVersions: await currentNoticeVersions(), wording: checkoutWording(), ...extra }, headers });
@@ -2482,7 +2482,11 @@ await test('checkout needs agreement to the current version of every published n
     assert.equal(pdf.status, 200);
     assert.ok(pdf.text.startsWith('%PDF-'), 'superseded versions stay downloadable');
   } finally {
-    await call('DELETE', `/api/admin/notices/${noticeId}`, { headers: admin });
+    const versions = await db.collection('noticeVersions').where('noticeId', '==', noticeId).get();
+    const cleanup = db.batch();
+    cleanup.delete(db.collection('notices').doc(noticeId));
+    versions.docs.forEach((version) => cleanup.delete(version.ref));
+    await cleanup.commit();
   }
 });
 

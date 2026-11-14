@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import PDFDocument from 'pdfkit';
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from 'firebase-admin/firestore';
 import { NOTICE_ID_PATTERN, NOTICE_LIMITS, noticePlainText, parseNoticeBlocks, publishedNotices, validateNoticeInput } from '../utils/notices.js';
 import { rateLimit } from './rateLimit.js';
 
@@ -17,8 +17,7 @@ export const loadCurrentNotices = async (db) => publishedNotices(await loadNotic
 
 /**
  * Publishes a notice's wording. Changed wording becomes the next numbered version, kept for good alongside who published
- * it and when; unchanged wording keeps the current version. A new notice goes to the end of the list, and publishing an
- * archived notice brings it back.
+ * it and when; unchanged wording keeps the current version. A new notice goes to the end of the list.
  */
 export const publishNotice = async (db, id, input, admin, now = Timestamp.now()) => {
   if (!NOTICE_ID_PATTERN.test(id)) throw Object.assign(new Error('Invalid notice ID.'), { status: 400 });
@@ -32,41 +31,92 @@ export const publishNotice = async (db, id, input, admin, now = Timestamp.now())
   return db.runTransaction(async (transaction) => {
     const all = (await transaction.get(notices)).docs;
     const existing = all.find((document) => document.id === id)?.data();
-    if (!existing && all.filter((document) => !document.data().archived).length >= NOTICE_LIMITS.notices) {
+    if (!existing && all.length >= NOTICE_LIMITS.notices) {
       throw Object.assign(new Error(`There can be up to ${NOTICE_LIMITS.notices} notices.`), { status: 400 });
     }
     const order = existing ? existing.order : Math.max(-1, ...all.map((document) => document.data().order ?? 0)) + 1;
     const publishedBy = { uid: admin.uid, email: admin.email || '' };
-    if (existing?.archived) transaction.set(db.collection('noticeHistory').doc(), { noticeId: id, action: 'restored', at: now, by: publishedBy });
     if (existing?.currentHash === hash) {
-      if (existing.archived) transaction.update(reference, { archived: false, archivedAt: FieldValue.delete(), updatedAt: now });
+      if (existing.preLive) {
+        transaction.set(db.collection('noticeVersions').doc(`${id}@1`), {
+          noticeId: id, version: 1, title: existing.title, body: existing.body, hash: existing.currentHash,
+          supersedesVersion: null, publishedAt: now, publishedBy: { uid: 'site-launch', email: 'Pre-launch draft' }, schemaVersion: 1
+        });
+        transaction.update(reference, { preLive: false, archived: false, publishedAt: now, updatedAt: now });
+      }
       return { version: existing.currentVersion, changed: false };
+    }
+    if (existing?.preLive && existing.currentVersion === 1) {
+      transaction.set(db.collection('noticeVersions').doc(`${id}@1`), {
+        noticeId: id, version: 1, title: existing.title, body: existing.body,
+        hash: existing.currentHash || noticeHash(existing.title, existing.body), supersedesVersion: null,
+        publishedAt: now, publishedBy: { uid: 'site-launch', email: 'Pre-launch draft' }, schemaVersion: 1
+      });
     }
     const version = (existing?.currentVersion || 0) + 1;
     transaction.set(db.collection('noticeVersions').doc(`${id}@${version}`), {
       noticeId: id, version, title, body, hash, supersedesVersion: version > 1 ? version - 1 : null, publishedAt: now, publishedBy, schemaVersion: 1
     });
     transaction.set(reference, {
-      title, body, order, archived: false, currentVersion: version, currentHash: hash, publishedAt: now, updatedAt: now, schemaVersion: 1,
-      ...(existing ? {} : { createdAt: now }), ...(existing?.archived ? { archivedAt: FieldValue.delete() } : {})
+      title, body, order, archived: false, preLive: false, currentVersion: version, currentHash: hash, publishedAt: now, updatedAt: now, schemaVersion: 1,
+      ...(existing ? {} : { createdAt: now })
     }, { merge: true });
     return { version, changed: true };
   });
 };
 
-/**
- * Removes a notice from the page and from checkout. Its versions, and everyone's record of agreeing to them, are kept.
- * Notices are public, so who archived it is kept in the admin-only history instead.
- */
-export const archiveNotice = async (db, id, admin, now = Timestamp.now()) => {
+/** Pre-live edits replace the working version 1; they do not create an immutable version history. */
+export const savePreLiveNotice = async (db, id, input, admin, now = Timestamp.now()) => {
+  if (!NOTICE_ID_PATTERN.test(id)) throw Object.assign(new Error('Invalid notice ID.'), { status: 400 });
+  let title;
+  let body;
+  try { ({ title, body } = validateNoticeInput(input)); }
+  catch (error) { throw Object.assign(error, { status: 400 }); }
+  const hash = noticeHash(title, body);
+  const notices = db.collection('notices');
   const reference = db.collection('notices').doc(id);
-  await db.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(reference);
-    if (!snapshot.exists) throw Object.assign(new Error('Notice not found.'), { status: 404 });
-    if (snapshot.data().archived) return;
-    transaction.update(reference, { archived: true, archivedAt: now, updatedAt: now });
-    transaction.set(db.collection('noticeHistory').doc(), { noticeId: id, action: 'archived', at: now, by: { uid: admin.uid, email: admin.email || '' } });
+  return db.runTransaction(async (transaction) => {
+    const all = (await transaction.get(notices)).docs;
+    const existing = all.find((document) => document.id === id)?.data();
+    if (existing && existing.currentVersion > 1) {
+      throw Object.assign(new Error('This notice already has published versions and cannot be returned to pre-launch editing.'), { status: 409 });
+    }
+    if (!existing && all.length >= NOTICE_LIMITS.notices) throw Object.assign(new Error(`There can be up to ${NOTICE_LIMITS.notices} notices.`), { status: 400 });
+    const order = existing ? existing.order : Math.max(-1, ...all.map((document) => document.data().order ?? 0)) + 1;
+    const publishedBy = { uid: admin.uid, email: admin.email || '' };
+    const version = 1;
+    if (existing?.preLive && existing.currentHash === hash) {
+      transaction.update(reference, { archived: false, updatedAt: now });
+      return { version, changed: false, preLive: true };
+    }
+    transaction.set(db.collection('noticeVersions').doc(`${id}@${version}`), {
+      noticeId: id, version, title, body, hash, supersedesVersion: null, publishedAt: now, publishedBy, schemaVersion: 1, preLive: true
+    });
+    transaction.set(reference, {
+      title, body, order, currentVersion: version, currentHash: hash, publishedAt: now, updatedAt: now,
+      createdAt: existing?.createdAt || now, schemaVersion: 1, archived: false, preLive: true
+    });
+    return { version, changed: existing?.currentHash !== hash, preLive: true };
   });
+};
+
+/** Freeze the latest editable version 1 as the live site's first immutable notice version. */
+export const freezePreLiveNotices = async (db, now = Timestamp.now()) => {
+  const notices = await loadNotices(db);
+  const drafts = notices.filter((notice) => notice.preLive && notice.currentVersion === 1);
+  if (!drafts.length) return 0;
+  const batch = db.batch();
+  for (const notice of drafts) {
+    const publishedBy = { uid: 'site-launch', email: 'Pre-launch draft' };
+    batch.set(db.collection('noticeVersions').doc(`${notice.id}@1`), {
+      noticeId: notice.id, version: 1, title: notice.title, body: notice.body,
+      hash: notice.currentHash || noticeHash(notice.title, notice.body), supersedesVersion: null,
+      publishedAt: now, publishedBy, schemaVersion: 1
+    });
+    batch.update(db.collection('notices').doc(notice.id), { preLive: false, archived: false, publishedAt: now, updatedAt: now });
+  }
+  await batch.commit();
+  return drafts.length;
 };
 
 export const reorderNotices = async (db, ids, now = Timestamp.now()) => {
@@ -121,12 +171,17 @@ export const noticePdf = (version) => new Promise((resolve, reject) => {
   document.end();
 });
 
-export const registerNoticeRoutes = (app, { requireAdmin, db }) => {
+export const registerNoticeRoutes = (app, { requireAdmin, db, live = () => true }) => {
   const fail = (res, error, fallback) => {
     if (error.status) return res.status(error.status).json({ error: error.message });
     console.error(`${fallback}:`, error.message);
     return res.status(500).json({ error: `${fallback}.` });
   };
+
+  app.get('/api/notices/mode', (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ live: live() });
+  });
 
   app.get('/api/notices/:id/pdf', rateLimit(30, 60 * 1000), async (req, res) => {
     const { id } = req.params;
@@ -136,7 +191,7 @@ export const registerNoticeRoutes = (app, { requireAdmin, db }) => {
     }
     try {
       const notice = await db().collection('notices').doc(id).get();
-      const versionNumber = requested ?? (notice.exists && !notice.data().archived ? notice.data().currentVersion : 0);
+      const versionNumber = requested ?? (notice.exists ? notice.data().currentVersion : 0);
       const version = versionNumber > 0 ? await db().collection('noticeVersions').doc(`${id}@${versionNumber}`).get() : null;
       if (!version?.exists) return res.status(404).json({ error: 'That notice version is not published.' });
       const pdf = await noticePdf(version.data());
@@ -156,6 +211,8 @@ export const registerNoticeRoutes = (app, { requireAdmin, db }) => {
     if (!NOTICE_ID_PATTERN.test(req.params.id)) return res.status(400).json({ error: 'Invalid notice ID.' });
     try {
       const versions = await db().collection('noticeVersions').where('noticeId', '==', req.params.id).get();
+      const notice = await db().collection('notices').doc(req.params.id).get();
+      if (!live() || (notice.exists && notice.data().preLive)) return res.json({ versions: [] });
       res.json({ versions: versions.docs.map((document) => {
         const { version, title, publishedAt, publishedBy, supersedesVersion } = document.data();
         return { version, title, publishedAt: toIso(publishedAt), publishedBy: publishedBy?.email || '', supersedesVersion };
@@ -170,22 +227,9 @@ export const registerNoticeRoutes = (app, { requireAdmin, db }) => {
     if (!admin) return;
     res.set('Cache-Control', 'no-store');
     try {
-      res.json(await publishNotice(db(), req.params.id, req.body, admin));
+      res.json(await (live() ? publishNotice(db(), req.params.id, req.body, admin) : savePreLiveNotice(db(), req.params.id, req.body, admin)));
     } catch (error) {
       fail(res, error, 'Could not publish the notice');
-    }
-  });
-
-  app.delete('/api/admin/notices/:id', rateLimit(20, 60 * 1000), async (req, res) => {
-    const admin = await requireAdmin(req, res);
-    if (!admin) return;
-    res.set('Cache-Control', 'no-store');
-    if (!NOTICE_ID_PATTERN.test(req.params.id)) return res.status(400).json({ error: 'Invalid notice ID.' });
-    try {
-      await archiveNotice(db(), req.params.id, admin);
-      res.json({ archived: true });
-    } catch (error) {
-      fail(res, error, 'Could not archive the notice');
     }
   });
 

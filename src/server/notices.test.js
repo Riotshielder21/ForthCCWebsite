@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { archiveNotice, noticeHash, noticePdf, publishNotice, reorderNotices } from './notices.js';
+import { freezePreLiveNotices, noticeHash, noticePdf, publishNotice, reorderNotices, savePreLiveNotice } from './notices.js';
 
 const DELETE = FieldValue.delete();
 
@@ -74,25 +74,31 @@ test('publishing rejects bad IDs and wording with a 400', async () => {
   assert.equal(db.store.size, 0);
 });
 
-test('archiving hides a notice, and publishing it again restores it', async () => {
+test('pre-live edits replace working version 1 without building history; launch freezes the last edit', async () => {
   const db = fakeDb();
-  await publishNotice(db, 'terms', { title: 'Terms', body: 'Be nice.' }, admin, at(1));
-  await archiveNotice(db, 'terms', admin, at(2));
-  assert.equal(db.store.get('notices/terms').archived, true);
-  await archiveNotice(db, 'terms', admin, at(3));
-  const history = () => [...db.store.entries()].filter(([path]) => path.startsWith('noticeHistory/')).map(([, entry]) => entry.action);
-  assert.deepEqual(history(), ['archived']);
+  assert.deepEqual(await savePreLiveNotice(db, 'terms', { title: 'Terms', body: 'First draft.' }, admin, at(1)),
+    { version: 1, changed: true, preLive: true });
+  assert.deepEqual(await savePreLiveNotice(db, 'terms', { title: 'Terms', body: 'Revised draft.' }, admin, at(2)),
+    { version: 1, changed: true, preLive: true });
+  assert.equal(db.store.get('notices/terms').currentVersion, 1);
+  assert.equal(db.store.get('noticeVersions/terms@1').body, 'Revised draft.');
+  assert.equal(await freezePreLiveNotices(db, at(3)), 1);
+  assert.equal(db.store.get('notices/terms').preLive, false);
+  assert.equal(db.store.get('noticeVersions/terms@1').body, 'Revised draft.');
+  assert.equal('preLive' in db.store.get('noticeVersions/terms@1'), false);
+  assert.deepEqual(await publishNotice(db, 'terms', { title: 'Terms', body: 'Live change.' }, admin, at(4)),
+    { version: 2, changed: true });
+});
 
-  assert.deepEqual(await publishNotice(db, 'terms', { title: 'Terms', body: 'Be nice.' }, admin, at(4)), { version: 1, changed: false });
-  const restored = db.store.get('notices/terms');
-  assert.equal(restored.archived, false);
-  assert.equal('archivedAt' in restored, false);
-  assert.deepEqual(history(), ['archived', 'restored']);
-
-  await archiveNotice(db, 'terms', admin, at(5));
-  assert.deepEqual(await publishNotice(db, 'terms', { title: 'Terms', body: 'Be kind.' }, admin, at(6)), { version: 2, changed: true });
-  assert.equal(db.store.get('notices/terms').archived, false);
-  await assert.rejects(archiveNotice(db, 'missing', admin), { status: 404 });
+test('pre-live saving cannot reset a notice with published history', async () => {
+  const db = fakeDb();
+  await publishNotice(db, 'terms', { title: 'Terms', body: 'First version.' }, admin, at(1));
+  await publishNotice(db, 'terms', { title: 'Terms', body: 'Second version.' }, admin, at(2));
+  await assert.rejects(savePreLiveNotice(db, 'terms', { title: 'Terms', body: 'Changed before launch.' }, admin, at(3)),
+    { status: 409 });
+  assert.equal(db.store.get('notices/terms').currentVersion, 2);
+  assert.equal(db.store.get('noticeVersions/terms@1').body, 'First version.');
+  assert.equal(db.store.get('noticeVersions/terms@2').body, 'Second version.');
 });
 
 test('reordering needs each known notice once', async () => {

@@ -22,6 +22,13 @@ export const watchPublishedNotices = (onChange) => subscribeToNotices(
   (error) => onChange({ notices: null, all: [], error: error.message || 'Notices could not be loaded.' })
 );
 
+export const loadNoticeMode = async () => {
+  const response = await apiFetch(apiUrl('/api/notices/mode'), { cache: 'no-store' });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || typeof result.live !== 'boolean') throw new Error(result.error || 'Could not check notice publishing mode.');
+  return result.live;
+};
+
 export const noticePdfUrl = (id, version) => apiUrl(`/api/notices/${encodeURIComponent(id)}/pdf${version ? `?version=${version}` : ''}`);
 
 const adminRequest = async (adminUser, path, options = {}) => {
@@ -39,8 +46,6 @@ const adminRequest = async (adminUser, path, options = {}) => {
 export const publishNotice = (adminUser, id, { title, body }) => adminRequest(adminUser, `/api/admin/notices/${encodeURIComponent(id)}`, {
   method: 'PUT', body: JSON.stringify({ title, body })
 });
-
-export const archiveNotice = (adminUser, id) => adminRequest(adminUser, `/api/admin/notices/${encodeURIComponent(id)}`, { method: 'DELETE' });
 
 export const reorderNotices = (adminUser, ids) => adminRequest(adminUser, '/api/admin/notices-order', { method: 'PUT', body: JSON.stringify({ ids }) });
 
