@@ -39,6 +39,11 @@ This starts the Auth, Firestore and Storage emulators, adds test records on the 
 - **Remote VS Code:** forward ports `3000`, `3002`, `4000`, `8080`, `9099` and `9199`.
 - **Test records** are made-up households, orders, a course and a voucher; `--fresh` resets them.
 
+In the catalogue editor, the green **Save all** button stays at the top-right of the item tile while scrolling.
+It saves every field of the current item, including an event's private attendee-list viewers (also for new events).
+Uploading an image and sending an attendee-list email remain explicit actions. If viewer access fails to save,
+the editor reports the partial save and lets you retry; it never reports all changes saved until both writes succeed.
+
 ## Test
 
 Before opening a pull request:

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
-import { removeProduct, reserveProductId, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
+import { loadEventRosterViewers, removeProduct, reserveProductId, saveEventRosterViewers, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
+import { saveCatalogueItem } from '../utils/catalogueSave';
 import { isLockedProduct, tripDiscountForProduct } from '../utils/tripDiscount';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
@@ -62,8 +63,24 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
   const [uploading, setUploading] = useState(false);
   const [reservingId, setReservingId] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [viewerText, setViewerText] = useState('');
+  const [viewerProductId, setViewerProductId] = useState(null);
+  const [viewersReady, setViewersReady] = useState(true);
+  const [viewerLoadError, setViewerLoadError] = useState('');
+  const [viewerLoadAttempt, setViewerLoadAttempt] = useState(0);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [formDraft, setFormDraft] = useState({ name: '', description: '', fields: 'Name\nEmail\nResponse' });
+
+  useEffect(() => {
+    if (!viewerProductId || !adminUser) return undefined;
+    let current = true;
+    setViewersReady(false);
+    setViewerLoadError('');
+    adminUser.getIdToken().then((token) => loadEventRosterViewers(viewerProductId, token))
+      .then((viewers) => { if (current) { setViewerText(viewers.join('\n')); setViewersReady(true); } })
+      .catch((loadError) => { if (current) setViewerLoadError(loadError.message); });
+    return () => { current = false; };
+  }, [viewerProductId, adminUser, viewerLoadAttempt]);
 
   // Type, pricing mode and monthly billing follow the category (see productTerms).
   const updateDraft = (field, value) => setDraft((current) => {
@@ -121,6 +138,12 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
   const resetImageInput = () => { setImageFile(null); setFileInputKey((key) => key + 1); };
 
   const editProduct = (product) => {
+    setError('');
+    setViewerText('');
+    setViewerLoadError('');
+    setViewersReady(product.category !== 'EVENTS');
+    setViewerProductId(product.category === 'EVENTS' ? product.id : null);
+    setViewerLoadAttempt((attempt) => attempt + 1);
     setSelectedProduct(product.id);
     setDraft({ ...EMPTY_PRODUCT, ...normaliseProduct(product), eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
     setMessage('');
@@ -133,6 +156,10 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
     try {
       const id = await reserveProductId(await adminUser.getIdToken());
       setSelectedProduct(null);
+      setViewerProductId(null);
+      setViewerText('');
+      setViewersReady(true);
+      setViewerLoadError('');
       setDraft({ ...EMPTY_PRODUCT, id, sortOrder: Math.max(0, ...products.map((product) => product.sortOrder)) + 10 });
       setMessage('');
       resetImageInput();
@@ -145,8 +172,9 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
 
   const handleSave = async (event) => {
     event.preventDefault();
-    if (saving || reservingId || uploading) return;
+    if (saving || reservingId || uploading || (draft.category === 'EVENTS' && !viewersReady)) return;
     setError('');
+    setMessage('');
     if (imageFile) {
       setError('Upload the selected image or remove it before saving the product.');
       return;
@@ -172,10 +200,14 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
         product.id = await reserveProductId(await adminUser.getIdToken());
         setDraft(product);
       }
-      await saveProduct(product);
+      const viewers = await saveCatalogueItem(product, viewerText, {
+        saveProduct,
+        saveViewers: async (id, values) => saveEventRosterViewers(id, values, await adminUser.getIdToken())
+      });
+      if (viewers !== null) setViewerText(viewers.join('\n'));
       setSelectedProduct(product.id);
       setDraft(product);
-      setMessage(`${product.name || 'Product'} saved.`);
+      setMessage(`${product.name || 'Product'}: all changes saved.`);
     } catch (saveError) {
       setError(saveError.message);
     } finally {
@@ -189,6 +221,10 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
       await removeProduct(selectedProduct, tripDiscounts);
       setDraft({ ...EMPTY_PRODUCT });
       setSelectedProduct(null);
+      setViewerProductId(null);
+      setViewerText('');
+      setViewersReady(true);
+      setViewerLoadError('');
       setMessage('Product removed.');
     } catch (deleteError) {
       setError(deleteError.message);
@@ -271,6 +307,13 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
             {!products.length && <p className="text_container">No products. Add a new item or restore the starter catalogue.</p>}
           </aside>
           <form className="main_tile AdminEditor" onSubmit={handleSave}>
+            <div className="AdminSaveCorner">
+              <button className="AdminSaveAll" type="submit" disabled={uploading || reservingId || saving || (draft.category === 'EVENTS' && !viewersReady)}>
+                {saving ? <Loader2 className="IconMd animate-spin" /> : <Save className="IconMd" />} {saving ? 'Saving...' : 'Save all'}
+              </button>
+              {message && <p className="StatusText StatusTextSuccess" role="status">{message}</p>}
+              {error && <p className="StatusText StatusTextError" role="alert">{error}</p>}
+            </div>
             <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && tripDiscounts && !isLockedProduct(selectedProduct, tripDiscounts) && <button type="button" className="CartRemoveButton" disabled={uploading || saving} onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
             {selectedProduct && tripDiscounts && isLockedProduct(selectedProduct, tripDiscounts) && <p className="text_container text_container_note">This product cannot be removed: holding it gives £{tripDiscountForProduct(selectedProduct, tripDiscounts).amount} off single-day trips at checkout. To remove it, first take it out of Reports & records → Credits & discounts → Service trip discounts.</p>}
             {EDITABLE_FIELDS.map((field) => (
@@ -314,7 +357,13 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
               <label className="FormLabel">Leader email (shown in the shop)<input className="FormInput" type="email" maxLength={254} value={draft.leaderEmail || ''} onChange={(event) => updateDraft('leaderEmail', event.target.value)} /></label>
               <label className="FormLabel">Bookings close (end of this day)<input className="FormInput" type="date" max={draft.eventSchedule.startDate || undefined} value={draft.closeDate || ''} onChange={(event) => updateDraft('closeDate', event.target.value)} /></label>
               <p className="text_container text_container_note">When bookings close, the leader is emailed the attendee list once, with emergency contacts, medical details and who needs boat hire. Leave blank to keep bookings open.</p>
-              {selectedProduct && <EventRosterControl adminUser={adminUser} productId={selectedProduct} leaderEmail={draft.leaderEmail} />}
+              <label className="FormLabel">Also allowed to view the attendee list
+                <textarea className="FormInput" rows="2" value={viewerText} disabled={!viewersReady || saving} placeholder="One email per line" onChange={(event) => setViewerText(event.target.value)} />
+              </label>
+              <p className="CartItemMeta">The leader and these people can open the list on the check-in page with an email code until the end of the event's last day. Save all saves these viewers along with the item details.</p>
+              {!viewersReady && !viewerLoadError && <p role="status">Loading attendee-list viewers...</p>}
+              {viewerLoadError && <div><p className="StatusTextError" role="alert">{viewerLoadError}</p><button className="EditorCommand" type="button" onClick={() => setViewerLoadAttempt((attempt) => attempt + 1)}>Retry loading viewers</button></div>}
+              {selectedProduct && <EventRosterControl adminUser={adminUser} productId={selectedProduct} leaderEmail={products.find((product) => product.id === selectedProduct)?.leaderEmail} disabled={saving} />}
             </fieldset>}
             {draft.category === 'MERCHANDISE' && <fieldset className="AdminEventSchedule">
               <legend className="tile_heading_bold_1">Sizes and stock</legend>
@@ -341,8 +390,6 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
               <label className="FormLabel">Membership<select className="FormInput" value={draft.membershipRule} onChange={(event) => updateDraft('membershipRule', event.target.value)}>{Object.entries(MEMBERSHIP_RULE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               <p className="text_container text_container_note">{MEMBERSHIP_RULE_NOTES[draft.membershipRule]}</p>
             </>}
-            {message && <p className="StatusText StatusTextSuccess">{message}</p>}{error && <p className="StatusText StatusTextError">{error}</p>}
-            <button className="FormSubmitButton" type="submit" disabled={uploading || reservingId || saving}><Save className="IconMd" /> {saving ? 'Saving...' : 'Save product'}</button>
           </form>
         </div>
         <DiscountCodesPanel adminUser={adminUser} products={products} />

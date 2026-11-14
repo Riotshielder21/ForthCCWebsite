@@ -46,6 +46,22 @@ export const reserveProductId = async (idToken) => {
   return result.id;
 };
 
+const eventRosterViewers = async (productId, idToken, viewers) => {
+  const response = await apiFetch(apiUrl(`/api/admin/events/${encodeURIComponent(productId)}/roster-viewers`), {
+    method: viewers === undefined ? 'GET' : 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    ...(viewers === undefined ? {} : { body: JSON.stringify({ viewers }) }),
+    cache: 'no-store'
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Could not access attendee-list viewers.');
+  if (!Array.isArray(result.viewers) || result.viewers.some((value) => typeof value !== 'string')) throw new Error('Invalid attendee-list viewers response.');
+  return result.viewers;
+};
+
+export const loadEventRosterViewers = (productId, idToken) => eventRosterViewers(productId, idToken);
+export const saveEventRosterViewers = (productId, viewers, idToken) => eventRosterViewers(productId, idToken, viewers);
+
 const defer = (name) => (...args) => import('./contentFirebase.js').then((module) => module[name](...args));
 export const saveProduct = defer('saveProduct');
 export const removeProduct = defer('removeProduct');
