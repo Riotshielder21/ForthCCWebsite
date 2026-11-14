@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { DEFAULT_TIMETABLE, publicTimetable, seasonLabel, timeLabel, TIMETABLE_LIMITS, validateTimetable } from './timetable.js';
+import { DEFAULT_TIMETABLE, publicTimetable, seasonLabel, sortTimetableSessions, timeLabel, TIMETABLE_LIMITS, validateTimetable } from './timetable.js';
 
 const session = (over = {}) => ({ name: 'Polo training', weekday: 1, start: '18:00', ...over });
 
@@ -33,6 +33,19 @@ test('the starting timetable is valid and holds the times that used to be in the
   assert.deepEqual(monday.sessions.map((entry) => [entry.name, entry.start]), [['Advanced polo', '18:00']]);
   const disciplines = JSON.parse(readFileSync(new URL('../../public/content/pages/disciplines.json', import.meta.url), 'utf8'));
   for (const key of ['slalomBody', 'poloBody', 'sprintBody']) assert.doesNotMatch(disciplines[key], /\d{1,2}:\d{2}/, `${key} has no session times`);
+});
+
+test('session picker sorts by weekday, start, season, then name without changing source indexes', () => {
+  const sessions = [
+    session({ name: 'Late Monday', start: '19:00' }),
+    session({ name: 'Summer Tuesday', weekday: 2, start: '18:00', seasonStart: 4, seasonEnd: 9 }),
+    session({ name: 'Sunday', weekday: 0, start: '09:00' }),
+    session({ name: 'Early Monday', start: '17:00' }),
+    session({ name: 'New session', weekday: '', start: '' })
+  ];
+  assert.deepEqual(sortTimetableSessions(sessions).map(({ session: item, index }) => [item.name, index]), [
+    ['Early Monday', 3], ['Late Monday', 0], ['Summer Tuesday', 1], ['Sunday', 2], ['New session', 4]
+  ]);
 });
 
 test('seasons and times read naturally', () => {

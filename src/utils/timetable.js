@@ -65,3 +65,17 @@ export const seasonLabel = ({ seasonStart, seasonEnd }) => seasonStart && season
   : 'All year';
 
 export const timeLabel = ({ start, end }) => end ? `${start} to ${end}` : start;
+
+export const sortTimetableSessions = (sessions) => sessions.map((session, index) => ({ session, index }))
+  .sort((a, b) => {
+    const weekdayRank = (weekday) => {
+      const rank = WEEK_ORDER.indexOf(Number(weekday));
+      return weekday === '' || rank < 0 ? WEEK_ORDER.length : rank;
+    };
+    const weekdayA = weekdayRank(a.session.weekday);
+    const weekdayB = weekdayRank(b.session.weekday);
+    return weekdayA - weekdayB || a.session.start.localeCompare(b.session.start)
+      || Number(a.session.seasonStart || 0) - Number(b.session.seasonStart || 0)
+      || Number(a.session.seasonEnd || 0) - Number(b.session.seasonEnd || 0)
+      || a.session.name.localeCompare(b.session.name);
+  });

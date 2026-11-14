@@ -20,16 +20,6 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
         }
       }
-    },
-    build: {
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (id.includes('node_modules/@dnd-kit/')) return 'page-editor-vendor'
-            if (/node_modules\/(?:@firebase|firebase)\//.test(id)) return 'firebase-vendor'
-          }
-        }
-      }
     }
   }
 })

@@ -2403,7 +2403,7 @@ app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
 /** Remaining stock for limited products, so the shop can hide anything sold out. */
 app.get('/api/availability', rateLimit(60, 60 * 1000), async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  if (!adminDb) return res.json({ availability: {} });
+  if (!adminDb) return res.json({ availability: {}, products: PRODUCTS });
   try {
     const [productSnapshot, stockSnapshot] = await Promise.all([adminDb.collection('products').get(), adminDb.collection('stock').get()]);
     const catalog = resolveCatalogue(PRODUCTS, productSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
@@ -2413,7 +2413,7 @@ app.get('/api/availability', rateLimit(60, 60 * 1000), async (req, res) => {
       const remaining = remainingStock(product, holdsById.get(product.id));
       if (remaining) availability[product.id] = { remaining, soldOut: isSoldOut(remaining) };
     }
-    res.json({ availability });
+    res.json({ availability, products: catalog });
   } catch (error) {
     console.error('Could not load availability:', error.message);
     res.status(503).json({ error: 'Availability is unavailable.' });

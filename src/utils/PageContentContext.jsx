@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { onIdTokenChanged, signOut } from 'firebase/auth';
 import { getPageCopy, PAGE_CONTENT } from '../constants/pageContent';
-import { auth, signInWithWorkspace } from './firebase';
 import { loadSavedPageDrafts, savePageContent } from './content';
 import { apiUrl, apiFetch } from './api';
 import { retryableAdminAuthMessage, verifyAdminSession } from './adminAccess.js';
@@ -10,9 +8,11 @@ import { pageDraftFingerprint, pageDraftStatus, savePageDraftBatch } from './pag
 const PageContentContext = createContext({});
 const PageEditorContext = createContext(null);
 
-export function PageContentProvider({ value, children }) {
+const ADMIN_SESSION_MARKER = 'fcc-admin-session';
+
+export function PageContentProvider({ value, children, enableAdminAuth = false }) {
   const [adminUser, setAdminUser] = useState(null);
-  const [authReady, setAuthReady] = useState(!auth);
+  const [authReady, setAuthReady] = useState(true);
   const [authError, setAuthError] = useState('');
   const [authRetrying, setAuthRetrying] = useState(false);
   const [editMode, updateEditMode] = useState(false);
@@ -27,28 +27,39 @@ export function PageContentProvider({ value, children }) {
   const [review, setReview] = useState(null);
 
   useEffect(() => {
-    if (!auth) return undefined;
+    let remembered = false;
+    try { remembered = localStorage.getItem(ADMIN_SESSION_MARKER) === 'true'; } catch { /* unavailable */ }
+    if (!enableAdminAuth && !remembered) return undefined;
     let revision = 0;
-    return onIdTokenChanged(auth, async (user) => {
-      const currentRevision = ++revision;
-      // Firebase can restore a cached user before refreshing an expired token; a network failure here is retryable.
-      const result = await verifyAdminSession(user);
-      if (revision !== currentRevision) return;
-      setAuthReady(true);
-      if (result.status === 'retry') {
-        setAuthError(result.message);
-        return;
-      }
-      const approved = result.status === 'approved' ? result.user : null;
-      setAuthError('');
-      setAdminUser(approved);
-      if (!approved) {
-        updateEditMode(false);
-        setDrafts({});
-        setSavedDrafts(null);
-      }
+    let unsubscribe = () => {};
+    let active = true;
+    setAuthReady(false);
+    import('./adminSession.js').then(({ subscribeAdminSession }) => {
+      if (!active) return;
+      unsubscribe = subscribeAdminSession(async (user) => {
+        const currentRevision = ++revision;
+        const result = await verifyAdminSession(user);
+        if (!active || revision !== currentRevision) return;
+        setAuthReady(true);
+        if (result.status === 'retry') {
+          setAuthError(result.message);
+          return;
+        }
+        const approved = result.status === 'approved' ? result.user : null;
+        setAuthError('');
+        setAdminUser(approved);
+        try { localStorage.setItem(ADMIN_SESSION_MARKER, String(Boolean(approved))); } catch { /* unavailable */ }
+        if (!approved) {
+          updateEditMode(false);
+          setDrafts({});
+          setSavedDrafts(null);
+        }
+      });
+    }).catch((error) => {
+      if (active) { setAuthReady(true); setAuthError(error.message); }
     });
-  }, []);
+    return () => { active = false; unsubscribe(); };
+  }, [enableAdminAuth]);
 
   useEffect(() => {
     if (!adminUser) return undefined;
@@ -131,7 +142,7 @@ export function PageContentProvider({ value, children }) {
     setAuthError('');
     let user;
     try {
-      user = await signInWithWorkspace();
+      user = await (await import('./adminSession.js')).signInWithWorkspace();
     } catch (error) {
       const retryMessage = retryableAdminAuthMessage(error);
       if (retryMessage) {
@@ -146,7 +157,8 @@ export function PageContentProvider({ value, children }) {
         setAuthError(result.message);
         throw new Error(result.message);
       }
-      await signOut(auth);
+      await (await import('./adminSession.js')).signOutAdmin();
+      try { localStorage.removeItem(ADMIN_SESSION_MARKER); } catch { /* unavailable */ }
       throw new Error(result.message);
     }
     setAdminUser(user);
@@ -157,7 +169,8 @@ export function PageContentProvider({ value, children }) {
     setAuthRetrying(true);
     setAuthError('');
     try {
-      const result = await verifyAdminSession(auth?.currentUser, true);
+      const { currentAdminUser } = await import('./adminSession.js');
+      const result = await verifyAdminSession(currentAdminUser(), true);
       if (result.status === 'retry') {
         setAuthError(result.message);
         return;
@@ -165,12 +178,14 @@ export function PageContentProvider({ value, children }) {
       if (result.status === 'approved') {
         setAdminUser(result.user);
         setAuthReady(true);
+        try { localStorage.setItem(ADMIN_SESSION_MARKER, 'true'); } catch { /* unavailable */ }
         return;
       }
       setAdminUser(null);
       updateEditMode(false);
       setDrafts({});
       setSavedDrafts(null);
+      try { localStorage.removeItem(ADMIN_SESSION_MARKER); } catch { /* unavailable */ }
       setAuthError(result.message);
     } finally {
       setAuthRetrying(false);
@@ -178,7 +193,8 @@ export function PageContentProvider({ value, children }) {
   };
 
   const logout = async () => {
-    await signOut(auth);
+    await (await import('./adminSession.js')).signOutAdmin();
+    try { localStorage.removeItem(ADMIN_SESSION_MARKER); } catch { /* unavailable */ }
     setAdminUser(null);
     setEditMode(false);
     setDrafts({});
