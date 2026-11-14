@@ -2,10 +2,11 @@
 import { getAuth, GoogleAuthProvider, signInWithCustomToken, onAuthStateChanged, signInWithPopup, setPersistence, browserLocalPersistence, connectAuthEmulator, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
-import { getAnalytics, isSupported } from 'firebase/analytics';
+import { getAnalytics, isSupported, setAnalyticsCollectionEnabled } from 'firebase/analytics';
 import { apiUrl, apiFetch } from './api.js';
 import { ADMIN_DOMAIN, isClubEmail } from './adminAccess.js';
 import { initializeBrowserAppCheck } from './appCheck.js';
+import { analyticsAllowed } from './analyticsConsent.js';
 
 const runtimeEnv = typeof import.meta.env !== 'undefined' ? import.meta.env : process.env;
 const localEmulators = runtimeEnv.DEV === true && runtimeEnv.VITE_USE_FIREBASE_EMULATORS === 'true';
@@ -27,6 +28,25 @@ let auth = null;
 let db = null;
 let storage = null;
 let analytics = null;
+let analyticsSupportCheck = null;
+
+/** Starts Google Analytics on the hosted site, only once the visitor has allowed it. */
+export const startAnalytics = async () => {
+  if (!app || localEmulators || typeof window === 'undefined' || !navigator.onLine || !analyticsAllowed()
+    || ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)) return;
+  if (!analytics) {
+    analyticsSupportCheck ||= isSupported()
+      .then((supported) => supported ? getAnalytics(app) : null)
+      .finally(() => { analyticsSupportCheck = null; });
+    analytics = await analyticsSupportCheck;
+  }
+  if (analytics && analyticsAllowed()) setAnalyticsCollectionEnabled(analytics, true);
+};
+
+/** Stops sending analytics after the visitor withdraws consent. */
+export const stopAnalytics = () => {
+  if (analytics) setAnalyticsCollectionEnabled(analytics, false);
+};
 
 try {
   app = initializeApp(firebaseConfig);
@@ -44,12 +64,7 @@ try {
       connectStorageEmulator(storage, host, Number(runtimeEnv.VITE_FIREBASE_STORAGE_EMULATOR_PORT) || 9199);
     }
   }
-  if (!localEmulators && typeof window !== 'undefined' && navigator.onLine
-    && !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)) {
-    isSupported().then((supported) => {
-      if (supported) analytics = getAnalytics(app);
-    }).catch(() => {});
-  }
+  startAnalytics().catch((error) => console.error('Google Analytics initialization failed:', error));
 } catch (error) {
   auth = null;
   db = null;

@@ -3,9 +3,10 @@ import { clubYearDates, clubYearOf } from './clubYear.js';
 import {
   isValidPersonName, normaliseAffiliationNumber, normaliseName as normalisePersonName, normalisePhoneNumber, normaliseUkPostcode
 } from './personalDetails.js';
-// Placeholder wording: replace with the club's approved disclaimer; the new wording is recorded as the next policy version after release.
-export const DISCLAIMER_TEXT = 'I confirm the details given are correct and I accept the Forth Canoe Club participation and safety disclaimer. For under-18s, the parent/guardian accepts on their behalf.';
-export const PHOTO_CONSENT_TEXT = 'Photo and video consent';
+import { DISCLAIMER, PHOTO_CONSENT, tickWording } from '../constants/consentWording.js';
+// The full wording ticked: changing either is recorded as the next policy version after release.
+export const DISCLAIMER_TEXT = tickWording(DISCLAIMER);
+export const PHOTO_CONSENT_TEXT = tickWording(PHOTO_CONSENT);
 export const SWIMMING_LEVELS = [
   ['non-swimmer', 'Non-swimmer'],
   ['basic', 'Can swim a short distance'],

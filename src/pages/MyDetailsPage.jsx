@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { loadEmailSession, clearEmailSession, sessionRequest } from '../utils/emailSession';
 import { validateDetailsUpdate } from '../utils/myDetails';
-import { PHOTO_CONSENT_TEXT } from '../utils/checkout';
 import { checkoutWording } from '../utils/consents';
+import { PHOTO_CONSENT } from '../constants/consentWording';
+import { NoticeDocument } from '../components/NoticeDocument';
 import EmailCodeSignIn from '../components/EmailCodeSignIn';
 import PurchaseReceipt from '../components/PurchaseReceipt';
 
@@ -27,8 +28,13 @@ function PhotoConsentChoices({ household, onSaved }) {
     } catch (saveError) { setError(saveError.message); } finally { setBusy(false); }
   };
   return <fieldset className="CheckoutFieldset SpaceT4">
-    <legend>{PHOTO_CONSENT_TEXT}</legend>
-    <p className="text_container">Optional. See the <a href="/notices">club notices</a> for how photos and videos are used.</p>
+    <legend>{PHOTO_CONSENT.title}</legend>
+    <p className="text_container">{PHOTO_CONSENT.label} Tick or untick each person; the change is saved straight away.</p>
+    <details className="PolicyTickView SpaceB2">
+      <summary>View the {PHOTO_CONSENT.title}</summary>
+      <div className="PolicyTickBody"><NoticeDocument body={PHOTO_CONSENT.body} /></div>
+    </details>
+    <p className="CartItemMeta">How the club uses your information: <a href="/notices#privacy-notice">Privacy Notice</a> · <a href="/notices">all notices</a>.</p>
     {household.people.map((person) => <label key={person.memberId} className="CheckoutCheck">
       <input type="checkbox" checked={person.photoConsent === true} disabled={busy} onChange={change(person)} />
       {' '}{person.firstName} {person.lastName}{person.junior ? ' (under 18)' : ''}{person.photoConsent === null ? ' (not answered yet)' : ''}

@@ -18,6 +18,9 @@ import { checkoutWording } from '../src/utils/consents.js';
 const projectId = assertLocalFirebase(process.env);
 initializeAdminApp({ projectId });
 const db = getFirestore();
+// Agrees to whichever notices are published, as the checkout page does.
+const currentNoticeVersions = async () => Object.fromEntries((await db.collection('notices').get()).docs
+  .filter((document) => !document.data().archived && document.data().currentVersion > 0).map((document) => [document.id, document.data().currentVersion]));
 const oldPaging = db.batch();
 for (let index = 0; index < 105; index += 1) oldPaging.delete(db.collection('orders').doc(`PAGING-${String(index).padStart(3, '0')}`));
 await oldPaging.commit();
@@ -129,7 +132,7 @@ try {
   await db.collection('memberships').doc('TEST-EVENT-MEMBER').set({ firstName: 'Eve', lastName: 'Event', email: 'event@example.com', dob: '1990-01-01', status: 'active', validUntil: Timestamp.fromDate(new Date(Date.now() + 90 * 86400000)) });
   const eventCheckout = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'TEST-EVENT', lineId: 'L1' }], billingMode: 'monthly',
-      people: [{ id: 'P1', lineIds: ['L1'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }], wording: checkoutWording() }) });
+      people: [{ id: 'P1', lineIds: ['L1'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }], wording: checkoutWording(), noticeVersions: await currentNoticeVersions() }) });
   assert.equal(eventCheckout.status, 200, `Event checkout failed: ${JSON.stringify(eventCheckout.result)}\nAPI output:\n${output}`);
   const eventOrder = (await db.collection('orders').doc(eventCheckout.result.orderRef).get()).data();
   assert.deepEqual(eventOrder.items[0].eventSchedule, eventSchedule);
@@ -221,7 +224,7 @@ try {
     body: JSON.stringify({ email: 'receipt@example.com', total: '0', items: [] }) }, { expectJson: false })).status, 404, 'unpaid orders cannot be created through the retired endpoint');
   const purchase = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'keyhire', lineId: 'receipt-key' }], billingMode: 'annual',
-      people: [{ id: 'receipt-person', lineIds: ['receipt-key'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }], wording: checkoutWording() }) });
+      people: [{ id: 'receipt-person', lineIds: ['receipt-key'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }], wording: checkoutWording(), noticeVersions: await currentNoticeVersions() }) });
   assert.equal(purchase.status, 200, `Receipt checkout failed: ${JSON.stringify(purchase.result)}\nAPI output:\n${output}`);
   const purchaseOrder = (await db.collection('orders').doc(purchase.result.orderRef).get()).data();
   const successUrl = new URL(purchase.result.checkoutUrl).searchParams.get('success_url');

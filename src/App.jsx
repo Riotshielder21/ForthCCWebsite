@@ -15,6 +15,7 @@ import { pageModules } from './pages/pageModules';
 import { useSiteRoute } from './utils/useSiteRoute';
 import PageLoadBoundary from './components/PageLoadBoundary';
 import OfflineStatus from './components/OfflineStatus';
+import AnalyticsConsentBanner from './components/AnalyticsConsentBanner';
 import { loadPublishedPageContent } from './utils/publicContent';
 import { subscribeToProducts } from './utils/content';
 import { validateDiscountCode } from './utils/discountCodeApi';
@@ -112,6 +113,7 @@ export default function App() {
   const [resumeLink, setResumeLink] = useState(initialDraft?.resumeLink || null);
 
   const [toast, setToast] = useState(null);
+  const [analyticsSettingsOpen, setAnalyticsSettingsOpen] = useState(false);
   const showToast = (message) => {
     setToast(message);
     setTimeout(() => setToast(null), 2500);
@@ -519,6 +521,7 @@ export default function App() {
             <a href="/contact-us" className="FooterLink">Contact</a>
             <a href="/safeguarding" className="FooterLink">Safeguarding</a>
             <a href="/notices" className="FooterLink">Notices</a>
+            <button type="button" className="FooterLink FooterLinkButton" onClick={() => setAnalyticsSettingsOpen(true)}>Analytics settings</button>
             <a href="/check-ins" onClick={(event) => {
               if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
               event.preventDefault();
@@ -534,6 +537,7 @@ export default function App() {
           </div>
         </div>
       </footer>
+      <AnalyticsConsentBanner open={analyticsSettingsOpen} onClose={() => setAnalyticsSettingsOpen(false)} />
 
       {isCartOpen && (
         <div className="CartOverlay">

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiUrl, apiFetch } from '../utils/api';
-import { ageOn, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT } from '../utils/checkout';
+import { ageOn, SWIMMING_LEVELS } from '../utils/checkout';
+import { DISCLAIMER, PHOTO_CONSENT } from '../constants/consentWording';
+import { PolicyTick } from '../components/NoticeDocument';
 import { checkoutWording } from '../utils/consents';
 import { loadEmailSession, clearEmailSession, sessionRequest } from '../utils/emailSession';
 import EmailCodeSignIn from '../components/EmailCodeSignIn';
@@ -354,8 +356,8 @@ export default function ClubNightPage() {
             </select>
           </Field>
           <Field label="Medical or other information we should know (optional)"><textarea className="FormInput" maxLength="1000" value={details.medical} onChange={setDetail('medical')} /></Field>
-          <label className="CheckoutCheck"><input type="checkbox" checked={details.photoConsent} onChange={setDetail('photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
-          <label className="CheckoutCheck"><input type="checkbox" required checked={details.disclaimerAccepted} onChange={setDetail('disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
+          <PolicyTick wording={DISCLAIMER} required checked={details.disclaimerAccepted} onChange={setDetail('disclaimerAccepted')} />
+          <PolicyTick wording={PHOTO_CONSENT} checked={details.photoConsent} onChange={setDetail('photoConsent')} />
         </fieldset>}
         {error && <p className="StatusTextError" role="alert">{error}</p>}
         {status && <p role="status">{status}</p>}

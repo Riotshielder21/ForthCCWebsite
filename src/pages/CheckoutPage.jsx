@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import {
   addFamilyMember, assignLine, blankPerson, isFamilyMembership, isMembership, needsPerson, familyRole, resolvedKind, FAMILY_ADULT_MAX,
-  displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT, requiresMembership, grantsMembership,
+  displayName, normaliseName, personDetailErrors, ageProblem, FAMILY_MAX, SWIMMING_LEVELS, requiresMembership, grantsMembership,
   returningVerificationMatches, invalidatePersonVerification, checkoutStepSnapshot, validateCheckout
 } from '../utils/checkout';
 import { apiUrl, apiFetch } from '../utils/api';
@@ -12,6 +12,8 @@ const money = (value) => `£${value.toFixed(2)}`;
 import { noticeVersionMap } from '../utils/notices';
 import { applyConsentPrefill, sameNoticeVersions } from '../utils/consents';
 import { watchPublishedNotices } from '../utils/noticesClient';
+import { DISCLAIMER, PHOTO_CONSENT } from '../constants/consentWording';
+import { PolicyTick } from '../components/NoticeDocument';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -247,9 +249,10 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
     const { prefill } = candidate;
     return (
       <>
-        <label className="CheckoutCheck"><input type="checkbox" checked={candidate.photoConsent} onChange={onCheck('photoConsent')} /> {PHOTO_CONSENT_TEXT}</label>
-        <label className="CheckoutCheck"><input type="checkbox" checked={candidate.disclaimerAccepted} onChange={onCheck('disclaimerAccepted')} /> {DISCLAIMER_TEXT}</label>
+        <PolicyTick wording={DISCLAIMER} checked={candidate.disclaimerAccepted} onChange={onCheck('disclaimerAccepted')} />
+        <PolicyTick wording={PHOTO_CONSENT} checked={candidate.photoConsent} onChange={onCheck('photoConsent')} />
         {prefill?.disclaimerChanged && !candidate.disclaimerAccepted && <p className="CartItemMeta">The wording has changed, so please read it and tick it again.</p>}
+        {prefill?.photoChanged && !candidate.photoConsent && <p className="CartItemMeta">The photo and video consent wording has changed, so it is no longer ticked. Read it and tick it again if you agree.</p>}
       </>
     );
   };
@@ -491,8 +494,10 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
             </div>
             {noticeState.notices?.length > 0 && <div className="CheckoutSection">
               <label className="CheckoutCheck"><input type="checkbox" checked={noticesAgreed} onChange={(event) => setAgreedNotices(event.target.checked ? noticeKey : '')} />
-                <span>I agree to the club's Notices, published <a href="/notices" target="_blank" rel="noopener">here</a>.</span></label>
-              <p className="CartItemMeta">{noticeState.notices.map((notice) => `${notice.title} (version ${notice.currentVersion})`).join(', ')}</p>
+                <span>I have read and agree to the club's Notices listed below, for myself and everyone I am booking for.</span></label>
+              <ul className="NoticeAgreementList">{noticeState.notices.map((notice) => <li key={notice.id}>
+                <a href={`/notices#${encodeURIComponent(notice.id)}`} target="_blank" rel="noopener">View the {notice.title}</a> (version {notice.currentVersion})
+              </li>)}</ul>
               {agreedNotices === null && noticesPrefilled && <p className="CartItemMeta">Ticked because everyone in this basket has agreed to these versions before. It is required, so it must stay ticked.</p>}
             </div>}
             {noticeState.notices === null && !noticeState.error && <p className="CartItemMeta" role="status">Loading the club notices…</p>}

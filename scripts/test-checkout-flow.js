@@ -950,7 +950,7 @@ await test('merchandise sizes and event capacity limit sales, expiry releases ho
   await db.collection('products').doc(tee).set({ name: 'Club tee', category: 'MERCHANDISE', type: 'merchandise', basePrice: 15, description: 'Tee',
     variants: [{ size: 'S', stock: 1 }, { size: 'M', stock: 2 }], active: true, sortOrder: 1000, pricingMode: 'fixed', allowMonthly: false });
   const shirt = (size, n) => ({ id: tee, lineId: `${tee}-${size}-${n}`, size });
-  const order = (who, items) => call('POST', '/api/checkout-session', { body: { email: who, items, people: [], billingMode: 'annual' } });
+  const order = async (who, items) => call('POST', '/api/checkout-session', { body: { email: who, items, people: [], billingMode: 'annual', noticeVersions: await currentNoticeVersions() } });
   const stock = async (id) => (await call('GET', '/api/availability')).json.availability[id];
 
   assert.deepEqual((await stock(tee)).remaining, { S: 1, M: 2 });
@@ -1123,7 +1123,7 @@ await test('consent and policy wording is recorded as numbered versions that fol
   assert.ok(byKey.get('photo-video-consent').currentVersion >= 1);
   for (const key of ['privacy-notice', 'data-retention', 'first-aid-and-safety']) assert.equal(byKey.get(key).currentVersion, 0, `${key} is registered but not yet written`);
   const first = listing.json.versions.find((version) => version.policyKey === 'participation-disclaimer' && version.version === 1);
-  assert.match(first.text, /participation and safety disclaimer/);
+  assert.match(first.text, /Participation Disclaimer/);
   assert.equal(first.supersedesVersion, null);
   assert.deepEqual((await call('POST', '/api/admin/policies/sync', { headers: admin })).json.recorded, [], 'unchanged wording adds no version');
 

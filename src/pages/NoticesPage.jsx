@@ -1,9 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArrowLeft, ArrowRight, Download, FilePlus2, History, RotateCcw, Send } from 'lucide-react';
-import { ContentText } from '../components/ContentText';
+import { NoticeDocument } from '../components/NoticeDocument';
 import { usePageEditor } from '../utils/PageContentContext';
-import { NOTICE_ID_PATTERN, NOTICE_LIMITS, noticeIdFromTitle, parseNoticeBlocks, sortNotices } from '../utils/notices';
+import { NOTICE_ID_PATTERN, NOTICE_LIMITS, noticeIdFromTitle, sortNotices } from '../utils/notices';
 import { archiveNotice, loadNoticeVersions, noticePdfUrl, publishNotice, reorderNotices, watchPublishedNotices } from '../utils/noticesClient';
+import { DISCLAIMER, PHOTO_CONSENT } from '../constants/consentWording';
+import { NOTICE_DRAFTS } from '../constants/noticeDrafts';
+
+/** Statements ticked per person at checkout. Their wording is set in the code and versioned on release, so it is shown here read-only. */
+const TICKED_STATEMENTS = [DISCLAIMER, PHOTO_CONSENT].map(({ id, title, label, body }) => ({ id, title, body: `${label}\n\n${body}`, ticked: true }));
 
 const formatDate = (value) => {
   const date = value?.toDate?.() || (value ? new Date(value) : null);
@@ -14,19 +19,6 @@ const formatDate = (value) => {
 const hashId = () => {
   try { return decodeURIComponent(window.location.hash.slice(1)); } catch { return ''; }
 };
-
-export function NoticeDocument({ body }) {
-  return <div className="NoticeDocument">{parseNoticeBlocks(body).map((block, index) => {
-    if (block.type === 'heading') return block.level === 2
-      ? <h3 key={index} className="NoticeHeading"><ContentText value={block.text} /></h3>
-      : <h4 key={index} className="NoticeSubheading"><ContentText value={block.text} /></h4>;
-    if (block.type === 'list') {
-      const List = block.ordered ? 'ol' : 'ul';
-      return <List key={index}>{block.items.map((item, itemIndex) => <li key={itemIndex}><ContentText value={item} /></li>)}</List>;
-    }
-    return <p key={index} className="AdminPreserveLines"><ContentText value={block.text} /></p>;
-  })}</div>;
-}
 
 function VersionHistory({ adminUser, notice }) {
   const [state, setState] = useState({ versions: null, error: '' });
@@ -93,13 +85,16 @@ export default function NoticesPage() {
   const canEdit = Boolean(adminUser && editing);
   const publishedIds = new Set((state.notices || []).map((item) => item.id));
   const newDrafts = Object.entries(drafts).filter(([id, draft]) => draft.isNew && !publishedIds.has(id)).map(([id, draft]) => ({ id, title: draft.title || 'New notice', draft: true }));
-  const tabs = useMemo(() => [...(state.notices || []), ...(canEdit ? newDrafts : [])], [state.notices, canEdit, drafts]);
+  const tabs = useMemo(() => state.notices ? [...state.notices, ...(canEdit ? newDrafts : []), ...TICKED_STATEMENTS.filter((item) => !publishedIds.has(item.id))] : [],
+    [state.notices, canEdit, drafts]);
   const archived = sortNotices(state.all.filter((notice) => notice.archived));
+  const missingDrafts = NOTICE_DRAFTS.filter((item) => !publishedIds.has(item.id) && !drafts[item.id] && !archived.some((old) => old.id === item.id));
   const selected = tabs.find((tab) => tab.id === selectedId) || tabs[0];
+  const ticked = selected?.ticked === true;
   const notice = state.notices?.find((item) => item.id === selected?.id);
-  const draft = selected && drafts[selected.id];
+  const draft = selected && !ticked && drafts[selected.id];
   const shownTitle = canEdit && draft ? draft.title : selected?.title;
-  const shownBody = canEdit && draft ? draft.body : notice?.body || '';
+  const shownBody = ticked ? selected.body : canEdit && draft ? draft.body : notice?.body || '';
 
   const select = (id, focus = false) => {
     setSelectedId(id);
@@ -164,6 +159,11 @@ export default function NoticesPage() {
     run(async () => { await archiveNotice(adminUser, notice.id); dropDraft(notice.id); }, `${notice.title} archived.`);
   };
   const restore = (item) => run(() => publishNotice(adminUser, item.id, item), `${item.title} restored.`);
+  const loadDrafts = () => {
+    setDrafts((current) => ({ ...current, ...Object.fromEntries(missingDrafts.map((item) => [item.id, { title: item.title, body: item.body, isNew: true }])) }));
+    setStatus({ message: `${missingDrafts.length} drafted notice${missingDrafts.length === 1 ? '' : 's'} added. Check each one, edit it if needed and publish it.`, error: '' });
+    if (missingDrafts[0]) select(missingDrafts[0].id);
+  };
 
   return <div className="SectionContent PageFadeIn NoticesPage">
     <span className="tile_eyebrow">Policies and terms</span>
@@ -172,6 +172,9 @@ export default function NoticesPage() {
 
     {adminUser && <div className="NoticeAdminBar" data-editor-control="true">
       <label className="EditorModeSwitch"><input type="checkbox" checked={editing} onChange={(event) => setEditing(event.target.checked)} /> Edit notices</label>
+      {canEdit && missingDrafts.length > 0 && <button type="button" className="EditorCommand" disabled={busy} onClick={loadDrafts}>
+        <FilePlus2 size={16} /> Add drafted notices ({missingDrafts.map((item) => item.title).join(', ')})
+      </button>}
       {busy && <span className="EditorStatus" role="status">Saving…</span>}
       {!busy && (status.message || status.error) && <span className={status.error ? 'EditorStatus EditorError' : 'EditorStatus'} role={status.error ? 'alert' : 'status'}>{status.error || status.message}</span>}
     </div>}
@@ -194,12 +197,13 @@ export default function NoticesPage() {
           <div>
             <h2 className="NoticeTitle">{shownTitle || 'New notice'}</h2>
             {notice && <p className="NoticeMeta">Version {notice.currentVersion}{formatDate(notice.publishedAt) ? ` · Published ${formatDate(notice.publishedAt)}` : ''}</p>}
+            {ticked && <p className="NoticeMeta">Ticked for each person at checkout and check-in{selected.id === PHOTO_CONSENT.id ? ' (optional)' : ''}. Every change to this wording is recorded as a new version.</p>}
           </div>
           {notice && <a className="PrimaryActionButtonCompact" href={noticePdfUrl(notice.id, notice.currentVersion)} aria-label={`Download ${notice.title} as a PDF`}>
             <Download className="IconSm" /> PDF
           </a>}
         </header>
-        {canEdit && <>
+        {canEdit && !ticked && <>
           <NoticeEditor notice={notice} draft={draft || { title: notice.title, body: notice.body }} busy={busy}
             onDraft={(value) => setDraft(selected.id, value)} onDiscard={() => dropDraft(selected.id)} onPublish={publish} />
           {notice && <div className="NoticeEditorActions" data-editor-control="true">
