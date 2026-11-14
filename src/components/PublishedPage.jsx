@@ -17,7 +17,9 @@ const publicInline = (node, copy, tile, inLink = false) => {
   const isLink = inLink || node.type === 'a' || node.type === 'button';
   if (node.props.className?.split(' ').includes('PrimaryActionButton') && tile.button !== undefined) return <TileButton button={tile.button} />;
   const key = node.props['data-content-field'];
-  const descriptiveField = key && !/title|heading|eyebrow|url|action|link|label$/i.test(key);
+  const fieldKey = typeof key === 'string' ? key.toLowerCase() : '';
+  const descriptiveField = fieldKey && !['title', 'heading', 'eyebrow', 'url', 'action', 'link'].some((part) => fieldKey.includes(part))
+    && !fieldKey.endsWith('label');
   if (descriptiveField && !isLink) return React.cloneElement(node, {}, <ContentText value={copy[key] || ''} />);
   if (typeof node.type !== 'string' && node.type !== React.Fragment) return node;
   const href = node.props.href ? safeTileUrl(node.props.href) : '';

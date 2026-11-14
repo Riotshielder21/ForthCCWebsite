@@ -696,7 +696,7 @@ const deliverOrder = async (orderRef, given) => {
   }
   // Sent after the receipt; a member whose welcome cannot go now is picked up by the scheduled job.
   await sendDueWelcomeEmails({ membershipIds: (fields.people || []).map((person) => person.membershipId) })
-    .catch((error) => console.error('Could not send welcome emails for %s: %s', orderRef, error.message));
+    .catch((error) => console.error('Could not send welcome emails after order fulfillment:', error.message));
   if (receiptError) throw receiptError;
 };
 
