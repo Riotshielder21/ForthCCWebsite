@@ -82,6 +82,7 @@ test('pre-live edits replace working version 1 without building history; launch 
     { version: 1, changed: true, preLive: true });
   assert.equal(db.store.get('notices/terms').currentVersion, 1);
   assert.equal(db.store.get('noticeVersions/terms@1').body, 'Revised draft.');
+  assert.equal((await noticePdf(db.store.get('noticeVersions/terms@1'))).subarray(0, 5).toString(), '%PDF-');
   assert.equal(await freezePreLiveNotices(db, at(3)), 1);
   assert.equal(db.store.get('notices/terms').preLive, false);
   assert.equal(db.store.get('noticeVersions/terms@1').body, 'Revised draft.');

@@ -41,16 +41,37 @@ function VersionHistory({ adminUser, notice }) {
   </details>;
 }
 
-function NoticeEditor({ notice, draft, preLive, onDraft, onDiscard, busy, onPublish }) {
+function NoticeEditor({ notice, draft, preLive, tabs, onDraft, onDiscard, busy, onPublish }) {
+  const textarea = useRef(null);
   const dirty = draft.isNew || draft.title !== notice?.title || draft.body !== notice?.body;
   const nextVersion = preLive ? 1 : (notice?.currentVersion || 0) + 1;
+  const insertNoticeLink = (tab) => {
+    const start = textarea.current?.selectionStart ?? draft.body.length;
+    const end = textarea.current?.selectionEnd ?? start;
+    const label = tab.title.replace(/[\[\]\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const link = `[${label}](/notices#${encodeURIComponent(tab.id)})`;
+    const before = draft.body.slice(0, start);
+    const after = draft.body.slice(end);
+    const insertion = `${before && !/\s$/.test(before) ? ' ' : ''}${link}${after && !/^\s/.test(after) ? ' ' : ''}`;
+    onDraft({ ...draft, body: `${before}${insertion}${after}` });
+    requestAnimationFrame(() => {
+      textarea.current?.focus();
+      textarea.current?.setSelectionRange(start + insertion.length, start + insertion.length);
+    });
+  };
   return <div className="NoticeEditor" data-editor-control="true">
     <label className="FormLabel">Title<input className="FormInput" maxLength={NOTICE_LIMITS.title} value={draft.title}
       onChange={(event) => onDraft({ ...draft, title: event.target.value })} /></label>
     <label className="FormLabel">Notice text
-      <textarea className="FormInput NoticeTextarea" rows={18} maxLength={NOTICE_LIMITS.body} value={draft.body}
+      <textarea ref={textarea} className="FormInput NoticeTextarea" rows={18} maxLength={NOTICE_LIMITS.body} value={draft.body}
         onChange={(event) => onDraft({ ...draft, body: event.target.value })} />
     </label>
+    <details className="NoticeInsertLinks" data-editor-control="true">
+      <summary>Insert a link to a notice tab</summary>
+      <div className="WelcomePlaceholders SpaceT2">
+        {tabs.map((tab) => <button key={tab.id} type="button" className="EditorCommand" onClick={() => insertNoticeLink(tab)}>{tab.title}</button>)}
+      </div>
+    </details>
     <p className="NoticeEditorHelp">Leave a blank line between paragraphs. Start a line with <code>## </code> for a heading, <code>### </code> for a smaller heading,
       <code>- </code> for a bullet or <code>1. </code> for a numbered item. Links: <code>[link text](https://…)</code>, <code>[text](/membership)</code> or <code>[email us](mailto:…)</code>.</p>
     <div className="NoticeEditorActions">
@@ -206,12 +227,12 @@ export default function NoticesPage() {
             {notice && <p className="NoticeMeta">{preLive ? 'Working version 1 · Pre-launch' : `Version ${notice.currentVersion}${formatDate(notice.publishedAt) ? ` · Published ${formatDate(notice.publishedAt)}` : ''}`}</p>}
             {ticked && <p className="NoticeMeta">Ticked for each person at checkout and check-in{selected.id === PHOTO_CONSENT.id ? ' (optional)' : ''}. Every change to this wording is recorded as a new version.</p>}
           </div>
-          {notice && !preLive && <a className="PrimaryActionButtonCompact" href={noticePdfUrl(notice.id, notice.currentVersion)} aria-label={`Download ${notice.title} as a PDF`}>
+          {notice && notice.currentVersion > 0 && <a className="PrimaryActionButtonCompact" href={noticePdfUrl(notice.id, notice.currentVersion)} aria-label={`Download ${notice.title} as a PDF`}>
             <Download className="IconSm" /> PDF
           </a>}
         </header>
         {canEdit && !ticked && <>
-          <NoticeEditor notice={notice} draft={draft || { title: shownTitle || '', body: shownBody }} preLive={preLive} busy={busy}
+          <NoticeEditor notice={notice} draft={draft || { title: shownTitle || '', body: shownBody }} preLive={preLive} tabs={tabs} busy={busy}
             onDraft={(value) => setDraft(selected.id, value)} onDiscard={() => dropDraft(selected.id)} onPublish={publish} />
           {notice && <div className="NoticeEditorActions" data-editor-control="true">
             <button type="button" className="EditorIconButton" title="Move left" aria-label={`Move ${notice.title} left`} disabled={busy || state.notices[0]?.id === notice.id} onClick={() => move(-1)}><ArrowLeft size={18} /></button>

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PUBLIC_ROUTES, resolveRoute, relativeClubLink, pagePath } from './routes.js';
+import { PUBLIC_ROUTES, resolveRoute, relativeClubLink, pagePath, isSamePageHashLink } from './routes.js';
 import { readFileSync } from 'node:fs';
 
 test('public paths resolve directly and legacy links canonicalise without losing parameters or hashes', () => {
@@ -47,4 +47,12 @@ test('club links stay on the serving domain, while external services remain exte
   assert.equal(relativeClubLink('mailto:hello@forthcanoeclub.co.uk'), 'mailto:hello@forthcanoeclub.co.uk');
   assert.equal(relativeClubLink('#timeline'), '#timeline');
   assert.equal(relativeClubLink('?filter=all'), '?filter=all');
+});
+
+test('same-page hash links remain native so tabs and in-page navigation can react', () => {
+  assert.equal(isSamePageHashLink('/notices', '/notices#privacy-notice'), true);
+  assert.equal(isSamePageHashLink('/notices#terms', '/notices#privacy-notice'), true);
+  assert.equal(isSamePageHashLink('/notices', '/membership#pricing'), false);
+  assert.equal(isSamePageHashLink('/notices?view=all', '/notices#privacy-notice'), false);
+  assert.equal(isSamePageHashLink('/notices', '/notices'), false);
 });
