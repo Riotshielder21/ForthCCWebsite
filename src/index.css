@@ -1080,6 +1080,20 @@
 
   .AdminEditor {
     @apply space-y-4;
+    position: relative;
+  }
+
+  .AdminEditor > .AdminListHeader {
+    min-height: 48px;
+    padding-right: 112px;
+    flex-wrap: wrap;
+  }
+
+  .AdminSaveTrack {
+    position: absolute;
+    inset: 24px;
+    margin: 0;
+    pointer-events: none;
   }
 
   .AdminSaveCorner {
@@ -1093,7 +1107,7 @@
     pointer-events: none;
   }
 
-  .AdminSaveAll {
+  .AdminSaveButton {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -1107,9 +1121,9 @@
     pointer-events: auto;
   }
 
-  .AdminSaveAll:hover:not(:disabled) { background: #166534; }
-  .AdminSaveAll:focus-visible { outline: 3px solid #032346; outline-offset: 3px; }
-  .AdminSaveAll:disabled { opacity: .65; cursor: wait; }
+  .AdminSaveButton:hover:not(:disabled) { background: #166534; }
+  .AdminSaveButton:focus-visible { outline: 3px solid #032346; outline-offset: 3px; }
+  .AdminSaveButton:disabled { opacity: .65; cursor: wait; }
   .AdminSaveCorner .StatusText {
     max-width: min(100%, 32rem);
     padding: 8px 12px;

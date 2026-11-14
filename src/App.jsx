@@ -456,7 +456,7 @@ export default function App() {
       case 'admin':
         return <AdminPage products={products} onNavigate={setCurrentPage} tripDiscounts={tripDiscounts} />;
       case 'admin-reports':
-        return <AdminReportsPage onNavigate={setCurrentPage} />;
+        return <AdminReportsPage onNavigate={setCurrentPage} products={products} />;
       case 'beginners':
         return <BeginnersPage onNavigate={setCurrentPage} products={products} />;
       case 'disciplines':

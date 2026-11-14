@@ -5,7 +5,6 @@ import { saveCatalogueItem } from '../utils/catalogueSave';
 import { isLockedProduct, tripDiscountForProduct } from '../utils/tripDiscount';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
 import { usePageEditor } from '../utils/PageContentContext';
-import DiscountCodesPanel from '../components/DiscountCodesPanel';
 import PagedAdminList from '../components/PagedAdminList';
 import EventRosterControl from '../components/EventRosterControl';
 import { apiUrl, apiFetch } from '../utils/api';
@@ -69,7 +68,6 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
   const [viewerLoadError, setViewerLoadError] = useState('');
   const [viewerLoadAttempt, setViewerLoadAttempt] = useState(0);
   const [fileInputKey, setFileInputKey] = useState(0);
-  const [formDraft, setFormDraft] = useState({ name: '', description: '', fields: 'Name\nEmail\nResponse' });
 
   useEffect(() => {
     if (!viewerProductId || !adminUser) return undefined;
@@ -110,30 +108,6 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
       setError(loginError.message || 'Sign-in failed. Check the account and admin access.');
     }
   };
-
-  const handleCreateForm = async (event) => {
-    event.preventDefault();
-    setError('');
-    try {
-      const token = await adminUser.getIdToken();
-      const response = await apiFetch(apiUrl('/api/admin/forms'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          name: formDraft.name,
-          description: formDraft.description,
-          fields: formDraft.fields.split('\n').map((label) => label.trim()).filter(Boolean)
-        })
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Could not create form.');
-      setMessage(`${result.form.name} created in the ${result.form.clubYear}-${result.form.clubYear + 1} folder.`);
-      setFormDraft({ name: '', description: '', fields: 'Name\nEmail\nResponse' });
-    } catch (formError) {
-      setError(formError.message);
-    }
-  };
-
 
   const resetImageInput = () => { setImageFile(null); setFileInputKey((key) => key + 1); };
 
@@ -285,7 +259,7 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
           <div>
             <span className="tile_eyebrow">Content Management</span>
             <h2 className="page_heading_bold_2">Website editor</h2>
-            <p className="PageIntro">Catalogue, event tickets, forms and reports.</p>
+            <p className="PageIntro">Shop catalogue and event tickets. Manage forms, discounts and records in Reports & records.</p>
           </div>
           <div className="AdminPreviewActions">
             <span className="StatusText StatusTextSuccess" role="status">Signed in as {adminUser.email}.</span>
@@ -307,12 +281,14 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
             {!products.length && <p className="text_container">No products. Add a new item or restore the starter catalogue.</p>}
           </aside>
           <form className="main_tile AdminEditor" onSubmit={handleSave}>
-            <div className="AdminSaveCorner">
-              <button className="AdminSaveAll" type="submit" disabled={uploading || reservingId || saving || (draft.category === 'EVENTS' && !viewersReady)}>
-                {saving ? <Loader2 className="IconMd animate-spin" /> : <Save className="IconMd" />} {saving ? 'Saving...' : 'Save all'}
-              </button>
-              {message && <p className="StatusText StatusTextSuccess" role="status">{message}</p>}
-              {error && <p className="StatusText StatusTextError" role="alert">{error}</p>}
+            <div className="AdminSaveTrack">
+              <div className="AdminSaveCorner">
+                <button className="AdminSaveButton" type="submit" disabled={uploading || reservingId || saving || (draft.category === 'EVENTS' && !viewersReady)}>
+                  {saving ? <Loader2 className="IconMd animate-spin" /> : <Save className="IconMd" />} {saving ? 'Saving...' : 'Save'}
+                </button>
+                {message && <p className="StatusText StatusTextSuccess" role="status">{message}</p>}
+                {error && <p className="StatusText StatusTextError" role="alert">{error}</p>}
+              </div>
             </div>
             <div className="AdminListHeader"><h3 className="tile_heading_bold_1">{selectedProduct ? 'Edit product' : 'New product'}</h3>{selectedProduct && tripDiscounts && !isLockedProduct(selectedProduct, tripDiscounts) && <button type="button" className="CartRemoveButton" disabled={uploading || saving} onClick={handleDelete} aria-label="Remove product"><Trash2 className="IconMd" /></button>}</div>
             {selectedProduct && tripDiscounts && isLockedProduct(selectedProduct, tripDiscounts) && <p className="text_container text_container_note">This product cannot be removed: holding it gives £{tripDiscountForProduct(selectedProduct, tripDiscounts).amount} off single-day trips at checkout. To remove it, first take it out of Reports & records → Credits & discounts → Service trip discounts.</p>}
@@ -360,7 +336,7 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
               <label className="FormLabel">Also allowed to view the attendee list
                 <textarea className="FormInput" rows="2" value={viewerText} disabled={!viewersReady || saving} placeholder="One email per line" onChange={(event) => setViewerText(event.target.value)} />
               </label>
-              <p className="CartItemMeta">The leader and these people can open the list on the check-in page with an email code until the end of the event's last day. Save all saves these viewers along with the item details.</p>
+              <p className="CartItemMeta">The leader and these people can open the list on the check-in page with an email code until the end of the event's last day. Saving the product also saves these viewers.</p>
               {!viewersReady && !viewerLoadError && <p role="status">Loading attendee-list viewers...</p>}
               {viewerLoadError && <div><p className="StatusTextError" role="alert">{viewerLoadError}</p><button className="EditorCommand" type="button" onClick={() => setViewerLoadAttempt((attempt) => attempt + 1)}>Retry loading viewers</button></div>}
               {selectedProduct && <EventRosterControl adminUser={adminUser} productId={selectedProduct} leaderEmail={products.find((product) => product.id === selectedProduct)?.leaderEmail} disabled={saving} />}
@@ -392,15 +368,6 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
             </>}
           </form>
         </div>
-        <DiscountCodesPanel adminUser={adminUser} products={products} />
-        <form className="main_tile AdminFormBuilder SpaceT6" onSubmit={handleCreateForm}>
-          <div className="AdminListHeader"><div><span className="tile_eyebrow">Google Workspace</span><h3 className="tile_heading_bold_2">Create a form</h3></div></div>
-          <p className="text_container SpaceB4">Creates one response spreadsheet in the current club-year folder on the Shared Drive.</p>
-          <label className="FormLabel">Form name<input className="FormInput" required value={formDraft.name} onChange={(event) => setFormDraft({ ...formDraft, name: event.target.value })} /></label>
-          <label className="FormLabel">Description<textarea className="FormInput" rows="2" value={formDraft.description} onChange={(event) => setFormDraft({ ...formDraft, description: event.target.value })} /></label>
-          <label className="FormLabel">Fields, one per line<textarea className="FormInput" rows="5" required value={formDraft.fields} onChange={(event) => setFormDraft({ ...formDraft, fields: event.target.value })} /></label>
-          <button className="FormSubmitButton" type="submit">Create form and sheet</button>
-        </form>
       </div>
     </div>
   );
