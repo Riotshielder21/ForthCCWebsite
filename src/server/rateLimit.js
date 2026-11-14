@@ -10,7 +10,8 @@ const limiter = ({ limit, windowMs = MINUTE, perPath }) => expressRateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   keyGenerator: (req) => (perPath ? `${clientKey(req.ip)}:${req.path}` : clientKey(req.ip)),
-  validate: { xForwardedForHeader: false },
+  // clientKey wraps ipKeyGenerator; the library's source-text check cannot see through the helper.
+  validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
   message: { error: 'Too many requests. Try again shortly.' }
 });
 
