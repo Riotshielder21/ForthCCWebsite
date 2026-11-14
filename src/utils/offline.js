@@ -2,7 +2,17 @@ import { apiUrl, apiFetch } from './api';
 import { savePublicSnapshot } from './publicSnapshots';
 
 export function prepareOfflineSite(onStatus) {
-  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return () => {};
+  if (!('serviceWorker' in navigator)) return () => {};
+  if (!import.meta.env.PROD) {
+    // A worker left by a production build on this localhost port would keep serving that build instead of the dev server.
+    navigator.serviceWorker.getRegistrations().then(async (registrations) => {
+      if (!registrations.length) return;
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+      for (const name of await caches.keys()) if (name.startsWith('fcc-public-')) await caches.delete(name);
+      window.location.reload();
+    }).catch((error) => console.error('Could not remove a leftover service worker:', error));
+    return () => {};
+  }
   let active = true;
   let timer;
   let registration;
@@ -25,6 +35,10 @@ export function prepareOfflineSite(onStatus) {
       if (!response.ok) throw new Error(`Could not download public volunteering information (${response.status}).`);
       savePublicSnapshot('volunteering', await response.json());
     }).catch((error) => console.error('Public volunteering information could not be saved:', error));
+    apiFetch(apiUrl('/api/timetable'), { credentials: 'omit', priority: 'low' }).then(async (response) => {
+      if (!response.ok) throw new Error(`Could not download the public timetable (${response.status}).`);
+      savePublicSnapshot('timetable', await response.json());
+    }).catch((error) => console.error('Public timetable could not be saved:', error));
     try {
       registration = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
       if (!active) return;
@@ -32,11 +46,9 @@ export function prepareOfflineSite(onStatus) {
         const worker = registration.installing;
         worker?.addEventListener('statechange', () => {
           if (worker.state === 'redundant') notify('unavailable');
-          if (worker.state === 'installed' && registration.waiting) notify('update');
         });
       });
-      if (registration.waiting) notify('update');
-      else check();
+      check();
     } catch (error) {
       console.error('Offline public-page setup failed:', error);
       notify('unavailable');

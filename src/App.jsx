@@ -3,7 +3,6 @@ import {
   Trash2, ShoppingBag, X, ShoppingCart, Plus, Minus,
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
-import { initializeAuth, validateDiscountCode } from './utils/firebase';
 import { calculateCart, debitRange, expandClubYearLines, expandPeopleLines } from './utils/pricing';
 import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName, returningVerificationMatches, restoreDraftLines } from './utils/checkout';
@@ -16,7 +15,9 @@ import { pageModules } from './pages/pageModules';
 import { useSiteRoute } from './utils/useSiteRoute';
 import PageLoadBoundary from './components/PageLoadBoundary';
 import OfflineStatus from './components/OfflineStatus';
-import { loadPublishedPageContent, subscribeToProducts } from './utils/content';
+import { loadPublishedPageContent } from './utils/publicContent';
+import { subscribeToProducts } from './utils/content';
+import { validateDiscountCode } from './utils/discountCodeApi';
 import { PageContentProvider } from './utils/PageContentContext';
 import { apiUrl, apiFetch } from './utils/api';
 import { PRODUCTS } from './constants/products';
@@ -116,26 +117,27 @@ export default function App() {
     setTimeout(() => setToast(null), 2500);
   };
 
-  useEffect(() => {
-    const initAuth = async () => {
-      await initializeAuth();
-    };
-    initAuth();
-  }, []);
-
-  useEffect(() => subscribeToProducts((remoteProducts) => {
-    setProducts(remoteProducts);
-    setCatalogueLive(true);
-    savePublicSnapshot('products', remoteProducts);
-  }, (error) => console.error('Product catalog unavailable:', error)), []);
-
   useEffect(() => loadPublishedPageContent((content) => setPageContent((current) => ({ ...current, ...content })), (error) => {
     console.error('Page content unavailable:', error);
   }, currentPage), [currentPage]);
 
+  // Admins see their own product saves straight away; public visitors use the availability response below.
+  const adminPage = currentPage === 'admin' || currentPage === 'admin-reports';
+  useEffect(() => adminPage ? subscribeToProducts((remoteProducts) => {
+    setProducts(remoteProducts);
+    setCatalogueLive(true);
+  }, (error) => console.error('Product catalog unavailable:', error)) : undefined, [adminPage]);
+
   const refreshAvailability = () => apiFetch(apiUrl('/api/availability'), { cache: 'no-store' })
     .then((response) => (response.ok ? response.json() : null))
-    .then((result) => { if (result?.availability) setAvailability(result.availability); })
+    .then((result) => {
+      if (result?.availability) setAvailability(result.availability);
+      if (Array.isArray(result?.products)) {
+        setProducts(result.products);
+        setCatalogueLive(true);
+        savePublicSnapshot('products', result.products);
+      }
+    })
     .catch(() => {});
   useEffect(() => { refreshAvailability(); }, [currentPage, isCartOpen]);
 
@@ -454,7 +456,7 @@ export default function App() {
       case 'admin-reports':
         return <AdminReportsPage onNavigate={setCurrentPage} />;
       case 'beginners':
-        return <BeginnersPage onNavigate={setCurrentPage} />;
+        return <BeginnersPage onNavigate={setCurrentPage} products={products} />;
       case 'disciplines':
         return <DisciplinesPage />;
       case 'volunteering':
@@ -484,7 +486,7 @@ export default function App() {
   };
 
   return (
-    <PageContentProvider value={pageContent}>
+    <PageContentProvider value={pageContent} enableAdminAuth={currentPage === 'admin' || currentPage === 'admin-reports'}>
     <div className="SiteShell" onClick={onLinkClick}>
       <SiteNavigation
         currentPage={currentPage}

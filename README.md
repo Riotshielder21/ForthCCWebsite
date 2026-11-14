@@ -10,7 +10,7 @@ How the club website works: what each part does and where its code lives. To run
 | API | Cloud Run (`europe-west2`) | Express ([server.js](server.js), [src/server/](src/server/)). Answers only `/api/...` and `/health`: payments, webhooks, emails, reports and every private read or write. |
 | Database | Firestore | All records. Browsers can read only `products` and `notices`, and only club admins can write `products` ([firestore.rules](firestore.rules)). Everything else goes through the API. |
 | Files | Firebase Storage | Uploaded images ([storage.rules](storage.rules)). |
-| Scheduled jobs | Cloud Scheduler + Cloud Run jobs | `fcc-renewals` (renewal emails, 1 and 15 February), `fcc-justgo-sync` (daily) and `fcc-justgo-upload` (hourly). See [scheduled-jobs.sh](scripts/scheduled-jobs.sh). The API also runs two hourly tasks itself: event attendee lists and policy wording versions. |
+| Scheduled jobs | Cloud Scheduler + Cloud Run jobs | `fcc-renewals` (renewal emails, 1 and 15 February), `fcc-welcome-emails` (daily welcome emails for JustGo joiners and renewals), `fcc-justgo-sync` (daily) and `fcc-justgo-upload` (hourly). See [scheduled-jobs.sh](scripts/scheduled-jobs.sh). The API also runs two hourly tasks itself: event attendee lists and policy wording versions. |
 | Payments | Stripe | Checkout (card and Bacs Direct Debit), monthly subscriptions, refunds. Results arrive through the Stripe webhook. Only test keys are accepted for now. |
 | Email, forms | Google Workspace | Sends all emails; admin-created forms save to Google Sheets in a club-year folder on the Shared Drive. |
 | Page content | GitHub | Admin page edits become a review pull request into `main`. |
@@ -26,7 +26,7 @@ Deployment is [.github/workflows/firebase-hosting.yml](.github/workflows/firebas
 
 **Shop and checkout.** Products in Firestore override the starter list in [products.js](src/constants/products.js) ([catalogue.js](src/utils/catalogue.js)). Categories: membership, services, subscriptions, vouchers, events and merchandise, with stock, event capacity and discount codes. Checkout collects each person, matches returning members by email, name and date of birth, then sends the payer to Stripe. The webhook records the order, households and memberships ([orderPeople.js](src/server/orderPeople.js), [membershipTerms.js](src/server/membershipTerms.js)). After payment, monthly items are added to the payer's Stripe subscription for that club year (created if needed) and debited on the 1st of each month. If the payer comes back from Stripe without paying, the basket and typed details are kept in that browser tab; starting again expires the earlier Stripe session, so nobody is charged twice.
 
-**Trip discounts.** Single-day trips are cheaper for each attendee who holds, or is buying, a qualifying service or subscription this club year. Admins set the rules in **Reports & records → Trip discounts**; the basket and checkout both price through the API, so the total shown is what Stripe charges ([tripDiscount.js](src/utils/tripDiscount.js)). Qualifying products cannot be removed from the shop.
+**Service trip discounts.** Single-day trips are cheaper for each attendee who holds, or is buying, a qualifying service or subscription this club year. Admins set the rules in **Reports & records → Credits & discounts → Service trip discounts**; the basket and checkout both price through the API, so the total shown is what Stripe charges ([tripDiscount.js](src/utils/tripDiscount.js)). Qualifying products cannot be removed from the shop.
 
 **Monthly receipts.** Each paid monthly debit emails the payer a club receipt listing the items paid under the person each is for, once per Stripe invoice. Subscriptions set up outside this site on the same Stripe account are receipted too.
 
@@ -37,6 +37,8 @@ Deployment is [.github/workflows/firebase-hosting.yml](.github/workflows/firebas
 **My details.** Members sign in with an emailed code ([emailCodes.js](src/server/emailCodes.js)), then update their household's contact details, give or withdraw photo consent, view receipts and ask to stop monthly payments ([myDetails.js](src/server/myDetails.js)).
 
 **Club night.** Scheduled check-in sessions. Non-members give their details once and are kept as contacts; volunteers sign in with an email code to see that day's check-ins ([clubNight.js](src/server/clubNight.js)).
+
+**Weekly timetable.** Admins list the club's regular sessions (day, time, season, location) under **Reports & records → Sessions & timetable**; the Disciplines page shows them to everyone from `GET /api/timetable` ([timetable.js](src/server/timetable.js)). It is separate from check-in sessions.
 
 **Events.** Each event has a schedule, capacity and leader. When bookings close, the leader is emailed the attendee list once, with emergency contacts, medical details and photo-consent status ([eventRosters.js](src/server/eventRosters.js)). An event leaves the shop when it sells out or is over; without a close date, a course can be booked until its last day ([eventRoster.js](src/utils/eventRoster.js)).
 

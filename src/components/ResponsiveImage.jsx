@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { chooseImageSource, requiredImageWidth, usableImageSources, usablePlaceholder } from '../utils/responsiveImages';
+import { chooseImageSource, priorityImageWidth, requiredImageWidth, usableImageSources, usablePlaceholder } from '../utils/responsiveImages';
 import { safeTileUrl } from '../utils/contentLinks';
 
 /**
@@ -29,7 +29,7 @@ export default function ResponsiveImage({ src, sources, placeholder, alt = '', c
       const box = element.getBoundingClientRect();
       if (!box.width && !box.height) return;
       const needed = requiredImageWidth({ boxWidth: box.width, boxHeight: box.height, aspect: largest.width / largest.height, fit, pixelRatio: window.devicePixelRatio });
-      const next = chooseImageSource(list, needed);
+      const next = chooseImageSource(list, priority ? priorityImageWidth(needed) : needed);
       if (next.width > chosenWidth) {
         chosenWidth = next.width;
         setCurrent(next.url);
@@ -40,7 +40,7 @@ export default function ResponsiveImage({ src, sources, placeholder, alt = '', c
     const observer = new ResizeObserver(pick);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [setKey, fit]);
+  }, [setKey, fit, priority]);
 
   if (!fallback && !list.length) return null;
   const showPreview = preview && !loaded;

@@ -10,6 +10,7 @@ import { holdsPlace } from './inventory.js';
  * details and each person's kit situation.
  */
 const EMAIL = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+export const isEventEmail = (value) => EMAIL.test(String(value || '').trim());
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 

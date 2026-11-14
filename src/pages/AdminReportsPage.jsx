@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, CircleSlash, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat, Percent, Banknote } from 'lucide-react';
+import { Download, RefreshCw, Search, Trash2, X, ArrowLeft, FileText, Mail, Users, ShoppingBag, AlertTriangle, CalendarClock, CircleSlash, ShieldX, ShieldCheck, KeyRound, HeartHandshake, Repeat, Banknote } from 'lucide-react';
 import { usePageEditor } from '../utils/PageContentContext';
 import { apiUrl, apiFetch } from '../utils/api';
 import { reportCsv, reportDetailEntries, uniqueReportEmails, eventAttendeeHeaders, eventAttendeeRows, justgoUploadHeaders, justgoUploadRows, PURCHASE_TYPES, purchaseMatches, PAID_VIA, paidViaMatches, takingsSummary, reportOptions, reportEventNames, onlyEvent, onlyEventPeriod, MEMBERSHIP_STATUSES, JUSTGO_STATES } from '../utils/adminReports';
@@ -9,24 +9,58 @@ import ReasonInput from '../components/ReasonInput';
 import MonthlyPayments from '../components/MonthlyPayments';
 import GdprErasurePanel from '../components/GdprErasurePanel';
 import ReceiptEmailPanel from '../components/ReceiptEmailPanel';
-import TripDiscountsPanel from '../components/TripDiscountsPanel';
 import RenewalsPanel from '../components/RenewalsPanel';
+import WelcomeEmailPanel from '../components/WelcomeEmailPanel';
+import TripDiscountsPanel from '../components/TripDiscountsPanel';
 import VolunteersPanel from '../components/VolunteersPanel';
 import CheckinSessionsPanel from '../components/CheckinSessionsPanel';
+import TimetablePanel from '../components/TimetablePanel';
 import BoathouseCodePanel from '../components/BoathouseCodePanel';
 import AdminAccessPanel from '../components/AdminAccessPanel';
 import PurchasedItemActions from '../components/PurchasedItemActions';
 import KeyAccessControl from '../components/KeyAccessControl';
+import LifetimeMembershipControl from '../components/LifetimeMembershipControl';
 import NeedsAttentionPanel from '../components/NeedsAttentionPanel';
 import CreditItemsPanel from '../components/CreditItemsPanel';
 
 // Member register is the authoritative list, so it comes first.
 const RECORD_TABS = [[Users, 'members', 'Member register'], [ShoppingBag, 'orders', 'Purchases'], [CalendarClock, 'events', 'Event tickets'], [Repeat, 'subscribers', 'Stripe subscribers']];
-// Settings tabs show a single panel instead of a records table.
-const SETTINGS_TABS = [[Banknote, 'credit-items', 'Credit items', CreditItemsPanel], [Mail, 'receipt-emails', 'Receipt emails', ReceiptEmailPanel], [Percent, 'trip-discounts', 'Trip discounts', TripDiscountsPanel],
-  [Repeat, 'renewals', 'Renewal emails', RenewalsPanel],
-  [HeartHandshake, 'volunteers', 'Volunteers', VolunteersPanel], [CalendarClock, 'checkin-sessions', 'Check-in sessions', CheckinSessionsPanel],
-  [KeyRound, 'boathouse', 'Boathouse code', BoathouseCodePanel], [ShieldCheck, 'admins', 'Website admins', AdminAccessPanel]];
+// Settings tabs show their configurators instead of a records table: [section id, label, panel].
+const SETTINGS_TABS = [[Banknote, 'credits-discounts', 'Credits & discounts', [['credit-items', 'Credit items', CreditItemsPanel], ['trip-discounts', 'Service trip discounts', TripDiscountsPanel]]],
+  [Mail, 'emails', 'Emails', [['welcome-email', 'Welcome email', WelcomeEmailPanel], ['renewal-emails', 'Renewal emails', RenewalsPanel], ['receipt-email', 'Receipt email details', ReceiptEmailPanel]]],
+  [HeartHandshake, 'volunteers', 'Volunteers', [['volunteers', 'Volunteers', VolunteersPanel]]], [CalendarClock, 'sessions', 'Sessions & timetable', [['checkin-sessions', 'Check-in sessions', CheckinSessionsPanel], ['timetable', 'Weekly timetable', TimetablePanel]]],
+  [KeyRound, 'boathouse', 'Boathouse code', [['boathouse', 'Boathouse code', BoathouseCodePanel]]], [ShieldCheck, 'admins', 'Website admins', [['admins', 'Website admins', AdminAccessPanel]]]];
+
+/** A tab's configurators; with more than one, binder-style sub-tabs show one at a time (the others stay mounted to keep unsaved edits). */
+const SettingsSections = ({ title, sections, adminUser }) => {
+  const [selected, setSelected] = useState(sections[0][0]);
+  const tabs = useRef({});
+  if (sections.length === 1) {
+    const [[, , Panel]] = sections;
+    return <Panel adminUser={adminUser} />;
+  }
+  const choose = (index) => {
+    const [id] = sections[(index + sections.length) % sections.length];
+    setSelected(id);
+    tabs.current[id]?.focus();
+  };
+  const onKeyDown = (event, index) => {
+    const moves = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: sections.length - 1 };
+    if (!Object.hasOwn(moves, event.key)) return;
+    event.preventDefault();
+    choose(moves[event.key]);
+  };
+  return <div className="SpaceT6">
+    <div className="NoticeTabs" role="tablist" aria-label={`${title} settings`}>
+      {sections.map(([id, label], index) => <button key={id} ref={(node) => { tabs.current[id] = node; }} id={`settings-tab-${id}`} type="button" role="tab"
+        className="NoticeTab" aria-selected={selected === id} aria-controls={`settings-${id}`} tabIndex={selected === id ? 0 : -1}
+        onClick={() => setSelected(id)} onKeyDown={(event) => onKeyDown(event, index)}>{label}</button>)}
+    </div>
+    {sections.map(([id, , Panel]) => <div key={id} id={`settings-${id}`} role="tabpanel" aria-labelledby={`settings-tab-${id}`} className="BinderPanel" hidden={selected !== id}>
+      <Panel adminUser={adminUser} />
+    </div>)}
+  </div>;
+};
 
 const detailValue = (value) => {
   if (value === true) return 'Yes';
@@ -91,7 +125,8 @@ export default function AdminReportsPage({ onNavigate }) {
   const closeButton = useRef(null);
   const returnFocus = useRef(null);
   const purchaseReport = kind === 'orders' || kind === 'events';
-  const SettingsPanel = SETTINGS_TABS.find(([, id]) => id === kind)?.[3];
+  const settingsTab = SETTINGS_TABS.find(([, id]) => id === kind);
+  const settingsSections = settingsTab?.[3];
   const reloadSelected = async () => {
     const response = await apiFetch(apiUrl(`/api/admin/reports?${new URLSearchParams({ kind, recordId: selected.id })}`), {
       headers: { Authorization: `Bearer ${await adminUser.getIdToken(true)}` }, cache: 'no-store'
@@ -137,7 +172,7 @@ export default function AdminReportsPage({ onNavigate }) {
     setCheckedAt(null);
     setStripeMode('');
     setClubYearEnd(null);
-    if (adminUser && !SettingsPanel) load();
+    if (adminUser && !settingsSections) load();
     else setLoading(false);
     return () => { generation.current += 1; };
   }, [kind, adminUser]);
@@ -173,7 +208,7 @@ export default function AdminReportsPage({ onNavigate }) {
   const periodRecords = kind === 'events' ? onlyEventPeriod(records, eventPeriod) : records;
   const filtered = onlyEvent(periodRecords.filter((record) => {
     const haystack = `${record.id} ${record.clubCustomerId || ''} ${record.clubSubscriptionId || ''} ${record.email || ''} ${record.name || ''} ${(record.names || []).join(' ')} ${record.affiliationNumber || ''} ${record.membershipNumber || ''} ${record.phone || ''} ${record.address || ''} ${record.emergencyContact || ''} ${record.parent || ''} ${record.tier || ''} ${(record.privileges || []).join(' ')} ${(record.items || []).map((item) => item.name).join(' ')}`.toLowerCase();
-    return haystack.includes(search.toLowerCase()) && (status === 'all' || record.status === status)
+    return haystack.includes(search.toLowerCase()) && (status === 'all' || record.status === status || (status === 'Active' && String(record.status).startsWith('Active')))
       && (kind !== 'members' || ((sourceFilter === 'all' || record.justgo === sourceFilter) && (tierFilter === 'all' || record.tier === tierFilter)
         && (includesFilter === 'all' || (includesFilter === 'none' ? !record.privileges.length : record.privileges.includes(includesFilter)))
         && (renewalFilter === 'all' || (record.renewalMethod || 'none') === renewalFilter)))
@@ -313,7 +348,7 @@ export default function AdminReportsPage({ onNavigate }) {
   if (!authReady) return <p className="SectionHero" role="status">Restoring your session…</p>;
   if (!adminUser) return <div className="SectionHero"><h2 className="tile_heading_bold_1">Admin reports</h2><button className="PrimaryActionButton" onClick={() => onNavigate('admin')}>Admin login</button></div>;
   return <div className="AdminReports PageFadeIn">
-    <header className="ReportsHeader"><div><h2 className="tile_heading_bold_1">Reports & records</h2>{!SettingsPanel && <span className="text_container">{records.length} loaded records{cursor ? ' (more available)' : ''}</span>}</div>
+    <header className="ReportsHeader"><div><h2 className="tile_heading_bold_1">Reports & records</h2>{!settingsSections && <span className="text_container">{records.length} loaded records{cursor ? ' (more available)' : ''}</span>}</div>
       <button className="EditorCommand" onClick={() => onNavigate('admin')}><ArrowLeft size={18} /> Website editor</button>
     </header>
     <NeedsAttentionPanel adminUser={adminUser} />
@@ -328,7 +363,7 @@ export default function AdminReportsPage({ onNavigate }) {
         setKind(id); setSourceFilter('all'); setTierFilter('all'); setIncludesFilter('all'); setRenewalFilter('all'); setEventFilter('all'); setEventPeriod('current'); setPlanFilter('all'); setPurchaseType('all'); setPaidVia('all'); setStatus(id === 'members' ? 'Active' : id === 'subscribers' ? 'Active' : 'all'); setPurchaseType('all'); setSearch(''); setMessage('');
       }}><Icon size={18} /> {label}</button>)}
     </div>
-    {SettingsPanel ? <SettingsPanel adminUser={adminUser} /> : <>
+    {settingsSections ? <SettingsSections key={kind} title={settingsTab[2]} sections={settingsSections} adminUser={adminUser} /> : <>
     {kind === 'events' && <div className="ReportsTabs" role="tablist" aria-label="Event period">
       {[['current', 'Current events'], ['past', 'Past events']].map(([id, label]) => <button key={id} role="tab" aria-selected={eventPeriod === id} className={eventPeriod === id ? 'is-selected' : ''} onClick={() => {
         setEventPeriod(id); setEventFilter('all');
@@ -400,6 +435,7 @@ export default function AdminReportsPage({ onNavigate }) {
         {selected.items && <ul className="ReportItems">{selected.items.map((item, index) => <li key={index}>{item.name} {kind === 'subscribers' ? `${item.amount ?? 'Variable'} ${item.currency.toUpperCase()} / ${item.interval}` : item.price === null ? '' : money(item.price)}{item.eventSchedule && <p>{eventScheduleLabel(item.eventSchedule)}</p>}</li>)}</ul>}
         {purchaseReport && selected.status === 'paid' && <PurchasedItemActions key={`purchased-items:${selected.id}`} order={selected} adminUser={adminUser} onChanged={reloadSelected} />}
         {kind === 'members' && <KeyAccessControl key={`key-access:${selected.id}`} member={selected} adminUser={adminUser} onChanged={reloadSelected} />}
+        {kind === 'members' && <LifetimeMembershipControl key={`lifetime:${selected.id}`} member={selected} adminUser={adminUser} onChanged={reloadSelected} />}
         {selected.people?.length > 0 && <div className="ReportPeople"><h4 className="CartItemTitle">People on this order</h4>{selected.people.map((person, index) => <dl key={index} className="ReportDetails">
           {[['Name', person.name], ['Date of birth', person.dob], ['Type', person.returningMember ? `${person.kind} (existing member)` : person.kind], ['Items', person.items.join(', ')], ['Email', person.email], ['Phone', person.phone], ['Address', person.address], ['Emergency contact', person.emergencyContact], ['Swimming', person.swimming], ['Medical', person.medical], ['Photo consent', person.photoConsent ? 'Yes' : 'No'], ['Membership ID', person.membershipId]].filter(([, value]) => value).map(([label, value]) => <React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}
         </dl>)}</div>}

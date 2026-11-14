@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  IMAGE_PRESETS, MAX_IMAGE_SOURCES, chooseImageSource, plannedWidths, requiredImageWidth,
+  IMAGE_PRESETS, MAX_IMAGE_SOURCES, chooseImageSource, plannedWidths, priorityImageWidth, requiredImageWidth,
   usableImageSources, usablePlaceholder, validateImagePlaceholder, validateImageSources
 } from './responsiveImages.js';
 
@@ -32,6 +32,12 @@ test('the smallest stored size that fills the box is chosen', () => {
   assert.equal(chooseImageSource(ladder, 1920).width, 1920);
   assert.equal(chooseImageSource(ladder, 10000).width, 3840);
   assert.equal(chooseImageSource(ladder, 1).width, 640);
+});
+
+test('priority images request 25% more pixels for the first visible rendition', () => {
+  assert.equal(priorityImageWidth(800), 1000);
+  assert.equal(priorityImageWidth(801), 1002);
+  assert.equal(chooseImageSource(ladder, priorityImageWidth(1569)).width, 2560);
 });
 
 test('stored sizes must be secure, plain links with whole-number sizes', () => {

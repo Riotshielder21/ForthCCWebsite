@@ -79,6 +79,8 @@ async def sync_snapshot_to_firestore(snapshot, now=None):
     households = db.collection("households")
     household_by_id = {document.id: document.to_dict() for document in households.stream()}
     household_by_email = {data.get("email", "").lower(): household_id for household_id, data in household_by_id.items() if data.get("email")}
+    # The first sync imports everyone already in JustGo; only joins and renewals after that get a welcome email.
+    welcome_new_terms = bool((db.collection("settings").document("justgoSync").get().to_dict() or {}).get("lastSuccessAt"))
 
     # Match each person to an existing record (a member who joined on the website, or an earlier sync)
     # so one person never has two records.
@@ -117,6 +119,8 @@ async def sync_snapshot_to_firestore(snapshot, now=None):
         held_until = as_utc(current.get("validUntil"))
         website_ahead = current.get("justgoSyncStatus") == "pending" and held_until and (not valid_until or held_until > valid_until)
         staff_review = (current.get("justgoUpload") or {}).get("status") in ("revoked", "review", "processing")
+        # A lifetime membership granted by staff has no expiry for JustGo to replace.
+        lifetime = bool(current.get("lifetimeMembership"))
         fields = {
             "affiliationNumber": number, "membershipNumber": membership_number_for(number), "justgoMemberId": person["memberId"],
             "lastJustgoSync": firestore.SERVER_TIMESTAMP, "updatedAt": firestore.SERVER_TIMESTAMP,
@@ -132,11 +136,14 @@ async def sync_snapshot_to_firestore(snapshot, now=None):
             checks[name] = {"source": "justgo", **check, "label": check_label(check), "updatedAt": firestore.SERVER_TIMESTAMP}
         if checks:
             fields["checks"] = checks
-        if not website_ahead and not staff_review:
+        if not website_ahead and not staff_review and not lifetime:
             fields.update({
                 "validUntil": valid_until, "status": person["status"], "justgoSyncStatus": "synced", "renewalMethod": "justgo",
                 "justgoUpload": {**(current.get("justgoUpload") or {}), "status": "done", "needsStaff": False, "nextAttemptAt": None},
             })
+            # The website sends it (POST /api/jobs/welcome-emails) and records the term, so a repeat sync never resends.
+            if welcome_new_terms and person["status"] == "active" and valid_until and (not held_until or valid_until > held_until):
+                fields["welcomeEmailDue"] = True
         if person["suspended"]:
             # A Paddle Scotland suspension always blocks club activity, even while a website renewal waits for upload.
             fields["status"] = "Suspended"

@@ -10,7 +10,8 @@ export const ATTENTION_KINDS = {
   'invoice-failed': { title: 'Monthly debits failed and Stripe stopped retrying', retry: false },
   'subscription-ended': { title: 'Monthly payments ended unexpectedly', retry: false },
   'cancel-request': { title: 'Member asked to cancel monthly payments', retry: false },
-  'discount-reused': { title: 'Single-use code used twice', retry: false }
+  'discount-reused': { title: 'Single-use code used twice', retry: false },
+  'welcome-email': { title: 'Welcome email not sent', retry: false }
 };
 
 const safeId = (value) => String(value).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 200);

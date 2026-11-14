@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Eye, Save, Send } from 'lucide-react';
 import { apiUrl, apiFetch } from '../utils/api';
+import { isEventEmail } from '../utils/eventRoster';
 
 /**
  * When the event leader's attendee list was last sent, a button to send it now, the extra people who can open the list on
  * the check-in page (as well as the leader) and the list itself.
  */
-export default function EventRosterControl({ adminUser, productId, saved }) {
+export default function EventRosterControl({ adminUser, productId, leaderEmail }) {
+  const ready = isEventEmail(leaderEmail);
   const [status, setStatus] = useState(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -34,8 +36,8 @@ export default function EventRosterControl({ adminUser, productId, saved }) {
     setError('');
     setAttendees(null);
     request().then(setStatus).catch((loadError) => setError(loadError.message));
-    if (saved) call(viewersPath).then((result) => setViewers(result.viewers.join('\n'))).catch((loadError) => setError(loadError.message));
-  }, [request, call, viewersPath, saved]);
+    call(viewersPath).then((result) => setViewers(result.viewers.join('\n'))).catch((loadError) => setError(loadError.message));
+  }, [request, call, viewersPath]);
 
   const saveViewers = async () => {
     setError('');
@@ -75,9 +77,9 @@ export default function EventRosterControl({ adminUser, productId, saved }) {
           ? `Attendee list last sent ${new Date(status.sentAt).toLocaleString('en-GB')} to ${status.sentTo} (${status.attendees} booked, ${status.trigger === 'admin' ? 'sent by an admin' : 'sent automatically'}).`
           : 'The attendee list has not been sent yet. It is sent automatically once bookings close.'}
       </p>
-      <button type="button" className="EditorCommand" onClick={send} disabled={sending || !saved}><Send size={18} /> {sending ? 'Sending…' : 'Send attendee list now'}</button>
-      {!saved && <p className="CartItemMeta">Save the leader's email first.</p>}
-      {saved && <>
+      <button type="button" className="EditorCommand" onClick={send} disabled={sending || !ready}><Send size={18} /> {sending ? 'Sending…' : 'Send attendee list now'}</button>
+      {!ready && <p className="CartItemMeta">Enter the leader's email to send or share the attendee list.</p>}
+      {ready && <>
         <label className="FormLabel">Also allowed to view the attendee list
           <textarea className="FormInput" rows="2" value={viewers} placeholder="One email per line" onChange={(event) => setViewers(event.target.value)} />
         </label>

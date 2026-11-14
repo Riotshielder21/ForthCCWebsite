@@ -76,3 +76,4 @@ export const requiredImageWidth = ({ boxWidth, boxHeight = 0, aspect = 0, fit = 
 
 /** The smallest stored size at least as wide as needed, or the largest when none is. */
 export const chooseImageSource = (sources, neededWidth) => sources.find((source) => source.width >= neededWidth) || sources.at(-1);
+export const priorityImageWidth = (neededWidth) => Math.ceil(neededWidth * 1.25);

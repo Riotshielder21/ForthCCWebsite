@@ -59,6 +59,7 @@ scripts/scheduled-jobs.sh setup <deploy-account-email>
 This enables the APIs, creates the `fcc-scheduled-jobs` service account (Firestore access, starts the jobs), creates `renewal-job-token` if missing and grants the API and deploy accounts access. The deploy account also gets Cloud Scheduler admin and permission to act as the jobs account. Then add the real JustGo secret with `gcloud secrets versions add justgo-api-secret --data-file=-` before enabling JustGo.
 
 Cloud Scheduler job `fcc-renewals` posts to `/api/jobs/renewals` at 09:00 London on 1 and 15 February with the `renewal-job-token`.
+Cloud Scheduler job `fcc-welcome-emails` posts to `/api/jobs/welcome-emails` at 06:00 London daily (after the JustGo sync) with the same token, sending the welcome email to members who joined or renewed through JustGo.
 
 **Outage alerts.** Every deployment sets up the **FCC API health** uptime check and **FCC API outage** email policy. The deploy account first needs:
 
@@ -85,7 +86,7 @@ gcloud projects add-iam-policy-binding fccwebsite-23cfc --member serviceAccount:
   git fetch && git checkout live/web-admin-edit && git rebase origin/main && git push --force-with-lease
   ```
 
-- **Trip discounts.** Admins set the amount, qualifying products, checkout name and trip-card wording in **Reports & records → Trip discounts**, saved to `settings/tripDiscounts`. Until first saved, £10 off applies for annual boat hire and a coaching subscription.
+- **Service trip discounts.** Admins set the amount, qualifying products, checkout name and trip-card wording in **Reports & records → Credits & discounts → Service trip discounts**, saved to `settings/tripDiscounts`. Until first saved, £10 off applies for annual boat hire and a coaching subscription.
 - **Credits.** **Reports & records → Credit items** records items paid outside the website (bank transfer, cash, cheque, other) or given free. It calls `POST /api/admin/credits`, which runs the same checks and fulfilment as checkout. Credited orders cannot be refunded through Stripe.
 
 ## Live Mode

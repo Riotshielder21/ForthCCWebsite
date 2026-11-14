@@ -2,7 +2,7 @@ import { IMAGE_PRESETS, MAX_IMAGE_UPLOAD_BYTES, MAX_STORED_IMAGE_BYTES, UPLOAD_I
 
 const WEBP_QUALITY = 0.8;
 const FALLBACK_QUALITY = 0.85;
-const PLACEHOLDER_WIDTH = 24;
+const PLACEHOLDER_WIDTH = 30;
 
 const canvasBlob = (canvas, type, quality) => new Promise((resolve) => canvas.toBlob(resolve, type, quality));
 

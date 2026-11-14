@@ -2,9 +2,14 @@ import React from 'react';
 import { ExternalLink } from 'lucide-react';
 import { usePageContent } from '../utils/PageContentContext';
 import EditablePage from '../components/EditablePage';
+import { calculateCart } from '../utils/pricing';
 
-export default function BeginnersPage({ onNavigate }) {
+export default function BeginnersPage({ products = [] }) {
   const copy = usePageContent('beginners');
+  const clubBody = copy.clubBody.replace(/\s*Boat hire £10 per session, or £70 per year for regular paddlers\.?/i, '').trim();
+  const boatHire = products.find((product) => product.id === 'boat-hire' && product.active !== false);
+  const hirePrice = boatHire && calculateCart([{ ...boatHire, clubYearChoice: 'this' }], true).items[0].displayPrice;
+  const hirePriceText = hirePrice === undefined ? '' : `Boat and kit hire is ${hirePrice.toLocaleString('en-GB', { style: 'currency', currency: 'GBP' })} for this club year${hirePrice < boatHire.basePrice ? ' (prorated)' : ''}.`;
   return (
     <EditablePage pageId="beginners">
       <div className="SectionHero"><div data-tile-group="hero">
@@ -31,7 +36,7 @@ export default function BeginnersPage({ onNavigate }) {
           <div className="main_tile" data-tile-id="club">
             <span className="tile_eyebrow" data-content-field="clubEyebrow">{copy.clubEyebrow}</span>
             <h3 className="tile_heading_bold_2" data-content-field="clubTitle">{copy.clubTitle}</h3>
-            <p className="text_container SpaceB4" data-content-field="clubBody">{copy.clubBody}</p>
+            <p className="text_container SpaceB4"><span data-content-field="clubBody">{clubBody}</span>{hirePriceText && <> {hirePriceText}</>}</p>
             <p className="text_container text_container_note" data-content-field="clubNote">{copy.clubNote}</p>
           </div>
 

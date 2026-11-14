@@ -2622,6 +2622,116 @@ await test('replaying a webhook does not duplicate records or emails', async () 
   assert.equal((await db.collection('testMail').where('orderRef', '==', shared.familyOrder).get()).size, 1);
 });
 
+await test('admins can make a membership lifetime, which needs no renewal, and undo it exactly', async () => {
+  const member = await newMember('lifetime');
+  const [record] = await membershipsFor(member.email);
+  const path = `/api/admin/memberships/${record.id}/lifetime`;
+  const body = { action: 'grant', reason: 'Committee decision', confirmation: record.id };
+  assert.equal((await call('POST', path, { body })).status, 401);
+  assert.equal((await call('POST', path, { headers: admin, body: { ...body, confirmation: 'wrong' } })).status, 400);
+  assert.equal((await call('POST', path, { headers: admin, body: { ...body, reason: ' ' } })).status, 400);
+  assert.equal((await call('POST', path, { headers: admin, body })).status, 200);
+  assert.equal((await call('POST', path, { headers: admin, body })).status, 409, 'granting twice is refused');
+  const lifetime = (await db.collection('memberships').doc(record.id).get()).data();
+  assert.equal(lifetime.validUntil, undefined);
+  assert.equal(lifetime.lifetimeMembership.previousValidUntil.toMillis(), record.validUntil.toMillis());
+  const report = (await reportFor('members', record.id)).json.records.find((entry) => entry.id === record.id);
+  assert.equal(report.status, 'Active (lifetime)');
+  assert.equal(report.lifetime.reason, 'Committee decision');
+  const blocked = await checkout(member.email, build(['membership-adult'], [member.person]));
+  assert.equal(blocked.status, 409, blocked.text);
+  assert.match(blocked.json.error, /lifetime membership/);
+  assert.equal((await db.collection('auditLog').where('membershipId', '==', record.id).where('action', '==', 'lifetime-membership-grant').get()).size, 1);
+  assert.equal((await call('POST', path, { headers: admin, body: { ...body, action: 'remove', reason: 'Granted by mistake' } })).status, 200);
+  const restored = (await db.collection('memberships').doc(record.id).get()).data();
+  assert.equal(restored.lifetimeMembership, undefined);
+  assert.equal(restored.validUntil.toMillis(), record.validUntil.toMillis());
+  assert.equal(restored.status, 'active');
+});
+
+await test('admins publish the weekly timetable and the public sees only active sessions', async () => {
+  const path = '/api/admin/timetable';
+  assert.equal((await call('GET', path)).status, 401);
+  assert.equal((await call('PUT', path, { body: { sessions: [] } })).status, 401);
+  assert.equal((await call('PUT', path, { headers: admin, body: { sessions: [{ name: 'Bad', weekday: 1, start: '19:00', end: '18:00' }] } })).status, 400);
+  try {
+    const saved = await call('PUT', path, { headers: admin, body: { sessions: [
+      { name: 'Polo training', discipline: 'Canoe polo', weekday: 1, start: '18:00', end: '20:00', location: 'Harrison Park' },
+      { name: 'Open night', weekday: 4, start: '18:30', seasonStart: 4, seasonEnd: 10 },
+      { name: 'Paused', weekday: 4, start: '10:00', active: false }
+    ] } });
+    assert.equal(saved.status, 200, saved.text);
+    assert.equal(saved.json.sessions.length, 3);
+    const published = await call('GET', '/api/timetable');
+    assert.equal(published.status, 200);
+    assert.deepEqual(published.json.days.map((day) => [day.day, day.sessions.map((entry) => entry.name)]), [['Monday', ['Polo training']], ['Thursday', ['Open night']]]);
+    assert.equal(published.json.days[1].sessions[0].seasonStart, 4);
+  } finally {
+    await db.collection('settings').doc('timetable').delete();
+  }
+  const fallback = (await call('GET', '/api/timetable')).json.days;
+  assert.deepEqual(fallback.map((day) => day.day), ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sunday'], 'until saved, the starting timetable is shown');
+  const unsaved = await call('GET', path, { headers: admin });
+  assert.equal(unsaved.json.updatedAt, 0);
+  assert.equal(unsaved.json.sessions.length, 6);
+});
+
+await test('new and renewing members get the admin-written welcome email once per term', async () => {
+  const path = '/api/admin/welcome-email';
+  const welcomeMail = async (membershipId) => (await db.collection('testMail').where('membershipId', '==', membershipId).get()).docs
+    .map((document) => document.data()).filter((mail) => mail.kind === 'welcome-email');
+  const paragraph = (content) => ({ type: 'doc', content: [{ type: 'paragraph', content }] });
+  assert.equal((await call('GET', path)).status, 401);
+  assert.equal((await call('POST', path, { headers: admin, body: { enabled: true, subject: 'Hi', doc: { type: 'doc', content: [{ type: 'image', attrs: { src: 'https://x.test/a.png' } }] } } })).status, 400);
+  const saved = await call('POST', path, { headers: admin, body: { enabled: true, subject: 'Welcome {{firstName}}',
+    doc: paragraph([{ type: 'text', text: 'Hello {{firstName}} <script>', marks: [{ type: 'bold' }, { type: 'link', attrs: { href: 'javascript:alert(1)' } }] }]) } });
+  assert.equal(saved.status, 200, saved.text);
+  assert.deepEqual(saved.json.doc.content[0].content[0].marks, [{ type: 'bold' }], 'unsafe links are dropped when saved');
+  const draft = await call('POST', `${path}/test`, { headers: admin, body: { subject: 'Draft {{firstName}}', doc: paragraph([{ type: 'text', text: 'Draft' }]) } });
+  assert.equal(draft.status, 200, draft.text);
+  assert.equal(draft.json.sentTo, 'admin@forthcanoeclub.co.uk');
+  try {
+    const address = email('welcome');
+    await buy(address, build(['membership-adult'], [adultDetails({ email: address, firstName: 'Wendy' })]));
+    const [member] = await membershipsFor(address);
+    const [mail] = await welcomeMail(member.id);
+    assert.equal(mail.subject, 'Welcome Wendy');
+    assert.equal(mail.email, address);
+    assert.match(mail.html, /<strong>Hello Wendy &lt;script&gt;<\/strong>/);
+    assert.doesNotMatch(mail.html, /<script|javascript:/);
+    assert.equal(member.welcomeEmailDue, false);
+    assert.equal(member.welcomeEmail.sentFor, member.validUntil.toMillis());
+
+    // The JustGo sync flags the same term again (for example on a repeat run): nothing more is sent.
+    const job = (secret = process.env.RENEWAL_JOB_TOKEN) => call('POST', '/api/jobs/welcome-emails', { body: {}, headers: { Authorization: `Bearer ${secret}` } });
+    assert.equal((await job('wrong-token-wrong-token-wrong-token-00')).status, 401);
+    await db.collection('memberships').doc(member.id).update({ welcomeEmailDue: true });
+    assert.equal((await job()).status, 200);
+    assert.equal((await welcomeMail(member.id)).length, 1, 'one welcome per term');
+    assert.equal((await db.collection('memberships').doc(member.id).get()).data().welcomeEmailDue, false);
+
+    // Someone who joins through JustGo is flagged by the sync and welcomed by the job, at the household (guardian) email.
+    const guardianEmail = email('welcome-guardian');
+    const household = await db.collection('households').add({ contactName: 'Guardian Person', email: guardianEmail });
+    const joiner = await db.collection('memberships').add({ firstName: 'Jess', lastName: 'Joiner', householdId: household.id, status: 'active',
+      membershipTier: 'junior', validUntil: new Date(Date.now() + 200 * 24 * 60 * 60 * 1000), source: 'justgo', welcomeEmailDue: true });
+    assert.equal((await job()).status, 200);
+    const [joined] = await welcomeMail(joiner.id);
+    assert.equal(joined.email, guardianEmail);
+    assert.equal(joined.subject, 'Welcome Jess');
+
+    // Switched off: due members are cleared rather than emailed later when it is switched back on.
+    assert.equal((await call('POST', path, { headers: admin, body: { ...saved.json, enabled: false } })).status, 200);
+    const later = await db.collection('memberships').add({ firstName: 'Late', lastName: 'Joiner', householdId: household.id, status: 'active',
+      validUntil: new Date(Date.now() + 200 * 24 * 60 * 60 * 1000), welcomeEmailDue: true });
+    assert.equal((await job()).status, 200);
+    assert.equal((await welcomeMail(later.id)).length, 0);
+    assert.equal((await later.get()).data().welcomeEmailDue, false);
+  } finally {
+    await db.collection('settings').doc('welcomeEmail').delete();
+  }
+});
+
 const failed = results.filter((entry) => !entry.ok);
 console.log(`\n${results.length - failed.length}/${results.length} passed`);
 if (failed.length) { for (const entry of failed) console.log(`\n${entry.name}\n${entry.error.stack}`); process.exit(1); }

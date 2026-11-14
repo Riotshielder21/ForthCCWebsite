@@ -3,12 +3,24 @@ const cacheName = `fcc-public-${manifest.version}`;
 const absolute = (path) => new URL(path, self.location.origin).href;
 const allowed = new Set([...manifest.files, ...manifest.images].map(absolute));
 const privatePath = /^\/(?:api|admin|order|my-details|checkout|check-ins|club-night|payment-success|_preview)(?:\/|$)/;
+// How long a page load waits for the network before falling back to the offline copy.
+const NAVIGATION_TIMEOUT_MS = 4000;
 
 // Firebase redirects /index.html to /. Browsers reject a redirected response for a page load ("This site can't be
 // reached"), so keep only the body and headers.
 const unredirected = async (response) => response?.redirected
   ? new Response(await response.blob(), { status: response.status, statusText: response.statusText, headers: response.headers })
   : response;
+
+async function fromNetwork(request) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), NAVIGATION_TIMEOUT_MS);
+  try {
+    return await fetch(request, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function download(cache, path) {
   const url = absolute(path);
@@ -41,12 +53,13 @@ self.addEventListener('install', (event) => {
       console.error('Public pages could not be saved for offline use:', error);
       throw error;
     }
+    // Page loads come from the network first, so an old tab never depends on this worker's cache.
+    await self.skipWaiting();
   })());
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    // Updates wait for existing tabs to close before activating; do not force mixed-build tabs.
     for (const name of await caches.keys()) if (name.startsWith('fcc-public-') && name !== cacheName) await caches.delete(name);
     await self.clients.claim();
   })());
@@ -91,9 +104,22 @@ self.addEventListener('fetch', (event) => {
   const publicNavigation = request.mode === 'navigate' && url.origin === self.location.origin
     && manifest.paths.includes(url.pathname) && !url.search;
   if (!publicNavigation && !allowed.has(url.href)) return;
+  if (publicNavigation) {
+    // The cached page shell is only used offline: after a deploy it would point at code the server no longer has.
+    event.respondWith((async () => {
+      try {
+        return await fromNetwork(request);
+      } catch (error) {
+        const cached = await (await caches.open(cacheName)).match(absolute('/index.html'));
+        if (cached) return unredirected(cached);
+        throw error;
+      }
+    })());
+    return;
+  }
   event.respondWith((async () => {
     const cache = await caches.open(cacheName);
-    const key = publicNavigation ? absolute('/index.html') : url.href;
+    const key = url.href;
     const cached = await cache.match(key);
     if (cached?.redirected) {
       // Saved by an earlier version of this worker; repair it so the page loads.
@@ -104,7 +130,7 @@ self.addEventListener('fetch', (event) => {
     if (cached) return cached;
     // A missing entry means storage was evicted; do not claim readiness based on this response.
     try {
-      await download(cache, publicNavigation ? '/index.html' : (url.origin === self.location.origin ? url.pathname + url.search : url.href));
+      await download(cache, url.origin === self.location.origin ? url.pathname + url.search : url.href);
       const saved = await cache.match(key);
       if (saved) return saved;
     } catch (error) {

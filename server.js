@@ -66,7 +66,10 @@ import { registerAdminAccessRoutes } from './src/server/adminAccess.js';
 import { registerEventRosterRoutes } from './src/server/eventRosters.js';
 import { registerMemberCheckRoutes } from './src/server/memberChecks.js';
 import { registerReceiptEmailRoutes } from './src/server/receiptEmail.js';
+import { registerWelcomeEmailRoutes } from './src/server/welcomeEmail.js';
 import { registerTripDiscountRoutes } from './src/server/tripDiscounts.js';
+import { registerTimetableRoutes } from './src/server/timetable.js';
+import { registerLifetimeMembershipRoutes } from './src/server/lifetimeMembership.js';
 import { registerRenewalRoutes } from './src/server/renewals.js';
 import { registerKeyAccessRoutes } from './src/server/keyAccess.js';
 import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemActions.js';
@@ -318,7 +321,7 @@ const toMembershipRecord = (document) => {
     justgo: data.justgoSyncStatus === 'synced' || data.renewalMethod === 'justgo',
     renewalMethod: data.renewalMethod || '', justgoSyncStatus: data.justgoSyncStatus || '', lastJustgoSync: data.lastJustgoSync?.toMillis() || 0,
     stripeMembershipSubscriptionId: data.stripeMembershipSubscriptionId || '', stripeMembershipMode: data.stripeMembershipMode || '',
-    familyTier: data.membershipTier === 'family'
+    familyTier: data.membershipTier === 'family', lifetimeMembership: Boolean(data.lifetimeMembership)
   };
 };
 
@@ -362,7 +365,7 @@ const findMembership = async (person, now = new Date()) => {
     conflict: result.conflict, reason: result.reason,
     contactHouseholdId: matchingHouseholds.length === 1 ? matchingHouseholds[0].id : '',
     existing: match ? { id: match.id, householdId: match.householdId, family: Boolean(match.familyTier && match.householdId),
-      active: activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil, clubYears: match.clubYears || [], contactOnly: match.contactOnly } : null
+      active: activity === 'active', awaitingRenewal: activity === 'awaiting-renewal', justgo: match.justgo, validUntil: match.validUntil, lifetime: match.lifetimeMembership, clubYears: match.clubYears || [], contactOnly: match.contactOnly } : null
   };
 };
 
@@ -452,7 +455,7 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
         ...(order.noticeAgreement ? { notices: { ...order.noticeAgreement, orderRef, by: 'purchaser' } } : {})
       },
       ...(membershipLine || includedLine ? { status: 'active', validUntil, clubYears: FieldValue.arrayUnion(...new Set([...(person.heldClubYears || []), ...coveredYears])), membershipTier: membershipLine ? membershipLine.membershipTier || '' : grantedTier, justgoSyncStatus: 'pending', renewalMethod: 'website', justgoUpload: { status: 'queued', attempts: 0, failures: 0, needsStaff: false, nextAttemptAt: paidAt, queuedAt: paidAt } } : {}),
-      ...(membershipLine || includedLine ? { membershipAccessEndsAt: FieldValue.delete() } : {}),
+      ...(membershipLine || includedLine ? { membershipAccessEndsAt: FieldValue.delete(), welcomeEmailDue: true } : {}),
       ...(previous && previous.source !== 'website' && previous.validUntil && !previous.membershipBeforeWebsite
         ? { membershipBeforeWebsite: { validUntil: previous.validUntil, source: previous.source || 'imported' } } : {}),
       ...(includedLine ? { membershipIncludedWith: { productId: includedLine.id, name: includedLine.name, orderRef } } : {}),
@@ -681,6 +684,7 @@ const deliverOrder = async (orderRef, given) => {
     }
   }
   catch (error) { console.error('Could not check volunteer codes after payment:', error.message); }
+  let receiptError = null;
   try {
     const emailSent = await sendOrderEmail({ email: fields.email, orderRef, receiptToken: fields.receiptToken, items: fields.items, people: fields.people, totalPence: fields.totalPence,
       vouchers: fields.vouchers, siteUrl: fields.siteUrl, billingMode: fields.billingMode, payment: fields.payment });
@@ -688,8 +692,12 @@ const deliverOrder = async (orderRef, given) => {
     if (!emailSent) throw new Error('Receipt email is not configured.');
   } catch (error) {
     await updateFirestoreOrder(orderRef, { 'fulfilment.emailSendingUntil': null });
-    throw error;
+    receiptError = error;
   }
+  // Sent after the receipt; a member whose welcome cannot go now is picked up by the scheduled job.
+  await sendDueWelcomeEmails({ membershipIds: (fields.people || []).map((person) => person.membershipId) })
+    .catch((error) => console.error('Could not send welcome emails after order fulfillment:', error.message));
+  if (receiptError) throw receiptError;
 };
 
 // While a club-year subscription waits for its first debit, its period ends at that debit.
@@ -1824,6 +1832,7 @@ registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, 
 registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
 registerNoticeRoutes(app, { requireAdmin, db: () => adminDb });
 const { settleKeyAccess, notifyKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message) });
+registerLifetimeMembershipRoutes(app, { requireAdmin, db: () => adminDb });
 const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
   adjustVolunteerSubscriptions: (membershipId) => adjustVolunteerSubscriptions(membershipId),
@@ -1851,6 +1860,8 @@ registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
 registerAdminAccessRoutes(app, { requireAdmin, auth: () => adminAuth, db: () => adminDb, localFirebase });
 registerMemberCheckRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadReceiptPersonFields, receiptPeopleWithRecords } = registerReceiptEmailRoutes(app, { requireAdmin, db: () => adminDb });
+const { sendDueWelcomeEmails } = registerWelcomeEmailRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), attention });
+registerTimetableRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadTripDiscounts } = registerTripDiscountRoutes(app, { requireAdmin, db: () => adminDb,
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
@@ -2392,7 +2403,7 @@ app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
 /** Remaining stock for limited products, so the shop can hide anything sold out. */
 app.get('/api/availability', rateLimit(60, 60 * 1000), async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  if (!adminDb) return res.json({ availability: {} });
+  if (!adminDb) return res.json({ availability: {}, products: PRODUCTS });
   try {
     const [productSnapshot, stockSnapshot] = await Promise.all([adminDb.collection('products').get(), adminDb.collection('stock').get()]);
     const catalog = resolveCatalogue(PRODUCTS, productSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
@@ -2402,7 +2413,7 @@ app.get('/api/availability', rateLimit(60, 60 * 1000), async (req, res) => {
       const remaining = remainingStock(product, holdsById.get(product.id));
       if (remaining) availability[product.id] = { remaining, soldOut: isSoldOut(remaining) };
     }
-    res.json({ availability });
+    res.json({ availability, products: catalog });
   } catch (error) {
     console.error('Could not load availability:', error.message);
     res.status(503).json({ error: 'Availability is unavailable.' });
@@ -2561,9 +2572,9 @@ const startCheckout = async (req, res, credit = null) => {
       // bought next year (which covers this year too from 8 February). Records from before club years were recorded
       // count as this year's.
       const currentClubYear = clubYearOf(now);
-      const coversNextYear = Boolean(existing?.active && existing.validUntil >= nextYearEnd);
+      const coversNextYear = Boolean(existing?.active && (existing.lifetime || existing.validUntil >= nextYearEnd));
       const heldYears = existing?.clubYears || [];
-      const coversThisYear = Boolean(existing?.active && (!heldYears.length || heldYears.some((year) => year <= currentClubYear)
+      const coversThisYear = Boolean(existing?.active && (existing.lifetime || !heldYears.length || heldYears.some((year) => year <= currentClubYear)
         || (coversNextYear && now >= clubYearDates(currentClubYear).membershipSaleEnds)));
       const covers = (part) => part === 'this' ? coversThisYear : coversNextYear;
       const neededParts = membershipPartsNeeded(lines, person, now).filter((part) => !covers(part));
@@ -2579,7 +2590,9 @@ const startCheckout = async (req, res, credit = null) => {
         const renewalOpen = now >= clubYearDates(clubYearOf(now)).renewalOpens;
         return res.status(409).json({
           code: existing.justgo ? 'renews_via_justgo' : 'membership_active', personIds: [person.id],
-          error: existing.justgo
+          error: existing.lifetime
+            ? `${name} has a lifetime membership, so no membership is needed. Remove the membership from your basket; add-ons can still be bought.`
+            : existing.justgo
             ? `${name} is already an active member and renews through JustGo, so no membership is needed here. Remove the membership from your basket; add-ons can still be bought.`
             : `${name} is already an active member until ${new Date(existing.validUntil).toLocaleDateString('en-GB', { timeZone: 'Europe/London' })}. ${renewalOpen && !coversNextYear
               ? `To renew, choose club year ${clubYearLabel(clubYearOf(now) + 1)} only for the membership in your basket.`
