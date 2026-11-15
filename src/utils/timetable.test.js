@@ -7,13 +7,14 @@ const session = (over = {}) => ({ name: 'Polo training', weekday: 1, start: '18:
 
 test('sessions are cleaned and checked before saving', () => {
   const { value } = validateTimetable([session({ name: '  Polo   training ', end: '20:00', seasonStart: '4', seasonEnd: 10, location: 'Harrison Park', extra: 'dropped' })]);
-  assert.deepEqual(value, [{ name: 'Polo training', discipline: '', weekday: 1, start: '18:00', end: '20:00', seasonStart: 4, seasonEnd: 10,
+  assert.deepEqual(value, [{ id: 'session-1', name: 'Polo training', discipline: '', weekday: 1, start: '18:00', end: '20:00', seasonStart: 4, seasonEnd: 10,
     location: 'Harrison Park', notes: '', active: true }]);
   assert.equal(validateTimetable([session({ active: false })]).value[0].active, false);
   for (const [bad, message] of [
     [[session({ name: ' ' })], /needs a name/], [[session({ weekday: 7 })], /Choose a day/], [[session({ start: '25:00' })], /start time/],
     [[session({ end: '17:00' })], /end after/], [[session({ seasonStart: 4 })], /both the first and last month/], ['nope', /not valid/],
     [[session({ seasonStart: 13, seasonEnd: 14 })], /valid season months/], [[session({ seasonStart: true, seasonEnd: true })], /valid season months/],
+    [[session({ id: 'invalid/id' })], /invalid identifier/], [[session(), session({ id: 'session-1' })], /unique identifier/],
     [Array.from({ length: TIMETABLE_LIMITS.sessions + 1 }, () => session()), /or fewer/]
   ]) assert.match(validateTimetable(bad).error, message);
 });
@@ -25,6 +26,7 @@ test('the public timetable lists active sessions by day, Monday first, in time o
   ]).value);
   assert.deepEqual(days.map((day) => [day.day, day.sessions.map((entry) => entry.name)]), [['Monday', ['Early polo', 'Late polo']], ['Sunday', ['Sunday paddle']]]);
   assert.equal('active' in days[0].sessions[0], false);
+  assert.equal(days[0].sessions[0].id, 'session-3');
 });
 
 test('the starting timetable is valid and holds the times that used to be in the Disciplines tiles', () => {

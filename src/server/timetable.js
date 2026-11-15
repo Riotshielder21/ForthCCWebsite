@@ -1,5 +1,6 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { DEFAULT_TIMETABLE, publicTimetable, validateTimetable } from '../utils/timetable.js';
+import { timetableCalendar } from '../utils/timetableCalendar.js';
 import { rateLimit } from './rateLimit.js';
 
 /**
@@ -18,6 +19,23 @@ export const registerTimetableRoutes = (app, { requireAdmin, db }) => {
     };
   };
 
+  const calendarExport = (single) => async (req, res) => {
+    try {
+      if (!db()) return res.status(503).json({ error: 'The timetable is not available.' });
+      const { sessions, updatedAt } = adminView((await reference().get()).data());
+      const session = sessions.find((item) => item.id === req.params.id && item.active);
+      if (!session) return res.status(404).json({ error: 'This timetable session is not available.' });
+      res.set('Cache-Control', 'no-cache, max-age=0, must-revalidate');
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Content-Type', 'text/calendar; charset=utf-8');
+      res.set('Content-Disposition', `inline; filename="forth-canoe-club-${session.id}${single ? '-next' : ''}.ics"`);
+      res.send(timetableCalendar(session, { single, updatedAt }));
+    } catch (error) {
+      console.error(`Could not create ${single ? 'next-session' : 'subscription'} calendar:`, error.message);
+      res.status(500).json({ error: 'Could not create this calendar export.' });
+    }
+  };
+
   app.get('/api/timetable', rateLimit(60, 60 * 1000), async (req, res) => {
     try {
       if (!db()) return res.status(503).json({ error: 'The timetable is not available.' });
@@ -28,6 +46,9 @@ export const registerTimetableRoutes = (app, { requireAdmin, db }) => {
       res.status(500).json({ error: 'Could not load the timetable.' });
     }
   });
+
+  app.get('/api/timetable/:id/next.ics', rateLimit(60, 60 * 1000), calendarExport(true));
+  app.get('/api/timetable/:id.ics', rateLimit(60, 60 * 1000), calendarExport(false));
 
   app.get('/api/admin/timetable', rateLimit(30, 60 * 1000), async (req, res) => {
     try {

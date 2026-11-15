@@ -3,9 +3,12 @@ import { CalendarClock } from 'lucide-react';
 import { apiUrl, apiFetch } from '../utils/api';
 import { MONTHS, seasonLabel, sortTimetableSessions, TIMETABLE_LIMITS, WEEK_ORDER, WEEKDAYS } from '../utils/timetable';
 
-const blankSession = () => ({ key: Math.random().toString(36).slice(2), name: '', discipline: '', weekday: '', start: '', end: '',
-  seasonStart: '', seasonEnd: '', location: '', notes: '', active: true });
-const withKeys = (sessions) => sessions.map((session) => ({ ...session, key: Math.random().toString(36).slice(2),
+const blankSession = () => {
+  const id = `session-${Math.random().toString(36).slice(2)}`;
+  return { id, key: id, name: '', discipline: '', weekday: '', start: '', end: '',
+    seasonStart: '', seasonEnd: '', location: '', notes: '', active: true };
+};
+const withKeys = (sessions) => sessions.map((session) => ({ ...session, key: session.id || Math.random().toString(36).slice(2),
   weekday: String(session.weekday), seasonStart: session.seasonStart ? String(session.seasonStart) : '', seasonEnd: session.seasonEnd ? String(session.seasonEnd) : '' }));
 
 /** The public weekly timetable shown on the Disciplines page. Separate from check-in sessions. */
@@ -90,7 +93,7 @@ export default function TimetablePanel({ adminUser }) {
 
   return <section className="main_tile SpaceT6">
     <div className="AdminListHeader"><div><span className="tile_eyebrow">Public website</span><h3 className="tile_heading_bold_2">Weekly timetable</h3></div></div>
-    <p className="text_container SpaceB4">The club's regular sessions, shown to everyone at the bottom of the Disciplines page, grouped by day in time order. Untick "Show on the website" to hide a session without deleting it. This does not change check-ins; one-off events and courses stay in the shop.</p>
+    <p className="text_container SpaceB4">The club's regular sessions, shown to everyone at the bottom of the Disciplines page, grouped by day in time order. Untick "Show on the website" to hide a session without deleting it. This does not change check-ins; one-off events and courses stay in the shop. Calendar exports use a two-hour duration when no end time is set.</p>
     <form onSubmit={save}>
       <div className="TimetableSessionPicker">
         <label className="FormLabel">Session
