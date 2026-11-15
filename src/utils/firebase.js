@@ -7,6 +7,7 @@ import { apiUrl, apiFetch } from './api.js';
 import { ADMIN_DOMAIN, isClubEmail } from './adminAccess.js';
 import { initializeBrowserAppCheck } from './appCheck.js';
 import { analyticsAllowed } from './analyticsConsent.js';
+import { reportClientError } from './reportClientError.js';
 
 const runtimeEnv = typeof import.meta.env !== 'undefined' ? import.meta.env : process.env;
 const localEmulators = runtimeEnv.DEV === true && runtimeEnv.VITE_USE_FIREBASE_EMULATORS === 'true';
@@ -70,6 +71,7 @@ try {
   db = null;
   storage = null;
   console.error('Firebase initialization failed:', error);
+  void reportClientError(error?.code === 'auth/network-request-failed' ? 'auth-network' : 'javascript');
 }
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'forth-canoe-default';
@@ -104,7 +106,7 @@ export const setupAuthListener = (callback) => {
   return onAuthStateChanged(auth, callback);
 };
 
-export const signInWithWorkspace = async () => {
+const performWorkspaceSignIn = async () => {
   if (!auth) throw new Error('Firebase authentication is unavailable.');
   await initializeAuth();
   await setPersistence(auth, browserLocalPersistence);
@@ -122,6 +124,15 @@ export const signInWithWorkspace = async () => {
   }
 
   return result.user;
+};
+
+export const signInWithWorkspace = async () => {
+  try {
+    return await performWorkspaceSignIn();
+  } catch (error) {
+    if (error?.code === 'auth/network-request-failed') void reportClientError('auth-network');
+    throw error;
+  }
 };
 
 export const validateDiscountCode = async (code) => {

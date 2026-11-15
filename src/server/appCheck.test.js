@@ -12,7 +12,8 @@ test('App Check covers submissions and private reads, not trusted callbacks or p
     assert.equal(requiresAppCheck({ path, method: 'GET' }), true, path);
   }
   for (const [path, method] of [['/health', 'GET'], ['/api/availability', 'GET'], ['/api/forms', 'GET'],
-    ['/api/stripe/webhook', 'POST'], ['/api/jobs/renewals', 'POST'], ['/api/admin/forms', 'OPTIONS']]) {
+    ['/api/stripe/webhook', 'POST'], ['/api/jobs/renewals', 'POST'], ['/api/jobs/welcome-emails', 'POST'],
+    ['/api/client-errors', 'POST'], ['/api/admin/forms', 'OPTIONS']]) {
     assert.equal(requiresAppCheck({ path, method }), false, path);
   }
   assert.equal(requiresAppCheck({ path: '/api/admin/forms', method: 'DELETE' }), true);
