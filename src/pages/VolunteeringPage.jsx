@@ -75,7 +75,7 @@ export default function VolunteeringPage({ products = [] }) {
     <>
       <div className="SectionHero">
         <div className="main_tile main_tile_grey">
-          <h2 className="page_heading_bold_1">{copy.title}</h2>
+          <h1 className="page_heading_bold_1">{copy.title}</h1>
           <p className="text_container text_container_intro">{copy.intro}</p>
           {offline && <p className="StatusTextError" role="alert">Live volunteering information is unavailable. {snapshot ? 'Previously downloaded information' : 'Built-in information'} is shown and may be out of date. Reconnect before applying.</p>}
           {adminUser && !offline && <button type="button" className="PrimaryActionButtonCompact" aria-expanded={configuring}

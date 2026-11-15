@@ -11,6 +11,7 @@ import { applyConsentPrefill, checkoutWording, draftForCurrentWording } from './
 import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
 import { itemLabel, productLimits } from './utils/inventory';
 import SiteNavigation from './components/SiteNavigation';
+import NotFoundPage from './pages/NotFoundPage';
 import { pageModules } from './pages/pageModules';
 import { useSiteRoute } from './utils/useSiteRoute';
 import PageLoadBoundary from './components/PageLoadBoundary';
@@ -430,7 +431,11 @@ export default function App() {
           makeId={newId}
         />
       ) : (
-        <div className="SectionHero"><p className="text_container">Your basket is empty.</p><button className="PrimaryActionButtonCompact" onClick={() => setCurrentPage('membership')}>Go to the shop</button></div>
+        <div className="SectionHero">
+          <h1 className="page_heading_bold_1">Your basket</h1>
+          <p className="text_container">Your basket is empty.</p>
+          <button className="PrimaryActionButtonCompact" onClick={() => setCurrentPage('membership')}>Go to the shop</button>
+        </div>
       );
     }
 
@@ -478,18 +483,14 @@ export default function App() {
       case 'access-project':
         return <AccessProjectPage />;
       default:
-        return <div className="SectionHero">
-          <h2 className="page_heading_bold_1">Page not found</h2>
-          <p className="text_container">This page may have moved or is not available on the rebuilt website yet.</p>
-          <a className="PrimaryActionButtonCompact" href="/">Go to the homepage</a>
-          <a className="ContentLink" href="/contact-us">Contact the club</a>
-        </div>;
+        return <NotFoundPage />;
     }
   };
 
   return (
     <PageContentProvider value={pageContent} enableAdminAuth={currentPage === 'admin' || currentPage === 'admin-reports'}>
     <div className="SiteShell" onClick={onLinkClick}>
+      <a className="SkipLink" href="#main-content">Skip to content</a>
       <SiteNavigation
         currentPage={currentPage}
         setCurrentPage={setCurrentPage}
@@ -497,7 +498,7 @@ export default function App() {
         onCartOpen={currentPage === 'checkout' ? handleBackToBasket : () => setIsCartOpen(true)}
       />
 
-      <main className="SiteMain">
+      <main className="SiteMain" id="main-content" tabIndex={-1}>
         <OfflineStatus currentPage={currentPage} />
         <PageLoadBoundary key={currentPage}>
           <Suspense fallback={<div className="SectionContent" role="status">Loading page…</div>}>

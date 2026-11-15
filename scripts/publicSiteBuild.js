@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PUBLIC_ROUTES, relativeClubLink } from '../src/utils/routes.js';
+import { pageShell, sitemapXml } from './sitePages.js';
 
 const contentIds = Object.values(PUBLIC_ROUTES).map((route) => route.content).filter(Boolean);
 
@@ -64,6 +65,12 @@ export default function publicSiteBuild() {
       }
     },
     writeBundle(options, bundle) {
+      const shell = readFileSync(join(options.dir, 'index.html'), 'utf8');
+      for (const [page, route] of Object.entries(PUBLIC_ROUTES)) {
+        writeFileSync(join(options.dir, route.path === '/' ? 'index.html' : `${route.path.slice(1)}.html`), pageShell(shell, page));
+      }
+      writeFileSync(join(options.dir, '404.html'), pageShell(shell, 'not-found'));
+      writeFileSync(join(options.dir, 'sitemap.xml'), sitemapXml());
       const files = new Set(['/index.html']);
       const include = (file) => {
         if (files.has(`/${file}`)) return;

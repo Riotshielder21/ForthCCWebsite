@@ -47,6 +47,7 @@ test('every public route, including notices and safeguarding, has its page code 
   assert.throws(() => publicPageNames("export const pageModules = { home: () => import('./HomePage') };"), /has no entry/);
   const dir = mkdtempSync(join(tmpdir(), 'fcc-offline-build-'));
   try {
+    writeFileSync(join(dir, 'index.html'), '<html><head><title>Club</title></head><body></body></html>');
     const chunks = pageChunks();
     delete chunks['assets/NoticesPage.js'];
     assert.throws(() => publicSiteBuild().writeBundle({ dir }, chunks), /NoticesPage/);

@@ -11,7 +11,7 @@ export default function HomePage({ onNavigate }) {
       <div className="SectionHero">
         <div className="tile_grid_two_desktop" data-tile-group="intro">
           <div className="main_tile" data-tile-id="welcome">
-            <h2 className="tile_heading_large_bold_1" data-content-field="welcomeTitle">{copy.welcomeTitle}</h2>
+            <h1 className="tile_heading_large_bold_1" data-content-field="welcomeTitle">{copy.welcomeTitle}</h1>
             <div className="text_container text_container_spaced">
               <p data-content-field="welcome1">{copy.welcome1}</p>
               <p data-content-field="welcome2">{copy.welcome2}</p>

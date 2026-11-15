@@ -1,10 +1,12 @@
 # Public club pages remain available to normal search engines.
 # These are voluntary crawl instructions, not access controls.
+Sitemap: https://forthcanoeclub.co.uk/sitemap.xml
 User-agent: *
 Disallow: /admin
 Disallow: /api/
 Disallow: /order/
 Disallow: /payment-success
+Disallow: /payment-issue
 Disallow: /my-details
 Disallow: /checkout
 Disallow: /check-ins

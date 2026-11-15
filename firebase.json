@@ -141,7 +141,15 @@
     ],
     "rewrites": [
       {
-        "source": "**",
+        "source": "/{admin,my-details,check-ins,checkout,payment-success,payment-issue}{,/**}",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/order/**",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/_preview/**",
         "destination": "/index.html"
       }
     ]

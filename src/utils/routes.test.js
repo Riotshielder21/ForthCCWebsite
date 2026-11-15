@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PUBLIC_ROUTES, resolveRoute, relativeClubLink, pagePath, isSamePageHashLink } from './routes.js';
+import { PUBLIC_ROUTES, PRIVATE_ROUTES, resolveRoute, relativeClubLink, pagePath, isSamePageHashLink } from './routes.js';
 import { readFileSync } from 'node:fs';
 
 test('public paths resolve directly and legacy links canonicalise without losing parameters or hashes', () => {
@@ -36,7 +36,14 @@ test('hosting serves canonical paths and revalidates the worker separately from 
     assert.equal(headers['Referrer-Policy'], 'no-referrer', source);
   }
   for (const redirect of hosting.redirects) assert.equal(resolveRoute(redirect.source).url, redirect.destination);
-  assert.ok(hosting.rewrites.some((rule) => rule.source === '**' && rule.destination === '/index.html'));
+  assert.ok(!hosting.rewrites.some((rule) => rule.source === '**'), 'unknown paths must reach Hosting’s 404 handler');
+  const privateRewrite = hosting.rewrites.find((rule) => rule.source.endsWith('{,/**}'));
+  assert.equal(privateRewrite?.destination, '/index.html');
+  const configuredRoots = privateRewrite.source.match(/^\/\{([^}]+)\}\{,\/\*\*\}$/)[1].split(',').sort();
+  const privateRoots = [...new Set(Object.values(PRIVATE_ROUTES).map((path) => path.split('/')[1]))].sort();
+  assert.deepEqual(configuredRoots, privateRoots, 'every private route must retain a direct-load rewrite');
+  assert.ok(hosting.rewrites.some((rule) => rule.source === '/order/**'));
+  assert.ok(hosting.rewrites.some((rule) => rule.source === '/_preview/**'));
 });
 
 test('club links stay on the serving domain, while external services remain external', () => {

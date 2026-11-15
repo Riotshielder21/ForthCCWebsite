@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { interceptLink, pagePath, PUBLIC_ROUTES, resolveRoute } from './routes';
+import { interceptLink, pagePath, resolveRoute } from './routes';
+import { pageMetadata } from './pageMetadata';
 
 export function useSiteRoute() {
   const [route, setRoute] = useState(() => resolveRoute(window.location.href));
@@ -28,12 +29,27 @@ export function useSiteRoute() {
   }, []);
 
   useEffect(() => {
-    const title = PUBLIC_ROUTES[route.page]?.title || {
-      admin: 'Admin', 'admin-reports': 'Admin Reports', 'club-night': 'Check-ins',
-      'my-details': 'My Details', checkout: 'Checkout', 'order-lookup': 'Order',
-      'payment-success': 'Payment', 'payment-issue': 'Payment', 'not-found': 'Page Not Found'
-    }[route.page];
-    document.title = `${title} | Forth Canoe Club SCIO`;
+    const metadata = pageMetadata(route.page);
+    document.title = metadata.title;
+    for (const [name, content] of Object.entries({ description: metadata.description, robots: metadata.robots })) {
+      let element = document.querySelector(`meta[name="${name}"]`);
+      if (!element) {
+        element = document.createElement('meta');
+        element.name = name;
+        document.head.append(element);
+      }
+      element.content = content;
+    }
+    let canonical = document.querySelector('link[rel="canonical"]');
+    if (!metadata.canonical) canonical?.remove();
+    else {
+      if (!canonical) {
+        canonical = document.createElement('link');
+        canonical.rel = 'canonical';
+        document.head.append(canonical);
+      }
+      canonical.href = metadata.canonical;
+    }
   }, [route.page]);
 
   const setCurrentPage = useCallback((value) => {
