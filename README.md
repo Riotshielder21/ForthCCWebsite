@@ -78,6 +78,8 @@ Paddle Scotland is the data controller for the JustGo membership register. The P
 - **Upload** (hourly) links memberships paid on the website to the club in JustGo. Anything uncertain (more than one possible match, suspended accounts, families, guardians, writes with an unclear result) is left for staff, never retried automatically. Nothing deletes or suspends a JustGo account.
 - **Both are off** until `JUSTGO_API_ENABLED` (sync) and `JUSTGO_API_WRITES_ENABLED` (upload) are set. Paddle Scotland's permission for clubs to search the national register and link members is still being confirmed.
 
+**GDPR erasure** uses the same enabled integration to unlink only FCC, confirming the current primary/additional club status and successful removal before deleting local records. Unconfirmed removal blocks completion and keeps records for a safe retry. The JustGo account and other clubs remain; wider erasure needs a separate privacy request. See [deployment requirements](DEPLOYMENT.md#justgo). The [customer confirmation email (#140)](https://github.com/Riotshielder21/ForthCCWebsite/issues/140) is tracked separately and is not sent yet.
+
 ## Project Layout
 
 | Location | Contents |

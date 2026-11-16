@@ -90,7 +90,8 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
     {result ? <>
       <p className="StatusText StatusTextSuccess" role="status">Erased {result.erased} member {result.erased === 1 ? 'record' : 'records'}, redacted {result.ordersRedacted} {result.ordersRedacted === 1 ? 'order' : 'orders'},
         cancelled {result.subscriptionsCancelled} Stripe {result.subscriptionsCancelled === 1 ? 'subscription' : 'subscriptions'}, stopped {result.subscriptionItemsStopped || 0} shared-subscription items,
-        freed {result.eventTicketsReleased || 0} event {result.eventTicketsReleased === 1 ? 'place' : 'places'}, deleted {result.stripeCustomersDeleted || 0} Stripe customers and purged {result.earlierDeletionsPurged} earlier deleted {result.earlierDeletionsPurged === 1 ? 'record' : 'records'}.</p>
+        freed {result.eventTicketsReleased || 0} event {result.eventTicketsReleased === 1 ? 'place' : 'places'}, deleted {result.stripeCustomersDeleted || 0} Stripe customers,
+        removed {result.justgoUnlinked || 0} FCC links from JustGo ({result.justgoAlreadyUnlinked || 0} already removed) and purged {result.earlierDeletionsPurged} earlier deleted {result.earlierDeletionsPurged === 1 ? 'record' : 'records'}.</p>
       <p className="ReportNotice">Still to do by hand:</p>
       <ul className="ReportItems">{[...result.warnings, ...result.manual].map((step) => <li key={step}>{step}</li>)}</ul>
       <button className="EditorCommand" type="button" onClick={onClose}>Close</button>
@@ -148,7 +149,7 @@ export default function GdprErasurePanel({ adminUser, start, onClose, onErased }
           {(preview.subscriptionItemsToStop || []).map((stop) => <li key={stop.id}>Monthly payments stop for {stop.itemNames.join(', ')} on {stop.id}; the payer keeps paying for everyone else.</li>)}
           <li>{preview.related.discountCodes} voucher or discount {preview.related.discountCodes === 1 ? 'code' : 'codes'}, {preview.related.lists} form {preview.related.lists === 1 ? 'submission' : 'submissions'} and {preview.related.stripeRecords} Stripe mirror {preview.related.stripeRecords === 1 ? 'record' : 'records'} will be cleared.</li>
           <li>{preview.deletedRecords.length} earlier deleted {preview.deletedRecords.length === 1 ? 'record' : 'records'} will be permanently purged{preview.deletedRecords.length ? `: ${preview.deletedRecords.map((entry) => entry.summary?.label).join(', ')}` : ''}.</li>
-          {preview.people.some((person) => person.justgo) && <li>They are in JustGo; remove them there too or the weekly sync recreates the record.</li>}
+          {preview.people.some((person) => person.justgo) && <li>FCC will be unlinked from their JustGo accounts, with removal confirmed before erasure completes. Their JustGo accounts and other clubs remain; wider erasure must be requested separately from JustGo.</li>}
           {preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
         </ul>
 
