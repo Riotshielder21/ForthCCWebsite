@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT } from './checkout.js';
+import { tickWording } from '../constants/consentWording.js';
 
 /**
  * Wording the club must be able to prove it showed: consent, disclaimers and policies tied to GDPR, retention and safety.
@@ -13,6 +14,12 @@ export const POLICY_DEFINITIONS = [
   { key: 'data-retention', name: 'Data retention policy', kind: 'retention', field: 'text', text: () => '' },
   { key: 'first-aid-and-safety', name: 'First aid and safety statement', kind: 'safety', field: 'text', text: () => '' }
 ];
+
+/** The definitions with the two ticked statements' text taken from the wording currently published. */
+export const policyDefinitionsFor = (wording) => POLICY_DEFINITIONS.map((definition) => {
+  const key = { 'participation-disclaimer': 'disclaimer', 'photo-video-consent': 'photoVideo' }[definition.key];
+  return key && wording?.[key] ? { ...definition, text: () => tickWording(wording[key]) } : definition;
+});
 
 /** Keys the checkout shows to every new member and records against their consents. */
 export const CHECKOUT_POLICY_KEYS = { disclaimer: 'participation-disclaimer', photoVideo: 'photo-video-consent' };

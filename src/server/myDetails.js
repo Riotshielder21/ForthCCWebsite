@@ -8,7 +8,7 @@ import { buildLinkedReceipt } from '../utils/receipt.js';
 import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
 import { activeSubscriptionItems } from '../utils/subscriptions.js';
 import { resolveOrderPeople } from './orderPeople.js';
-import { currentCheckoutPolicies } from './policies.js';
+import { currentCheckoutPolicies, loadConsentWording } from './policies.js';
 import { loadNotices } from './notices.js';
 import { noticeVersionMap } from '../utils/notices.js';
 import { noticeVersionEntries, photoConsentRecord, photoHistoryAdditions, wordingMatches } from '../utils/consents.js';
@@ -163,7 +163,7 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripe
       if (!ID.test(req.params.householdId) || !ID.test(req.params.memberId)) return res.status(400).json({ error: 'Choose a person.' });
       if (typeof req.body?.accepted !== 'boolean') return res.status(400).json({ error: 'Choose whether to give photo and video consent.' });
       const { accepted } = req.body;
-      if (accepted && !wordingMatches(req.body.wording)) {
+      if (accepted && !wordingMatches(req.body.wording, await loadConsentWording(db()))) {
         return res.status(409).json({ code: 'wording_changed', error: 'The photo consent wording has changed since this page loaded. Reload the page and try again.' });
       }
       const household = await households().doc(req.params.householdId).get();

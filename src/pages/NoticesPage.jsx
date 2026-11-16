@@ -4,11 +4,15 @@ import { NoticeDocument } from '../components/NoticeDocument';
 import { usePageEditor } from '../utils/PageContentContext';
 import { NOTICE_ID_PATTERN, NOTICE_LIMITS, noticeIdFromTitle } from '../utils/notices';
 import { loadNoticeMode, loadNoticeVersions, noticePdfUrl, publishNotice, reorderNotices, watchPublishedNotices } from '../utils/noticesClient';
-import { DISCLAIMER, PHOTO_CONSENT } from '../constants/consentWording';
+import { tickWording } from '../constants/consentWording';
+import { CONSENT_LIMITS } from '../utils/consentWordingStore';
+import { saveConsentWording, useConsentWording } from '../utils/consentWordingClient';
 import { NOTICE_DRAFTS } from '../constants/noticeDrafts';
 
-/** Statements ticked per person at checkout. Their wording is set in the code and versioned on release, so it is shown here read-only. */
-const TICKED_STATEMENTS = [DISCLAIMER, PHOTO_CONSENT].map(({ id, title, label, body }) => ({ id, title, body: `${label}\n\n${body}`, ticked: true }));
+/** Statements ticked per person at checkout; the admin edits the tick-box label and full text, and each publish is a new version. */
+const tickedStatements = (wording) => Object.entries(wording).map(([wordingKey, statement]) => ({
+  id: statement.id, title: statement.title, body: tickWording(statement), label: statement.label, text: statement.body, wordingKey, ticked: true
+}));
 
 const formatDate = (value) => {
   const date = value?.toDate?.() || (value ? new Date(value) : null);
@@ -88,8 +92,32 @@ function NoticeEditor({ adminUser, notice, draft, preLive, tabs, onDraft, onDisc
   </div>;
 }
 
+function StatementEditor({ statement, draft, preLive, busy, onDraft, onDiscard, onPublish }) {
+  const dirty = draft.label !== statement.label || draft.body !== statement.text;
+  return <div className="NoticeEditor" data-editor-control="true">
+    <label className="FormLabel">Statement beside the tick box
+      <textarea className="FormInput" rows={3} maxLength={CONSENT_LIMITS.label} value={draft.label} onChange={(event) => onDraft({ ...draft, label: event.target.value })} />
+    </label>
+    <label className="FormLabel">Full wording
+      <textarea className="FormInput NoticeTextarea" rows={18} maxLength={CONSENT_LIMITS.body} value={draft.body} onChange={(event) => onDraft({ ...draft, body: event.target.value })} />
+    </label>
+    <div className="NoticeVersionControls" data-editor-control="true">
+      <button type="button" className="EditorCommand EditorPublish" disabled={busy || !dirty || !draft.label.trim() || !draft.body.trim()} onClick={onPublish}>
+        <Send size={16} /> {preLive ? 'Save wording' : 'Publish new version'}
+      </button>
+      <button type="button" className="EditorCommand" disabled={busy || !dirty} onClick={onDiscard}><RotateCcw size={16} /> Discard changes</button>
+    </div>
+    {dirty && <p className="NoticeEditorHelp">{preLive
+      ? 'Until the website goes live, each save replaces the working wording.'
+      : 'Publishing records a new version straight away. Everyone is asked to read and tick this again, and ticks already given to the old wording stay on record against it.'}</p>}
+  </div>;
+}
+
 export default function NoticesPage() {
   const { adminUser } = usePageEditor();
+  const consentWording = useConsentWording();
+  const tickedList = useMemo(() => tickedStatements(consentWording), [consentWording]);
+  const [statementDrafts, setStatementDrafts] = useState({});
   const [state, setState] = useState({ notices: null, all: [], error: '' });
   const [selectedId, setSelectedId] = useState(hashId);
   const [editing, setEditing] = useState(false);
@@ -117,8 +145,8 @@ export default function NoticesPage() {
   const canEdit = Boolean(adminUser && editing);
   const publishedIds = new Set((state.notices || []).map((item) => item.id));
   const newDrafts = Object.entries(drafts).filter(([id, draft]) => draft.isNew && !publishedIds.has(id)).map(([id, draft]) => ({ id, title: draft.title || 'New notice', draft: true }));
-  const tabs = useMemo(() => state.notices ? [...state.notices, ...(canEdit ? newDrafts : []), ...TICKED_STATEMENTS.filter((item) => !publishedIds.has(item.id))] : [],
-    [state.notices, canEdit, drafts]);
+  const tabs = useMemo(() => state.notices ? [...state.notices, ...(canEdit ? newDrafts : []), ...tickedList.filter((item) => !publishedIds.has(item.id))] : [],
+    [state.notices, canEdit, drafts, tickedList]);
   const allNoticeIds = new Set(state.all.map((item) => item.id));
   const missingDrafts = NOTICE_DRAFTS.filter((item) => !allNoticeIds.has(item.id) && !drafts[item.id]);
   const selected = tabs.find((tab) => tab.id === selectedId) || tabs[0];
@@ -126,7 +154,8 @@ export default function NoticesPage() {
   const notice = state.notices?.find((item) => item.id === selected?.id);
   const draft = selected && !ticked && drafts[selected.id];
   const shownTitle = canEdit && draft ? draft.title : selected?.title;
-  const shownBody = ticked ? selected.body : canEdit && draft ? draft.body : notice?.body || '';
+  const statementDraft = ticked ? statementDrafts[selected.id] : null;
+  const shownBody = ticked ? (canEdit && statementDraft ? tickWording({ label: statementDraft.label, body: statementDraft.body }) : selected.body) : canEdit && draft ? draft.body : notice?.body || '';
   const preLive = notice ? notice.preLive === true : liveMode !== true;
 
   useEffect(() => {
@@ -185,6 +214,12 @@ export default function NoticesPage() {
   }, (result) => result.preLive
     ? `${draft.title.trim()} saved as the editable version 1.`
     : `${draft.title.trim()} published as version ${result.version}.`);
+  const publishStatement = () => run(async () => {
+    const result = await saveConsentWording(adminUser, selected.wordingKey, statementDraft);
+    setStatementDrafts(({ [selected.id]: _removed, ...rest }) => rest);
+    if (!result.changed) throw new Error('The wording is unchanged; nothing was saved.');
+    return result;
+  }, (result) => result.live ? `${selected.title} published${result.version ? ` as version ${result.version}` : ''}. People will tick it again.` : `${selected.title} saved. Versions start when the website goes live.`);
   const move = (direction) => {
     const ids = state.notices.map((item) => item.id);
     const index = ids.indexOf(notice.id);
@@ -236,7 +271,7 @@ export default function NoticesPage() {
           <div>
             <h2 className="NoticeTitle">{shownTitle || 'New notice'}</h2>
             {notice && <p className="NoticeMeta">{preLive ? 'Working version 1 · Pre-launch' : `Version ${notice.currentVersion}${formatDate(notice.publishedAt) ? ` · Published ${formatDate(notice.publishedAt)}` : ''}`}</p>}
-            {ticked && <p className="NoticeMeta">Ticked for each person at checkout and check-in{selected.id === PHOTO_CONSENT.id ? ' (optional)' : ''}. Every change to this wording is recorded as a new version.</p>}
+            {ticked && <p className="NoticeMeta">Ticked for each person at checkout and check-in{selected.wordingKey === 'photoVideo' ? ' (optional)' : ''}. Every change to this wording is recorded as a new version.</p>}
           </div>
           {notice && notice.currentVersion > 0 && <a className="PrimaryActionButtonCompact" href={noticePdfUrl(notice.id, notice.currentVersion)} aria-label={`Download ${notice.title} as a PDF`}>
             <Download className="IconSm" /> PDF
@@ -256,6 +291,9 @@ export default function NoticesPage() {
           <NoticeEditor adminUser={adminUser} notice={notice} draft={draft || { title: shownTitle || '', body: shownBody }} preLive={preLive} tabs={tabs} busy={busy}
             onDraft={(value) => setDraft(selected.id, value)} onDiscard={() => dropDraft(selected.id)} onPublish={publish} />
         </>}
+        {canEdit && ticked && <StatementEditor statement={selected} draft={statementDraft || { label: selected.label, body: selected.text }} preLive={liveMode !== true} busy={busy}
+          onDraft={(value) => setStatementDrafts((current) => ({ ...current, [selected.id]: value }))}
+          onDiscard={() => setStatementDrafts(({ [selected.id]: _removed, ...rest }) => rest)} onPublish={publishStatement} />}
         {shownBody ? <NoticeDocument body={shownBody} /> : canEdit && <p className="NoticeEditorHelp">Write the notice above to see a preview here.</p>}
       </section>
       {canEdit && <form className="NoticeAddForm" onSubmit={addNotice} data-editor-control="true">

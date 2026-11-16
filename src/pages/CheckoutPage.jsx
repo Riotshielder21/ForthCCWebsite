@@ -12,12 +12,13 @@ const money = (value) => `£${value.toFixed(2)}`;
 import { noticeVersionMap } from '../utils/notices';
 import { applyConsentPrefill, sameNoticeVersions } from '../utils/consents';
 import { watchPublishedNotices } from '../utils/noticesClient';
-import { DISCLAIMER, PHOTO_CONSENT } from '../constants/consentWording';
+import { useConsentWording } from '../utils/consentWordingClient';
 import { PolicyTick } from '../components/NoticeDocument';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function CheckoutPage({ lines, people, onPeopleChange, email, onEmailChange, serverErrors, focusPersonId, busy, total, pricedItems = [], tripDiscounts = [], onBack, onReset, onPay, makeId, labels = {} }) {
+  const { disclaimer: DISCLAIMER, photoVideo: PHOTO_CONSENT } = useConsentWording();
   const text = { back: 'Back to basket', review: 'Review and pay', submit: 'Continue to payment', submitting: 'Starting payment…', ...labels };
   const addOnLines = lines.filter((line) => needsPerson(line) && !isMembership(line));
   const openToNonMembers = addOnLines.some((line) => !requiresMembership(line));

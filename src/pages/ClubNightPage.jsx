@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiUrl, apiFetch } from '../utils/api';
 import { ageOn, SWIMMING_LEVELS } from '../utils/checkout';
-import { DISCLAIMER, PHOTO_CONSENT } from '../constants/consentWording';
+import { useConsentWording } from '../utils/consentWordingClient';
 import { PolicyTick } from '../components/NoticeDocument';
 import { checkoutWording } from '../utils/consents';
 import { loadEmailSession, clearEmailSession, sessionRequest } from '../utils/emailSession';
@@ -235,6 +235,7 @@ function VolunteerPanel() {
 }
 
 export default function ClubNightPage() {
+  const { disclaimer: DISCLAIMER, photoVideo: PHOTO_CONSENT } = useConsentWording();
   const [club, setClub] = useState(null);
   const [view, setView] = useState(() => loadEmailSession('volunteer') ? 'volunteer' : 'checkin');
   const [identity, setIdentity] = useState(blankIdentity);

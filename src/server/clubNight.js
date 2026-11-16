@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { rateLimit } from './rateLimit.js';
-import { currentCheckoutPolicies } from './policies.js';
+import { currentCheckoutPolicies, loadConsentWording } from './policies.js';
 import { loadNotices } from './notices.js';
 import { noticeVersionMap } from '../utils/notices.js';
 import { noticeVersionEntries, photoConsentRecord, wordingMatches } from '../utils/consents.js';
@@ -173,7 +173,7 @@ export const registerClubNightRoutes = (app, { requireAdmin, db, emailCodes, req
         }
         const guest = validateGuestDetails(identity, req.body.details, now);
         if (guest.error) return res.status(400).json({ error: guest.error });
-        if (!wordingMatches(req.body.wording)) {
+        if (!wordingMatches(req.body.wording, await loadConsentWording(db()))) {
           return res.status(409).json({ code: 'wording_changed', error: 'The disclaimer or photo consent wording has changed since this page loaded. Reload the page, then read and tick them again.' });
         }
         matches = [await createGuest(guest.value, now)];
