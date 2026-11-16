@@ -47,6 +47,7 @@ test('every public route, including notices and safeguarding, has its page code 
   assert.throws(() => publicPageNames("export const pageModules = { home: () => import('./HomePage') };"), /has no entry/);
   const dir = mkdtempSync(join(tmpdir(), 'fcc-offline-build-'));
   try {
+    writeFileSync(join(dir, 'index.html'), '<html><head><title>Club</title></head><body></body></html>');
     const chunks = pageChunks();
     delete chunks['assets/NoticesPage.js'];
     assert.throws(() => publicSiteBuild().writeBundle({ dir }, chunks), /NoticesPage/);
@@ -71,6 +72,7 @@ test('offline digests use final written assets, not code before Vite resolves pr
     assert.ok(manifest.digests['/index.html']);
     assert.ok(manifest.files.includes('/content/pages/home.json'));
     assert.ok(!manifest.files.some((path) => path.includes('/admin')));
+    assert.ok(!manifest.files.some((path) => path.includes('/payment-issue')));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

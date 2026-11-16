@@ -309,7 +309,7 @@ export default function ClubNightPage() {
   };
 
   return <div className="SectionContent CheckinsPage PageFadeIn">
-    <h2 className="page_heading_bold_1">Check-ins</h2>
+    <h1 className="page_heading_bold_1">Check-ins</h1>
     <p className="CartItemMeta">{session?.name || (todaysSessions.length > 1 ? 'Choose your session' : 'Club night')}</p>
     <div className="CheckinsTabs" role="group" aria-label="Check-in views">
       <button className="EditorCommand" type="button" aria-pressed={view === 'checkin'} onClick={() => setView('checkin')}>Check in</button>

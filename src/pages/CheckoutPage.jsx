@@ -279,7 +279,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
       <div className="main_tile">
         {current === 'email' && (
           <div className="CheckoutDetails">
-            <h2 className="page_heading_bold_1">Your receipt email</h2>
+            <h1 className="page_heading_bold_1">Your receipt email</h1>
             <p className="text_container">We send your receipt and any voucher codes here. This is only the receipt address, so it can be different from the email on your membership. You will be asked for the membership email next.</p>
             <label className="FormLabel">Receipt email
               <input className="FormInput" type="email" required maxLength={254} autoComplete="email" value={email} onChange={(event) => changeEmail(event.target.value)} placeholder="you@example.com" />
@@ -289,7 +289,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
 
         {person && (
           <div className="CheckoutDetails">
-            <h2 className="page_heading_bold_1">{heading}</h2>
+            <h1 className="page_heading_bold_1">{heading}</h1>
             {canRemove && <button type="button" className="PrimaryActionButtonCompact" disabled={busy || checking} onClick={() => removePerson(person)}>Cancel and remove this person</button>}
             {heading !== 'Member Details' && <p className="CartItemMeta">{memberships.length ? memberships.map(lineLabel).join(', ') : heading === 'Attendee'
               ? 'Tickets are assigned on a later step.'
@@ -439,7 +439,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
 
         {current === 'assign' && (
           <div className="CheckoutDetails">
-            <h2 className="page_heading_bold_1">Who are the add-ons for?</h2>
+            <h1 className="page_heading_bold_1">Who are the add-ons for?</h1>
             <p className="text_container">Memberships are already assigned. Choose who each add-on is for.{addOnLines.some((line) => line.category === 'EVENTS') ? ' Without their own kit, event attendees need annual boat hire; the leader will be told who needs it.' : ''}</p>
             {addOnLines.map((line) => {
               const holder = people.find((candidate) => candidate.lineIds.includes(line.lineId));
@@ -469,7 +469,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
 
         {current === 'review' && (
           <div className="CheckoutDetails">
-            <h2 className="page_heading_bold_1">{text.review}</h2>
+            <h1 className="page_heading_bold_1">{text.review}</h1>
             <p className="text_container">Receipt email: <strong>{email}</strong></p>
             <div className="CheckoutSection ReviewItems">
               {lines.map((line) => {
@@ -506,7 +506,9 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
           </div>
         )}
 
-        {shownErrors.length > 0 && <ul className="StatusText StatusTextError CheckoutErrors">{shownErrors.map((message) => <li key={message}>{message}</li>)}</ul>}
+        {shownErrors.length > 0 && <div role="alert">
+          <ul className="StatusText StatusTextError CheckoutErrors">{shownErrors.map((message) => <li key={message}>{message}</li>)}</ul>
+        </div>}
 
         <div className="CheckoutNav">
           <button type="button" className="PrimaryActionButtonCompact" onClick={() => go(-1)} disabled={busy || checking || index === 0}><ArrowLeft className="IconSm" /> Previous</button>

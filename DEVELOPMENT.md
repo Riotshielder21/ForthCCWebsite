@@ -63,6 +63,19 @@ npx --yes firebase-tools@14.22.0 emulators:exec --only auth,firestore,storage --
 
 Pull requests run the same three checks on GitHub, plus CodeQL.
 
+### Public pages and missing links
+
+The build writes a metadata-specific HTML shell for each public route, plus `404.html` and `sitemap.xml`.
+[routes.js](src/utils/routes.js) is the public-route source; update [public/sitemap.xml](public/sitemap.xml)
+when adding a route (tests check that the lists match). Titles and descriptions are in
+[pageMetadata.js](src/utils/pageMetadata.js). Firebase Hosting serves unknown URLs with the 404 shell
+and HTTP 404; only private app routes and editor previews rewrite to the shared shell.
+
+Check a production preview for page layout and reload recovery. To verify HTTP status codes and
+direct links, use the Firebase Hosting emulator, not Vite's SPA fallback. Check an unknown path,
+`/membership`, `/my-details`, and `/order/test` after refreshing each.
+The missing-page illustration is an original club SVG in [public/images/missing-kayak.svg](public/images/missing-kayak.svg).
+
 To run one integration script while `npm run local` is running, load the emulator settings and run it directly, for example:
 
 ```bash

@@ -15,7 +15,7 @@ export default function DisciplinesPage() {
     <EditablePage pageId="disciplines">
       <div className="SectionHero"><div data-tile-group="hero">
         <div className="main_tile main_tile_grey" data-tile-id="hero">
-          <h2 className="page_heading_bold_1" data-content-field="title">{copy.title}</h2>
+          <h1 className="page_heading_bold_1" data-content-field="title">{copy.title}</h1>
           <p className="text_container text_container_intro" data-content-field="intro">{copy.intro}</p>
         </div></div>
       </div>

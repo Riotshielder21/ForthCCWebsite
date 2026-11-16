@@ -10,11 +10,15 @@ export default class PageLoadBoundary extends React.Component {
   }
   render() {
     if (this.state.reloading) return <div className="SectionContent" role="status">Loading the latest version of the site…</div>;
-    if (this.state.error) return <div className="SectionHero">
-      <h2 className="page_heading_bold_1">This page could not be loaded</h2>
-      <p role="alert">Check your connection and reload. If the site has just been updated, reloading will get the latest version.</p>
-      <button className="PrimaryActionButtonCompact" onClick={() => window.location.reload()}>Reload page</button>
-    </div>;
+    if (this.state.error) return <section className="SectionHero PageRecovery">
+      <span className="tile_eyebrow">A little off course</span>
+      <h1 className="page_heading_bold_2">Let’s try that again</h1>
+      <p className="text_container" role="alert">This page couldn’t load. Check your connection, then reload.</p>
+      <div className="PageRecoveryActions">
+        <button type="button" className="PrimaryActionButtonCompact" onClick={() => window.location.reload()}>Reload page</button>
+        <a className="EditorCommand" href="/" onClick={(event) => event.stopPropagation()}>Go home</a>
+      </div>
+    </section>;
     return this.props.children;
   }
 }

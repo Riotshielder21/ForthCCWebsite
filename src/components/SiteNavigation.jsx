@@ -74,7 +74,7 @@ export default function SiteNavigation({ currentPage, setCurrentPage, cartCount,
         <a href="/" className="BrandLockup" onClick={() => setMenuOpen(false)} aria-label="Go to home page">
           <img src={fccCrest} alt="Forth Canoe Club crest" className="BrandMark" />
           <div>
-            <h1 className="BrandTitle">Forth Canoe<br />Club SCIO</h1>
+            <p className="BrandTitle">Forth Canoe<br />Club SCIO</p>
           </div>
         </a>
 

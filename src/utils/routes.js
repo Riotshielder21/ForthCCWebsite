@@ -11,7 +11,7 @@ export const PUBLIC_ROUTES = {
   'access-project': { path: '/access-project', title: 'Access Project', content: 'access-project' }
 };
 
-const PRIVATE_ROUTES = {
+export const PRIVATE_ROUTES = {
   admin: '/admin', 'admin-reports': '/admin/reports', 'club-night': '/check-ins',
   'my-details': '/my-details', checkout: '/checkout', 'payment-success': '/payment-success', 'payment-issue': '/payment-issue'
 };

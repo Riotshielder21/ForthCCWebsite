@@ -84,7 +84,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
       <div className="SectionHero">
         <div className="PageHero">
           <div>
-            <h2 className="page_heading_bold_1">Membership and Events</h2>
+            <h1 className="page_heading_bold_1">Membership and Events</h1>
             <p className="PageIntro">{copy.intro}</p>
             {adminUser && (
               <button type="button" className="PrimaryActionButtonCompact" onClick={() => { onNavigate?.('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>

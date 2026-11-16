@@ -10,7 +10,7 @@ export default function AboutPage() {
       <div className="SectionHero"><div data-tile-group="hero">
         <div className="main_tile main_tile_grey" data-tile-id="hero">
           <span className="tile_eyebrow" data-content-field="eyebrow">{copy.eyebrow}</span>
-          <h2 className="page_heading_bold_2" data-content-field="title">{copy.title}</h2>
+          <h1 className="page_heading_bold_2" data-content-field="title">{copy.title}</h1>
           <p className="text_container text_container_intro" data-content-field="intro">{copy.intro}</p>
           <div className="SpaceT6">
             <a
