@@ -38,6 +38,22 @@ Never commit secrets. Locally, copy [.env.example](.env.example) to the ignored 
 
 **GitHub Actions variables** (Settings → Secrets and variables → Actions → Variables, applied on the next deploy): `APP_CHECK_MODE`, `VITE_FIREBASE_AUTH_DOMAIN` and the `JUSTGO_*` settings ([JustGo](#justgo)). Outage email recipients are `API_ALERT_EMAILS` in the workflow file.
 
+## Email-code expiry cleanup
+
+The API rejects expired codes and sessions immediately; Firestore TTL only removes expired storage later (normally within about 24 hours). Numeric `expiresAt` values remain unchanged for compatibility. TTL uses a separate timestamp field, `ttlAt`, in `emailCodes` and `emailSessions`. Code cleanup waits until the hourly sending-limit window ends so background cleanup cannot reset that limit early.
+
+The project owner enabled both policies on 16 November 2026. Deploy the updated API so new records contain `ttlAt`. For a fresh project or older records:
+
+```bash
+GCLOUD_PROJECT=fccwebsite-23cfc node scripts/migrate-email-ttl.js --gcloud
+GCLOUD_PROJECT=fccwebsite-23cfc node scripts/migrate-email-ttl.js --gcloud --apply
+gcloud firestore fields ttls update ttlAt --collection-group=emailCodes --enable-ttl --project=fccwebsite-23cfc
+gcloud firestore fields ttls update ttlAt --collection-group=emailSessions --enable-ttl --project=fccwebsite-23cfc
+gcloud firestore fields ttls list --project=fccwebsite-23cfc
+```
+
+Without `--apply` the migration is read-only. It writes only `ttlAt`, logs counts rather than personal information, and refuses to overwrite a document changed since it was read. Rerun it after deploying if the older API created more records in the meantime. Use application default credentials instead by omitting `--gcloud`.
+
 ## Stripe Dashboard
 
 Do this in each mode (test now, live later); each endpoint has its own signing secret.

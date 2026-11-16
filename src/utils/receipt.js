@@ -214,11 +214,11 @@ const emailImageUrl = (value) => {
   }
 };
 
-const htmlItems = (label, items) => items.length ? `
+const htmlItems = (label, items, images) => items.length ? `
   <h3 style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#64748b;margin:28px 0 8px">${escapeHtml(label)}</h3>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
     ${items.map((item) => {
-      const imageUrl = emailImageUrl(item.imageUrl);
+      const imageUrl = images?.has(item.imageUrl) ? `cid:${images.get(item.imageUrl)}` : emailImageUrl(item.imageUrl);
       return `<tr>
         <td style="padding:14px 16px 14px 0;border-bottom:1px solid #f1f5f9;vertical-align:top;font-size:14px">
           <strong>${escapeHtml(item.name)}</strong>
@@ -234,7 +234,7 @@ const htmlItems = (label, items) => items.length ? `
   </table>` : '';
 
 /** Inline styles and table layout work in email clients without the website stylesheet. */
-export const receiptEmailHtml = (receipt, retrievalUrl) => `<!doctype html>
+export const receiptEmailHtml = (receipt, retrievalUrl, images) => `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Forth Canoe Club receipt</title></head>
 <body style="margin:0;padding:28px 12px;background:#f8fafc;color:#002147;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;line-height:1.6">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
@@ -256,11 +256,11 @@ export const receiptEmailHtml = (receipt, retrievalUrl) => `<!doctype html>
             ${person.details.map((detail) => `<tr><td style="padding:2px 16px 2px 0;color:#64748b;vertical-align:top;white-space:nowrap">${escapeHtml(detail.label)}</td>
               <td style="padding:2px 0;vertical-align:top;white-space:pre-line">${escapeHtml(detail.value)}</td></tr>`).join('')}
           </table>` : ''}
-          ${htmlItems('Membership', person.memberships)}
-          ${htmlItems('Bookings', person.events)}
-          ${htmlItems('Additional items', person.addOns)}
+          ${htmlItems('Membership', person.memberships, images)}
+          ${htmlItems('Bookings', person.events, images)}
+          ${htmlItems('Additional items', person.addOns, images)}
         `).join('')}
-        ${htmlItems('Other items', receipt.otherItems)}
+        ${htmlItems('Other items', receipt.otherItems, images)}
         ${receipt.vouchers.length ? `<h2 style="font-size:20px;margin:28px 0 8px">Vouchers</h2>
           ${receipt.vouchers.map((voucher) => `<p><strong>${escapeHtml(voucher.name)}</strong><br>
             Code: <strong>${escapeHtml(voucher.code)}</strong><br>

@@ -110,7 +110,7 @@ The club year runs from 1 March to the end of February. "After membership ends" 
 - PVG and safeguarding records: the date and outcome of checks only, while the volunteer role continues and for 3 years after. Disclosure certificates are not kept.
 - Boathouse key and access records: while you hold access and for 1 year after it ends.
 - Changes you make in My details: 2 years.
-- Email sign-in codes: a few minutes; the sign-in session ends after a short time.
+- Email sign-in codes stop working after 10 minutes. Expired code records are kept for up to an hour to enforce sending limits, then queued for automatic deletion. My details sign-in sessions last 30 minutes; check-in volunteer sessions last 12 hours. Expired session records are queued for automatic deletion. Firestore cleanup is asynchronous and may take around 24 hours; it does not extend sign-in access.
 - Order look-up links: 90 days. Links to retry a failed payment: 30 days.
 - Emails and contact form messages: 2 years, unless they are part of a record listed above.
 - Photos and videos: reviewed every year; removed sooner if consent is withdrawn.
@@ -123,7 +123,7 @@ You can ask us to erase your information at any time by emailing ${SECRETARY}. W
 
 ## Anonymous statistics
 
-Before personal information is deleted we may keep anonymous statistics, such as the number of members, juniors, check-ins or volunteer hours in a year. These cannot identify anyone and are kept for as long as they are useful to the club. Whatever the period above, personal information is deleted or made anonymous no later than 7 years after someone's last contact with the club. How the statistics are made is explained in [Data Analytics](/notices#data-analytics).
+Before personal information is deleted we may keep anonymous statistics, such as the number of members, juniors, check-ins or volunteer hours in a year. These cannot identify anyone and are kept for as long as they are useful to the club. The proposed general limit is 7 years after someone's last contact with the club, except where a longer financial, incident or safeguarding retention period is required. An approved retention schedule must resolve these exceptions before automatic deletion is enabled. How the statistics are made is explained in [Data Analytics](/notices#data-analytics).
 
 ## Reviewing this notice
 

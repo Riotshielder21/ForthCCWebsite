@@ -3,6 +3,7 @@ import express from 'express';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { registerEmailCodeRoutes } from '../src/server/emailCodes.js';
+import { codeDocumentId } from '../src/utils/emailCodes.js';
 import { registerMyDetailsRoutes } from '../src/server/myDetails.js';
 import { registerClubNightRoutes } from '../src/server/clubNight.js';
 import { registerGdprRoutes } from '../src/server/gdpr.js';
@@ -76,8 +77,15 @@ const signIn = async (email, purpose, dob, at) => {
   const before = sent.length;
   assert.equal((await call('/api/email-codes', { method: 'POST', body: { email, purpose, dob }, at })).status, 200);
   assert.equal(sent.length, before + 1, `${purpose} code emailed to ${email}`);
+  const codeData = (await db.collection('emailCodes').doc(codeDocumentId(purpose, email)).get()).data();
+  assert.ok(codeData.ttlAt instanceof Timestamp);
+  assert.equal(codeData.ttlAt.toMillis(), Math.max(codeData.expiresAt, codeData.windowStart + 60 * 60 * 1000),
+    'code cleanup preserves the hourly send-limit window without extending code access');
   const verified = await call('/api/email-codes/verify', { method: 'POST', body: { email, purpose, dob, code: lastCode(email) }, at });
   assert.equal(verified.status, 200);
+  const sessionData = (await db.collection('emailSessions').doc(crypto.createHash('sha256').update(verified.data.token).digest('hex')).get()).data();
+  assert.ok(sessionData.ttlAt instanceof Timestamp, 'Firestore TTL uses a timestamp, not the numeric API expiry');
+  assert.equal(sessionData.ttlAt.toMillis(), verified.data.expiresAt);
   return verified.data.token;
 };
 

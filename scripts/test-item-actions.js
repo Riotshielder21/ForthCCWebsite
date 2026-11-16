@@ -12,7 +12,7 @@ import { registerItemActionRoutes } from '../src/server/itemActions.js';
 import { registerKeyAccessRoutes } from '../src/server/keyAccess.js';
 import { registerBoathouseRoutes } from '../src/server/boathouse.js';
 
-const projectId = 'demo-fcc-item-action-tests';
+const projectId = process.env.FCC_TEST_PROJECT || 'demo-fcc-item-action-tests';
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: projectId });
 const firebase = initializeApp({ projectId }, 'item-action-tests');
 const db = getFirestore(firebase);

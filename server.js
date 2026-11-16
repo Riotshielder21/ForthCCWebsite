@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getAppCheck } from 'firebase-admin/app-check';
+import { getStorage as getAdminStorage } from 'firebase-admin/storage';
 import { appCheckMiddleware } from './src/server/appCheck.js';
 import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
 import { PAGE_CONTENT, validatePageFields } from './src/constants/pageContent.js';
@@ -32,6 +33,7 @@ import { readJustgoSync } from './src/server/justgoSync.js';
 import { buildRawEmail } from './src/utils/mail.js';
 import { emailReplyTo, isVolunteerEmail, TREASURER_REPLY_TO } from './src/utils/emailReplyTo.js';
 import { buildReceiptSummary, buildLinkedReceipt, receiptEmailCopy, receiptEmailHtml } from './src/utils/receipt.js';
+import { loadReceiptImage, receiptAttachments, receiptPdf } from './src/server/receiptAttachments.js';
 import { assertLocalFirebase } from './src/utils/localFirebase.js';
 import { loadStripeSubscribers, importStripeSubscribers, nextClubYearEnd, cancelStripeSubscription } from './src/utils/stripeReports.js';
 import { resolveCatalogue, validateEventSchedule } from './src/utils/catalogue.js';
@@ -1029,6 +1031,7 @@ const recordInvoicePaid = async (invoice) => {
   try {
     await sendEmail({ to: email, subject: `Your Forth Canoe Club subscription payment receipt - ${receipt.orderRef}`,
       body: [receiptEmailCopy(receipt), '', `Questions about your monthly payments: ${TREASURER_REPLY_TO}.`].join('\n'), html: receiptEmailHtml(receipt, ''),
+      attachments: [{ filename: 'receipt.pdf', contentType: 'application/pdf', content: await receiptPdf(receipt) }],
       record: { kind: 'invoice-paid', subscriptionId, invoiceId: invoice.id, receipt, ...(record ? {} : { setUpOutsideSite: true }) } });
   } catch {
     console.error('Could not email the monthly payment receipt for %s.', String(invoice.id).replace(/[\r\n]/g, ''));
@@ -2863,13 +2866,15 @@ app.post('/api/admin/credits', rateLimit(10, 60 * 1000), async (req, res) => {
 });
 
 /** Sends email through Workspace; the emulator stack writes it to `testMail` instead. */
-const sendEmail = async ({ to, subject, body, html, replyTo: requestedReplyTo, record = {} }) => {
+const sendEmail = async ({ to, subject, body, html, attachments = [], replyTo: requestedReplyTo, record = {} }) => {
   const coordinatorEmail = isVolunteerEmail(record) && adminDb
     ? (await adminDb.collection('settings').doc('volunteerCoordinator').get()).data()?.email || ''
     : '';
   const replyTo = requestedReplyTo || emailReplyTo(record, coordinatorEmail);
   if (localFirebase) {
-    await adminDb.collection('testMail').add({ email: to, subject, body, ...(html ? { html } : {}), ...record, replyTo, createdAt: Timestamp.now() });
+    await adminDb.collection('testMail').add({ email: to, subject, body, ...(html ? { html } : {}),
+      attachments: attachments.map(({ content, ...attachment }) => ({ ...attachment, content: content.toString('base64') })),
+      ...record, replyTo, createdAt: Timestamp.now() });
     return true;
   }
   const sender = process.env.GOOGLE_WORKSPACE_SENDER || process.env.GOOGLE_WORKSPACE_DELEGATED_USER;
@@ -2877,7 +2882,7 @@ const sendEmail = async ({ to, subject, body, html, replyTo: requestedReplyTo, r
     console.error('Email not sent: set GOOGLE_WORKSPACE_DELEGATED_USER (and a service account with domain-wide delegation).');
     return false;
   }
-  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body, html, replyTo });
+  const raw = buildRawEmail({ fromName: 'Forth Canoe Club', from: sender, to, subject, body, html, replyTo, attachments });
   await gmailApi.users.messages.send({ userId: 'me', requestBody: { raw } });
   return true;
 };
@@ -2888,14 +2893,17 @@ const sendOrderEmail = async ({ email, orderRef, receiptToken, items, people = [
   const personFields = await loadReceiptPersonFields();
   const receiptPeople = personFields.length ? await receiptPeopleWithRecords(people, email) : people;
   const receipt = buildReceiptSummary(orderRef, { email, items, people: receiptPeople, totalPence, vouchers, billingMode, payment }, { personFields });
+  const { attachments, images } = await receiptAttachments({ receipt, orderRef, items,
+    loadImage: (url) => loadReceiptImage(url, { projectId: adminDb.projectId, storage: getAdminStorage() }) });
   const retrievalUrl = `${orderSiteUrl}/order/${orderRef}.${receiptToken}`;
   const body = [receiptEmailCopy(receipt), '', `Retrieve your receipt and subscription information: ${retrievalUrl}`, '',
     `For help, contact ${TREASURER_REPLY_TO}.`].join('\n');
-  return sendEmail({ to: email, subject: `Your Forth Canoe Club receipt - ${orderRef}`, body, html: receiptEmailHtml(receipt, retrievalUrl),
+  return sendEmail({ to: email, subject: `Your Forth Canoe Club receipt - ${orderRef}`, body,
+    html: receiptEmailHtml(receipt, retrievalUrl, images), attachments,
     record: { kind: 'order-receipt', orderRef, items, people, totalPence, receipt, retrievalUrl, vouchers } });
 };
 
-app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => {
+app.get(['/api/orders/:accessKey', '/api/orders/:accessKey/receipt.pdf'], rateLimit(30, 60 * 1000), async (req, res) => {
   try {
     const separator = req.params.accessKey.indexOf('.');
     const orderRef = separator === -1 ? '' : req.params.accessKey.slice(0, separator);
@@ -2908,8 +2916,14 @@ app.get('/api/orders/:accessKey', rateLimit(30, 60 * 1000), async (req, res) => 
     if (!tokenMatches(receiptToken, fields.receiptTokenHash)) return res.status(404).json({ error: 'Order not found.' });
     if (fields.expiresAt?.toDate() < new Date()) return res.status(410).json({ error: 'This receipt link has expired.' });
 
+    const linked = buildLinkedReceipt(orderRef, await resolveOrderPeople(adminDb, fields));
+    res.set('Cache-Control', 'no-store');
+    if (req.path.endsWith('/receipt.pdf')) {
+      res.attachment(`${orderRef}.pdf`);
+      return res.send(await receiptPdf(linked));
+    }
     res.json({
-      ...buildLinkedReceipt(orderRef, await resolveOrderPeople(adminDb, fields)),
+      ...linked,
       createdAt: fields.createdAt?.toDate?.() || null,
       expiresAt: fields.expiresAt?.toDate?.() || null
     });

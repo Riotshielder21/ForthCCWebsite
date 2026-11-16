@@ -4,6 +4,7 @@ import {
   isCodeEmail, nextCodeRecord, normaliseCodeEmail, sha256
 } from '../utils/emailCodes.js';
 import crypto from 'node:crypto';
+import { Timestamp } from 'firebase-admin/firestore';
 
 const SENT_MESSAGE = 'If that email address can use this, we have sent a 6-digit code. It expires in 10 minutes.';
 const WRONG_MESSAGE = 'That code is wrong or has expired. Request a new code if needed.';
@@ -33,7 +34,9 @@ export const registerEmailCodeRoutes = (app, { db, sendEmail }) => {
       const now = Date.now();
       const record = (await transaction.get(reference)).data();
       if (!canSendCode(record, now)) return false;
-      transaction.set(reference, nextCodeRecord(record, { codeHash: hashCode(code, salt), salt, now, extra }));
+      const next = nextCodeRecord(record, { codeHash: hashCode(code, salt), salt, now, extra });
+      transaction.set(reference, { ...next,
+        ttlAt: Timestamp.fromMillis(Math.max(next.expiresAt, next.windowStart + 60 * 60 * 1000)) });
       return true;
     });
     if (!allowed) return false;
@@ -108,7 +111,7 @@ export const registerEmailCodeRoutes = (app, { db, sendEmail }) => {
       if (!await eligible[purpose](email, req)) return res.status(403).json({ error: refusals[purpose] || 'This email address cannot use this any more.' });
       const token = createSessionToken();
       const expiresAt = Date.now() + EMAIL_CODE_PURPOSES[purpose].sessionMs;
-      await sessions().doc(sha256(token)).set({ email, purpose, expiresAt, createdAt: Date.now() });
+      await sessions().doc(sha256(token)).set({ email, purpose, expiresAt, ttlAt: Timestamp.fromMillis(expiresAt), createdAt: Date.now() });
       res.set('Cache-Control', 'no-store');
       res.json({ success: true, token, email, expiresAt });
     } catch (error) {

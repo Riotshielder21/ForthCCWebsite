@@ -86,7 +86,7 @@ const request = async (path, options = {}, { expectJson = true } = {}) => {
       throw new Error(`Expected JSON from ${options.method || 'GET'} ${path}, received HTTP ${response.status}: ${text}\nAPI output:\n${output}`);
     }
   }
-  return { status: response.status, result };
+  return { status: response.status, headers: response.headers, result };
 };
 try {
   await new Promise((resolve, reject) => {
@@ -124,7 +124,10 @@ try {
   assert.match(unavailableDrafts.result.error, /GitHub publishing is not configured/);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const eventSchedule = { mode: 'consecutive', startDate: '2027-04-05', startTime: '15:00', endTime: '17:00', days: 5, timeZone: 'Europe/London' };
-  await db.collection('products').doc('TEST-EVENT').set({ name: 'Five-day course', category: 'EVENTS', type: 'event-ticket', basePrice: 50, eventSchedule });
+  const receiptImageBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6He8AAAAASUVORK5CYII=', 'base64');
+  await uploadBytes(ref(storage, 'products/TEST-EVENT/receipt.png'), receiptImageBytes, { contentType: 'image/png' });
+  const imageUrl = `https://firebasestorage.googleapis.com/v0/b/${projectId}.appspot.com/o/products%2FTEST-EVENT%2Freceipt.png?alt=media`;
+  await db.collection('products').doc('TEST-EVENT').set({ name: 'Five-day course', category: 'EVENTS', type: 'event-ticket', basePrice: 50, eventSchedule, imageUrl });
   const savedCatalogue = await db.collection('products').get();
   const resolved = resolveCatalogue(PRODUCTS, savedCatalogue.docs.map((document) => ({ ...document.data(), id: document.id })));
   assert.ok(resolved.some((product) => product.id === 'TEST-EVENT'));
@@ -222,9 +225,10 @@ try {
   assert.equal((await db.collection('auditLog').where('recordId', '==', 'TEST-SUBSCRIPTION').get()).docs[0].data().reason, 'Test order');
   assert.equal((await request('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: 'receipt@example.com', total: '0', items: [] }) }, { expectJson: false })).status, 404, 'unpaid orders cannot be created through the retired endpoint');
+  await db.collection('products').doc('TEST-EVENT').update({ active: true });
   const purchase = await request('/api/checkout-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'keyhire', lineId: 'receipt-key' }], billingMode: 'annual',
-      people: [{ id: 'receipt-person', lineIds: ['receipt-key'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }], wording: checkoutWording(), noticeVersions: await currentNoticeVersions() }) });
+    body: JSON.stringify({ email: 'event@example.com', items: [{ id: 'keyhire', lineId: 'receipt-key' }, { id: 'TEST-EVENT', lineId: 'receipt-event' }], billingMode: 'annual',
+      people: [{ id: 'receipt-person', lineIds: ['receipt-key', 'receipt-event'], returning: true, firstName: 'Eve', lastName: 'Event', dob: '1990-01-01', disclaimerAccepted: true }], wording: checkoutWording(), noticeVersions: await currentNoticeVersions() }) });
   assert.equal(purchase.status, 200, `Receipt checkout failed: ${JSON.stringify(purchase.result)}\nAPI output:\n${output}`);
   const purchaseOrder = (await db.collection('orders').doc(purchase.result.orderRef).get()).data();
   const successUrl = new URL(purchase.result.checkoutUrl).searchParams.get('success_url');
@@ -250,6 +254,22 @@ try {
   assert.equal(receipt.result.items[0].name, 'Boathouse Access');
   assert.deepEqual(receipt.result.items[0].personNames, ['Eve Event']);
   assert.equal('people' in receipt.result, false, 'public receipt does not expose contact records');
+  assert.deepEqual(mail.attachments.map(({ contentType }) => contentType), ['application/pdf', 'text/calendar', 'image/png']);
+  assert.ok(Buffer.from(mail.attachments[0].content, 'base64').subarray(0, 5).equals(Buffer.from('%PDF-')));
+  assert.equal(Buffer.from(mail.attachments[1].content, 'base64').toString().match(/BEGIN:VEVENT/g).length, 5);
+  assert.ok(Buffer.from(mail.attachments[2].content, 'base64').equals(receiptImageBytes));
+  assert.match(mail.html, /src="cid:event-0@forthcanoeclub.co.uk"/);
+  const accessKey = new URL(mail.retrievalUrl).pathname.split('/order/')[1];
+  const pdf = await request(`/api/orders/${accessKey}/receipt.pdf`, {}, { expectJson: false });
+  assert.equal(pdf.status, 200);
+  assert.match(pdf.headers.get('content-type'), /^application\/pdf/);
+  assert.match(pdf.headers.get('content-disposition'), /attachment/);
+  assert.equal(pdf.headers.get('cache-control'), 'no-store');
+  assert.ok(pdf.result.startsWith('%PDF-'));
+  assert.equal((await request(`/api/orders/${purchase.result.orderRef}/receipt.pdf`)).status, 404);
+  assert.equal((await request(`/api/orders/${purchase.result.orderRef}.invalid/receipt.pdf`)).status, 404);
+  await db.collection('orders').doc(purchase.result.orderRef).update({ expiresAt: Timestamp.fromMillis(Date.now() - 1000) });
+  assert.equal((await request(`/api/orders/${accessKey}/receipt.pdf`)).status, 410);
   await db.collection('orders').doc('TEST-WEBHOOK').set({ schemaVersion: 2, email: 'webhook@example.com', status: 'pending', totalPence: 2500,
     stripe: { sessionId: 'cs_local_test' }, fulfilment: {}, createdAt: Timestamp.now(), items: [{ name: 'Monthly test', pricePence: 2500, type: 'subscription' }] });
   const payload = JSON.stringify({ type: 'checkout.session.completed', data: { object: {
