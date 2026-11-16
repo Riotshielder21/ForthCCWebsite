@@ -1928,10 +1928,7 @@
 .NoticeHistoryList li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; }
 @media (max-width: 760px) {
   .NoticePanel { padding: 1.5rem 1.25rem 2rem; }
-  .NoticeTabs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.35rem; margin-bottom: 0; }
-  .NoticeTab { justify-self: start; max-width: calc(100% - 1rem); border-bottom: 1px solid var(--fcc-color-border); border-radius: 0.6rem; box-shadow: none; }
-  .NoticeTab:nth-child(even) { justify-self: end; }
-  .NoticeTab[aria-selected="true"] { box-shadow: inset 0 3px 0 var(--fcc-color-accent); }
+  .NoticeTab { padding: 0.65rem 0.75rem; }
 }
 .CheckoutGrid input.FormInput, .CheckoutGrid select.FormInput,
 .FormFieldGrid input.FormInput, .FormFieldGrid select.FormInput { min-height: 3rem; }
