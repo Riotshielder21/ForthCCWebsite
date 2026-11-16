@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Timestamp } from 'firebase-admin/firestore';
-import { CHECKOUT_POLICY_KEYS, POLICY_DEFINITIONS, planPolicyUpdates } from '../utils/policies.js';
+import { CHECKOUT_POLICY_KEYS, planPolicyUpdates, policyDefinitionsFor } from '../utils/policies.js';
+import { mergeConsentWording } from '../utils/consentWordingStore.js';
 import { PRE_LIVE_VERSION } from '../utils/live.js';
 import { rateLimit } from './rateLimit.js';
 
@@ -23,11 +24,15 @@ export const loadPublishedPages = async ({ distDirectory, siteUrl, pageIds }) =>
   return pages;
 };
 
+/** The wording of the two ticked statements: the code's defaults with any published edits laid over them. */
+export const loadConsentWording = async (db) => mergeConsentWording((await db.collection('settings').doc('consentWording').get()).data());
+
 /**
  * Records each tracked policy's wording as a new numbered version when it changed since the last one.
  * Run after every release; safe to repeat and safe if two instances start together.
  */
-export const syncPolicies = async (db, { distDirectory, siteUrl, recordedBy = 'release', source = 'release', definitions = POLICY_DEFINITIONS, pages } = {}) => {
+export const syncPolicies = async (db, { distDirectory, siteUrl, recordedBy = 'release', source = 'release', definitions, pages } = {}) => {
+  definitions ||= policyDefinitionsFor(await loadConsentWording(db));
   const current = new Map((await db.collection('policies').get()).docs.map((document) => [document.id, { version: document.data().currentVersion || 0, hash: document.data().currentHash || '' }]));
   const pageIds = [...new Set(definitions.map((definition) => definition.page).filter(Boolean))];
   const plan = planPolicyUpdates(definitions, current, pages ?? await loadPublishedPages({ distDirectory, siteUrl, pageIds }));

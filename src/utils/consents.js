@@ -1,4 +1,6 @@
-import { DISCLAIMER_TEXT, PHOTO_CONSENT_TEXT, invalidatePersonVerification } from './checkout.js';
+import { invalidatePersonVerification } from './checkout.js';
+import { tickWording } from '../constants/consentWording.js';
+import { getConsentWording } from './consentWordingStore.js';
 
 /**
  * Consents someone gave before, used to tick checkout boxes in advance, and the photo and video consent records kept on
@@ -109,12 +111,14 @@ export const wordingFingerprint = (text) => {
   return hash.toString(16).padStart(8, '0');
 };
 
-/** Fingerprints of the consent wording this build shows, sent with a checkout so a page loaded before a change is caught. */
-export const checkoutWording = () => ({ disclaimer: wordingFingerprint(DISCLAIMER_TEXT), photoVideo: wordingFingerprint(PHOTO_CONSENT_TEXT) });
+/** Fingerprints of the consent wording shown now, sent with a checkout so a page loaded before a change is caught. */
+export const checkoutWording = (wording = getConsentWording()) => ({
+  disclaimer: wordingFingerprint(tickWording(wording.disclaimer)), photoVideo: wordingFingerprint(tickWording(wording.photoVideo))
+});
 
-export const wordingMatches = (sent) => {
+export const wordingMatches = (sent, wording = getConsentWording()) => {
   if (!sent || typeof sent !== 'object') return false;
-  return Object.entries(checkoutWording()).every(([key, fingerprint]) => sent[key] === fingerprint);
+  return Object.entries(checkoutWording(wording)).every(([key, fingerprint]) => sent[key] === fingerprint);
 };
 
 /**

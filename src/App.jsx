@@ -8,6 +8,8 @@ import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYear
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName, returningVerificationMatches, restoreDraftLines } from './utils/checkout';
 import { applyTripDiscounts } from './utils/tripDiscount';
 import { applyConsentPrefill, checkoutWording, draftForCurrentWording } from './utils/consents';
+import { loadCachedConsentWording, refreshConsentWording, useConsentWording } from './utils/consentWordingClient';
+import { invalidatePersonVerification } from './utils/checkout';
 import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
 import { itemLabel, productLimits } from './utils/inventory';
 import SiteNavigation from './components/SiteNavigation';
@@ -71,7 +73,7 @@ const BASKET_LINKS = [
 ];
 
 export default function App() {
-  const [initialDraft] = useState(() => draftForCurrentWording(loadDraft()));
+  const [initialDraft] = useState(() => { loadCachedConsentWording(); return draftForCurrentWording(loadDraft()); });
   const { currentPage, setCurrentPage, onLinkClick, navigateTo } = useSiteRoute();
   const [products, setProducts] = useState(() => readPublicSnapshot('products') || PRODUCTS);
   const [availability, setAvailability] = useState({});
@@ -106,6 +108,18 @@ export default function App() {
   const [focusPersonId, setFocusPersonId] = useState(null);
   const pageBeforeCheckout = useRef('/membership');
   const [people, setPeople] = useState(initialDraft?.people || []);
+  // Published wording can change while the page is open: anyone ticked for the old text must tick again.
+  const consentWording = useConsentWording();
+  const wordingKey = JSON.stringify(checkoutWording(consentWording));
+  const shownWordingKey = useRef(wordingKey);
+  useEffect(() => { refreshConsentWording(); }, []);
+  useEffect(() => {
+    if (shownWordingKey.current === wordingKey) return;
+    shownWordingKey.current = wordingKey;
+    setPeople((prev) => prev.map((person) => ({
+      ...(person.returning ? invalidatePersonVerification(person) : person), prefill: null, disclaimerAccepted: false, photoConsent: false
+    })));
+  }, [wordingKey]);
   const [volunteerTiers, setVolunteerTiers] = useState([]);
   const [tripDiscounts, setTripDiscounts] = useState(null);
   const [checkoutErrors, setCheckoutErrors] = useState([]);
@@ -306,6 +320,7 @@ export default function App() {
       });
       const order = await response.json();
       if (!response.ok) {
+        if (order.code === 'wording_changed') refreshConsentWording();
         if (['membership_required', 'renews_via_justgo', 'membership_active', 'renewal_unconfirmed', 'sold_out', 'club_year_unavailable', 'already_held', 'payment_processing', 'already_paid'].includes(order.code)) {
           refusedCartKey.current = cartKey;
           setCheckoutError(order.error);

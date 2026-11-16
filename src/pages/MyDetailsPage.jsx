@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { loadEmailSession, clearEmailSession, sessionRequest } from '../utils/emailSession';
 import { validateDetailsUpdate } from '../utils/myDetails';
 import { checkoutWording } from '../utils/consents';
-import { PHOTO_CONSENT } from '../constants/consentWording';
+import { useConsentWording } from '../utils/consentWordingClient';
 import { NoticeDocument } from '../components/NoticeDocument';
 import EmailCodeSignIn from '../components/EmailCodeSignIn';
 import PurchaseReceipt from '../components/PurchaseReceipt';
@@ -14,6 +14,7 @@ const formFor = (household) => ({
 
 /** Each person's photo and video consent, saved as soon as it changes. JustGo households answer here too. */
 function PhotoConsentChoices({ household, onSaved }) {
+  const { photoVideo: PHOTO_CONSENT } = useConsentWording();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');

@@ -47,7 +47,8 @@ import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive
 import { registerGdprRoutes } from './src/server/gdpr.js';
 import { rebaseBranch, rebaseWarning } from './src/server/githubRebase.js';
 import { readContentDrafts } from './src/server/contentDrafts.js';
-import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies } from './src/server/policies.js';
+import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies, loadConsentWording } from './src/server/policies.js';
+import { registerConsentWordingRoutes } from './src/server/consentWording.js';
 import { freezePreLiveNotices, loadNotices, registerNoticeRoutes } from './src/server/notices.js';
 import { checkNoticeAgreement, noticeVersionMap } from './src/utils/notices.js';
 import { consentPrefill, photoConsentRecord, photoHistoryAdditions, retryConsentPrefill, wordingMatches } from './src/utils/consents.js';
@@ -1837,6 +1838,7 @@ registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, 
   } });
 registerPolicyRoutes(app, { requireAdmin, db: () => adminDb, distDirectory: join(__dirname, 'dist'), siteUrl: process.env.PUBLIC_SITE_URL, live: isLive() });
 registerNoticeRoutes(app, { requireAdmin, db: () => adminDb, live: isLive });
+registerConsentWordingRoutes(app, { requireAdmin, db: () => adminDb, live: isLive });
 const { settleKeyAccess, notifyKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message) });
 registerLifetimeMembershipRoutes(app, { requireAdmin, db: () => adminDb });
 const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
@@ -2543,7 +2545,7 @@ const startCheckout = async (req, res, credit = null) => {
     const detailErrors = validateCheckout({ lines: selected, people, now });
     if (detailErrors.length) return res.status(400).json({ error: detailErrors[0], details: detailErrors });
     // Answers are recorded against the wording version current here, so a page still showing older wording must reload.
-    if (people.length && !wordingMatches(req.body.wording)) {
+    if (people.length && !wordingMatches(req.body.wording, await loadConsentWording(adminDb))) {
       return res.status(409).json({ code: 'wording_changed',
         error: 'The disclaimer or photo consent wording has changed since this page loaded. Reload the page, then read and tick them again.' });
     }
