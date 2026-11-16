@@ -10,12 +10,17 @@ assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: projectId });
 const firebase = initializeApp({ projectId }, 'gdpr-tests');
 const db = getFirestore(firebase);
 const app = express();
+app.set('trust proxy', 'loopback');
 app.use(express.json());
 const subscriptions = new Map();
 const customers = new Map();
 const calls = [];
 let failCustomer = false;
 let failDelete = false;
+let failJustgo = false;
+let rejectJustgoPreparation = false;
+const justgoLinks = new Set();
+let unlinkCalls = 0;
 const request = async (path, options = {}) => {
   const url = new URL(path, 'https://stripe.invalid/');
   calls.push({ path, method: options.method || 'GET' });
@@ -47,6 +52,23 @@ registerGdprRoutes(app, {
     return { uid: 'gdpr-admin', email: 'admin@example.test' };
   },
   stripeReportRequest: () => request,
+  justgoErasure: {
+    prepare: async (records) => {
+      const linked = records.filter((record) => record.justgoMemberId);
+      if (linked.length && rejectJustgoPreparation) throw new Error('JustGo unlinking is not configured');
+      return { unlink: async () => {
+        let unlinked = 0, alreadyUnlinked = 0;
+        for (const record of linked) {
+          if (!justgoLinks.has(record.justgoMemberId)) { alreadyUnlinked += 1; continue; }
+          unlinkCalls += 1;
+          justgoLinks.delete(record.justgoMemberId);
+          if (failJustgo) throw new Error('JustGo removal result could not be confirmed');
+          unlinked += 1;
+        }
+        return { unlinked, alreadyUnlinked };
+      } };
+    }
+  },
   normalizeEmail: (email) => String(email || '').trim().toLowerCase(),
   isValidEmail: (email) => /^[^@]+@[^@]+$/.test(email),
   stopSubscriptionItems: async (id, items, admin, stripeRequest, reason) => {
@@ -62,9 +84,12 @@ registerGdprRoutes(app, {
 });
 const server = app.listen(0, '127.0.0.1');
 await new Promise((resolve) => server.once('listening', resolve));
+let client = 0;
 const call = async (route, body, admin = true) => {
+  client += 1;
   const result = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/gdpr/${route}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...(admin ? { 'x-test-admin': 'yes' } : {}) },
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `192.0.2.${client}`,
+      ...(admin ? { 'x-test-admin': 'yes' } : {}) },
     body: JSON.stringify(body)
   });
   return { status: result.status, data: await result.json() };
@@ -164,7 +189,39 @@ try {
   assert.equal((await call('erase', { membershipId: retry.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' })).status, 200);
   assert.equal(customers.get(retry.customer).deleted, true);
   assert.ok(calls.some((entry) => entry.method === 'DELETE'));
-  console.log('GDPR checks passed: immediate cancellation, shared-item isolation, historical redaction, customer deletion, retained-history warning and safe retry.');
+  const justgo = await make('justgo');
+  const justgoId = '22222222-2222-2222-2222-222222222222';
+  await db.doc(`memberships/${justgo.id}`).update({ justgoMemberId: justgoId, justgoSyncStatus: 'synced' });
+  justgoLinks.add(justgoId);
+  rejectJustgoPreparation = true;
+  assert.equal((await call('erase', { membershipId: justgo.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' })).status, 500);
+  assert.equal(subscriptions.get(justgo.sub).status, 'active', 'JustGo preparation fails before billing cancellation');
+  assert.equal((await db.doc(`memberships/${justgo.id}`).get()).exists, true);
+  rejectJustgoPreparation = false;
+  failJustgo = true;
+  const unconfirmed = await call('erase', { membershipId: justgo.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' });
+  assert.equal(unconfirmed.status, 500);
+  assert.match(unconfirmed.data.error, /Check Stripe and JustGo/);
+  assert.equal((await db.doc(`memberships/${justgo.id}`).get()).exists, true, 'unconfirmed unlink cannot erase local member');
+  assert.equal(subscriptions.get(justgo.sub).status, 'canceled');
+  failJustgo = false;
+  const confirmed = await call('erase', { membershipId: justgo.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' });
+  assert.equal(confirmed.status, 200, JSON.stringify(confirmed.data));
+  assert.equal(confirmed.data.justgoAlreadyUnlinked, 1);
+  assert.equal(unlinkCalls, 1, 'retry checks current link state instead of removing twice');
+  assert.ok(confirmed.data.manual.some((step) => /accounts and other clubs were not deleted/.test(step)));
+  assert.equal((await db.doc(`memberships/${justgo.id}`).get()).exists, false);
+  const normalJustgo = await make('justgosuccess');
+  await db.doc(`memberships/${normalJustgo.id}`).update({ justgoMemberId: justgoId });
+  justgoLinks.add(justgoId);
+  await put(`memberships/${normalJustgo.id}_duplicate`, { justgoMemberId: justgoId });
+  assert.equal((await call('erase', { membershipId: normalJustgo.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' })).status, 409);
+  assert.equal(subscriptions.get(normalJustgo.sub).status, 'active', 'a staying linked account cannot be removed');
+  await db.doc(`memberships/${normalJustgo.id}_duplicate`).delete();
+  const complete = await call('erase', { membershipId: normalJustgo.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' });
+  assert.equal(complete.status, 200, JSON.stringify(complete.data));
+  assert.equal(complete.data.justgoUnlinked, 1);
+  console.log('GDPR checks passed: cancellation, shared-item isolation, Stripe redaction/deletion, confirmed FCC-only JustGo unlinking, retained records on failure and safe retry.');
 } finally {
   await Promise.all([...written].map((path) => db.doc(path).delete()));
   await new Promise((resolve) => server.close(resolve));

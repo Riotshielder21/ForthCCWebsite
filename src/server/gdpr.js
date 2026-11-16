@@ -10,6 +10,7 @@ import { memberIsJunior } from '../utils/households.js';
 import { rateLimit } from './rateLimit.js';
 import { REASON_REQUIRED, auditEntry, requiredReason } from '../utils/auditLog.js';
 import { EMAIL_CODE_PURPOSES, codeDocumentId } from '../utils/emailCodes.js';
+import { createJustgoErasure, hasJustgoLink } from './justgoErasure.js';
 
 const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 const subjectFor = (record) => ({ email: identityEmails(record, record.household)[0] || '', firstName: record.firstName || '', lastName: record.lastName || '', dob: record.dob || '', affiliationNumber: record.affiliationNumber || '' });
@@ -26,7 +27,7 @@ const leftHouseholdIds = (records, targets) => {
  * GDPR erasure. Starts from the member register, follows the person into every other collection, keeps orders for the
  * accounts with identifying details removed, and leaves only a masked audit entry.
  */
-export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail, stopSubscriptionItems, loadCatalogue = async () => [] }) => {
+export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail, stopSubscriptionItems, loadCatalogue = async () => [], justgoErasure = createJustgoErasure() }) => {
   const auditSecret = () => process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
 
   /** Everything an erasure for this request would touch. `scope` is 'person' or 'family'. */
@@ -200,7 +201,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
 
   const describe = (scope, refunds = []) => ({
     people: scope.targets.map((record) => ({ id: record.id, name: fullName(record), email: identityEmails(record, record.household)[0] || '', tier: record.membershipTier || '', junior: juniorRecord(record), status: record.status || '',
-      justgo: record.justgoSyncStatus === 'synced' || record.renewalMethod === 'justgo' || Boolean(record.affiliationNumber) })),
+      justgo: hasJustgoLink(record) })),
     family: scope.family.map((record) => ({ id: record.id, name: fullName(record), junior: juniorRecord(record), erased: scope.targets.some((target) => target.id === record.id) })),
     remaining: scope.remaining.map((record) => ({ id: record.id, name: fullName(record), junior: juniorRecord(record) })),
     refundChecks: refunds,
@@ -251,6 +252,14 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
         if (problems.length) return res.status(400).json({ error: problems[0], details: problems, requiresSharedDetails: true });
       }
 
+      const targetIds = new Set(scope.targets.map((record) => record.id));
+      for (const id of new Set(scope.targets.filter(hasJustgoLink).map((record) => record.justgoMemberId).filter(Boolean))) {
+        const holders = await adminDb.collection('memberships').where('justgoMemberId', '==', id).get();
+        if (holders.docs.some((document) => !targetIds.has(document.id))) {
+          return res.status(409).json({ error: 'This JustGo account is linked to a member who is staying. Reconcile the duplicate account links before erasure.' });
+        }
+      }
+      const justgo = await justgoErasure.prepare(scope.targets);
       const cancellations = [...scope.subscriptions];
       const stripeIds = new Set([...scope.subscriptionRecords.keys(), ...scope.subscriptions.keys(),
         ...scope.mirrorSubscriptions.map((document) => document.data().id || document.data().stripeSubscriptionId).filter(Boolean)]);
@@ -290,7 +299,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
         });
       }
 
-      const targetIds = new Set(scope.targets.map((record) => record.id));
+      const justgoResult = await justgo.unlink();
       const linkedRecords = [];
       const attentionRecords = new Map();
       const attentionFor = async (field, value) => (await adminDb.collection('attention').where(field, '==', value).get()).docs
@@ -379,24 +388,25 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       batch.create(adminDb.collection('auditLog').doc(), auditEntry({ kind: 'deletion', action: 'gdpr-erasure', reason, actor: admin, at: Timestamp.now(), personalDataErased: true, snapshot: null,
         recordIdHash: crypto.createHash('sha256').update([...targetIds].sort().join(',') || 'lookup').digest('hex'),
         summary: { label: 'GDPR erasure', scope: left.length ? 'person' : scope.family.length > 1 ? 'family' : 'person', people, ordersRedacted: scope.orderUpdates.map(({ id }) => id),
-          subscriptionsCancelled: cancellations.map(([id]) => id), earlierDeletionsPurged: scope.auditDocs.size },
+          subscriptionsCancelled: cancellations.map(([id]) => id), justgoUnlinked: justgoResult.unlinked,
+          justgoAlreadyUnlinked: justgoResult.alreadyUnlinked, earlierDeletionsPurged: scope.auditDocs.size },
         lookupKeys: [...new Set(scope.subjects.flatMap((subject) => [...personLookupKeys(secret, subject), ...(subject.email ? [lookupKey(secret, 'email', subject.email)] : [])]))]
       }));
       await batch.commit();
 
       const manual = [];
-      if (scope.targets.some((record) => record.justgoSyncStatus === 'synced' || record.renewalMethod === 'justgo' || record.affiliationNumber)) manual.push('Remove them from JustGo, or the weekly sync will recreate the record.');
+      if (scope.targets.some(hasJustgoLink)) manual.push('FCC club links were confirmed removed from JustGo. JustGo accounts and other clubs were not deleted. The person must request any wider account/data erasure through JustGo and the relevant governing body privacy process.');
       if (stripeIds.size || scope.erasedEmails.size) manual.push('Stripe retains historical invoices, payments and mandate records that its API cannot fully erase. Review these in Stripe and use Stripe privacy support for any further erasure required; this is not a complete purge of Stripe financial history.');
       if (stripeErasure.retained) manual.push('A Stripe customer still pays for other people. Its contact details were cleared, but its payment method was retained to avoid cancelling their payments. Arrange a replacement payer and review the retained mandate in Stripe.');
       manual.push('Remove any rows about them from Google Sheets and form responses.');
       res.json({ success: true, erased: people.length, ordersRedacted: scope.orderUpdates.length, subscriptionsCancelled: cancellations.length,
         subscriptionItemsStopped: scope.itemStops.reduce((sum, stop) => sum + stop.items.length, 0), stripeCustomersDeleted: stripeErasure.deleted,
-        earlierDeletionsPurged: scope.auditDocs.size,
+        earlierDeletionsPurged: scope.auditDocs.size, justgoUnlinked: justgoResult.unlinked, justgoAlreadyUnlinked: justgoResult.alreadyUnlinked,
         eventTicketsReleased: scope.orderUpdates.reduce((sum, { id, update }) => sum + (update.items || []).filter((item, index) => item.attendeeErased && !scope.orders.get(id)?.items?.[index]?.attendeeErased).length, 0),
         warnings: scope.warnings, manual });
     } catch (error) {
       console.error('GDPR erasure failed:', error.message);
-      res.status(500).json({ error: 'Erasure could not be completed. Some payments may already have stopped, but member records were kept so you can retry. Check Stripe and try again.' });
+      res.status(500).json({ error: 'Erasure could not be completed. Some payments may already have stopped or FCC links may have been removed from JustGo, but member records were kept so you can retry. Check Stripe and JustGo, reconcile any unconfirmed unlinking, and try again.' });
     }
   });
 };

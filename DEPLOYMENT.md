@@ -30,7 +30,7 @@ Never commit secrets. Locally, copy [.env.example](.env.example) to the ignored 
 | `stripe-subscription-admin-key` | `STRIPE_SUBSCRIPTION_ADMIN_KEY` | Restricted key, same mode: subscription, item, schedule and customer read/write (including deletion), plus invoice, payment-intent and charge read. Refunds also need refund write and refund read. |
 | `audit-lookup-secret` | `AUDIT_LOOKUP_SECRET` | `openssl rand -hex 32`. Never rotate it: GDPR erasure uses it to find already-deleted records. |
 | `renewal-job-token` | `RENEWAL_JOB_TOKEN` | Created by `scheduled-jobs.sh setup` |
-| `justgo-api-secret` | (JustGo jobs) | Created as a placeholder by `scheduled-jobs.sh setup` |
+| `justgo-api-secret` | `JUSTGO_API_SECRET` (API and JustGo jobs) | Created as a placeholder by `scheduled-jobs.sh setup`; API service account also needs Secret Manager access |
 
 `STRIPE_REPORT_SECRET_KEY` (optional, server only) gives reports their own key; without it they use `STRIPE_SECRET_KEY`.
 
@@ -100,6 +100,10 @@ gcloud projects add-iam-policy-binding fccwebsite-23cfc --member serviceAccount:
 GDPR erasure cannot be undone; admin deletion keeps a recovery snapshot. Stripe history and mandates, Google Sheets and JustGo need checking by hand after an erasure.
 
 ## JustGo
+
+GDPR erasure automatically removes only the FCC club link, never the JustGo account or other clubs. The API uses the documented v2.2 member lookup and `Organisations/DeleteMember`, taking primary/additional status from the current record and confirming removal with another lookup. It requires `JUSTGO_API_ENABLED=true`, `JUSTGO_API_WRITES_ENABLED=true`, the confirmed `JUSTGO_ORGANISATION_ID` and the `justgo-api-secret` binding. Both flags remain default-off; the workflow binds the secret only when both are true. `scripts/scheduled-jobs.sh setup` also grants the Cloud Run API account access to this secret. For the existing production account, that specific secret-access grant was approved and verified on 16 November 2026; no flags were enabled or live accounts unlinked.
+
+Linked records without a confirmed `justgoMemberId`, ambiguous club status, shared duplicate JustGo links, disabled integration or failed/unconfirmed removal block erasure with local member records retained. Reconcile the link and retry; a retry checks current JustGo state and skips already-removed FCC links. Stripe billing may already have stopped if unlinking fails after its initial validation. Wider JustGo/governing-body data erasure remains the person's separate privacy request. The [customer erasure-summary email (#140)](https://github.com/Riotshielder21/ForthCCWebsite/issues/140) is a separate follow-up, not sent by this implementation.
 
 Both jobs stay paused until their flags are set. Run the read-only discovery locally with the secret from Secret Manager:
 

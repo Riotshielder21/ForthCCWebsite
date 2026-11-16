@@ -66,6 +66,9 @@ jobs:
             PUBLIC_SITE_URL=https://new.forthcanoeclub.co.uk
             PUBLIC_SITE_URLS=https://new.forthcanoeclub.co.uk\,https://fccwebsite-23cfc.web.app\,https://fccwebsite-23cfc.firebaseapp.com
             WEBSITE_ISLIVE=${{ secrets.WEBSITE_ISLIVE || 'false' }}
+            JUSTGO_API_ENABLED=${{ vars.JUSTGO_API_ENABLED || 'false' }}
+            JUSTGO_API_WRITES_ENABLED=${{ vars.JUSTGO_API_WRITES_ENABLED || 'false' }}
+            JUSTGO_ORGANISATION_ID=${{ vars.JUSTGO_ORGANISATION_ID }}
           secrets: |-
             GITHUB_CONTENT_TOKEN=github-content-token:latest
             FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account-json:latest
@@ -74,6 +77,7 @@ jobs:
             AUDIT_LOOKUP_SECRET=audit-lookup-secret:latest
             STRIPE_SUBSCRIPTION_ADMIN_KEY=stripe-subscription-admin-key:latest
             RENEWAL_JOB_TOKEN=renewal-job-token:latest
+            ${{ vars.JUSTGO_API_ENABLED == 'true' && vars.JUSTGO_API_WRITES_ENABLED == 'true' && 'JUSTGO_API_SECRET=justgo-api-secret:latest' || '' }}
 
       - name: Verify API browser access
         env:

@@ -49,6 +49,9 @@ setup() {
     gcloud secrets add-iam-policy-binding renewal-job-token --member "serviceAccount:$member" \
       --role roles/secretmanager.secretAccessor "${cloud[@]}" >/dev/null
   done
+  # GDPR erasure verifies and removes the FCC-only JustGo link through the API.
+  gcloud secrets add-iam-policy-binding justgo-api-secret --member "serviceAccount:$api_account" \
+    --role roles/secretmanager.secretAccessor "${cloud[@]}" >/dev/null
 
   gcloud iam service-accounts add-iam-policy-binding "$JOBS_ACCOUNT" --member "serviceAccount:$deployer" \
     --role roles/iam.serviceAccountUser "${cloud[@]}" >/dev/null
