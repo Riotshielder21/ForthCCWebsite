@@ -31,6 +31,7 @@ export default function OrderLookupPage() {
             <p className="PageIntroCentered">Here’s a summary of your purchase. Keep your confirmation email for your records.</p>
           </div>
           <PurchaseReceipt order={state.order} />
+          <a className="EditorCommand" href={apiUrl(`/api/orders/${encodeURIComponent(window.location.pathname.split('/').filter(Boolean).pop())}/receipt.pdf`)}>Download PDF receipt</a>
         </>}
       </div>
     </div>

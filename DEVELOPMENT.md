@@ -105,6 +105,32 @@ node scripts/test-stripe-clocks.js /absolute/path/to/stripe-sandbox.env
 
 The key needs write access to test clocks, customers, payment methods, products and subscriptions, and read access to invoices. Set `STRIPE_CLOCK_CASE` to `current-year`, `next-year`, `delayed-payment` or `failed-payment` to run one case.
 
+### Committee and Stripe acceptance
+
+The remaining checks for issues #41–#62 belong in [launch acceptance #138](https://github.com/Riotshielder21/ForthCCWebsite/issues/138) and [committee decisions #128](https://github.com/Riotshielder21/ForthCCWebsite/issues/128). The checks below require **Stripe sandbox/test mode**, made-up people and a test mailbox; never use a real member or real bank account. Test clocks simulate card billing, not Bacs settlement.
+
+1. In Stripe's test Dashboard, disable customer trial-ending reminder emails for the club subscriptions. Keep other payment-failure notifications as agreed.
+2. Forward actual sandbox webhooks with the `stripe listen` command above, restart the local API with the sandbox key, and use the real website checkout (not `stripe trigger`, which produces unrelated fixture events). Choose Bacs with Stripe's current documented Bacs test account details. Confirm the mandate appears and the order stays pending until the asynchronous payment succeeds, then becomes paid exactly once and grants the right items. Repeat with Stripe's documented failure account: no membership should be granted, and retry/cancel should work.
+3. Use two made-up people sharing one monthly subscription. In Reports, schedule one item's removal as a volunteer benefit, then cancel/revoke that same item. Inspect the **actual Stripe schedule phases**: the removed price must not occur in any current/future phase, the other person's price must remain, and no unwanted proration or new charge should appear. Cancel test subscriptions afterwards.
+4. Submit GDPR erasure for a synthetic Stripe customer with no remaining payer obligations: billing stops, current identifying fields are redacted, and deletion completes. Repeat for one person sharing billing: only that person's item ends, while the other person's payments and payment method remain. The existing isolated GDPR script covers a failed-delete retry; verifying a real permission failure needs a deliberately restricted test key and must not be done to a live customer. Record any Stripe historical invoices/mandates that need separate retention review.
+5. A genuinely live Bacs payment, settlement and refund is a separate controlled launch check requiring explicit agreement on the payer, amount and refund. Sandbox results do not prove bank settlement in live mode.
+
+Record results without keys, bank information, names, emails or complete Stripe objects. Include which checks passed, the time, and any failure to reproduce. For an isolated item-action test, start separate empty emulators with a demo project and set `FCC_TEST_PROJECT` to that same project. Merely changing the variable against existing single-project emulators does not isolate data or authentication.
+
+### Boathouse check-in poster
+
+Generate an A4 PDF using the **deployed public website origin**, not localhost:
+
+```bash
+node scripts/export-checkin-poster.js https://new.forthcanoeclub.co.uk /tmp/check-in-poster.pdf
+```
+
+The command refuses to overwrite an existing file. Scan the printed QR code and confirm it opens `/check-ins`, then display it at the boathouse. Configure the agreed weekly sessions in the admin check-in sessions editor; the poster does not create sessions or grant access.
+
+### Dependency status
+
+For #51, the installed tree now resolves `body-parser` 1.20.9, `qs` 6.16.2 and `ip-address` 10.7.6. The original patch-waiting task is superseded; `npm audit` still reports a separate low-severity transitive XML-parser advisory with no available fix. Continue dependency monitoring. Compressed JSON remains deliberately unsupported by the API and is tested; installing patched packages does not require changing that API behaviour.
+
 ## When Something Goes Wrong
 
 | Problem | Check |

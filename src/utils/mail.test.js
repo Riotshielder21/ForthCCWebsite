@@ -62,3 +62,36 @@ test('addresses with more than one @ are refused, quickly even when very long', 
   assert.throws(() => buildRawEmail({ from: 'a@b.co', to: '!@'.repeat(20000), subject: 's', body: 'b' }), /Invalid/);
   assert.ok(Date.now() - started < 200);
 });
+
+test('attachments preserve the alternative body and carry correct MIME headers and bytes', () => {
+  const message = decode(buildRawEmail({ from: 'a@b.co', to: 'x@y.com', subject: 'Bookings', body: 'Plain', html: '<img src="cid:event-0@fcc">',
+    attachments: [
+      { filename: 'receipt.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF-1.3') },
+      { filename: 'events.ics', contentType: 'text/calendar', content: Buffer.from('BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n') },
+      { filename: 'event.png', contentType: 'image/png', content: Buffer.from([1, 2, 3]), contentId: 'event-0@fcc' }
+    ] }));
+  assert.match(message, /multipart\/mixed/);
+  assert.match(message, /multipart\/alternative/);
+  assert.match(message, /multipart\/related/);
+  assert.match(message, /Content-Disposition: attachment; filename="receipt.pdf"/);
+  assert.match(message, /text\/calendar; charset=UTF-8; method=PUBLISH/);
+  assert.match(message, /Content-Disposition: inline; filename="event.png"/);
+  assert.match(message, /Content-ID: <event-0@fcc>/);
+  assert.match(message, /AQID/);
+  assert.match(message, /JVBERi0xLjM=/);
+  const relatedBoundary = /multipart\/related; boundary="([^"]+)"/.exec(message)[1];
+  const relatedBody = message.slice(message.indexOf(`--${relatedBoundary}`), message.indexOf(`--${relatedBoundary}--`));
+  assert.match(relatedBody, /Content-ID: <event-0@fcc>/);
+  assert.doesNotMatch(relatedBody, /filename="receipt.pdf"|filename="events.ics"/);
+});
+
+test('unsafe attachment headers and oversized payloads are rejected', () => {
+  const email = { from: 'a@b.co', to: 'x@y.com', body: 'x' };
+  for (const attachment of [
+    { filename: 'bad\r\nBcc:test', contentType: 'application/pdf', content: Buffer.from('x') },
+    { filename: 'ok.pdf', contentType: 'application/pdf', content: 'not a buffer' },
+    { filename: 'ok.png', contentType: 'image/png', content: Buffer.from('x'), contentId: 'bad\r\nheader' }
+  ]) assert.throws(() => buildRawEmail({ ...email, attachments: [attachment] }), /Invalid email attachment/);
+  assert.throws(() => buildRawEmail({ ...email, attachments: [{ filename: 'big.pdf', contentType: 'application/pdf',
+    content: Buffer.alloc(10 * 1024 * 1024 + 1) }] }), /exceed/);
+});
