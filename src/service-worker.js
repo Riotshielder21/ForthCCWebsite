@@ -117,6 +117,22 @@ self.addEventListener('fetch', (event) => {
     })());
     return;
   }
+  if (url.origin === self.location.origin && /^\/content\/.*\.json$/.test(url.pathname)) {
+    // Page text can change without a deploy, so ask the network first and keep the saved copy only for offline or slow signal.
+    event.respondWith((async () => {
+      const cache = await caches.open(cacheName);
+      try {
+        const response = await fromNetwork(new Request(request, { cache: 'no-cache' }));
+        if (response.ok && response.headers.get('content-type')?.includes('application/json')) await cache.put(url.href, response.clone());
+        return response;
+      } catch (error) {
+        const cached = await cache.match(url.href);
+        if (cached) return cached;
+        throw error;
+      }
+    })());
+    return;
+  }
   event.respondWith((async () => {
     const cache = await caches.open(cacheName);
     const key = url.href;
