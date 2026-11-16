@@ -76,6 +76,8 @@ import { registerRenewalRoutes } from './src/server/renewals.js';
 import { registerKeyAccessRoutes } from './src/server/keyAccess.js';
 import { registerItemActionRoutes, orderSubscriptions } from './src/server/itemActions.js';
 import { rateLimit, baselineRateLimit } from './src/server/rateLimit.js';
+import { registerClientErrorRoutes } from './src/server/clientErrors.js';
+import { registerJobMonitoringHealth } from './src/server/jobMonitoring.js';
 import { isClubEmail } from './src/utils/adminAccess.js';
 import { createAttention, registerAttentionRoutes } from './src/server/attention.js';
 import { RETRY_LINK_DAYS, invoiceFailureEmail, invoicePeriodStart, orderFailureEmail, subscriptionPaymentReceipt, paidUpTo, restartBasket, retryBasket, splitLinkKey,
@@ -1335,6 +1337,7 @@ app.post('/api/stripe/webhook', rateLimit(100, 60 * 1000), express.raw({ type: '
 // photos or supporter logos need a larger limit. The route still requires an admin and validates every field.
 app.use('/api/admin/publish-page', express.json({ limit: '512kb', inflate: false }));
 app.use(express.json({ limit: '100kb', inflate: false }));
+registerClientErrorRoutes(app);
 
 // Google Sheets API Setup
 let sheets;
@@ -3121,6 +3124,14 @@ app.get('/api/safeguarding-documents/:id', rateLimit(30, 60 * 1000), async (req,
 });
 
 // Health check for the uptime alert: only healthy when Firestore can be read, so a broken database or credentials also alert.
+const monitoringAuth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+registerJobMonitoringHealth(app, {
+  project: process.env.GOOGLE_CLOUD_PROJECT, attention,
+  request: async (url) => {
+    const client = await monitoringAuth.getClient();
+    return (await client.request({ url, timeout: 10000 })).data;
+  }
+});
 app.get('/health', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!adminDb) return res.status(503).json({ status: 'unavailable', error: 'Database not configured.' });

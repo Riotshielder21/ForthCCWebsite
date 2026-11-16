@@ -15,8 +15,9 @@ permissions:
   id-token: write
 
 env:
-  # Who is emailed when the API fails its /health check (comma separated). Applied on every deploy.
-  API_ALERT_EMAILS: Riotshielder21@gmail.com
+  # Monitoring and budget email recipients (comma separated), applied on every deploy.
+  API_ALERT_EMAILS: jack.watt@forthcanoeclub.co.uk
+  MONTHLY_BUDGET_GBP: '5'
 
 jobs:
   deploy:
@@ -61,6 +62,8 @@ jobs:
             GITHUB_PR_REVIEWERS=Riotshielder21
             GOOGLE_WORKSPACE_DELEGATED_USER=website@forthcanoeclub.co.uk
             GOOGLE_WORKSPACE_SENDER=no-reply@forthcanoeclub.co.uk
+            STAFF_ALERT_EMAIL=jack.watt@forthcanoeclub.co.uk
+            GOOGLE_CLOUD_PROJECT=fccwebsite-23cfc
             GOOGLE_SHARED_DRIVE_ID=0APxBZiGs6yEGUk9PVA
             GOOGLE_FORMS_ROOT_FOLDER_ID=1_ptxNQkgpJdogsjDZ4Wbqb310LCEJI4Z
             PUBLIC_SITE_URL=https://new.forthcanoeclub.co.uk
@@ -167,8 +170,8 @@ jobs:
           JUSTGO_CLUB_MEMBER_ROLE: ${{ vars.JUSTGO_CLUB_MEMBER_ROLE }}
           JUSTGO_UNSUSPENDED_LEVELS: ${{ vars.JUSTGO_UNSUSPENDED_LEVELS }}
 
-      - name: Configure API outage email alert
-        run: node scripts/setup-api-monitoring.mjs
+      - name: Configure outage, browser, scheduled-job and budget alerts
+        run: node scripts/setup-site-monitoring.mjs
         env:
           API_URL: ${{ steps.deploy-api.outputs.url }}
           GOOGLE_CLOUD_PROJECT: fccwebsite-23cfc

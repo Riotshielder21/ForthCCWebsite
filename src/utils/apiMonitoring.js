@@ -61,7 +61,7 @@ const idOf = (name) => name.split('/').pop();
  * Creates or updates the uptime check, one email channel per address and the alert policy.
  * `request({ method, path, body })` calls https://monitoring.googleapis.com/v3/<path> and returns parsed JSON.
  */
-export async function syncApiMonitoring({ request, project, apiUrl, emails, log = () => {} }) {
+export async function syncApiMonitoring({ request, project, apiUrl, emails, preserveChannels = false, log = () => {} }) {
   const parent = `projects/${project}`;
   const list = async (path, key) => {
     const items = [];
@@ -107,10 +107,13 @@ export async function syncApiMonitoring({ request, project, apiUrl, emails, log 
   else await request({ method: 'POST', path: `${parent}/alertPolicies`, body: policyBody });
   log(`Alert policy "${ALERT_POLICY_NAME}" emails: ${emails.join(', ')}.`);
 
-  // Addresses removed from the workflow stop receiving alerts.
+  // Site-wide setup repoints every policy/budget; keep shared channels so a failed update cannot break other alerts.
   for (const channel of channels.filter((item) => !channelNames.includes(item.name))) {
-    await request({ method: 'DELETE', path: `${channel.name}?force=true` });
-    log(`Removed alert email ${channel.labels?.email_address}.`);
+    if (preserveChannels) log(`Retained shared email channel ${channel.labels?.email_address}; API alerts no longer use it.`);
+    else {
+      await request({ method: 'DELETE', path: channel.name });
+      log(`Removed alert email ${channel.labels?.email_address}.`);
+    }
   }
   return { checkId: idOf(check.name), channelNames };
 }

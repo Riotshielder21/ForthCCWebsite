@@ -1,4 +1,4 @@
-const trustedCallbacks = new Set(['/api/stripe/webhook', '/api/jobs/renewals']);
+const trustedCallbacks = new Set(['/api/stripe/webhook', '/api/jobs/renewals', '/api/jobs/welcome-emails', '/api/client-errors']);
 
 export const requiresAppCheck = ({ path, method }) => {
   if (!path.startsWith('/api/') || method === 'OPTIONS' || trustedCallbacks.has(path)) return false;

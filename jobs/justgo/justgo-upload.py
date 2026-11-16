@@ -14,6 +14,7 @@ creation, club-link notices) are sent by JustGo itself.
 """
 import asyncio
 import datetime
+import json
 import os
 
 from firebase_admin import firestore
@@ -156,4 +157,7 @@ if __name__ == "__main__":
         print("JustGo API writes are disabled; upload pass skipped, no request was sent. Members stay queued.")
         raise SystemExit(0)
     uploader = load_uploader()  # Guard before opening Firestore or changing attempts.
-    print(f"[{utcnow().isoformat()}] JustGo upload pass: {asyncio.run(process_queue(firestore_database(), uploader))}")
+    summary = asyncio.run(process_queue(firestore_database(), uploader))
+    print(f"[{utcnow().isoformat()}] JustGo upload pass: {summary}")
+    if summary["failed"] or summary["review"]:
+        print(json.dumps({"severity": "ERROR", "event": "fcc-job-problems", "job": "fcc-justgo-upload"}))

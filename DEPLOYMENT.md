@@ -11,7 +11,7 @@ How the live site is deployed, configured and kept running. For what each part d
 3. Builds the website against the new API URL.
 4. Deploys Hosting, **Firestore rules** and Storage rules.
 5. Rebuilds the JustGo jobs and updates the Cloud Scheduler jobs ([scheduled-jobs.sh](scripts/scheduled-jobs.sh)).
-6. Updates the API uptime check and outage email ([setup-api-monitoring.mjs](scripts/setup-api-monitoring.mjs)).
+6. Updates outage, browser-error, scheduled-job and project budget alerts ([setup-site-monitoring.mjs](scripts/setup-site-monitoring.mjs)).
 
 Deploy [firestore.rules](firestore.rules) whenever the API is deployed; the workflow does both in one run. If you deploy the API by hand, also run `npx firebase-tools deploy --project fccwebsite-23cfc --only firestore:rules`. The rules stop admins deactivating or deleting the products a trip discount depends on (the ids in `settings/tripDiscounts`, or `boat-hire`, `blue-sub` and `gold-sub` until the rules are first saved); without them those products can be removed from the shop.
 
@@ -36,7 +36,7 @@ Never commit secrets. Locally, copy [.env.example](.env.example) to the ignored 
 
 **GitHub Actions secrets:** `FIREBASE_SERVICE_ACCOUNT` (the deploy account), the `VITE_FIREBASE_*` web config, `VITE_APPCHECK_SITE_KEY`, and optionally `WEBSITE_ISLIVE`.
 
-**GitHub Actions variables** (Settings → Secrets and variables → Actions → Variables, applied on the next deploy): `APP_CHECK_MODE`, `VITE_FIREBASE_AUTH_DOMAIN` and the `JUSTGO_*` settings ([JustGo](#justgo)). Outage email recipients are `API_ALERT_EMAILS` in the workflow file.
+**GitHub Actions variables** (Settings → Secrets and variables → Actions → Variables, applied on the next deploy): `APP_CHECK_MODE`, `VITE_FIREBASE_AUTH_DOMAIN` and the `JUSTGO_*` settings ([JustGo](#justgo)). Monitoring/budget recipients are `API_ALERT_EMAILS` in the workflow file; `STAFF_ALERT_EMAIL` sets Needs attention emails. Both currently use `jack.watt@forthcanoeclub.co.uk`.
 
 ## Email-code expiry cleanup
 
@@ -85,6 +85,63 @@ gcloud projects add-iam-policy-binding fccwebsite-23cfc --member serviceAccount:
 ```
 
 **App Check.** Register the web app with Firebase App Check's reCAPTCHA Enterprise provider and put the public site key in the `VITE_APPCHECK_SITE_KEY` Actions secret (deployment fails without it). Do not add standalone reCAPTCHA scripts. `APP_CHECK_MODE` defaults to `monitor`, which logs missing or invalid tokens but lets requests through. When Cloud Run's `App Check` logs and Firebase's verified-request metrics look right, enable Firebase enforcement for Auth, Firestore and Storage, then set `APP_CHECK_MODE=enforce` and redeploy to protect the API too. Firebase enforcement alone does not protect Cloud Run. Stripe webhooks and the renewal job have their own authentication and are exempt.
+
+### Monitoring and who acts
+
+All monitoring emails currently go to **jack.watt@forthcanoeclub.co.uk**, the interim website maintainer and budget contact.
+The Google login and alert recipient need not match. Transfer budget responsibility to the treasurer by changing the
+recipient configuration and rerunning setup; do not delete an email channel still used by another budget.
+
+| Alert | Meaning and action |
+| --- | --- |
+| FCC API outage | `/health` cannot read Firestore. The website maintainer checks Cloud Run logs, credentials and the latest revision, and rolls back a bad release if needed. |
+| FCC browser errors | The browser reported a fixed error category/page, including caught API/sign-in network failures. The maintainer filters Cloud Run logs by `jsonPayload.event="fcc-client-error"` and reproduces the problem. Notifications are limited to once an hour per open incident. |
+| FCC scheduled job failures | Scheduler dispatch, JustGo execution or partial renewal/upload work failed. Check Scheduler and execution/API logs; reconcile uncertain JustGo writes before retrying. |
+| FCC scheduled job missed or unhealthy | `/health/jobs` found a missed/failed run or could not inspect jobs. Check **Reports & records → Needs attention**, then Scheduler/Run and monitoring permissions. Paused JustGo schedules are intentionally ignored. |
+| FCC website monthly budget | Project-only **GBP 5/month**, including credits: actual spend 50% (GBP 2.50), 90% (GBP 4.50), 100% (GBP 5), plus forecast 100%. The budget contact/treasurer checks Billing cost reports for unexpected usage. **This is an alert, not a spending cap**; forecasts and emails can be delayed. |
+
+The job health endpoint checks the four schedules in [scheduled-jobs.sh](scripts/scheduled-jobs.sh), using London time
+and a two-hour completion grace. It inspects Cloud Run's latest execution for the JustGo jobs. Checks are cached for
+five minutes per API instance, including failed checks. A newly created/reconfigured schedule is checked after its
+next due run; an older missed run is not inferred from before that configuration. Renewals are due on 1/15 February,
+not every day. Update [jobMonitoring.js](src/utils/jobMonitoring.js) if those schedules change.
+The missed-run policy stays disabled until the setup script recognises the deployed `/health/jobs` endpoint.
+
+Browser reports contain only an allowlisted category and route ID, never error messages, stack traces, full URLs,
+query strings, form contents, names, email addresses, cookies or persistent visitor identifiers. Each page session
+sends at most ten reports, with a one-minute duplicate cooldown; the API additionally limits each IP to ten/minute
+per instance. The endpoint is deliberately independent of App Check (which can itself fail), accepts no arbitrary
+text and uses the existing baseline limiter. Reports go to existing Google Cloud Logging/Monitoring, not a new
+analytics provider, and do not depend on Google Analytics consent. Standard Cloud Run request/security logs still
+contain technical data such as IP addresses; operational logs follow the configured Cloud Logging retention.
+The privacy starting draft explains this; already-published notices are not overwritten by editing that draft.
+Include the wording in the committee's notice review. No CSP origin additions are needed: the existing API origin
+already accepts website requests.
+
+One-off permissions, as a project owner:
+
+```bash
+gcloud services enable monitoring.googleapis.com logging.googleapis.com cloudbilling.googleapis.com billingbudgets.googleapis.com --project fccwebsite-23cfc
+# The API runtime account needs read-only Scheduler/Run access.
+gcloud projects add-iam-policy-binding fccwebsite-23cfc --member serviceAccount:<api-runtime-account> --role roles/cloudscheduler.viewer --condition=None
+gcloud projects add-iam-policy-binding fccwebsite-23cfc --member serviceAccount:<api-runtime-account> --role roles/run.viewer --condition=None
+# Give the deploy account only project-scoped budget read/write, not billing-account administration.
+gcloud iam roles create fccWebsiteBudget --project fccwebsite-23cfc --title="FCC project budget setup" --permissions=billing.resourcebudgets.read,billing.resourcebudgets.write,resourcemanager.projects.get
+gcloud projects add-iam-policy-binding fccwebsite-23cfc --member serviceAccount:<deploy-account-email> --role projects/fccwebsite-23cfc/roles/fccWebsiteBudget --condition=None
+```
+
+The deploy account also needs the Monitoring Editor role described above. Setup can be rerun locally using the
+authenticated gcloud account (tokens are never printed or saved):
+
+```bash
+API_URL=https://fcc-website-api-votmp6k2oq-nw.a.run.app \
+GOOGLE_CLOUD_PROJECT=fccwebsite-23cfc API_ALERT_EMAILS=jack.watt@forthcanoeclub.co.uk \
+MONTHLY_BUDGET_GBP=5 node scripts/setup-site-monitoring.mjs --gcloud
+```
+
+Setup updates only club-named policies/checks and the matching project budget; unrelated budgets, including an existing
+account-wide GBP 1 budget, are left alone. Do not trigger a real failure just to test emails: use the Monitoring
+notification channel's test feature and synthetic local error/job tests.
 
 **Google sign-in on the club domain.** Authorise `new.forthcanoeclub.co.uk` in Firebase Authentication and `https://new.forthcanoeclub.co.uk/__/auth/handler` in the OAuth client, keeping the existing `firebaseapp.com` redirect. Then set the `VITE_FIREBASE_AUTH_DOMAIN` variable and redeploy. Removing the variable returns to the secret's domain.
 
