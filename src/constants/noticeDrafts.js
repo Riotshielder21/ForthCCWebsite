@@ -31,6 +31,7 @@ Contact for anything about your information: ${SECRETARY}.
 - Messages and sign-in: emails you send us or forms you fill in, email sign-in codes and sessions for My details, and changes you make there.
 - Photos and videos: only with consent (see the [Photo and Video Consent](/notices#photo-video-consent)).
 - Website use: basic technical information needed to run and protect the website (such as IP address in security logs) and, only if you allow it, Google Analytics information about visits and page use (see [Cookies and Analytics](/notices#cookies-and-analytics)).
+- Website faults: fixed error categories and page names help us notice and fix failures. These reports do not include error messages, full URLs, stack traces, names, email addresses or form contents. They use no analytics cookies and are separate from optional Google Analytics; ordinary hosting security logs may still contain IP addresses.
 
 ## Why we use it and our lawful basis
 
@@ -44,14 +45,14 @@ Contact for anything about your information: ${SECRETARY}.
 - Volunteer records and benefits: our legitimate interest in organising volunteers and recognising their time.
 - Anonymous statistics about who takes part and how (see [Data Analytics](/notices#data-analytics)): our legitimate interest in planning the club's activities and showing who the club serves. Counts of disability and health information are made only to monitor equality of opportunity.
 - Photos and videos, and website analytics: your consent, which you can withdraw at any time.
-- Security of the website and preventing misuse: our legitimate interest in keeping the website and your information secure.
+- Security, reliability of the website and preventing misuse: our legitimate interest in keeping the website working and your information secure.
 
 ## Who we share it with
 
 We never sell your information. We share only what each organisation needs:
 
 - Stripe takes card and Direct Debit payments.
-- Google (Firebase, Cloud Run and Google Workspace) hosts the website, the club's database, file storage and club email.
+- Google (Firebase, Cloud Run, Cloud Logging, Cloud Monitoring and Google Workspace) hosts the website, the club's database, file storage, operational error reports and club email.
 - Paddle Scotland, through its JustGo membership system, for affiliation, membership records and insurance.
 - Event leaders, coaches and check-in volunteers see the details of people at their sessions that they need to run them safely, such as names, swimming ability, medical information and emergency contacts. Access is limited and recorded.
 - The emergency services or medical staff, if someone is hurt or ill.

@@ -3,6 +3,7 @@ import { rateLimit } from './rateLimit.js';
 
 // What each kind of problem means for staff, and whether the website can safely redo it.
 export const ATTENTION_KINDS = {
+  'scheduled-job': { title: 'Scheduled job failed or missed', retry: false },
   'order-unrecorded': { title: 'Paid order not recorded', retry: true },
   'subscription-setup': { title: 'Monthly payments not set up', retry: true },
   'receipt-email': { title: 'Receipt email not sent', retry: true },

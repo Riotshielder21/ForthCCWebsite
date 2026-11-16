@@ -159,9 +159,13 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       if (!round) return res.json({ emails: 0, members: 0, failures: 0, waiting: true });
       const result = await sendAll(now, { round });
       const volunteers = await sendVolunteerRenewals(now, round, siteUrl());
+      if (result.failures || volunteers.failures) {
+        console.error(JSON.stringify({ severity: 'ERROR', event: 'fcc-job-problems', job: 'fcc-renewals' }));
+      }
       res.json({ round, ...result, volunteerEmails: volunteers.emails, volunteerFailures: volunteers.failures });
     } catch (error) {
       console.error('Renewal job failed:', error.message);
+      console.error(JSON.stringify({ severity: 'ERROR', event: 'fcc-job-problems', job: 'fcc-renewals' }));
       res.status(500).json({ error: 'Renewal job failed.' });
     }
   });

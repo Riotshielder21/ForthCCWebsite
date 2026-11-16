@@ -69,3 +69,12 @@ test('a new API URL replaces the uptime check and repoints the policy', async ()
   assert.equal(fake.store.uptimeCheckConfigs[0].monitoredResource.labels.host, 'api-new.a.run.app');
   assert.match(fake.store.alertPolicies[0].conditions[0].conditionThreshold.filter, new RegExp(`check_id="${result.checkId}"`));
 });
+
+test('site-wide setup preserves shared channels while moving the API policy to the new recipients', async () => {
+  const fake = fakeMonitoring();
+  await syncApiMonitoring(options(fake));
+  await syncApiMonitoring(options(fake, { emails: ['b@example.com'], preserveChannels: true }));
+  assert.deepEqual(fake.store.notificationChannels.map((channel) => channel.labels.email_address), ['a@example.com', 'b@example.com']);
+  assert.deepEqual(fake.store.alertPolicies[0].notificationChannels, [fake.store.notificationChannels[1].name]);
+  assert.ok(!fake.calls.some((call) => call.startsWith('DELETE')));
+});

@@ -74,6 +74,7 @@ export const registerWelcomeEmailRoutes = (app, { requireAdmin, db, sendEmail, a
       return true;
     } catch (error) {
       console.error('Could not send the welcome email to %s: %s', memberReference.id, error.message);
+      console.error(JSON.stringify({ severity: 'ERROR', event: 'fcc-job-problems', job: 'fcc-welcome-emails' }));
       if (!claimed) return false;
       const failures = (claimed.member.welcomeEmail?.failures || 0) + 1;
       // Left due so the next run retries, until it has failed too often to keep trying.
@@ -152,9 +153,11 @@ export const registerWelcomeEmailRoutes = (app, { requireAdmin, db, sendEmail, a
       if (expected.length < 32 || given.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected))) {
         return res.status(401).json({ error: 'Job authentication required.' });
       }
+      if (!db()) return res.status(503).json({ error: 'Record storage is not configured.' });
       res.json(await sendDueWelcomeEmails());
     } catch (error) {
       console.error('Welcome email job failed:', error.message);
+      console.error(JSON.stringify({ severity: 'ERROR', event: 'fcc-job-problems', job: 'fcc-welcome-emails' }));
       res.status(500).json({ error: 'Welcome email job failed.' });
     }
   });

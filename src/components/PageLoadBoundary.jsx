@@ -1,10 +1,13 @@
 import React from 'react';
 import { reloadForNewBuild } from '../utils/staleBuild';
+import { clientErrorKind } from '../utils/clientErrors';
+import { reportClientError } from '../utils/reportClientError';
 
 export default class PageLoadBoundary extends React.Component {
   state = { error: null, reloading: false };
   static getDerivedStateFromError(error) { return { error }; }
   componentDidCatch(error) {
+    void reportClientError(clientErrorKind(error, 'page-render'));
     if (reloadForNewBuild(error)) this.setState({ reloading: true });
     else console.error('Page could not be displayed:', error);
   }
