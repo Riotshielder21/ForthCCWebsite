@@ -80,9 +80,11 @@ import { registerClientErrorRoutes } from './src/server/clientErrors.js';
 import { registerJobMonitoringHealth } from './src/server/jobMonitoring.js';
 import { isClubEmail } from './src/utils/adminAccess.js';
 import { createAttention, registerAttentionRoutes } from './src/server/attention.js';
-import { RETRY_LINK_DAYS, invoiceFailureEmail, invoicePeriodStart, orderFailureEmail, subscriptionPaymentReceipt, paidUpTo, restartBasket, retryBasket, splitLinkKey,
+import { RETRY_LINK_DAYS, invoiceFailureEmail, invoicePeriodStart, orderFailureEmail, subscriptionPaymentReceipt, paidUpTo, restartBasket, retryBasket,
   subscriptionStoppedEmail, treasurerFailureEmail } from './src/utils/failedPayments.js';
 import { writePurchaseTerms, loadTerms, loadEntitlements, loadPurchases, endTermItems } from './src/server/membershipTerms.js';
+import { createPaymentLink, resolvePaymentLink } from './src/server/paymentLinks.js';
+import { normalEmailBlocked, suppressesNormalEmail } from './src/server/emailSuppression.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -938,10 +940,11 @@ const subscriptionItemNames = (record) => {
 /** New restart and cancel links for a subscription that has stopped; any earlier link stops working. */
 const subscriptionLinks = async (reference, record) => {
   const token = createAccessToken();
-  await reference.update({ restartTokenHash: hashAccessToken(token) });
+  const tokenHash = hashAccessToken(token);
+  await reference.update({ restartTokenHash: tokenHash });
   const order = record.orderRef ? (await adminDb.collection('orders').doc(record.orderRef).get()).data() : null;
   const site = publicSite(order?.siteUrl);
-  const key = `${reference.id}.${token}`;
+  const key = await createPaymentLink(adminDb, 'subscription', reference.id, tokenHash);
   return { restartUrl: `${site}/membership?restart=${key}`, cancelUrl: `${site}/payment-issue?subscription=${key}` };
 };
 
@@ -966,6 +969,7 @@ const recordInvoiceFailed = async (invoice) => {
       lastFailedInvoice: { id: invoice.id, attempt, final, at: Timestamp.now() }, updatedAt: Timestamp.now() });
     return document.data();
   }) : null;
+  if (suppressesNormalEmail(record)) return;
   const email = record?.email || invoice.customer_email || '';
   const paidUntil = invoicePeriodStart(invoice);
   const details = { names: record?.names || [], itemNames: record ? subscriptionItemNames(record) : [], amountDuePence: invoice.amount_due || 0, attempt };
@@ -1009,6 +1013,7 @@ const recordInvoicePaid = async (invoice) => {
   });
   if (!claim) return;
   const { record } = claim;
+  if (suppressesNormalEmail(record)) return;
   const email = record?.email || invoice.customer_email || '';
   if (!email) return;
   let receipt;
@@ -1051,6 +1056,7 @@ const recordSubscriptionEnded = async (subscription) => {
   const reference = adminDb.collection('subscriptions').doc(subscription.id);
   const document = await reference.get();
   if (!document.exists) return;
+  if (document.data().gdprErasurePending) return;
   const atCutoff = endedAtCutoff(subscription);
   const voided = [];
   if (atCutoff) {
@@ -1089,7 +1095,7 @@ const recordSubscriptionEnded = async (subscription) => {
     ...((voided.length || endedEarly) ? { needsStaff: true } : {})
   }, { merge: true });
   let emailed = false;
-  if (endedEarly && !data.finalFailureEmailedAt && data.email) {
+  if (endedEarly && !data.finalFailureEmailedAt && data.email && !suppressesNormalEmail(data)) {
     const links = await subscriptionLinks(reference, data);
     emailed = await sendEmail({ to: data.email, ...subscriptionStoppedEmail({ names: data.names || [], itemNames: subscriptionItemNames(data),
       paidUntil: paidUntil ? paidUntil.seconds : 0, ...links, contact: TREASURER_REPLY_TO }), record: { kind: 'subscription-stopped', subscriptionId: subscription.id } })
@@ -1196,12 +1202,13 @@ const publicSite = (siteUrl) => siteUrl || process.env.PUBLIC_SITE_URL || 'http:
  * cancel the order, and tells staff, once.
  */
 const reportPaymentFailed = async (order) => {
+  if (suppressesNormalEmail(order)) return;
   const site = publicSite(order.siteUrl);
   const itemNames = [...new Set((order.items || []).map((item) => item.name))];
   const token = createAccessToken();
   await updateFirestoreOrder(order.orderRef, { retryTokenHash: hashAccessToken(token),
     retryExpiresAt: Timestamp.fromMillis(Date.now() + RETRY_LINK_DAYS * 24 * 60 * 60 * 1000) });
-  const key = `${order.orderRef}.${token}`;
+  const key = await createPaymentLink(adminDb, 'order', order.orderRef, hashAccessToken(token));
   await sendEmail({ to: order.email, ...orderFailureEmail({ orderRef: order.orderRef, itemNames, retryUrl: `${site}/membership?retry=${key}`,
     cancelUrl: `${site}/payment-issue?order=${key}`, retryDays: RETRY_LINK_DAYS, contact: TREASURER_REPLY_TO }),
   record: { orderRef: order.orderRef, kind: 'payment-failed' } })
@@ -1823,6 +1830,7 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
 });
 
 registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail,
+  sendEmail: (message) => sendEmail(message),
   loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   stopSubscriptionItems: async (subscriptionId, items, admin, stripeAdminRequest, reason) => {
     const reference = adminDb.collection('subscriptions').doc(subscriptionId);
@@ -2500,9 +2508,9 @@ const startCheckout = async (req, res, credit = null) => {
     if (retried?.order.retriedAs) {
       return res.status(409).json({ code: 'already_paid', error: `Your payment for this order already went through as order ${retried.order.retriedAs}, so you do not need to pay again.` });
     }
-    const restarted = !credit && req.body.restartOf ? splitLinkKey(req.body.restartOf) : null;
+    const restarted = !credit && req.body.restartOf ? await resolvePaymentLink(adminDb, req.body.restartOf, 'subscription') : null;
     const restartRecord = restarted ? (await adminDb.collection('subscriptions').doc(restarted.id).get()).data() : null;
-    const restartOf = restartRecord && tokenMatches(restarted.token, restartRecord.restartTokenHash) ? restarted.id : '';
+    const restartOf = restartRecord && restarted.tokenHash === restartRecord.restartTokenHash && !suppressesNormalEmail(restartRecord) ? restarted.id : '';
     if (restartOf && restartRecord.restartedAs) {
       return res.status(409).json({ code: 'already_paid', error: `Your monthly payments were already restarted with order ${restartRecord.restartedAs}, so you do not need to pay again.` });
     }
@@ -2870,6 +2878,10 @@ app.post('/api/admin/credits', rateLimit(10, 60 * 1000), async (req, res) => {
 
 /** Sends email through Workspace; the emulator stack writes it to `testMail` instead. */
 const sendEmail = async ({ to, subject, body, html, attachments = [], replyTo: requestedReplyTo, record = {} }) => {
+  if (adminDb && await normalEmailBlocked(adminDb, to, record)) {
+    console.info('Normal email suppressed for GDPR erasure (%s).', record.kind || 'unspecified');
+    return false;
+  }
   const coordinatorEmail = isVolunteerEmail(record) && adminDb
     ? (await adminDb.collection('settings').doc('volunteerCoordinator').get()).data()?.email || ''
     : '';
@@ -2939,11 +2951,12 @@ app.get(['/api/orders/:accessKey', '/api/orders/:accessKey/receipt.pdf'], rateLi
 
 /** The order an emailed retry/cancel link (`ORDERREF.TOKEN`) is for, or null. */
 const linkedOrder = async (key) => {
-  const parts = splitLinkKey(key);
+  const parts = await resolvePaymentLink(adminDb, key, 'order');
   if (!parts || !adminDb) return null;
   const reference = adminDb.collection('orders').doc(parts.id);
   const document = await reference.get();
-  return document.exists && tokenMatches(parts.token, document.data().retryTokenHash) ? { reference, order: document.data() } : null;
+  return document.exists && parts.tokenHash === document.data().retryTokenHash && !suppressesNormalEmail(document.data())
+    ? { reference, order: document.data() } : null;
 };
 /** Why a failed order can no longer be retried or cancelled, or null. */
 const retryRefusal = (orderRef, order) => {
@@ -3015,11 +3028,11 @@ app.post('/api/orders/:key/cancel', rateLimit(10, 60 * 1000), async (req, res) =
 
 /** The subscription an emailed restart/cancel link (`SUBSCRIPTIONID.TOKEN`) is for, brought up to date with Stripe, or a refusal. */
 const linkedSubscription = async (key) => {
-  const parts = splitLinkKey(key);
+  const parts = await resolvePaymentLink(adminDb, key, 'subscription');
   if (!parts || !adminDb) return { refusal: { status: 404, error: 'This link is not valid.' } };
   const reference = adminDb.collection('subscriptions').doc(parts.id);
   let document = await reference.get();
-  if (!document.exists || !tokenMatches(parts.token, document.data().restartTokenHash)) return { refusal: { status: 404, error: 'This link is not valid.' } };
+  if (!document.exists || parts.tokenHash !== document.data().restartTokenHash || suppressesNormalEmail(document.data())) return { refusal: { status: 404, error: 'This link is not valid.' } };
   // The link is sent with the final failed debit; Stripe cancels the subscription straight after, which may not be recorded yet.
   if (document.data().status === 'active') {
     const live = await stripeRequest(`subscriptions/${encodeURIComponent(parts.id)}`, null, 'GET');

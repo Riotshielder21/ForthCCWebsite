@@ -11,6 +11,7 @@ import { rateLimit } from './rateLimit.js';
 import { REASON_REQUIRED, auditEntry, requiredReason } from '../utils/auditLog.js';
 import { EMAIL_CODE_PURPOSES, codeDocumentId } from '../utils/emailCodes.js';
 import { createJustgoErasure, hasJustgoLink } from './justgoErasure.js';
+import { EMAIL_BLOCK_DAYS, emailBlockId } from './emailSuppression.js';
 
 const text = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 const subjectFor = (record) => ({ email: identityEmails(record, record.household)[0] || '', firstName: record.firstName || '', lastName: record.lastName || '', dob: record.dob || '', affiliationNumber: record.affiliationNumber || '' });
@@ -27,7 +28,7 @@ const leftHouseholdIds = (records, targets) => {
  * GDPR erasure. Starts from the member register, follows the person into every other collection, keeps orders for the
  * accounts with identifying details removed, and leaves only a masked audit entry.
  */
-export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail, stopSubscriptionItems, loadCatalogue = async () => [], justgoErasure = createJustgoErasure() }) => {
+export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail, stopSubscriptionItems, sendEmail, loadCatalogue = async () => [], justgoErasure = createJustgoErasure() }) => {
   const auditSecret = () => process.env.AUDIT_LOOKUP_SECRET || (localFirebase ? 'local-audit-secret' : '');
 
   /** Everything an erasure for this request would touch. `scope` is 'person' or 'family'. */
@@ -266,6 +267,17 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       let stripeErasure = { deleted: 0, retained: 0 };
       const stripeJournal = adminDb.collection('gdprStripeErasure').doc(lookupKey(secret, 'stripe-erasure',
         [...scope.erasedEmails].sort().join('|') || [...scope.targets.map((record) => record.id)].sort().join('|')));
+      // Commit before Stripe can deliver cancellation webhooks. Keep the blocks if erasure needs retrying.
+      const blockNormalEmails = async () => {
+        const batch = adminDb.batch();
+        const at = Timestamp.now();
+        const expiresAt = Timestamp.fromMillis(at.toMillis() + EMAIL_BLOCK_DAYS * 24 * 60 * 60 * 1000);
+        for (const email of scope.erasedEmails) batch.set(adminDb.collection('gdprEmailBlocks').doc(emailBlockId(email)), { at, expiresAt });
+        for (const record of scope.targets) batch.update(adminDb.collection('memberships').doc(record.id), { gdprErasurePending: true });
+        for (const id of scope.orders.keys()) batch.update(adminDb.collection('orders').doc(id), { gdprErasurePending: true, retryTokenHash: '' });
+        for (const id of scope.subscriptionRecords.keys()) batch.update(adminDb.collection('subscriptions').doc(id), { gdprErasurePending: true, restartTokenHash: '' });
+        await batch.commit();
+      };
       if (stripeIds.size || scope.erasedEmails.size) {
         const writeKey = process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY || '';
         if (!/^(sk|rk)_(test|live)_/.test(writeKey)) return res.status(503).json({ error: 'Stripe erasure requires STRIPE_SUBSCRIPTION_ADMIN_KEY. Nothing was erased.' });
@@ -276,6 +288,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
           return res.status(400).json({ error: 'A linked subscription cannot be cancelled with the configured Stripe key. Nothing was erased.' });
         }
         const request = stripeReportRequest(writeKey);
+        await blockNormalEmails();
         for (const [id] of cancellations) {
           let current = null;
           try { current = await request(`subscriptions/${encodeURIComponent(id)}`); }
@@ -297,7 +310,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
             || scope.erasedEmails.has(normalizeEmail(document.data().email))).map(([id]) => id)),
           rememberCustomer: (id) => stripeJournal.set({ customerIds: FieldValue.arrayUnion(id), updatedAt: Timestamp.now() }, { merge: true })
         });
-      }
+      } else await blockNormalEmails();
 
       const justgoResult = await justgo.unlink();
       const linkedRecords = [];
@@ -329,6 +342,15 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       const stockDocuments = stockChanges.length ? await adminDb.getAll(...stockChanges.map(({ productId }) => adminDb.collection('stock').doc(productId))) : [];
       const batch = adminDb.batch();
       batch.delete(stripeJournal);
+      for (const id of scope.orders.keys()) batch.update(adminDb.collection('orders').doc(id), {
+        gdprErasurePending: false, suppressNormalEmails: scope.erasedEmails.has(normalizeEmail(scope.orders.get(id).email))
+      });
+      for (const [kind, ids] of [['order', [...scope.orders.keys()]], ['subscription', [...scope.subscriptionRecords.keys()]]]) {
+        for (const id of ids) {
+          const links = await adminDb.collection('paymentLinks').where('id', '==', id).get();
+          links.docs.filter((document) => document.data().kind === kind).forEach((document) => batch.delete(document.ref));
+        }
+      }
       stockChanges.forEach(({ id, productId, items }, index) => {
         if (!stockDocuments[index].data()?.holds?.[id]) return;
         const kept = items.filter((item) => item.id === productId && holdsPlace(item));
@@ -362,6 +384,8 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
           const redacted = redactSubscription(document.data(), scope.targets, scope.erasedEmails);
           batch.update(document.ref, {
             ...redacted,
+            gdprErasurePending: false,
+            suppressNormalEmails: scope.subscriptions.has(id) || redacted.payerErased,
             ...(scope.subscriptions.has(id) ? { status: 'cancelled', items: redacted.items
               .map((item) => item.status === 'active' ? { ...item, status: 'cancelled' } : item) } : {}),
             personalDataErasedAt: Timestamp.now()
@@ -394,6 +418,22 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
       }));
       await batch.commit();
 
+      const emailWarnings = [];
+      for (const email of scope.erasedEmails) {
+        try {
+          if (!sendEmail) throw new Error('Email is not configured.');
+          const sent = await sendEmail({ to: email, subject: 'Your Forth Canoe Club data erasure is complete',
+            body: ['Your GDPR erasure request has been completed on the Forth Canoe Club website.',
+              'Your personal details have been removed. Payments solely for erased people have been stopped; shared payments may need staff review. You do not need to confirm stopping or restart payments.',
+              'Anonymised financial records are retained for accounting. Stripe may retain historical financial records where required.',
+              'Normal club emails to this address are now blocked. This message is only to confirm your erasure request.'].join('\n\n'),
+            record: { kind: 'gdpr-erasure' } });
+          if (!sent) throw new Error('Email is not configured.');
+        } catch (error) {
+          console.error('Could not send GDPR erasure confirmation:', error.message);
+          emailWarnings.push('Erasure completed, but its confirmation email could not be sent.');
+        }
+      }
       const manual = [];
       if (scope.targets.some(hasJustgoLink)) manual.push('FCC club links were confirmed removed from JustGo. JustGo accounts and other clubs were not deleted. The person must request any wider account/data erasure through JustGo and the relevant governing body privacy process.');
       if (stripeIds.size || scope.erasedEmails.size) manual.push('Stripe retains historical invoices, payments and mandate records that its API cannot fully erase. Review these in Stripe and use Stripe privacy support for any further erasure required; this is not a complete purge of Stripe financial history.');
@@ -403,7 +443,7 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
         subscriptionItemsStopped: scope.itemStops.reduce((sum, stop) => sum + stop.items.length, 0), stripeCustomersDeleted: stripeErasure.deleted,
         earlierDeletionsPurged: scope.auditDocs.size, justgoUnlinked: justgoResult.unlinked, justgoAlreadyUnlinked: justgoResult.alreadyUnlinked,
         eventTicketsReleased: scope.orderUpdates.reduce((sum, { id, update }) => sum + (update.items || []).filter((item, index) => item.attendeeErased && !scope.orders.get(id)?.items?.[index]?.attendeeErased).length, 0),
-        warnings: scope.warnings, manual });
+        warnings: [...scope.warnings, ...emailWarnings], manual });
     } catch (error) {
       console.error('GDPR erasure failed:', error.message);
       res.status(500).json({ error: 'Erasure could not be completed. Some payments may already have stopped or FCC links may have been removed from JustGo, but member records were kept so you can retry. Check Stripe and JustGo, reconcile any unconfirmed unlinking, and try again.' });
