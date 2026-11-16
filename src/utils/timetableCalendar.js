@@ -93,8 +93,8 @@ const updatedTime = (updatedAt, now) => {
 };
 
 /** Build a live per-session subscription or a single next-occurrence calendar event. */
-export function timetableCalendar(session, { single = false, updatedAt = 0, now = new Date() } = {}) {
-  if (!session || session.active === false) throw new Error('This timetable session is not available.');
+export function timetableCalendar(session, { single = false, cancelled = false, sequence, updatedAt = 0, now = new Date() } = {}) {
+  if (!session || (session.active === false && !cancelled) || (single && cancelled)) throw new Error('This timetable session is not available.');
   const date = nextTimetableDate(session, now);
   const end = endDateTime(date, session.start, session.end);
   const changedAt = updatedTime(updatedAt, now);
@@ -118,10 +118,11 @@ export function timetableCalendar(session, { single = false, updatedAt = 0, now 
     `UID:${session.id}${single ? '-next' : ''}@forthcanoeclub.co.uk`,
     `DTSTAMP:${stamp}`,
     `LAST-MODIFIED:${stamp}`,
-    `SEQUENCE:${Math.floor(changedAt.getTime() / 1000)}`,
+    `SEQUENCE:${sequence ?? Math.floor(changedAt.getTime() / 1000)}`,
     `DTSTART;TZID=${TIME_ZONE}:${icsDateTime(date, session.start)}`,
     `DTEND;TZID=${TIME_ZONE}:${icsDateTime(end.date, end.time)}`,
     `SUMMARY:${escapeText(session.name)}`,
+    ...(cancelled ? ['STATUS:CANCELLED', 'TRANSP:TRANSPARENT'] : []),
     ...(session.location ? [`LOCATION:${escapeText(session.location)}`] : []),
     ...(description ? [`DESCRIPTION:${escapeText(description)}`] : []),
     ...recurrence,

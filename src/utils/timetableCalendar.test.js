@@ -38,7 +38,31 @@ test('calendar text is escaped and folded without breaking UTF-8 lines', () => {
   const calendar = timetableCalendar(session({ name: 'Canoë; Polo, training', notes: `First line\n${'é'.repeat(60)}` }), {
     now: new Date('2026-01-01T10:00:00Z')
   });
+
   assert.match(calendar, /SUMMARY:Canoë\\; Polo\\, training/);
   assert.match(calendar, /First line\\n/);
   for (const line of calendar.split('\r\n').filter(Boolean)) assert.ok(Buffer.byteLength(line, 'utf8') <= 75);
+});
+
+test('cancellation keeps the subscription UID and cancels the entire recurring series', () => {
+  const calendar = timetableCalendar(session({ active: false }), {
+    cancelled: true, updatedAt: Date.UTC(2026, 0, 2), now: new Date('2026-01-03T10:00:00Z')
+  });
+  assert.match(calendar, /METHOD:PUBLISH/);
+  assert.match(calendar, /UID:monday-polo@forthcanoeclub\.co\.uk/);
+  assert.match(calendar, /STATUS:CANCELLED/);
+  assert.match(calendar, /TRANSP:TRANSPARENT/);
+  assert.match(calendar, /RRULE:FREQ=WEEKLY;BYDAY=MO/);
+  assert.doesNotMatch(calendar, /RECURRENCE-ID:/);
+  assert.throws(() => timetableCalendar(session({ active: false })), /not available/);
+  assert.throws(() => timetableCalendar(session(), { cancelled: true, single: true }), /not available/);
+});
+
+test('extending the season updates the recurrence while preserving the subscription identity', () => {
+  const options = { now: new Date('2026-01-01T10:00:00Z') };
+  const before = timetableCalendar(session({ seasonStart: 4, seasonEnd: 8 }), options);
+  const after = timetableCalendar(session({ seasonStart: 4, seasonEnd: 12 }), options);
+  assert.match(before, /BYMONTH=4,5,6,7,8\r\n/);
+  assert.match(after, /BYMONTH=4,5,6,7,8,9,10,11,12\r\n/);
+  assert.equal(before.match(/UID:.+/)[0], after.match(/UID:.+/)[0]);
 });

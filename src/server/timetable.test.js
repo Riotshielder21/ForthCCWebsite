@@ -7,13 +7,19 @@ const setup = (initialData) => {
   const routes = new Map();
   const documents = new Map(initialData ? [['settings/timetable', initialData]] : []);
   const app = Object.fromEntries(['get', 'put'].map((method) => [method, (path, ...handlers) => routes.set(`${method.toUpperCase()} ${path}`, handlers.at(-1))]));
-  const db = () => ({ collection: (name) => ({ doc: (id) => ({
-    get: async () => {
-      const data = documents.get(`${name}/${id}`);
-      return { exists: Boolean(data), data: () => data };
-    },
-    set: async (value) => documents.set(`${name}/${id}`, value)
-  }) }) });
+  const db = () => ({
+    runTransaction: async (callback) => callback({
+      get: (document) => document.get(),
+      set: (document, value) => document.set(value)
+    }),
+    collection: (name) => ({ doc: (id) => ({
+      get: async () => {
+        const data = documents.get(`${name}/${id}`);
+        return { exists: Boolean(data), data: () => data };
+      },
+      set: async (value) => documents.set(`${name}/${id}`, value)
+    }) })
+  });
   registerTimetableRoutes(app, { requireAdmin: async () => ({ email: 'admin@forthcanoeclub.co.uk' }), db });
   const call = async (method, path, { body = {}, params = {} } = {}) => {
     const response = {
@@ -47,7 +53,7 @@ test('missing timetable settings still use the validated defaults', async () => 
   assert.deepEqual(response.body.days, publicTimetable(DEFAULT_TIMETABLE));
 });
 
-test('calendar endpoints export only active timetable sessions and return calendar content', async () => {
+test('calendar endpoints export active sessions and cancellations, but next-event downloads require an active session', async () => {
   const initialData = { sessions: [
     { id: 'monday-polo', name: 'Polo', weekday: 1, start: '18:00' },
     { id: 'hidden-session', name: 'Hidden', weekday: 2, start: '18:00', active: false }
@@ -61,8 +67,62 @@ test('calendar endpoints export only active timetable sessions and return calend
   assert.equal(next.headers['Access-Control-Allow-Origin'], '*');
   const subscription = await call('GET', '/api/timetable/:id.ics', { params: { id: 'monday-polo' } });
   assert.match(subscription.body, /RRULE:FREQ=WEEKLY;BYDAY=MO/);
-  assert.equal((await call('GET', '/api/timetable/:id.ics', { params: { id: 'hidden-session' } })).statusCode, 404);
+  const disabled = await call('GET', '/api/timetable/:id.ics', { params: { id: 'hidden-session' } });
+  assert.equal(disabled.statusCode, 200);
+  assert.match(disabled.body, /STATUS:CANCELLED/);
+  assert.equal((await call('GET', '/api/timetable/:id/next.ics', { params: { id: 'hidden-session' } })).statusCode, 404);
   assert.equal((await call('GET', '/api/timetable/:id.ics', { params: { id: 'missing' } })).statusCode, 404);
+});
+
+test('deleting sessions retains cancellation feeds through later saves without publishing deleted sessions', async () => {
+  const sessions = [
+    { id: 'monday-polo', name: 'Polo', weekday: 1, start: '18:00' },
+    { id: 'slalom', name: 'Slalom', weekday: 2, start: '19:00' }
+  ];
+  const { call, documents } = setup({ sessions, updatedAt: { toMillis: () => Date.UTC(2026, 0, 1) } });
+  const params = { id: 'monday-polo' };
+  const before = await call('GET', '/api/timetable/:id.ics', { params });
+  const saved = await call('PUT', '/api/admin/timetable', { body: { sessions: [sessions[1]] } });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.body.sessions.map(({ id }) => id), ['slalom']);
+  assert.equal(saved.body.cancelledSessions, undefined);
+  const firstSequence = documents.get('settings/timetable').calendarSequence;
+  const cancelled = await call('GET', '/api/timetable/:id.ics', { params });
+  assert.equal(cancelled.statusCode, 200);
+  assert.equal(cancelled.headers['Content-Type'], 'text/calendar; charset=utf-8');
+  assert.match(cancelled.body, /UID:monday-polo@forthcanoeclub\.co\.uk/);
+  assert.match(cancelled.body, /STATUS:CANCELLED/);
+  assert.match(cancelled.body, /TRANSP:TRANSPARENT/);
+  assert.ok(Number(cancelled.body.match(/SEQUENCE:(\d+)/)[1]) > Number(before.body.match(/SEQUENCE:(\d+)/)[1]));
+  assert.equal((await call('GET', '/api/timetable/:id/next.ics', { params })).statusCode, 404);
+  assert.deepEqual((await call('GET', '/api/timetable')).body.days.flatMap(({ sessions }) => sessions.map(({ id }) => id)), ['slalom']);
+
+  await call('PUT', '/api/admin/timetable', { body: { sessions: [] } });
+  assert.ok(documents.get('settings/timetable').calendarSequence > firstSequence);
+  assert.equal(documents.get('settings/timetable').cancelledSessions.length, 2);
+  assert.match((await call('GET', '/api/timetable/:id.ics', { params })).body, /STATUS:CANCELLED/);
+  const { call: restarted } = setup(documents.get('settings/timetable'));
+  assert.match((await restarted('GET', '/api/timetable/:id.ics', { params })).body, /STATUS:CANCELLED/);
+
+  await call('PUT', '/api/admin/timetable', { body: { sessions: [sessions[0]] } });
+  assert.doesNotMatch((await call('GET', '/api/timetable/:id.ics', { params })).body, /STATUS:CANCELLED/);
+  assert.deepEqual(documents.get('settings/timetable').cancelledSessions.map(({ id }) => id), ['slalom']);
+});
+
+test('removing a default session before the first save also preserves its cancellation feed', async () => {
+  const { call } = setup();
+  await call('PUT', '/api/admin/timetable', { body: { sessions: [] } });
+  for (const { id } of DEFAULT_TIMETABLE) {
+    const response = await call('GET', '/api/timetable/:id.ics', { params: { id } });
+    assert.equal(response.statusCode, 200);
+    assert.match(response.body, /STATUS:CANCELLED/);
+  }
+});
+
+test('invalid saved cancellation records fail explicitly instead of being silently discarded', async () => {
+  const { call } = setup({ sessions: [], cancelledSessions: 'invalid' });
+  assert.equal((await call('PUT', '/api/admin/timetable', { body: { sessions: [] } })).statusCode, 500);
+  assert.equal((await call('GET', '/api/timetable/:id.ics', { params: { id: 'missing' } })).statusCode, 500);
 });
 
 test('a saved timetable time change is immediately reflected by the live subscription URL', async () => {

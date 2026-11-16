@@ -56,13 +56,8 @@ export default function Timetable({ emptyMessage = '' }) {
   if (!days.length) return emptyMessage ? <p className="text_container SpaceT6">{emptyMessage}</p> : null;
 
   const subscriptionUrl = (id) => new URL(apiUrl(`/api/timetable/${encodeURIComponent(id)}.ics`), window.location.origin).toString();
-  const isLocalSubscription = (id) => ['localhost', '127.0.0.1', '[::1]'].includes(new URL(subscriptionUrl(id)).hostname);
   const copySubscriptionUrl = async (session, service) => {
     const url = subscriptionUrl(session.id);
-    if (isLocalSubscription(session.id)) {
-      setCopyStatus({ id: session.id, service, message: `${service} cannot access a local address. Subscribe after the website is deployed to a public URL.`, url });
-      return;
-    }
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable in this browser.');
       await navigator.clipboard.writeText(url);

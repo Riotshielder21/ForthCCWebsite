@@ -19,17 +19,29 @@ export const registerTimetableRoutes = (app, { requireAdmin, db }) => {
     };
   };
 
+  const cancelledSessions = (data = {}) => {
+    if (data.cancelledSessions === undefined) return [];
+    if (!Array.isArray(data.cancelledSessions)) throw new Error('Saved calendar cancellations are invalid.');
+    return data.cancelledSessions.map((session) => {
+      const result = validateTimetable([session]);
+      if (result.error) throw new Error(`Saved calendar cancellation is invalid: ${result.error}`);
+      return result.value[0];
+    });
+  };
+
   const calendarExport = (single) => async (req, res) => {
     try {
       if (!db()) return res.status(503).json({ error: 'The timetable is not available.' });
-      const { sessions, updatedAt } = adminView((await reference().get()).data());
-      const session = sessions.find((item) => item.id === req.params.id && item.active);
-      if (!session) return res.status(404).json({ error: 'This timetable session is not available.' });
+      const data = (await reference().get()).data();
+      const { sessions, updatedAt } = adminView(data);
+      const session = sessions.find((item) => item.id === req.params.id)
+        || (!single && cancelledSessions(data).find((item) => item.id === req.params.id));
+      if (!session || (single && !session.active)) return res.status(404).json({ error: 'This timetable session is not available.' });
       res.set('Cache-Control', 'no-cache, max-age=0, must-revalidate');
       res.set('Access-Control-Allow-Origin', '*');
       res.set('Content-Type', 'text/calendar; charset=utf-8');
       res.set('Content-Disposition', `inline; filename="forth-canoe-club-${session.id}${single ? '-next' : ''}.ics"`);
-      res.send(timetableCalendar(session, { single, updatedAt }));
+      res.send(timetableCalendar(session, { single, cancelled: !session.active, sequence: data?.calendarSequence, updatedAt }));
     } catch (error) {
       console.error(`Could not create ${single ? 'next-session' : 'subscription'} calendar:`, error.message);
       res.status(500).json({ error: 'Could not create this calendar export.' });
@@ -69,8 +81,22 @@ export const registerTimetableRoutes = (app, { requireAdmin, db }) => {
       if (!db()) return res.status(503).json({ error: 'Settings storage is not configured.' });
       const { error, value } = validateTimetable(req.body?.sessions);
       if (error) return res.status(400).json({ error });
-      const next = { sessions: value, updatedAt: Timestamp.now(), updatedBy: admin.email || admin.uid };
-      await reference().set(next);
+      const next = await db().runTransaction(async (transaction) => {
+        const document = reference();
+        const previous = (await transaction.get(document)).data();
+        const previousView = adminView(previous);
+        const retainedIds = new Set(value.map(({ id }) => id));
+        const removed = [...cancelledSessions(previous), ...previousView.sessions]
+          .filter((session) => !retainedIds.has(session.id));
+        const cancellations = new Map(removed.map((session) => [session.id, { ...session, active: false }]));
+        const updatedAt = Timestamp.now();
+        const calendarSequence = Math.max(Math.floor(updatedAt.toMillis() / 1000),
+          (previous?.calendarSequence ?? Math.floor(previousView.updatedAt / 1000)) + 1);
+        const updated = { sessions: value, cancelledSessions: [...cancellations.values()],
+          calendarSequence, updatedAt, updatedBy: admin.email || admin.uid };
+        transaction.set(document, updated);
+        return updated;
+      });
       res.set('Cache-Control', 'no-store');
       res.json({ success: true, ...adminView(next) });
     } catch (error) {
