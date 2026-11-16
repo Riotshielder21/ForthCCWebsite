@@ -66,7 +66,7 @@ export default function Timetable({ emptyMessage = '' }) {
         : 'Subscription link copied. In Apple Calendar, choose File → New Calendar Subscription and paste the link.' });
     } catch (error) {
       console.error(`Could not copy the timetable subscription link for ${service}:`, error);
-      setCopyStatus({ id: session.id, service, message: `Could not copy the link automatically. Paste this URL into ${service}:`, url });
+      setCopyStatus({ id: session.id, service, message: 'Could not copy the subscription link. Allow clipboard access in your browser and try again.' });
     }
   };
 
@@ -127,8 +127,6 @@ export default function Timetable({ emptyMessage = '' }) {
         </div>
         {copyStatus && copyStatus.id === calendarSession.id && <div className="TimetableCalendarCopyStatus" role="status">
           <p>{copyStatus.message}</p>
-          {copyStatus.url && <input className="FormInput" aria-label={`${copyStatus.service} subscription URL`} readOnly value={copyStatus.url}
-            onFocus={(event) => event.target.select()} />}
         </div>}
       </section>
     </div>}
