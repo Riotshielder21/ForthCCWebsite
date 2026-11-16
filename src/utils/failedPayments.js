@@ -84,12 +84,12 @@ export const retryBasket = (order, currentYear) => {
  * null when its club year is no longer on sale. `describe(member)` adds fields to each person.
  */
 export const restartBasket = (record, members, currentYear, makeId, now = new Date(), describe = () => ({})) => {
-  const clubYearChoice = choiceFor(new Set([record.clubYear]), currentYear);
-  if (!clubYearChoice) return null;
   const byId = new Map(members.map((member) => [member.id, member]));
   const people = new Map();
   const items = [];
   for (const item of record.items || []) {
+    const clubYearChoice = choiceFor(new Set([item.clubYear ?? record.clubYear]), currentYear);
+    if (!clubYearChoice) continue;
     const holders = (item.membershipIds || []).filter((id) => byId.has(id));
     if (!item.productId || !holders.length) continue;
     const lineId = makeId();
@@ -103,7 +103,8 @@ export const restartBasket = (record, members, currentYear, makeId, now = new Da
       people.get(id).lineIds.push(lineId);
     }
   }
-  return { clubYearChoice, items, people: [...people.values()] };
+  return items.length ? { clubYearChoice: items.every((item) => item.clubYearChoice === items[0].clubYearChoice) ? items[0].clubYearChoice : null,
+    items, people: [...people.values()] } : null;
 };
 
 /** The member's email for a failed monthly debit; `final` when Stripe has stopped retrying. */

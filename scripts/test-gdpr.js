@@ -4,6 +4,7 @@ import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { registerGdprRoutes } from '../src/server/gdpr.js';
+import { emailBlockId, normalEmailBlocked } from '../src/server/emailSuppression.js';
 
 const projectId = 'demo-fcc-gdpr-tests';
 assertLocalFirebase({ ...process.env, GCLOUD_PROJECT: projectId });
@@ -15,6 +16,7 @@ app.use(express.json());
 const subscriptions = new Map();
 const customers = new Map();
 const calls = [];
+const emails = [];
 let failCustomer = false;
 let failDelete = false;
 let failJustgo = false;
@@ -41,7 +43,11 @@ const request = async (path, options = {}) => {
   }
   const subscription = subscriptions.get(id);
   if (!subscription) throw Object.assign(new Error('Missing subscription'), { stripeCode: 'resource_missing' });
-  if (options.method === 'DELETE') subscription.status = 'canceled';
+  if (options.method === 'DELETE') {
+    assert.equal(await normalEmailBlocked(db, '', { kind: 'subscription-stopped', subscriptionId: id }), true,
+      'suppression is committed before Stripe can deliver its cancellation webhook');
+    subscription.status = 'canceled';
+  }
   return subscription;
 };
 process.env.STRIPE_SUBSCRIPTION_ADMIN_KEY = 'sk_test_local_gdpr_fixture';
@@ -71,6 +77,11 @@ registerGdprRoutes(app, {
   },
   normalizeEmail: (email) => String(email || '').trim().toLowerCase(),
   isValidEmail: (email) => /^[^@]+@[^@]+$/.test(email),
+  sendEmail: async (message) => {
+    assert.equal(await normalEmailBlocked(db, message.to, message.record), false);
+    emails.push(message);
+    return true;
+  },
   stopSubscriptionItems: async (id, items, admin, stripeRequest, reason) => {
     assert.equal(stripeRequest, request);
     assert.equal(reason, 'Requested by the member');
@@ -100,6 +111,7 @@ const put = async (path, value) => { written.add(path); await db.doc(path).set(v
 const make = async (suffix, { shared = false, historical = false } = {}) => {
   const id = `M_${run}_${suffix}`;
   const email = `${suffix}.${run}@example.test`;
+  written.add(`gdprEmailBlocks/${emailBlockId(email)}`);
   const sub = `sub_${run}_${suffix}`;
   const customer = `cus_${run}_${suffix}`;
   const other = `${id}_other`;
@@ -144,6 +156,10 @@ try {
   assert.deepEqual([mirrored.membershipIds, mirrored.status], [[`M_${run}_kept`], 'Inactive'], 'the Stripe mirror forgets the erased member');
   assert.deepEqual((await db.doc(`stripeCustomers/FCC-test-${sole.customer}`).get()).data().membershipIds, []);
   const stored = (await db.doc(`subscriptions/${sole.sub}`).get()).data();
+  assert.equal(stored.suppressNormalEmails, true);
+  assert.equal(await normalEmailBlocked(db, sole.email, { kind: 'invoice-paid' }), true);
+  assert.equal(emails.filter((message) => message.to === sole.email && message.record.kind === 'gdpr-erasure').length, 1);
+  assert.doesNotMatch(emails[0].body, /https?:|membership\?/);
   assert.equal(stored.email, '');
   assert.equal(stored.status, 'cancelled');
   assert.deepEqual(stored.names, []);
@@ -168,6 +184,8 @@ try {
   assert.equal(kept.items[0].status, 'cancelled');
   assert.equal(kept.items[1].status, 'active');
   assert.equal(kept.email, shared.email, 'the contact address belongs to the remaining household');
+  assert.equal(await normalEmailBlocked(db, shared.email, { kind: 'invoice-paid', subscriptionId: shared.sub }), false,
+    'remaining household members can still receive normal emails');
 
   const old = await make('historical', { historical: true });
   const historical = await call('erase', { membershipId: old.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' });
@@ -181,6 +199,8 @@ try {
   assert.match(refused.data.error, /member records were kept/);
   assert.equal((await db.doc(`memberships/${retry.id}`).get()).exists, true);
   assert.equal(subscriptions.get(retry.sub).status, 'canceled', 'billing stopped even though Stripe redaction failed');
+  assert.equal(await normalEmailBlocked(db, retry.email, { kind: 'subscription-stopped', subscriptionId: retry.sub }), true,
+    'a failed erasure does not reopen normal mail while awaiting retry');
   failCustomer = false;
   failDelete = true;
   assert.equal((await call('erase', { membershipId: retry.id, scope: 'person', confirm: 'ERASE', reason: 'Requested by the member' })).status, 500);

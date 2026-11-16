@@ -2122,6 +2122,7 @@ await test('failed monthly debits email the member each time; when Stripe gives 
   const final = (await mails('invoice-failed')).find((mail) => mail.final);
   assert.match(final.body, /stopped/);
   const key = /restart=(\S+)/.exec(final.body)[1];
+  assert.equal(key.length, 22, 'email links use compact first-party keys');
   assert.ok(final.body.includes(`/payment-issue?subscription=${key}`));
   const [copy] = await mails('treasurer-copy');
   assert.equal(copy.email, 'treasurer@forthcanoeclub.co.uk');
@@ -2146,11 +2147,13 @@ await test('failed monthly debits email the member each time; when Stripe gives 
   assert.equal((await mails('subscription-stopped')).length, 0, 'the member already had the final email with the links');
 
   const december = testNow(londonNoon(autumnYear, 11, 10));
+  await db.collection('subscriptions').doc(subscriptionId).update({ clubYear: autumnYear + 1 });
   const restart = await call('GET', `/api/subscriptions/${key}/restart`, { headers: december });
   assert.equal(restart.status, 200, restart.text);
   assert.equal(restart.json.billingMode, 'monthly');
   assert.equal(restart.json.email, payer);
   assert.deepEqual(restart.json.items.map((item) => item.id), ['gold-sub'], 'only what Stripe stopped');
+  assert.ok(restart.json.items.every((item) => item.clubYearChoice === 'this'), 'restarting before January is not a renewal');
   assert.deepEqual(restart.json.people.map((person) => [person.firstName, person.returning, person.lineIds.length]), [['Dee', true, 1]]);
   assert.deepEqual(restart.json.people[0].prefill, { disclaimer: true, disclaimerChanged: false, photoConsent: true, photoChanged: false, notices: await currentNoticeVersions() },
     'the answers on the record are offered in advance');
@@ -2178,14 +2181,57 @@ await test('when Stripe cancels without a final failure email, the member is tol
   const stopped = (await db.collection('testMail').where('subscriptionId', '==', subscriptionId).get()).docs.map((document) => document.data())
     .filter((mail) => mail.kind === 'subscription-stopped');
   assert.equal(stopped.length, 1);
-  const key = /subscription=(\S+)/.exec(stopped[0].body)[1];
+  let key = /subscription=(\S+)/.exec(stopped[0].body)[1];
+  assert.equal(key.length, 22);
+  assert.equal((await call('GET', `/api/subscriptions/${key}/restart`, { headers: autumn })).status, 200);
   assert.equal((await call('GET', `/api/subscriptions/${subscriptionId}.${'0'.repeat(64)}/restart`)).status, 404, 'a wrong token is refused');
+  const legacyToken = 'b'.repeat(64);
+  await db.collection('subscriptions').doc(subscriptionId).update({ restartTokenHash: sha256(legacyToken) });
+  assert.equal((await call('GET', `/api/subscriptions/${key}/restart`)).status, 404, 'rotating the access token invalidates compact links too');
+  key = `${subscriptionId}.${legacyToken}`;
+  assert.equal((await call('GET', `/api/subscriptions/${key}/restart`, { headers: autumn })).status, 200, 'older long email links still work');
   const cancelled = await call('POST', `/api/subscriptions/${key}/cancel`);
   assert.equal(cancelled.status, 200, cancelled.text);
   assert.equal(cancelled.json.decision, 'cancelled');
   assert.equal((await call('POST', `/api/subscriptions/${key}/cancel`)).status, 200, 'confirming twice is harmless');
   assert.ok(!(await openAttention()).some((entry) => entry.kind === 'subscription-ended' && entry.subscriptionId === subscriptionId), 'staff need do nothing');
   assert.equal((await call('GET', `/api/subscriptions/${key}/restart`)).json.code, 'payments_cancelled');
+});
+
+await test('GDPR suppresses normal payment emails during erasure and for late webhooks, sending only its own confirmation', async () => {
+  const payer = email('gdpr-monthly');
+  const basket = lessonFor('Erin');
+  basket.people = basket.people.map((person) => ({ ...person, email: payer }));
+  const order = await orderData(await buy(payer, basket, { billingMode: 'monthly' }, autumn));
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const reference = db.collection('subscriptions').doc(subscriptionId);
+  const [member] = await membershipsFor(payer);
+  const mails = async () => (await db.collection('testMail').where('email', '==', payer).get()).docs.map((document) => document.data());
+  const before = (await mails()).length;
+  const ended = { type: 'customer.subscription.deleted', data: { object: {
+    id: subscriptionId, status: 'canceled', ended_at: seconds(new Date()), metadata: { club_year: String(autumnYear), cutoff_at: String(seconds(thisYear.end)) }
+  } } };
+  await reference.update({ gdprErasurePending: true });
+  assert.equal((await sendWebhook(ended)).status, 200);
+  assert.equal((await reference.get()).data().status, 'active', 'a webhook must not race the erasure workflow');
+  assert.equal((await mails()).length, before);
+  const erased = await call('POST', '/api/admin/gdpr/erase', { headers: admin, body: {
+    membershipId: member.id, scope: 'person', confirm: 'ERASE', reason: 'Asked to be forgotten'
+  } });
+  assert.equal(erased.status, 200, erased.text);
+  assert.equal((await sendWebhook(ended)).status, 200);
+  for (const [type, fields] of [
+    ['invoice.payment_failed', { amount_due: 2400, attempt_count: 4, next_payment_attempt: null }],
+    ['invoice.paid', { amount_paid: 2400 }]
+  ]) {
+    const result = await sendWebhook({ type, data: { object: { id: `in_gdpr_${type.replaceAll('.', '_')}_${run}`,
+      subscription: subscriptionId, customer_email: payer, ...fields } } });
+    assert.equal(result.status, 200, result.text);
+  }
+  const after = await mails();
+  assert.equal(after.length, before + 1);
+  assert.equal(after.find((mail) => mail.kind === 'gdpr-erasure')?.subject, 'Your Forth Canoe Club data erasure is complete');
+  assert.ok(!after.some((mail) => ['subscription-stopped', 'invoice-failed', 'invoice-paid'].includes(mail.kind)));
 });
 
 await test('a failed bank payment emails links to retry the same basket or cancel the order', async () => {

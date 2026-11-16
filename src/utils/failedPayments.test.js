@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { receiptEmailCopy, receiptEmailHtml } from './receipt.js';
+import { resolveClubYearChoice } from './clubYear.js';
+import { PRODUCTS } from '../constants/products.js';
 import { invoiceCoverage, invoiceFailureEmail, invoiceItemNames, invoicePeriodStart, subscriptionPaymentReceipt, orderFailureEmail, paidUpTo, restartBasket, retryBasket, splitLinkKey,
   subscriptionStoppedEmail, treasurerFailureEmail } from './failedPayments.js';
 
@@ -93,6 +95,19 @@ test('failed-debit emails say when Stripe retries, or that payments stopped with
   const copy = treasurerFailureEmail({ ...common, email: 'ann@example.test', attempt: 4, subscriptionId: 'sub_1', invoiceId: 'in_1', paidUntil: seconds('2025-12-01') });
   assert.match(copy.body, /£20\.00 from ann@example\.test after 4 attempts/);
   assert.match(copy.body, /sub_1/);
+});
+
+test('restarting uses each stopped item year, not a subscription-level renewal year', () => {
+  const now = new Date('2026-11-16T12:00:00Z');
+  const members = [{ id: 'A', firstName: 'Ann', dob: '1980-02-02' }];
+  const record = { clubYear: 2027, items: [{ productId: 'gold-sub', clubYear: 2026, membershipIds: ['A'] }] };
+  let index = 0;
+  const basket = restartBasket(record, members, 2026, () => `r${++index}`, now);
+  assert.equal(basket.items[0].clubYearChoice, 'this');
+  const product = PRODUCTS.find((item) => item.id === 'gold-sub');
+  assert.equal(resolveClubYearChoice(product, basket.items[0].clubYearChoice, now), 'this', 'restart works before renewals open');
+  assert.equal(restartBasket({ ...record, items: [{ ...record.items[0], clubYear: 2025 }] }, members, 2026, () => 'x', now), null,
+    'a stale stopped item must not become a renewal');
 });
 
 test('monthly payment receipts use the checkout receipt layout, list every item paid monthly by person, and say the days covered', () => {
