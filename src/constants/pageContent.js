@@ -179,9 +179,9 @@ export const PAGE_CONTENT = {
     fields: {
       title: field('Page heading', 'Contact Us'),
       intro: field('Page introduction', "Got a question or want to book a session? Get in touch and we'll get back to you as soon as we can.", true),
-      addressEyebrow: field('Address tile label', 'Mailing Address'),
+      addressEyebrow: field('Address tile label', 'Address'),
       addressTitle: field('Address tile heading', 'Find Us'),
-      address: field('Mailing address (one line per row)', 'Forth Canoe Club\nHarrison Park\nPolwarth\nEdinburgh EH11 1ED', true),
+      address: field('Address (one line per row)', 'Forth Canoe Club\nHarrison Park\nPolwarth\nEdinburgh EH11 1ED', true),
       mapAction: field('Map link text', 'View on maps'),
       mapUrl: field('Map URL', 'https://maps.app.goo.gl/sXk7kWQrv8EbgwY37'),
       emailEyebrow: field('Email tile label', 'General Enquiries'),
