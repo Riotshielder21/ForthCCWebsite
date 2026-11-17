@@ -104,7 +104,7 @@ export const PRODUCTS = [
     name: 'Course place voucher',
     category: 'VOUCHERS',
     basePrice: 60.00,
-    description: 'Recieve a code and giftvoucher for a friend or family member to use against any of our courses. Valid for 1 year.',
+    description: 'Receive a code and gift voucher for a friend or family member to use against any of our courses. Valid for 1 year.',
     hasAnnualDiscount: false,
     allowsAnnualStacking: false,
     type: 'voucher',

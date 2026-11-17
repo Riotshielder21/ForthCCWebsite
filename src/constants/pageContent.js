@@ -11,7 +11,7 @@ export const PAGE_CONTENT = {
       welcome1: field('Welcome paragraph 1', "Welcome to Forth Canoe Club. We're a local, open, active, and friendly kayaking / canoeing club, right in the heart of Edinburgh. We can't wait to have you join us on the water!", true),
       welcome2: field('Welcome paragraph 2', "If you're a complete beginner or a bit scared to start, don't let that get in the way — that's what we're here for!", true),
       welcome3: field('Welcome paragraph 3 before link', 'We also cater to experienced, adventurous paddlers, already involved in a specific discipline or keen to compete.' , true),
-      welcome3Link: field('Welcome paragraph 3 link text', 'All are most welcome members.'),
+      welcome3Link: field('Welcome paragraph 3 link text', 'Everyone is welcome members.'),
       welcome3After: field('Welcome paragraph 3 after link', '.'),
       welcome4Before: field('Welcome paragraph 4 before link', 'Total beginners might find the easiest way to get started is at one of our', true),
       welcome4Link: field('Welcome paragraph 4 link text', 'open nights'),
