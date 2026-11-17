@@ -7,10 +7,11 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:4175',
     browserName: 'chromium',
+    serviceWorkers: 'block',
     trace: 'retain-on-failure'
   },
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 4175 --strictPort --mode test',
+    command: 'npm run build -- --mode test && npm run preview -- --host 127.0.0.1 --port 4175 --strictPort',
     url: 'http://127.0.0.1:4175',
     reuseExistingServer: false,
     env: {

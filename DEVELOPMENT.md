@@ -71,8 +71,9 @@ npm run test:browser
 ```
 
 They exercise same-tab content freshness, retained cached products with availability retry, and clearing consent ticks
-after wording changes. Playwright starts and stops its own Vite server on port 4175. CI runs these in a separate
-browser job and uploads traces on failure; no production credentials or Firebase emulators are needed.
+after wording changes. Playwright builds with test configuration, then starts and stops a production preview on port
+4175. Service workers are blocked in these scenarios; their offline behavior has separate unit coverage.
+CI runs the browser job separately and uploads traces on failure; no production credentials or emulators are needed.
 
 The emulator integration suite runs the API against fresh emulators with Stripe mocked. It covers checkout, renewals, failed payments, club night, volunteering, refunds, GDPR erasure, data migration and the JustGo jobs. It takes 5–10 minutes. Stop `npm run local` first, as it uses the same ports.
 
@@ -82,7 +83,8 @@ set -a; source .env.emulator.example; set +a
 npx --yes firebase-tools@14.22.0 emulators:exec --only auth,firestore,storage --project demo-fcc 'npm run test:integration'
 ```
 
-Pull requests run the same three checks on GitHub, plus CodeQL.
+Pull requests run lint, unit tests, production build, server syntax, emulator integration and browser regressions,
+plus CodeQL.
 
 ### Production-code boundaries
 
