@@ -122,15 +122,21 @@ export const syncPolicies = async (db, {
     const reference = db.collection('policies').doc(definition.key);
     const version = await db.runTransaction(async (transaction) => {
       let currentDefinition = definition;
+      let latest;
 
       if (usePublishedWording && Object.values(CHECKOUT_POLICY_KEYS).includes(definition.key)) {
-        // Read inside the transaction so a concurrent wording publication forces a retry.
-        const snapshot = await transaction.get(db.collection('settings').doc('consentWording'));
+        // Read both documents together, avoiding a second read on a transaction aborted by contention.
+        const [snapshot, policy] = await transaction.getAll(
+          db.collection('settings').doc('consentWording'),
+          reference
+        );
         const wording = mergeConsentWording(snapshot.data());
         currentDefinition = policyDefinitionsFor(wording).find((entry) => entry.key === definition.key);
+        latest = policy.data();
+      } else {
+        latest = (await transaction.get(reference)).data();
       }
 
-      const latest = (await transaction.get(reference)).data();
       return recordPolicyVersion(transaction, db, currentDefinition, latest, {
         pages: publishedPages,
         recordedBy,

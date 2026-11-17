@@ -1146,33 +1146,41 @@ await test('concurrent consent publications and release sync keep the final word
     body
   });
   const policyReference = db.collection('policies').doc('participation-disclaimer');
-  const initialPolicy = (await policyReference.get()).data();
-
   try {
-    const edits = [
-      { ...original, body: `${original.body}\n\nFirst concurrent edit.` },
-      { ...original, body: `${original.body}\n\nSecond concurrent edit.` }
-    ];
-    const results = await Promise.all([
-      publish(edits[0]),
-      publish(edits[1]),
-      call('POST', '/api/admin/policies/sync', { headers: admin })
-    ]);
-    for (const result of results) assert.equal(result.status, 200, result.text);
-    const versions = results.slice(0, 2).map((result) => result.json.version).sort((a, b) => a - b);
-    assert.deepEqual(versions, [initialPolicy.currentVersion + 1, initialPolicy.currentVersion + 2]);
+    for (let round = 1; round <= 3; round += 1) {
+      const initialPolicy = (await policyReference.get()).data();
+      const edits = [
+        { ...original, body: `${original.body}\n\nFirst concurrent edit, round ${round}.` },
+        { ...original, body: `${original.body}\n\nSecond concurrent edit, round ${round}.` }
+      ];
+      const results = await Promise.all([
+        publish(edits[0]),
+        publish(edits[1]),
+        call('POST', '/api/admin/policies/sync', { headers: admin })
+      ]);
+      for (const result of results) assert.equal(result.status, 200, `Round ${round}: ${result.text}`);
+      const versions = results.slice(0, 2).map((result) => result.json.version).sort((a, b) => a - b);
+      assert.deepEqual(versions, [initialPolicy.currentVersion + 1, initialPolicy.currentVersion + 2]);
 
-    const current = await call('GET', '/api/consent-wording');
-    const policy = (await policyReference.get()).data();
-    const history = (await db.collection('policyVersions').doc(`participation-disclaimer@${policy.currentVersion}`).get()).data();
-    assert.equal(policy.currentVersion, initialPolicy.currentVersion + 2);
-    assert.equal(history.text, tickWording(current.json.disclaimer));
-    assert.equal(policy.currentHash, policyHash(history.text));
+      for (const [index, edit] of edits.entries()) {
+        const version = results[index].json.version;
+        const history = (await db.collection('policyVersions').doc(`participation-disclaimer@${version}`).get()).data();
+        assert.equal(history.text, tickWording(edit), 'each successful publication keeps its own history');
+      }
 
-    const retry = await publish(current.json.disclaimer);
-    assert.equal(retry.status, 200, retry.text);
-    assert.equal(retry.json.changed, false);
-    assert.equal((await policyReference.get()).data().currentVersion, policy.currentVersion);
+      const current = await call('GET', '/api/consent-wording');
+      assert.equal(current.status, 200, current.text);
+      const policy = (await policyReference.get()).data();
+      const history = (await db.collection('policyVersions').doc(`participation-disclaimer@${policy.currentVersion}`).get()).data();
+      assert.equal(policy.currentVersion, initialPolicy.currentVersion + 2);
+      assert.equal(history.text, tickWording(current.json.disclaimer));
+      assert.equal(policy.currentHash, policyHash(history.text));
+
+      const retry = await publish(current.json.disclaimer);
+      assert.equal(retry.status, 200, retry.text);
+      assert.equal(retry.json.changed, false);
+      assert.equal((await policyReference.get()).data().currentVersion, policy.currentVersion);
+    }
   } finally {
     const restored = await publish(original);
     assert.equal(restored.status, 200, restored.text);

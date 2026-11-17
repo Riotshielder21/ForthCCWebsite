@@ -35,14 +35,14 @@ export const publishConsentWording = async (db, key, input, admin, { live }) => 
   const policyReference = db.collection('policies').doc(policyKey);
 
   return db.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(wordingReference);
+    const references = live ? [wordingReference, policyReference] : [wordingReference];
+    const [snapshot, policy] = await transaction.getAll(...references);
     const wording = mergeConsentWording(snapshot.data());
     const before = wording[key];
     const changed = before.label !== label || before.body !== body;
     let version = null;
 
     if (live) {
-      const policy = await transaction.get(policyReference);
       const definition = policyDefinitionsFor({ ...wording, [key]: { label, body } })
         .find((entry) => entry.key === policyKey);
 

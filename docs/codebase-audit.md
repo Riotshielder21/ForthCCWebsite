@@ -142,6 +142,18 @@ Vite's module graph determines browser-bundle inclusion, not proximity to produc
 - The production build and modified server/integration-script syntax checks passed. The existing bundle-size
   warning remains.
 
+### CI concurrency follow-up
+
+The first CI run exposed `INVALID_ARGUMENT: Transaction is invalid or closed` during concurrent publication.
+The consent paths read wording and policy through separate transaction requests; contention could abort a
+transaction before its second read. Both paths now fetch the related documents together with `transaction.getAll`,
+keeping the existing atomic writes and SDK retry policy. No publication errors are suppressed or retried blindly.
+
+A separate local emulator stress check completed 40 rounds of two simultaneous publications plus policy sync.
+The API regression now repeats its race three times and checks each publication's history as well as the final state.
+The 24 focused consent/policy unit tests and the complete emulator integration runner passed again, including all
+84 checkout scenarios.
+
 ## Next steps
 
 1. Make failed availability and consent refreshes visible without breaking offline use.

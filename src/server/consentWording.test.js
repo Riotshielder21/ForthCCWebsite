@@ -29,6 +29,10 @@ const fakeDb = () => {
       const writes = [];
       let writing = false;
       const result = await work({
+        getAll: async (...references) => {
+          assert.equal(writing, false, 'Firestore requires all reads before writes');
+          return Promise.all(references.map((reference) => reference.get()));
+        },
         get: async (reference) => {
           assert.equal(writing, false, 'Firestore requires all reads before writes');
           return reference.get();
