@@ -53,6 +53,17 @@ npm test          # unit tests
 npm run build     # production build
 ```
 
+Browser regression tests use Chromium and mocked public responses, with external network requests blocked:
+
+```bash
+npx playwright install chromium
+npm run test:browser
+```
+
+They exercise same-tab content freshness, retained cached products with availability retry, and clearing consent ticks
+after wording changes. Playwright starts and stops its own Vite server on port 4175. CI runs these in a separate
+browser job and uploads traces on failure; no production credentials or Firebase emulators are needed.
+
 The emulator integration suite runs the API against fresh emulators with Stripe mocked. It covers checkout, renewals, failed payments, club night, volunteering, refunds, GDPR erasure, data migration and the JustGo jobs. It takes 5–10 minutes. Stop `npm run local` first, as it uses the same ports.
 
 ```bash
