@@ -63,6 +63,17 @@ npx --yes firebase-tools@14.22.0 emulators:exec --only auth,firestore,storage --
 
 Pull requests run the same three checks on GitHub, plus CodeQL.
 
+### Production-code boundaries
+
+Keep HTTP feature handlers in [src/server/](src/server/) and register them from [server.js](server.js).
+For example, [pagePublishing.js](src/server/pagePublishing.js) owns the saved-draft, page-save and review-request
+routes; Workspace notification delivery remains in the server wiring. Shared validation and normalization stay
+independent of Express and React, so the browser and API can use the same rules.
+
+Prefer descriptive names, explicit validation steps and small helpers for repeated domain operations. Keep related
+decisions together rather than introducing a generic abstraction or moving files only to reduce line counts.
+Unit tests remain beside their production modules.
+
 ### Public pages and missing links
 
 The build writes a metadata-specific HTML shell for each public route, plus `404.html` and `sitemap.xml`.
