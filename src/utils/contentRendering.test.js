@@ -20,6 +20,7 @@ test('published content renders safe inline links and configurable buttons witho
     const { ContentText } = await vite.ssrLoadModule('/src/components/ContentText.jsx');
     const { PageContentProvider } = await vite.ssrLoadModule('/src/utils/PageContentContext.jsx');
     const { default: HomePage } = await vite.ssrLoadModule('/src/pages/HomePage.jsx');
+    const { default: PublishedPage } = await vite.ssrLoadModule('/src/components/PublishedPage.jsx');
     const renderHome = (saved) => renderToStaticMarkup(React.createElement(PageContentProvider,
       { value: { home: getPageCopy('home', saved) } }, React.createElement(HomePage, { onNavigate: () => {} })));
     const inline = renderToStaticMarkup(React.createElement(ContentText, {
@@ -54,6 +55,29 @@ test('published content renders safe inline links and configurable buttons witho
       assert.ok(anchorDepth >= 0 && anchorDepth <= 1, 'anchors must not be nested');
     }
     assert.equal(anchorDepth, 0);
+
+    const disciplines = renderToStaticMarkup(React.createElement(PageContentProvider, {
+      value: {
+        disciplines: getPageCopy('disciplines', {
+          poloTitle: 'Polo',
+          paddleboardingTitle: '  ',
+          tileLayout: [
+            { id: 'hero', group: 'hero', type: 'existing' },
+            { id: 'polo', group: 'tiles', type: 'existing' },
+            { id: 'paddleboarding', group: 'tiles', type: 'existing' },
+            { id: 'blank-custom', group: 'tiles', type: 'text', title: ' ', description: 'Placeholder' }
+          ]
+        })
+      }
+    }, React.createElement(PublishedPage, { pageId: 'disciplines' }, React.createElement('div', {
+      'data-tile-group': 'tiles'
+    }, React.createElement('div', { 'data-tile-id': 'polo' },
+      React.createElement('h3', { 'data-content-field': 'poloTitle' }, 'Polo')),
+    React.createElement('div', { 'data-tile-id': 'paddleboarding' },
+      React.createElement('h3', { 'data-content-field': 'paddleboardingTitle' }, 'Paddleboarding'))))));
+    assert.match(disciplines, /data-tile-id="polo"/);
+    assert.doesNotMatch(disciplines, /data-tile-id="paddleboarding"/);
+    assert.doesNotMatch(disciplines, /data-tile-id="blank-custom"/);
   } finally {
     await vite.close();
   }

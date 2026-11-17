@@ -53,7 +53,11 @@ export default function PublishedPage({ pageId, children, toolbar }) {
     React.Children.forEach(node.props.children, collect);
   };
   React.Children.forEach(children, collect);
-  const tiles = Array.isArray(copy.tileLayout) ? copy.tileLayout : [];
+  const tiles = (Array.isArray(copy.tileLayout) ? copy.tileLayout : []).filter((tile) => {
+    if (pageId !== 'disciplines' || tile.group !== 'tiles') return true;
+    const title = tile.type === 'existing' ? copy[`${tile.id}Title`] : tile.title;
+    return typeof title === 'string' && title.trim().length > 0;
+  });
   const ordered = Object.keys(PAGE_TILE_GROUPS[pageId] || {}).flatMap((group) => tiles.filter((tile) => tile.group === group));
   const numbers = new Map(ordered.map((tile, index) => [tile.id, index + 1]));
 
