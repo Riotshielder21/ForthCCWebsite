@@ -1,4 +1,4 @@
-# Codebase audit and first readability pass
+# Codebase audit and readability passes
 
 Date: 17 November 2026.
 
@@ -17,27 +17,37 @@ partial failures and content freshness. There is no need for a framework replace
 
 ### 1. Consent wording and its policy version are saved separately
 
-**Priority: high. Behavioral follow-up; not changed in this refactor.**
+**Priority: high. Publication failure and retry fixed in pass two.**
 
-[publishConsentWording](../src/server/consentWording.js) writes the new wording before calling
-[syncPolicies](../src/server/policies.js). If versioning fails, the wording remains changed even though publishing
-returns an error. Repeating the same save takes the unchanged-wording return and does not retry versioning.
-Until a later sync succeeds, checkout can show new wording while recording an older policy version.
+At audit time, [publishConsentWording](../src/server/consentWording.js) wrote new wording before calling
+[syncPolicies](../src/server/policies.js). If versioning failed, the wording remained changed even though publishing
+returned an error. Repeating the same save took the unchanged-wording return and did not retry versioning.
+Until a later sync succeeded, checkout could show new wording while recording an older policy version.
 
-An in-memory failure-injection check confirmed both the persisted wording and the skipped retry. A separate fix
-should make wording publication and version assignment consistent, including retries and concurrent publishers.
+An in-memory failure-injection check confirmed both the persisted wording and the skipped retry.
+
+Pass two saves the selected statement, policy hash and numbered history in one Firestore transaction. A failed
+commit leaves all three unchanged. An identical retry creates no duplicate version, but repairs the version if an
+earlier partial publication left it behind. Release sync reads consent wording inside its own transaction so it
+cannot overwrite the current version using a stale wording snapshot during concurrent publication.
+This fixes publication consistency; it does not turn checkout's separate wording and policy reads into one snapshot.
 
 ### 2. Public page content remains cached for the lifetime of an open tab
 
-**Priority: medium. Behavioral follow-up; not changed in this refactor.**
+**Priority: medium. Fixed for navigation in pass two.**
 
-[publicContent.js](../src/utils/publicContent.js) keeps successful fetch promises in a module-level map with no
-expiry or refresh path. Revisiting a page reuses the first result rather than fetching it again. The network-first
-service worker cannot help when the application does not issue another request.
+At audit time, [publicContent.js](../src/utils/publicContent.js) kept successful fetch promises in a module-level map
+with no expiry or refresh path. Revisiting a page reused the first result rather than fetching it again. The
+network-first service worker could not help when the application did not issue another request.
 
 An isolated browser-module check loaded a page, changed the simulated server response, then loaded it again:
-the application returned the original text and made only one request. Define a refresh policy separately, preserving
-offline behavior and in-flight request deduplication.
+the application returned the original text and made only one request.
+
+Pass two retains only in-flight promises. Each page visit requests its published JSON again; concurrent subscribers
+still share a request, and the existing delayed prefetch remains. Successful, missing and failed responses all release
+their in-flight entry. Cancellation stops callbacks and pending prefetch, without aborting another subscriber's request.
+The service worker still supplies the offline copy on network failure or its four-second timeout. There is no polling
+or live push: a visitor staying on one page sees changes on the next visit or reload, not automatically mid-reading.
 
 ### 3. Some fallback paths hide whether data is current
 
@@ -79,6 +89,10 @@ phone/postcode helpers. It also makes the guards in [adminAccess.js](../src/util
 Existing output fields, normalization fallbacks, validation messages and authentication outcomes are preserved.
 Simple expressions remain simple; extra layers and explanatory comments are not added just for appearance.
 
+Pass two applies the same layout to consent publication, policy synchronization and the browser content loader:
+separate validation steps, readable object fields, blank lines between stages and explicit transaction boundaries.
+Shared consent merging and policy planning also use clearer intermediate names and multiline return values.
+
 ### 6. Test organization is sound, but browser-level verification is missing from CI
 
 **Priority: medium. Follow-up.**
@@ -115,9 +129,22 @@ Vite's module graph determines browser-bundle inclusion, not proximity to produc
 - The complete emulator integration runner passed, including the JustGo Python suites using the existing virtual
   environment and all 83 checkout scenarios. No external Stripe or Workspace calls were needed.
 
+## Second-pass verification
+
+- 42 focused unit tests passed, including transaction commit failure and retry, historical partial-save repair,
+  unchanged saves, pre-live edits, policy sync, request deduplication, navigation freshness and cancelled prefetch.
+- The complete emulator integration runner passed, including all 84 checkout scenarios. The new scenario races
+  two consent publications with policy sync, checks consecutive versions and the final wording/hash/history,
+  then verifies that an identical save creates no duplicate version.
+- A local browser smoke check used simulated JSON responses and real application links: Home, Membership, Home,
+  then the same navigation after changing the response. The updated heading appeared after two Home requests;
+  an in-memory marker confirmed there was no full-page reload. This is a manual check, not a new browser CI suite.
+- The production build and modified server/integration-script syntax checks passed. The existing bundle-size
+  warning remains.
+
 ## Next steps
 
-1. Make consent publication/versioning consistent under failure and retry.
-2. Specify public-content refresh behavior and make failed refreshes visible without breaking offline use.
-3. Add browser coverage alongside those fixes.
-4. Continue one feature extraction at a time; keep payment and erasure changes separate from readability-only work.
+1. Make failed availability and consent refreshes visible without breaking offline use.
+2. Consider a shared wording/version snapshot for checkout acceptance during concurrent publication.
+3. Add browser coverage for navigation and wording changes.
+4. Continue one feature extraction at a time; keep behavioral fixes explicit rather than hiding them in formatting.

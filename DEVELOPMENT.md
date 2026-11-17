@@ -74,6 +74,14 @@ Prefer descriptive names, explicit validation steps and small helpers for repeat
 decisions together rather than introducing a generic abstraction or moving files only to reduce line counts.
 Unit tests remain beside their production modules.
 
+Live consent publication saves the statement and its numbered policy history in one Firestore transaction.
+Policy sync must read consent wording inside its transaction too, so a release cannot version a stale copy during
+an admin edit. Keep transaction reads before writes, and read wording before the policy in both paths.
+
+Public page JSON is fetched on each visit. Only in-flight requests are shared; do not retain completed promises
+in the application. The service worker handles offline fallback after network failure or a four-second timeout.
+Pages do not poll for edits while someone is reading them.
+
 ### Public pages and missing links
 
 The build writes a metadata-specific HTML shell for each public route, plus `404.html` and `sitemap.xml`.
