@@ -85,6 +85,12 @@ Public page JSON is fetched on each visit. Only in-flight requests are shared; d
 in the application. The service worker handles offline fallback after network failure or a four-second timeout.
 Pages do not poll for edits while someone is reading them.
 
+Browser state and effects belong in [src/browser/](src/browser/), starting with catalogue refresh and consent wording.
+Keep that code out of server modules and keep shared rules free of React, storage and network side effects.
+The existing consent-client utility re-exports its browser implementation for compatibility while call sites migrate.
+Catalogue and consent refresh failures retain the displayed data but show a retry action; a wording save whose
+follow-up refresh fails explicitly reports that the save succeeded and the displayed copy is stale.
+
 ### Public pages and missing links
 
 The build writes a metadata-specific HTML shell for each public route, plus `404.html` and `sitemap.xml`.
