@@ -21,17 +21,28 @@ export const productTerms = (product) => {
 };
 
 const LEGACY_FIXED_SERVICES = ['keyhire'];
+const LEGACY_PRODUCT_NAMES = {
+  'boat-hire': { oldName: 'ANNUAL BOAT & KIT HIRE', currentName: 'Annual Boat & Kit Hire' }
+};
+
+const currentProductName = (id, name) => {
+  const legacy = LEGACY_PRODUCT_NAMES[id];
+  return legacy && typeof name === 'string' && name.trim().toUpperCase() === legacy.oldName
+    ? legacy.currentName : name;
+};
 
 /**
  * Converts a saved product to the current shape. `active` replaces the soft-delete `deleted` flag (and any
  * `hidden`/`visible`), `sortOrder` is backfilled from the shop's display order (`displayIndex`), and products saved
  * before `pricingMode`/`allowMonthly` existed get the terms they were sold on: a `yearly-service` was prorated except
  * key hire, and a subscription could be paid monthly. A partial override with no `category` (a removed starter
- * product) keeps the starter terms. Returns only what changes.
+ * product) keeps the starter terms. Legacy starter-product names are also corrected. Returns only what changes.
  */
 export const productUpgrade = (fields, displayIndex) => {
   const set = {};
   const remove = ['deleted', 'hidden', 'visible'].filter((key) => key in fields);
+  const name = currentProductName(fields.id, fields.name);
+  if (name !== fields.name) set.name = name;
   if (typeof fields.active !== 'boolean') set.active = fields.deleted !== true && fields.hidden !== true && fields.visible !== false;
   if (typeof fields.sortOrder !== 'number') set.sortOrder = (displayIndex + 1) * 10;
   if (fields.category && !PRICING_MODES.includes(fields.pricingMode)) {
@@ -58,6 +69,8 @@ export const productMembershipRule = (product) => {
 export const normaliseProduct = (product) => {
   const rule = productMembershipRule(product);
   const { membershipRule: _rule, membershipRequired: _required, eventSchedule, ...rest } = product;
+  const name = currentProductName(rest.id, rest.name);
+  if (name !== rest.name) rest.name = name;
   if (product.category === 'MEMBERSHIP' && typeof rest.description === 'string') {
     rest.description = rest.description.replace(/\bSCA\b/g, 'Paddle Scotland');
   }

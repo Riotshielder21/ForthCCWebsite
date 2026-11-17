@@ -28,6 +28,14 @@ test('saved products are upgraded to active, sortOrder and explicit pricing term
   for (const product of PRODUCTS) assert.deepEqual(productUpgrade(product, 0), { set: {}, remove: [] }, `${product.id} is already current`);
 });
 
+test('legacy boat-hire product names resolve and migrate to title case without replacing a custom name', () => {
+  const legacy = { ...PRODUCTS.find(({ id }) => id === 'boat-hire'), name: 'ANNUAL BOAT & KIT HIRE' };
+  assert.equal(normaliseProduct(legacy).name, 'Annual Boat & Kit Hire');
+  assert.equal(resolveCatalogue(PRODUCTS, [legacy]).find(({ id }) => id === 'boat-hire').name, 'Annual Boat & Kit Hire');
+  assert.equal(productUpgrade(legacy, 0).set.name, 'Annual Boat & Kit Hire');
+  assert.equal(normaliseProduct({ ...legacy, name: 'Annual Kit Hire' }).name, 'Annual Kit Hire');
+});
+
 test('only event products retain event schedule metadata', () => {
   const straySchedule = { mode: 'invalid' };
   assert.equal(Object.hasOwn(normaliseProduct({ category: 'MEMBERSHIP', eventSchedule: straySchedule }), 'eventSchedule'), false);

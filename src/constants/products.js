@@ -10,7 +10,7 @@ export const CATEGORIES = ['ALL', 'MEMBERSHIP', 'SERVICES', 'SUBSCRIPTIONS', 'VO
 export const PRODUCTS = [
   {
     id: 'boat-hire',
-    name: 'ANNUAL BOAT & KIT HIRE',
+    name: 'Annual Boat & Kit Hire',
     category: 'SERVICES',
     basePrice: 85.00,
     description: 'Unlimited kit hire for the club year.',

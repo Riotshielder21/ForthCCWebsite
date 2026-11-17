@@ -189,7 +189,7 @@ await pass('Products', async (write) => {
   const displayOrder = [...starterIds, ...products.map((document) => document.id).filter((id) => !starterIds.includes(id)).sort()];
   for (const document of products) {
     const upgrade = productUpgrade({ ...document.data(), id: document.id }, displayOrder.indexOf(document.id));
-    if (changes(upgrade)) await write('Add active, sortOrder, pricingMode and allowMonthly', (writer) => writer.update(document.ref, updateWith(upgrade)));
+    if (changes(upgrade)) await write('Upgrade product fields and legacy product names', (writer) => writer.update(document.ref, updateWith(upgrade)));
   }
   return products.length;
 });

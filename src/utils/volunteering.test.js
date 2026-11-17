@@ -4,6 +4,8 @@ import { applyVolunteerBenefits, DEFAULT_VOLUNTEER_BENEFITS as tiers, needsVolun
 import { clubYearOf } from './clubYear.js';
 import { calculateCart } from './pricing.js';
 import { volunteerCancellationPhases } from './volunteerCancellation.js';
+import { PRODUCTS } from '../constants/products.js';
+import { resolveCatalogue } from './catalogue.js';
 
 const now = new Date('2027-04-01T12:00:00Z');
 const member = (tier, active = true) => ({ volunteer: { inducted: true, years: { 2027: { active, tier, benefits: ['Free key hire'] } } } });
@@ -23,6 +25,12 @@ test('volunteer benefits emails capitalise greetings, use real bullets and sign 
   assert.doesNotMatch(email.html, /<br|white-space|max-width|\swidth=/);
   assert.match(email.body, /details\. Monthly payments/);
   assert.match(email.body, /club year 2026\/2027/);
+});
+
+test('volunteer benefit wording uses the corrected name for a legacy boat-hire product', () => {
+  const legacy = { ...PRODUCTS.find(({ id }) => id === 'boat-hire'), name: 'ANNUAL BOAT & KIT HIRE' };
+  const products = resolveCatalogue(PRODUCTS, [legacy]);
+  assert.match(volunteerBenefitText(tiers[1], products), /Free Annual Boat & Kit Hire/);
 });
 
 test('volunteer benefits email escapes user content and preserves existing mixed-case names', () => {

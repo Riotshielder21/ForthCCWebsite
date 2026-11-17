@@ -338,7 +338,7 @@ await test('adult membership plus boat hire is recorded on the membership, custo
   }
   const customer = await call('GET', `/api/admin/customer?q=${encodeURIComponent(alex)}`, { headers: admin });
   assert.equal(customer.json.memberships.length, 1);
-  assert.deepEqual(customer.json.memberships[0].privileges, ['ANNUAL BOAT & KIT HIRE']);
+  assert.deepEqual(customer.json.memberships[0].privileges, ['Annual Boat & Kit Hire']);
 });
 
 await test('an email only reveals that a record exists, names need the matching date of birth', async () => {
@@ -552,7 +552,7 @@ await test('multiple copies of shop services can be bought by different members 
     && member.entitlements.some((privilege) => privilege.productId === 'keyhire')));
   const report = (await reportFor('orders', orderRef)).json.records.find((record) => record.id === orderRef);
   assert.deepEqual(
-    ['ANNUAL BOAT & KIT HIRE', 'Boathouse Access', 'GOLD SUBSCRIPTION'].map((name) => report.items.filter((item) => item.name === name).length),
+    ['Annual Boat & Kit Hire', 'Boathouse Access', 'GOLD SUBSCRIPTION'].map((name) => report.items.filter((item) => item.name === name).length),
     [2, 2, 1]
   );
   assert.ok(report.items.every((item) => typeof item.price === 'number'));
@@ -850,7 +850,7 @@ await test('reports: orders list shows each person and what they bought', async 
     && person.items.includes('CLUB MEMBERSHIP — FAMILY')), 'every family member reports the same household contact and membership');
   const alex = report.json.records.find((record) => record.id === shared.adultOrder);
   assert.equal(alex.people[0].medical, 'Asthma');
-  assert.deepEqual(alex.items.map((item) => item.name), ['CLUB MEMBERSHIP — ADULT', 'ANNUAL BOAT & KIT HIRE']);
+  assert.deepEqual(alex.items.map((item) => item.name), ['CLUB MEMBERSHIP — ADULT', 'Annual Boat & Kit Hire']);
   assert.ok(alex.items.every((item) => typeof item.price === 'number'));
   const voucherPurchase = report.json.records.find((record) => record.id === shared.voucherOrder);
   assert.equal(voucherPurchase.status, 'paid');
@@ -880,7 +880,7 @@ await test('reports: one member register holds website and JustGo members, compl
   assert.equal(alex.name, 'Alex Adult');
   assert.equal(alex.tier, 'adult');
   assert.equal(alex.status, 'Active');
-  assert.deepEqual(alex.privileges.sort(), ['ANNUAL BOAT & KIT HIRE', 'Boathouse Access', 'BLUE SUBSCRIPTION'].sort());
+  assert.deepEqual(alex.privileges.sort(), ['Annual Boat & Kit Hire', 'Boathouse Access', 'BLUE SUBSCRIPTION'].sort());
   assert.equal(alex.history.length, 5, 'membership, key hire, subscription, voucher-paid course and the event ticket');
   assert.ok(alex.history.every((entry) => entry.orderRef && entry.paidAt && entry.items.length));
   assert.equal(alex.justgoSync, 'pending');
