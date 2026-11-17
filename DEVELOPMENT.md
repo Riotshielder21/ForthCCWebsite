@@ -78,6 +78,8 @@ Live consent publication saves the statement and its numbered policy history in 
 Policy sync must read consent wording inside its transaction too, so a release cannot version a stale copy during
 an admin edit. Keep transaction reads before writes, and fetch wording and policy together with `transaction.getAll`
 in both paths to avoid a second read on a transaction that contention has already aborted.
+Checkout, guest check-in and photo-consent updates use `loadCheckoutConsent` to validate the wording and retain
+the versions from the same read-only transaction snapshot. Do not fetch a newer version after validating older wording.
 
 Public page JSON is fetched on each visit. Only in-flight requests are shared; do not retain completed promises
 in the application. The service worker handles offline fallback after network failure or a four-second timeout.

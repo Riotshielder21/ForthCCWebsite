@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { publishConsentWording } from './consentWording.js';
-import { loadConsentWording, syncPolicies } from './policies.js';
+import { loadCheckoutConsent, loadConsentWording, syncPolicies } from './policies.js';
 import { policyHash } from '../utils/policies.js';
 import { tickWording } from '../constants/consentWording.js';
 
@@ -21,7 +21,7 @@ const fakeDb = () => {
     collection: (name) => ({
       doc: (id) => ({
         path: `${name}/${id}`,
-        get: async () => ({ data: () => store.get(`${name}/${id}`) }),
+        get: async () => ({ id, data: () => store.get(`${name}/${id}`) }),
         set: async (data, options) => apply(`${name}/${id}`, data, options)
       })
     }),
@@ -167,4 +167,29 @@ test('release sync still supports supplied definitions and published page text',
   assert.deepEqual(await syncPolicies(db, options), [{ key: 'privacy-notice', version: 1 }]);
   assert.equal(db.store.get('policyVersions/privacy-notice@1').text, 'Our privacy wording.');
   assert.deepEqual(await syncPolicies(db, options), []);
+});
+
+test('acceptance keeps the policy versions belonging to its wording snapshot after a later publication', async () => {
+  const db = fakeDb();
+  await publishConsentWording(db, 'disclaimer', statement, admin, { live: true });
+  const before = await loadCheckoutConsent(db);
+  await publishConsentWording(db, 'disclaimer', { ...statement, body: 'Published later.' }, admin, { live: true });
+
+  const after = await loadCheckoutConsent(db);
+  assert.equal(before.wording.disclaimer.body, statement.body);
+  assert.equal(before.policies.disclaimer.version, 1);
+  assert.equal(after.wording.disclaimer.body, 'Published later.');
+  assert.equal(after.policies.disclaimer.version, 2);
+  assert.equal(db.store.get(`policyVersions/participation-disclaimer@${before.policies.disclaimer.version}`).text,
+    tickWording(before.wording.disclaimer));
+});
+
+test('pre-live acceptance reads wording without requiring policy documents', async () => {
+  const db = fakeDb();
+  await publishConsentWording(db, 'disclaimer', statement, admin, { live: false });
+  const consent = await loadCheckoutConsent(db, false);
+
+  assert.equal(consent.wording.disclaimer.body, statement.body);
+  assert.equal(consent.policies.disclaimer.version, 'pre-live');
+  assert.equal(db.store.size, 1);
 });

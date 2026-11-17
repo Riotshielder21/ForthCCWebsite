@@ -18,6 +18,7 @@ import { applyConsentPrefill, checkoutWording } from '../src/utils/consents.js';
 import { activeSubscriptionItems } from '../src/utils/subscriptions.js';
 import { tickWording } from '../src/constants/consentWording.js';
 import { policyHash } from '../src/utils/policies.js';
+import { loadCheckoutConsent } from '../src/server/policies.js';
 import { joiningShare, fullMonthsAfterCurrent, clubYearOf, clubYearDates, monthlyDebits, nextFirst } from '../src/utils/clubYear.js';
 
 const projectId = assertLocalFirebase(process.env);
@@ -1156,9 +1157,10 @@ await test('concurrent consent publications and release sync keep the final word
       const results = await Promise.all([
         publish(edits[0]),
         publish(edits[1]),
-        call('POST', '/api/admin/policies/sync', { headers: admin })
+        call('POST', '/api/admin/policies/sync', { headers: admin }),
+        Promise.all(Array.from({ length: 3 }, () => loadCheckoutConsent(db)))
       ]);
-      for (const result of results) assert.equal(result.status, 200, `Round ${round}: ${result.text}`);
+      for (const result of results.slice(0, 3)) assert.equal(result.status, 200, `Round ${round}: ${result.text}`);
       const versions = results.slice(0, 2).map((result) => result.json.version).sort((a, b) => a - b);
       assert.deepEqual(versions, [initialPolicy.currentVersion + 1, initialPolicy.currentVersion + 2]);
 
@@ -1166,6 +1168,13 @@ await test('concurrent consent publications and release sync keep the final word
         const version = results[index].json.version;
         const history = (await db.collection('policyVersions').doc(`participation-disclaimer@${version}`).get()).data();
         assert.equal(history.text, tickWording(edit), 'each successful publication keeps its own history');
+      }
+
+      for (const consent of results[3]) {
+        for (const [key, policy] of Object.entries(consent.policies)) {
+          const history = (await db.collection('policyVersions').doc(`${policy.policyKey}@${policy.version}`).get()).data();
+          assert.equal(history.text, tickWording(consent.wording[key]), 'acceptance uses one wording/version snapshot');
+        }
       }
 
       const current = await call('GET', '/api/consent-wording');

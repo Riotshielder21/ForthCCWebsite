@@ -8,7 +8,7 @@ import { buildLinkedReceipt } from '../utils/receipt.js';
 import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
 import { activeSubscriptionItems } from '../utils/subscriptions.js';
 import { resolveOrderPeople } from './orderPeople.js';
-import { currentCheckoutPolicies, loadConsentWording } from './policies.js';
+import { loadCheckoutConsent } from './policies.js';
 import { loadNotices } from './notices.js';
 import { noticeVersionMap } from '../utils/notices.js';
 import { noticeVersionEntries, photoConsentRecord, photoHistoryAdditions, wordingMatches } from '../utils/consents.js';
@@ -163,12 +163,14 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripe
       if (!ID.test(req.params.householdId) || !ID.test(req.params.memberId)) return res.status(400).json({ error: 'Choose a person.' });
       if (typeof req.body?.accepted !== 'boolean') return res.status(400).json({ error: 'Choose whether to give photo and video consent.' });
       const { accepted } = req.body;
-      if (accepted && !wordingMatches(req.body.wording, await loadConsentWording(db()))) {
+      const consent = await loadCheckoutConsent(db(), live());
+      if (accepted && !wordingMatches(req.body.wording, consent.wording)) {
         return res.status(409).json({ code: 'wording_changed', error: 'The photo consent wording has changed since this page loaded. Reload the page and try again.' });
       }
       const household = await households().doc(req.params.householdId).get();
       if (!household.exists || household.data().email !== session.email) return res.status(404).json({ error: 'Household not found.' });
-      const [policies, noticeVersions] = await Promise.all([currentCheckoutPolicies(db(), live()), loadNotices(db()).then(noticeVersionMap)]);
+      const { policies } = consent;
+      const noticeVersions = noticeVersionMap(await loadNotices(db()));
       const reference = db().collection('memberships').doc(req.params.memberId);
       const at = Timestamp.now();
       const changed = await db().runTransaction(async (transaction) => {

@@ -44,7 +44,7 @@ import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from '
 import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive, endedAtCutoff, clubYearEndUpdate } from './src/utils/subscriptions.js';
 import { registerGdprRoutes } from './src/server/gdpr.js';
 import { registerPagePublishingRoutes } from './src/server/pagePublishing.js';
-import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies, loadConsentWording } from './src/server/policies.js';
+import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies, loadCheckoutConsent } from './src/server/policies.js';
 import { registerConsentWordingRoutes } from './src/server/consentWording.js';
 import { freezePreLiveNotices, loadNotices, registerNoticeRoutes } from './src/server/notices.js';
 import { checkNoticeAgreement, noticeVersionMap } from './src/utils/notices.js';
@@ -2355,7 +2355,8 @@ const startCheckout = async (req, res, credit = null) => {
     const detailErrors = validateCheckout({ lines: selected, people, now });
     if (detailErrors.length) return res.status(400).json({ error: detailErrors[0], details: detailErrors });
     // Answers are recorded against the wording version current here, so a page still showing older wording must reload.
-    if (people.length && !wordingMatches(req.body.wording, await loadConsentWording(adminDb))) {
+    const consent = await loadCheckoutConsent(adminDb, isLive());
+    if (people.length && !wordingMatches(req.body.wording, consent.wording)) {
       return res.status(409).json({ code: 'wording_changed',
         error: 'The disclaimer or photo consent wording has changed since this page loaded. Reload the page, then read and tick them again.' });
     }
@@ -2541,7 +2542,7 @@ const startCheckout = async (req, res, credit = null) => {
     }));
     const totalPence = toPence(pricing.total);
     reservedStockIds = await reserveStock(orderRef, selected, catalog);
-    const policyVersions = await currentCheckoutPolicies(adminDb, isLive());
+    const policyVersions = consent.policies;
     const hasRecurringItem = items.some((item) => item.monthly);
     // New people get their permanent short ID only once the checkout has passed every check.
     const newPeople = storedPeople.filter((person) => !person.membershipId);

@@ -169,6 +169,27 @@ export const currentCheckoutPolicies = async (db, live = true) => {
   ]));
 };
 
+/** Wording and the versions attached to its answers, read at one point in time even during publication. */
+export const loadCheckoutConsent = async (db, live = true) => {
+  const wordingReference = db.collection('settings').doc('consentWording');
+  const policyReferences = live
+    ? Object.values(CHECKOUT_POLICY_KEYS).map((key) => db.collection('policies').doc(key))
+    : [];
+
+  return db.runTransaction(async (transaction) => {
+    const [wording, ...policies] = await transaction.getAll(wordingReference, ...policyReferences);
+    const versions = new Map(policies.map((document) => [document.id, document.data()?.currentVersion || 0]));
+
+    return {
+      wording: mergeConsentWording(wording.data()),
+      policies: Object.fromEntries(Object.entries(CHECKOUT_POLICY_KEYS).map(([name, key]) => [
+        name,
+        { policyKey: key, version: live ? versions.get(key) || 0 : PRE_LIVE_VERSION }
+      ]))
+    };
+  }, { readOnly: true });
+};
+
 export const registerPolicyRoutes = (app, { requireAdmin, db, distDirectory, siteUrl, live }) => {
   app.get('/api/admin/policies', rateLimit(30, 60 * 1000), async (req, res) => {
     const admin = await requireAdmin(req, res);

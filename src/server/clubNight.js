@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { rateLimit } from './rateLimit.js';
-import { currentCheckoutPolicies, loadConsentWording } from './policies.js';
+import { loadCheckoutConsent } from './policies.js';
 import { loadNotices } from './notices.js';
 import { noticeVersionMap } from '../utils/notices.js';
 import { noticeVersionEntries, photoConsentRecord, wordingMatches } from '../utils/consents.js';
@@ -92,11 +92,10 @@ export const registerClubNightRoutes = (app, { requireAdmin, db, emailCodes, req
     return [...new Map([...byEmail.docs, ...byGuardianEmail.docs, ...householdMembers].map((document) => [document.id, document])).values()];
   };
 
-  const createGuest = async (person, now) => {
+  const createGuest = async (person, now, policies) => {
     const at = Timestamp.fromDate(now);
     const [householdId] = await allocateRecordIds(db(), 'households');
     const [memberId] = await allocateMemberIds(db(), 1);
-    const policies = await currentCheckoutPolicies(db(), live());
     const { id: _householdKey, ...household } = householdForPerson(person, householdId, at);
     const { id: _id, lineIds: _lines, ownKitLineIds: _kit, returning: _returning, photoConsent, disclaimerAccepted: _accepted, ...details } = person;
     for (const key of HOUSEHOLD_MEMBER_FIELDS) delete details[key];
@@ -173,10 +172,11 @@ export const registerClubNightRoutes = (app, { requireAdmin, db, emailCodes, req
         }
         const guest = validateGuestDetails(identity, req.body.details, now);
         if (guest.error) return res.status(400).json({ error: guest.error });
-        if (!wordingMatches(req.body.wording, await loadConsentWording(db()))) {
+        const consent = await loadCheckoutConsent(db(), live());
+        if (!wordingMatches(req.body.wording, consent.wording)) {
           return res.status(409).json({ code: 'wording_changed', error: 'The disclaimer or photo consent wording has changed since this page loaded. Reload the page, then read and tick them again.' });
         }
-        matches = [await createGuest(guest.value, now)];
+        matches = [await createGuest(guest.value, now, consent.policies)];
       }
       const memberDocument = matches.length === 1 ? matches[0] : null;
       const member = memberDocument
