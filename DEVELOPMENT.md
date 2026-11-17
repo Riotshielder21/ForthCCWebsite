@@ -58,6 +58,8 @@ The lint baseline covers the refactored feature modules, browser modules and bro
 silently claiming the whole repository is lint-clean. Add touched modules to [eslint.config.js](eslint.config.js)
 as they are reviewed. It checks JavaScript correctness and browser/shared import boundaries; it is not a type checker.
 This remains a JavaScript project, with no repository-wide TypeScript conversion.
+The lint scope is deliberate: correctness and import-boundary rules are adopted incrementally instead of rewriting
+untouched modules to satisfy a new formatter. Build, unit, browser and emulator checks remain complementary.
 
 The unit runner discovers `.test.js` files recursively under [src/](src/), including nested browser/shared modules.
 Keep unit tests beside their module; browser scenarios live separately in [tests/browser/](tests/browser/).
