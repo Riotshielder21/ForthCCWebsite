@@ -49,9 +49,19 @@ the editor reports the partial save and lets you retry; it never reports all cha
 Before opening a pull request:
 
 ```bash
+npm run lint     # incremental JavaScript correctness and import-boundary baseline
 npm test          # unit tests
 npm run build     # production build
 ```
+
+The lint baseline covers the refactored feature modules, browser modules and browser-test tooling rather than
+silently claiming the whole repository is lint-clean. Add touched modules to [eslint.config.js](eslint.config.js)
+as they are reviewed. It checks JavaScript correctness and browser/shared import boundaries; it is not a type checker.
+This remains a JavaScript project, with no repository-wide TypeScript conversion.
+
+The unit runner discovers `.test.js` files recursively under [src/](src/), including nested browser/shared modules.
+Keep unit tests beside their module; browser scenarios live separately in [tests/browser/](tests/browser/).
+Use `node --test path/to/module.test.js` for a focused run.
 
 Browser regression tests use Chromium and mocked public responses, with external network requests blocked:
 

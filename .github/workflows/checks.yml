@@ -37,6 +37,7 @@ jobs:
       - run: python -m pip install -r jobs/justgo/requirements.txt
       - name: Unit tests and build
         run: |
+          npm run lint
           npm test
           npm run build
           node --check server.js
