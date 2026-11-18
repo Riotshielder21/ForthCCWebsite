@@ -95,7 +95,7 @@ recipient configuration and rerunning setup; do not delete an email channel stil
 | Alert | Meaning and action |
 | --- | --- |
 | FCC API outage | `/health` cannot read Firestore. The website maintainer checks Cloud Run logs, credentials and the latest revision, and rolls back a bad release if needed. |
-| FCC browser errors | The browser reported a fixed error category/page, including caught API/sign-in network failures. The maintainer filters Cloud Run logs by `jsonPayload.event="fcc-client-error"` and reproduces the problem. Notifications are limited to once an hour per open incident. |
+| FCC browser errors | The browser reported a fixed error category/page, including caught API/sign-in network failures. Google Analytics or reCAPTCHA scripts blocked by privacy tools are not reported. The maintainer filters Cloud Run logs by `jsonPayload.event="fcc-client-error"` and reproduces the problem. Notifications are limited to once an hour per open incident. |
 | FCC scheduled job failures | Scheduler dispatch, JustGo execution or partial renewal/upload work failed. Check Scheduler and execution/API logs; reconcile uncertain JustGo writes before retrying. |
 | FCC scheduled job missed or unhealthy | `/health/jobs` found a missed/failed run or could not inspect jobs. Check **Reports & records → Needs attention**, then Scheduler/Run and monitoring permissions. Paused JustGo schedules are intentionally ignored. |
 | FCC website monthly budget | Project-only **GBP 5/month**, including credits: actual spend 50% (GBP 2.50), 90% (GBP 4.50), 100% (GBP 5), plus forecast 100%. The budget contact/treasurer checks Billing cost reports for unexpected usage. **This is an alert, not a spending cap**; forecasts and emails can be delayed. |

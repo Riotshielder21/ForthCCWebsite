@@ -29,10 +29,19 @@ export function createClientErrorReporter({ send, location = () => globalThis.lo
   };
 }
 
+// Privacy tools routinely block Google Analytics and reCAPTCHA scripts; only the site's own files show a broken release.
+const siteFile = (element, origin) => {
+  try {
+    return new URL(element.src || element.href, origin).origin === origin;
+  } catch {
+    return true;
+  }
+};
+
 export function installClientErrorListeners(target, report) {
   const onError = (event) => {
     const resource = event.target && event.target !== target;
-    if (resource && !['SCRIPT', 'LINK'].includes(event.target.tagName)) return;
+    if (resource && (!['SCRIPT', 'LINK'].includes(event.target.tagName) || !siteFile(event.target, target.location?.origin))) return;
     void report(resource ? 'asset-load' : clientErrorKind(event.error));
   };
   const onRejection = (event) => { void report(clientErrorKind(event.reason, 'promise')); };

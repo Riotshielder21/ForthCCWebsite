@@ -33,14 +33,15 @@ test('failed reporting logs a fixed warning without recursion or personal error 
   assert.deepEqual(warnings, ['Browser error report could not be delivered.']);
 });
 
-test('global listeners capture script and promise errors, skip images and can be removed', () => {
+test('global listeners capture script and promise errors, skip images and blocked third-party scripts, and can be removed', () => {
   const listeners = new Map();
-  const target = { addEventListener: (name, callback) => listeners.set(name, callback),
+  const target = { location: { origin: 'https://club.test' }, addEventListener: (name, callback) => listeners.set(name, callback),
     removeEventListener: (name, callback) => { assert.equal(listeners.get(name), callback); listeners.delete(name); } };
   const reports = [];
   const cleanup = installClientErrorListeners(target, (kind) => reports.push(kind));
   listeners.get('error')({ target, error: new Error('private message') });
-  listeners.get('error')({ target: { tagName: 'SCRIPT' } });
+  listeners.get('error')({ target: { tagName: 'SCRIPT', src: 'https://club.test/assets/page.js' } });
+  listeners.get('error')({ target: { tagName: 'SCRIPT', src: 'https://www.googletagmanager.com/gtag/js?id=G-TEST' } });
   listeners.get('error')({ target: { tagName: 'IMG' } });
   listeners.get('unhandledrejection')({ reason: { code: 'auth/network-request-failed' } });
   assert.deepEqual(reports, ['javascript', 'asset-load', 'auth-network']);
