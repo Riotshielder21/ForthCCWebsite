@@ -19,10 +19,10 @@ test('public paths resolve directly and legacy links canonicalise without losing
   for (const path of ['/unknown', '/faq', '/history', '/?page=unknown']) assert.equal(resolveRoute(path).page, 'not-found');
 });
 
-test('hosting serves canonical paths and revalidates the worker separately from immutable hashed assets', () => {
+test('hosting serves canonical paths and revalidates pages and the worker separately from immutable hashed assets', () => {
   const { hosting } = JSON.parse(readFileSync(new URL('../../firebase.json', import.meta.url), 'utf8'));
   for (const rule of hosting.headers) {
-    assert.equal(typeof rule.source, 'string');
+    assert.equal(typeof (rule.source ?? rule.regex), 'string');
     for (const header of rule.headers) {
       assert.equal(typeof header.key, 'string');
       assert.equal(typeof header.value, 'string');
@@ -30,10 +30,19 @@ test('hosting serves canonical paths and revalidates the worker separately from 
   }
   assert.equal(hosting.headers.find((rule) => rule.source === '/sw.js').headers[0].value, 'no-cache');
   assert.ok(hosting.headers.find((rule) => rule.source === '/assets/**').headers.some((header) => header.value.includes('immutable')));
+  // Page HTML names hashed assets that the next release deletes, so browsers must revalidate every page path.
+  const pageRule = hosting.headers.findIndex((rule) => rule.regex && rule.headers.some(({ key, value }) => key === 'Cache-Control' && value === 'no-cache'));
+  const pageHtml = new RegExp(hosting.headers[pageRule]?.regex);
+  for (const path of [...Object.values(PUBLIC_ROUTES).map((route) => route.path), ...Object.values(PRIVATE_ROUTES), '/_preview/home', '/unknown']) {
+    assert.match(path, pageHtml);
+  }
+  for (const path of ['/assets/index-abc123.js', '/sw.js', '/content/pages/home.json']) assert.doesNotMatch(path, pageHtml);
+  assert.equal(hosting.headers.find((rule) => rule.source === '404.html').headers[0].value, 'no-cache');
   for (const source of ['/order/**', '/payment-success', '/payment-issue']) {
     const headers = Object.fromEntries(hosting.headers.find((rule) => rule.source === source).headers.map(({ key, value }) => [key, value]));
     assert.equal(headers['Cache-Control'], 'no-store', source);
     assert.equal(headers['Referrer-Policy'], 'no-referrer', source);
+    assert.ok(hosting.headers.findIndex((rule) => rule.source === source) > pageRule, `${source} must follow the page rule so no-store wins`);
   }
   for (const redirect of hosting.redirects) assert.equal(resolveRoute(redirect.source).url, redirect.destination);
   assert.ok(!hosting.rewrites.some((rule) => rule.source === '**'), 'unknown paths must reach Hosting’s 404 handler');
