@@ -65,15 +65,19 @@ The unit runner discovers `.test.js` files recursively under [src/](src/), inclu
 Keep unit tests beside their module; browser scenarios live separately in [tests/browser/](tests/browser/).
 Use `node --test path/to/module.test.js` for a focused run.
 
-Browser regression tests use Chromium and mocked public responses, with external network requests blocked:
+Browser regression tests use Chromium and mocked API responses, with external network requests blocked or fulfilled
+by synthetic Firebase authentication fixtures:
 
 ```bash
 npx playwright install chromium
 npm run test:browser
 ```
 
-They exercise same-tab content freshness, retained cached products with availability retry, and clearing consent ticks
-after wording changes. Playwright builds with test configuration, then starts and stops a production preview on port
+They exercise same-tab content freshness, retained cached products with availability retry, clearing consent ticks
+after wording changes, and admin reports using fresh tokens while requiring expired tokens to refresh successfully.
+Ordinary admin API requests should use `getIdToken()` so Firebase reuses valid tokens and refreshes only when needed;
+reserve forced refreshes for explicitly rechecking changed claims or retrying session verification.
+Playwright builds with test configuration, then starts and stops a production preview on port
 4175. Service workers are blocked in these scenarios; their offline behavior has separate unit coverage.
 CI runs the browser job separately and uploads traces on failure; no production credentials or emulators are needed.
 

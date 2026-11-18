@@ -132,7 +132,7 @@ export default function AdminReportsPage({ onNavigate, products }) {
   const settingsSections = settingsTab?.[3];
   const reloadSelected = async () => {
     const response = await apiFetch(apiUrl(`/api/admin/reports?${new URLSearchParams({ kind, recordId: selected.id })}`), {
-      headers: { Authorization: `Bearer ${await adminUser.getIdToken(true)}` }, cache: 'no-store'
+      headers: { Authorization: `Bearer ${await adminUser.getIdToken()}` }, cache: 'no-store'
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not reload the record.');
@@ -147,7 +147,7 @@ export default function AdminReportsPage({ onNavigate, products }) {
     setLoading(true);
     setError('');
     try {
-      const token = await adminUser.getIdToken(true);
+      const token = await adminUser.getIdToken();
       if (generation.current !== revision) return;
       const params = new URLSearchParams({ kind });
       if (nextCursor) params.set('cursor', nextCursor);
@@ -162,7 +162,11 @@ export default function AdminReportsPage({ onNavigate, products }) {
       setClubYearEnd(result.clubYearEnd || null);
       setJustgoSync(result.justgoSync || null);
     } catch (loadError) {
-      if (generation.current === revision) setError(loadError.message);
+      if (generation.current === revision) {
+        setError(loadError.code === 'auth/network-request-failed'
+          ? 'Firebase could not refresh your session. Check your connection to Google and retry loading the report.'
+          : loadError.message);
+      }
     } finally {
       if (generation.current === revision) setLoading(false);
     }
@@ -222,7 +226,7 @@ export default function AdminReportsPage({ onNavigate, products }) {
   const justgoAction = async (id, action) => {
     setError('');
     try {
-      const token = await adminUser.getIdToken(true);
+      const token = await adminUser.getIdToken();
       const response = await apiFetch(apiUrl(`/api/admin/memberships/${encodeURIComponent(id)}/justgo`), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not update JustGo status.');
@@ -237,7 +241,7 @@ export default function AdminReportsPage({ onNavigate, products }) {
   const sendRenewal = async (id) => {
     setError('');
     try {
-      const token = await adminUser.getIdToken(true);
+      const token = await adminUser.getIdToken();
       const response = await apiFetch(apiUrl('/api/admin/renewals/send'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ membershipId: id }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not send the renewal email.');
@@ -286,7 +290,7 @@ export default function AdminReportsPage({ onNavigate, products }) {
     setDeleteBusy(true);
     setError('');
     try {
-      const token = await adminUser.getIdToken(true);
+      const token = await adminUser.getIdToken();
       for (const path of activeMonthly.flatMap((subscription) => subscription.cancelPaths)) {
         const response = await apiFetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ reason }) });
@@ -305,7 +309,7 @@ export default function AdminReportsPage({ onNavigate, products }) {
     setScheduleBusy(true);
     setError('');
     try {
-      const token = await adminUser.getIdToken(true);
+      const token = await adminUser.getIdToken();
       const response = await apiFetch(apiUrl(`/api/admin/subscribers/${encodeURIComponent(selected.id)}/cancel`), {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ mode: stripeMode, clubCustomerId: selected.clubCustomerId,
@@ -327,7 +331,7 @@ export default function AdminReportsPage({ onNavigate, products }) {
     setDeleteBusy(true);
     setError('');
     try {
-      const token = await adminUser.getIdToken(true);
+      const token = await adminUser.getIdToken();
       const response = await apiFetch(apiUrl(`/api/admin/records/${kind}/${encodeURIComponent(deleting.id)}`), {
         method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ confirmId: confirmation, acknowledgeStripe: stripeAcknowledged, reason })
