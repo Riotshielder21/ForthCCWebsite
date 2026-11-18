@@ -57,7 +57,16 @@
         ]
       },
       {
-        "source": "index.html",
+        "regex": "^/[^.]*$",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "404.html",
         "headers": [
           {
             "key": "Cache-Control",
