@@ -49,9 +49,33 @@ the editor reports the partial save and lets you retry; it never reports all cha
 Before opening a pull request:
 
 ```bash
+npm run lint     # incremental JavaScript correctness and import-boundary baseline
 npm test          # unit tests
 npm run build     # production build
 ```
+
+The lint baseline covers the refactored feature modules, browser modules and browser-test tooling rather than
+silently claiming the whole repository is lint-clean. Add touched modules to [eslint.config.js](eslint.config.js)
+as they are reviewed. It checks JavaScript correctness and browser/shared import boundaries; it is not a type checker.
+This remains a JavaScript project, with no repository-wide TypeScript conversion.
+The lint scope is deliberate: correctness and import-boundary rules are adopted incrementally instead of rewriting
+untouched modules to satisfy a new formatter. Build, unit, browser and emulator checks remain complementary.
+
+The unit runner discovers `.test.js` files recursively under [src/](src/), including nested browser/shared modules.
+Keep unit tests beside their module; browser scenarios live separately in [tests/browser/](tests/browser/).
+Use `node --test path/to/module.test.js` for a focused run.
+
+Browser regression tests use Chromium and mocked public responses, with external network requests blocked:
+
+```bash
+npx playwright install chromium
+npm run test:browser
+```
+
+They exercise same-tab content freshness, retained cached products with availability retry, and clearing consent ticks
+after wording changes. Playwright builds with test configuration, then starts and stops a production preview on port
+4175. Service workers are blocked in these scenarios; their offline behavior has separate unit coverage.
+CI runs the browser job separately and uploads traces on failure; no production credentials or emulators are needed.
 
 The emulator integration suite runs the API against fresh emulators with Stripe mocked. It covers checkout, renewals, failed payments, club night, volunteering, refunds, GDPR erasure, data migration and the JustGo jobs. It takes 5–10 minutes. Stop `npm run local` first, as it uses the same ports.
 
@@ -61,7 +85,36 @@ set -a; source .env.emulator.example; set +a
 npx --yes firebase-tools@14.22.0 emulators:exec --only auth,firestore,storage --project demo-fcc 'npm run test:integration'
 ```
 
-Pull requests run the same three checks on GitHub, plus CodeQL.
+Pull requests run lint, unit tests, production build, server syntax, emulator integration and browser regressions,
+plus CodeQL.
+
+### Production-code boundaries
+
+Keep HTTP feature handlers in [src/server/](src/server/) and register them from [server.js](server.js).
+For example, [pagePublishing.js](src/server/pagePublishing.js) owns the saved-draft, page-save and review-request
+routes; Workspace notification delivery remains in the server wiring. Shared validation and normalization stay
+independent of Express and React, so the browser and API can use the same rules.
+
+Prefer descriptive names, explicit validation steps and small helpers for repeated domain operations. Keep related
+decisions together rather than introducing a generic abstraction or moving files only to reduce line counts.
+Unit tests remain beside their production modules.
+
+Live consent publication saves the statement and its numbered policy history in one Firestore transaction.
+Policy sync must read consent wording inside its transaction too, so a release cannot version a stale copy during
+an admin edit. Keep transaction reads before writes, and fetch wording and policy together with `transaction.getAll`
+in both paths to avoid a second read on a transaction that contention has already aborted.
+Checkout, guest check-in and photo-consent updates use `loadCheckoutConsent` to validate the wording and retain
+the versions from the same read-only transaction snapshot. Do not fetch a newer version after validating older wording.
+
+Public page JSON is fetched on each visit. Only in-flight requests are shared; do not retain completed promises
+in the application. The service worker handles offline fallback after network failure or a four-second timeout.
+Pages do not poll for edits while someone is reading them.
+
+Browser state and effects belong in [src/browser/](src/browser/), starting with catalogue refresh and consent wording.
+Keep that code out of server modules and keep shared rules free of React, storage and network side effects.
+The existing consent-client utility re-exports its browser implementation for compatibility while call sites migrate.
+Catalogue and consent refresh failures retain the displayed data but show a retry action; a wording save whose
+follow-up refresh fails explicitly reports that the save succeeded and the displayed copy is stale.
 
 ### Public pages and missing links
 

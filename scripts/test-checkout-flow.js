@@ -16,6 +16,9 @@ import { eventAttendeeRows, justgoUploadRows, takingsSummary } from '../src/util
 import { sha256 } from '../src/utils/emailCodes.js';
 import { applyConsentPrefill, checkoutWording } from '../src/utils/consents.js';
 import { activeSubscriptionItems } from '../src/utils/subscriptions.js';
+import { tickWording } from '../src/constants/consentWording.js';
+import { policyHash } from '../src/utils/policies.js';
+import { loadCheckoutConsent } from '../src/server/policies.js';
 import { joiningShare, fullMonthsAfterCurrent, clubYearOf, clubYearDates, monthlyDebits, nextFirst } from '../src/utils/clubYear.js';
 
 const projectId = assertLocalFirebase(process.env);
@@ -1133,6 +1136,64 @@ await test('consent and policy wording is recorded as numbered versions that fol
   const next = (await db.collection('policyVersions').doc(`participation-disclaimer@${byKey.get('participation-disclaimer').currentVersion + 1}`).get()).data();
   assert.equal(next.supersedesVersion, byKey.get('participation-disclaimer').currentVersion);
   assert.equal((await call('GET', '/api/admin/policies')).status, 401, 'policy records are admin only');
+});
+
+await test('concurrent consent publications and release sync keep the final wording and policy version together', async () => {
+  const before = await call('GET', '/api/consent-wording');
+  assert.equal(before.status, 200, before.text);
+  const original = before.json.disclaimer;
+  const publish = (body) => call('PUT', '/api/admin/consent-wording/disclaimer', {
+    headers: admin,
+    body
+  });
+  const policyReference = db.collection('policies').doc('participation-disclaimer');
+  try {
+    for (let round = 1; round <= 3; round += 1) {
+      const initialPolicy = (await policyReference.get()).data();
+      const edits = [
+        { ...original, body: `${original.body}\n\nFirst concurrent edit, round ${round}.` },
+        { ...original, body: `${original.body}\n\nSecond concurrent edit, round ${round}.` }
+      ];
+      const results = await Promise.all([
+        publish(edits[0]),
+        publish(edits[1]),
+        call('POST', '/api/admin/policies/sync', { headers: admin }),
+        Promise.all(Array.from({ length: 3 }, () => loadCheckoutConsent(db)))
+      ]);
+      for (const result of results.slice(0, 3)) assert.equal(result.status, 200, `Round ${round}: ${result.text}`);
+      const versions = results.slice(0, 2).map((result) => result.json.version).sort((a, b) => a - b);
+      assert.deepEqual(versions, [initialPolicy.currentVersion + 1, initialPolicy.currentVersion + 2]);
+
+      for (const [index, edit] of edits.entries()) {
+        const version = results[index].json.version;
+        const history = (await db.collection('policyVersions').doc(`participation-disclaimer@${version}`).get()).data();
+        assert.equal(history.text, tickWording(edit), 'each successful publication keeps its own history');
+      }
+
+      for (const consent of results[3]) {
+        for (const [key, policy] of Object.entries(consent.policies)) {
+          const history = (await db.collection('policyVersions').doc(`${policy.policyKey}@${policy.version}`).get()).data();
+          assert.equal(history.text, tickWording(consent.wording[key]), 'acceptance uses one wording/version snapshot');
+        }
+      }
+
+      const current = await call('GET', '/api/consent-wording');
+      assert.equal(current.status, 200, current.text);
+      const policy = (await policyReference.get()).data();
+      const history = (await db.collection('policyVersions').doc(`participation-disclaimer@${policy.currentVersion}`).get()).data();
+      assert.equal(policy.currentVersion, initialPolicy.currentVersion + 2);
+      assert.equal(history.text, tickWording(current.json.disclaimer));
+      assert.equal(policy.currentHash, policyHash(history.text));
+
+      const retry = await publish(current.json.disclaimer);
+      assert.equal(retry.status, 200, retry.text);
+      assert.equal(retry.json.changed, false);
+      assert.equal((await policyReference.get()).data().currentVersion, policy.currentVersion);
+    }
+  } finally {
+    const restored = await publish(original);
+    assert.equal(restored.status, 200, restored.text);
+  }
 });
 
 await test('API responses carry security headers and CORS only answers approved origins', async () => {

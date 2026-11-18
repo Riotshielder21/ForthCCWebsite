@@ -8,7 +8,8 @@ import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYear
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName, returningVerificationMatches, restoreDraftLines } from './utils/checkout';
 import { applyTripDiscounts } from './utils/tripDiscount';
 import { applyConsentPrefill, checkoutWording, draftForCurrentWording } from './utils/consents';
-import { loadCachedConsentWording, refreshConsentWording, useConsentWording } from './utils/consentWordingClient';
+import { loadCachedConsentWording, refreshConsentWording, useConsentWording, useConsentWordingRefresh } from './browser/consentWording.js';
+import { usePublicCatalogue } from './browser/usePublicCatalogue.js';
 import { invalidatePersonVerification } from './utils/checkout';
 import { eventScheduleLabel, normaliseProduct } from './utils/catalogue';
 import { itemLabel, productLimits } from './utils/inventory';
@@ -20,15 +21,12 @@ import PageLoadBoundary from './components/PageLoadBoundary';
 import OfflineStatus from './components/OfflineStatus';
 import AnalyticsConsentBanner from './components/AnalyticsConsentBanner';
 import { loadPublishedPageContent } from './utils/publicContent';
-import { subscribeToProducts } from './utils/content';
 import { validateDiscountCode } from './utils/discountCodeApi';
 import { PageContentProvider } from './utils/PageContentContext';
 import { apiUrl, apiFetch } from './utils/api';
-import { PRODUCTS } from './constants/products';
 import './index.css';
 import fccCrest from './assets/fcc-crest.png';
 import { applyVolunteerBenefits } from './utils/volunteering';
-import { readPublicSnapshot, savePublicSnapshot } from './utils/publicSnapshots';
 
 const HomePage = lazy(pageModules.home);
 const MembershipPage = lazy(pageModules.membership);
@@ -75,8 +73,8 @@ const BASKET_LINKS = [
 export default function App() {
   const [initialDraft] = useState(() => { loadCachedConsentWording(); return draftForCurrentWording(loadDraft()); });
   const { currentPage, setCurrentPage, onLinkClick, navigateTo } = useSiteRoute();
-  const [products, setProducts] = useState(() => readPublicSnapshot('products') || PRODUCTS);
-  const [availability, setAvailability] = useState({});
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const { products, availability, catalogueLive, refreshAvailability, refresh: catalogueRefresh } = usePublicCatalogue(currentPage, isCartOpen);
   const productsRef = useRef(products);
   productsRef.current = products;
   const [pageContent, setPageContent] = useState({});
@@ -85,8 +83,6 @@ export default function App() {
   // Saved lines the cached catalogue lacks (such as a new event) wait for the live catalogue rather than being dropped,
   // and until then the attendees and draft are left as they are.
   const waitingDraft = useRef(restoredCart.complete ? null : initialDraft.cart.filter((line) => line?.id));
-  const [catalogueLive, setCatalogueLive] = useState(false);
-  const [isCartOpen, setIsCartOpen] = useState(false);
   useEffect(() => {
     if (!isCartOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -110,6 +106,7 @@ export default function App() {
   const [people, setPeople] = useState(initialDraft?.people || []);
   // Published wording can change while the page is open: anyone ticked for the old text must tick again.
   const consentWording = useConsentWording();
+  const consentRefresh = useConsentWordingRefresh();
   const wordingKey = JSON.stringify(checkoutWording(consentWording));
   const shownWordingKey = useRef(wordingKey);
   useEffect(() => { refreshConsentWording(); }, []);
@@ -137,26 +134,6 @@ export default function App() {
   useEffect(() => loadPublishedPageContent((content) => setPageContent((current) => ({ ...current, ...content })), (error) => {
     console.error('Page content unavailable:', error);
   }, currentPage), [currentPage]);
-
-  // Admins see their own product saves straight away; public visitors use the availability response below.
-  const adminPage = currentPage === 'admin' || currentPage === 'admin-reports';
-  useEffect(() => adminPage ? subscribeToProducts((remoteProducts) => {
-    setProducts(remoteProducts);
-    setCatalogueLive(true);
-  }, (error) => console.error('Product catalog unavailable:', error)) : undefined, [adminPage]);
-
-  const refreshAvailability = () => apiFetch(apiUrl('/api/availability'), { cache: 'no-store' })
-    .then((response) => (response.ok ? response.json() : null))
-    .then((result) => {
-      if (result?.availability) setAvailability(result.availability);
-      if (Array.isArray(result?.products)) {
-        setProducts(result.products);
-        setCatalogueLive(true);
-        savePublicSnapshot('products', result.products);
-      }
-    })
-    .catch(() => {});
-  useEffect(() => { refreshAvailability(); }, [currentPage, isCartOpen]);
 
   // How many more of a product (and size) can be added; unlimited products return Infinity.
   const stockLeft = (product, size = '') => {
@@ -515,6 +492,14 @@ export default function App() {
 
       <main className="SiteMain" id="main-content" tabIndex={-1}>
         <OfflineStatus currentPage={currentPage} />
+        {catalogueRefresh.error && <p className="OfflineStatus" role="status">
+          {catalogueRefresh.error}{' '}
+          <button type="button" className="EditorCommand" disabled={catalogueRefresh.refreshing} onClick={refreshAvailability}>Retry availability</button>
+        </p>}
+        {consentRefresh.error && <p className="OfflineStatus" role="status">
+          {consentRefresh.error}{' '}
+          <button type="button" className="EditorCommand" disabled={consentRefresh.refreshing} onClick={refreshConsentWording}>Retry consent wording</button>
+        </p>}
         <PageLoadBoundary key={currentPage}>
           <Suspense fallback={<div className="SectionContent" role="status">Loading page…</div>}>
             {renderPage()}

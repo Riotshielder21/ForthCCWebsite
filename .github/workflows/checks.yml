@@ -37,6 +37,7 @@ jobs:
       - run: python -m pip install -r jobs/justgo/requirements.txt
       - name: Unit tests and build
         run: |
+          npm run lint
           npm test
           npm run build
           node --check server.js
@@ -48,3 +49,23 @@ jobs:
           npx --yes firebase-tools@14.22.0 emulators:exec \
             --only auth,firestore,storage --project demo-fcc \
             'node scripts/test-local.mjs'
+
+  browser-tests:
+    name: Browser regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-test-results
+          path: test-results/
+          retention-days: 7

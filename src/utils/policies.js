@@ -16,10 +16,19 @@ export const POLICY_DEFINITIONS = [
 ];
 
 /** The definitions with the two ticked statements' text taken from the wording currently published. */
-export const policyDefinitionsFor = (wording) => POLICY_DEFINITIONS.map((definition) => {
-  const key = { 'participation-disclaimer': 'disclaimer', 'photo-video-consent': 'photoVideo' }[definition.key];
-  return key && wording?.[key] ? { ...definition, text: () => tickWording(wording[key]) } : definition;
-});
+export const policyDefinitionsFor = (wording) => {
+  const consentKeys = {
+    'participation-disclaimer': 'disclaimer',
+    'photo-video-consent': 'photoVideo'
+  };
+
+  return POLICY_DEFINITIONS.map((definition) => {
+    const key = consentKeys[definition.key];
+    if (!key || !wording?.[key]) return definition;
+
+    return { ...definition, text: () => tickWording(wording[key]) };
+  });
+};
 
 /** Keys the checkout shows to every new member and records against their consents. */
 export const CHECKOUT_POLICY_KEYS = { disclaimer: 'participation-disclaimer', photoVideo: 'photo-video-consent' };
@@ -30,7 +39,10 @@ const normaliseText = (text) => String(text ?? '').replace(/\r\n/g, '\n').trim()
 export const policyHash = (text) => createHash('sha256').update(normaliseText(text)).digest('hex');
 
 /** The wording currently published for a policy, read from its website page when it has one. */
-export const resolvePolicyText = (definition, pages = {}) => normaliseText(definition.page ? pages[definition.page]?.[definition.field] : definition.text());
+export const resolvePolicyText = (definition, pages = {}) => {
+  const text = definition.page ? pages[definition.page]?.[definition.field] : definition.text();
+  return normaliseText(text);
+};
 
 /**
  * What to write for each policy. `current` maps policy key to its latest `{ version, hash }`.
@@ -40,7 +52,16 @@ export const planPolicyUpdates = (definitions, current, pages = {}) => definitio
   const text = resolvePolicyText(definition, pages);
   const latest = current.get(definition.key);
   if (!text) return { definition, action: latest ? 'keep' : 'register' };
+
   const hash = policyHash(text);
   if (latest?.hash === hash) return { definition, action: 'keep' };
-  return { definition, action: 'version', version: (latest?.version || 0) + 1, supersedes: latest?.version || null, text, hash };
+
+  return {
+    definition,
+    action: 'version',
+    version: (latest?.version || 0) + 1,
+    supersedes: latest?.version || null,
+    text,
+    hash
+  };
 });

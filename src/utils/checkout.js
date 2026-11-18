@@ -138,18 +138,51 @@ export const displayName = (person) => {
 
 const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 
+const sanitizePhone = (value) => {
+  const phone = text(value, 40);
+  return normalisePhoneNumber(phone) || phone;
+};
+
+const sanitizePostcode = (value) => {
+  const postcode = text(value, 12);
+  return normaliseUkPostcode(postcode) || postcode;
+};
+
 export const sanitizePerson = (person) => ({
   id: text(person?.id, 64),
-  lineIds: Array.isArray(person?.lineIds) ? person.lineIds.filter((id) => typeof id === 'string').map((id) => id.slice(0, 64)) : [],
-  returning: person?.returning === true, junior: person?.junior === true,
-  firstName: normalisePersonName(text(person?.firstName, 80)), lastName: normalisePersonName(text(person?.lastName, 80)), dob: text(person?.dob, 10),
-  email: text(person?.email, 254).toLowerCase(), phone: normalisePhoneNumber(text(person?.phone, 40)) || text(person?.phone, 40),
-  address: text(person?.address, 300), postcode: normaliseUkPostcode(text(person?.postcode, 12)) || text(person?.postcode, 12),
-  affiliationNumber: text(person?.affiliationNumber, 40), swimming: text(person?.swimming, 20), medical: text(person?.medical, 1000),
-  photoConsent: person?.photoConsent === true, disclaimerAccepted: person?.disclaimerAccepted === true,
-  ownKitLineIds: Array.isArray(person?.ownKitLineIds) ? person.ownKitLineIds.filter((id) => typeof id === 'string').map((id) => id.slice(0, 64)).slice(0, 20) : [],
-  emergencyContact: { name: normalisePersonName(text(person?.emergencyContact?.name, 120)), phone: normalisePhoneNumber(text(person?.emergencyContact?.phone, 40)) || text(person?.emergencyContact?.phone, 40), relationship: text(person?.emergencyContact?.relationship, 60) },
-  guardian: { name: normalisePersonName(text(person?.guardian?.name, 120)), phone: normalisePhoneNumber(text(person?.guardian?.phone, 40)) || text(person?.guardian?.phone, 40), email: text(person?.guardian?.email, 254).toLowerCase(), relationship: text(person?.guardian?.relationship, 60), address: text(person?.guardian?.address, 300), postcode: normaliseUkPostcode(text(person?.guardian?.postcode, 12)) || text(person?.guardian?.postcode, 12) }
+  lineIds: Array.isArray(person?.lineIds)
+    ? person.lineIds.filter((id) => typeof id === 'string').map((id) => id.slice(0, 64))
+    : [],
+  returning: person?.returning === true,
+  junior: person?.junior === true,
+  firstName: normalisePersonName(text(person?.firstName, 80)),
+  lastName: normalisePersonName(text(person?.lastName, 80)),
+  dob: text(person?.dob, 10),
+  email: text(person?.email, 254).toLowerCase(),
+  phone: sanitizePhone(person?.phone),
+  address: text(person?.address, 300),
+  postcode: sanitizePostcode(person?.postcode),
+  affiliationNumber: text(person?.affiliationNumber, 40),
+  swimming: text(person?.swimming, 20),
+  medical: text(person?.medical, 1000),
+  photoConsent: person?.photoConsent === true,
+  disclaimerAccepted: person?.disclaimerAccepted === true,
+  ownKitLineIds: Array.isArray(person?.ownKitLineIds)
+    ? person.ownKitLineIds.filter((id) => typeof id === 'string').map((id) => id.slice(0, 64)).slice(0, 20)
+    : [],
+  emergencyContact: {
+    name: normalisePersonName(text(person?.emergencyContact?.name, 120)),
+    phone: sanitizePhone(person?.emergencyContact?.phone),
+    relationship: text(person?.emergencyContact?.relationship, 60)
+  },
+  guardian: {
+    name: normalisePersonName(text(person?.guardian?.name, 120)),
+    phone: sanitizePhone(person?.guardian?.phone),
+    email: text(person?.guardian?.email, 254).toLowerCase(),
+    relationship: text(person?.guardian?.relationship, 60),
+    address: text(person?.guardian?.address, 300),
+    postcode: sanitizePostcode(person?.guardian?.postcode)
+  }
 });
 
 const EMAIL = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
