@@ -1909,6 +1909,7 @@
 .ProductChipRemove:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: 1px; }
 .LifetimeControl { border-top: 1px dashed var(--fcc-color-border); padding-top: 0.75rem; }
 .LifetimeControl > summary { cursor: pointer; font-size: 0.8rem; color: var(--fcc-color-copy); width: fit-content; }
+.TimetableCalendarHelp { margin-top: 0.5rem; }
 .TimetableDays { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; margin-top: 1rem; }
 .TimetableDay { padding: 1rem; border: 1px solid var(--fcc-color-border); border-radius: 0.75rem; background: var(--fcc-color-surface-subtle); }
 .TimetableDayName { margin-bottom: 0.5rem; font-size: 0.8rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fcc-color-copy); }
@@ -1918,6 +1919,24 @@
 .TimetableDetails { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
 .TimetableTag { align-self: flex-start; padding: 0 0.5rem; border-radius: 999px; background: var(--fcc-color-surface); border: 1px solid var(--fcc-color-border); font-size: 0.75rem; font-weight: 700; }
 .TimetableMeta { font-size: 0.85rem; color: var(--fcc-color-copy); overflow-wrap: anywhere; }
+.TimetableCalendarActions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.35rem; }
+.TimetableCalendarLink { display: inline-flex; align-items: center; padding: 0.25rem 0.45rem; border: 1px solid var(--fcc-color-border); border-radius: 0.35rem; background: var(--fcc-color-surface); color: var(--fcc-color-accent); font: inherit; font-size: 0.78rem; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.TimetableAddCalendar { gap: 0.35rem; white-space: nowrap; text-decoration: none; }
+.TimetableCalendarLink:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: 2px; }
+.TimetableCalendarDialog { width: min(460px, 100%); }
+.TimetableCalendarDialog .AdminListHeader { align-items: flex-start; }
+.TimetableCalendarDialog .AdminListHeader h3 { display: flex; align-items: center; gap: 0.5rem; }
+.TimetableCalendarDialog .AdminListHeader p { margin-top: 0.35rem; }
+.TimetableCalendarChoices { display: grid; gap: 0.6rem; margin-top: 1.25rem; }
+.TimetableCalendarChoice { display: flex; align-items: center; gap: 0.85rem; width: 100%; padding: 0.85rem 1rem; border: 1px solid var(--fcc-color-border); border-radius: 0.55rem; background: var(--fcc-color-surface); color: var(--fcc-color-copy); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.TimetableCalendarChoice:hover { background: var(--fcc-color-surface-subtle); }
+.TimetableCalendarChoice:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: 2px; }
+.TimetableCalendarChoice > svg, .TimetableCalendarChoice > .CalendarGoogleLogo { flex: 0 0 22px; }
+.TimetableCalendarChoice > span:last-child { display: grid; gap: 0.2rem; }
+.TimetableCalendarChoice small { color: var(--fcc-color-copy); font-size: 0.82rem; }
+.CalendarGoogleLogo { display: inline-block; font-family: Arial, sans-serif; font-size: 1.6rem; font-weight: 700; line-height: 1; background: conic-gradient(from -45deg, #4285f4 0deg 90deg, #34a853 90deg 180deg, #fbbc05 180deg 270deg, #ea4335 270deg); background-clip: text; -webkit-text-fill-color: transparent; }
+.TimetableCalendarCopyStatus { margin-top: 1rem; font-size: 0.9rem; }
+.TimetableCalendarCopyStatus p { margin-bottom: 0.5rem; }
 .WelcomePlaceholders .EditorCommand { min-height: 32px; padding: 4px 10px; font-size: 0.8rem; }
 .WelcomePreview { display: block; width: 100%; height: 28rem; border: 1px solid var(--fcc-color-border); border-radius: 0.6rem; background: #f8fafc; }
 .NoticeAddForm { display: grid; max-width: 28rem; margin-top: 1.5rem; gap: 0.5rem; padding: 0.75rem; border: 1px dashed #94a3b8; border-radius: 0.6rem; }

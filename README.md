@@ -44,6 +44,8 @@ Purchase emails include a PDF receipt and, for scheduled bookings, a calendar fi
 
 **Weekly timetable.** Admins list the club's regular sessions (day, time, season, location) under **Reports & records → Sessions & timetable**; the Disciplines page shows them to everyone from `GET /api/timetable` ([timetable.js](src/server/timetable.js)). It is separate from check-in sessions.
 
+Each session offers a one-off next-event download or a live Google/Apple calendar subscription. Subscriptions require a publicly reachable URL (Google cannot fetch `localhost`); refresh timing is controlled by the calendar app. Season and time edits update the same event ID. Deleted sessions are retained privately as cancellation records, and deleted/disabled sessions continue serving a feed with `STATUS:CANCELLED` instead of returning 404. This cancels the events on refresh, not the subscription itself; users remove unused subscriptions in their calendar app. One-off downloads do not receive updates.
+
 **Events.** Each event has a schedule, capacity and leader. When bookings close, the leader is emailed the attendee list once, with emergency contacts, medical details and photo-consent status ([eventRosters.js](src/server/eventRosters.js)). An event leaves the shop when it sells out or is over; without a close date, a course can be booked until its last day ([eventRoster.js](src/utils/eventRoster.js)).
 
 **Volunteering.** The volunteering page, volunteer levels and yearly benefits, with every save versioned and restorable ([volunteers.js](src/server/volunteers.js)). Boathouse access codes are private and only changed through admin routes ([boathouse.js](src/server/boathouse.js)).

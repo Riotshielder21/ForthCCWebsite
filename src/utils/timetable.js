@@ -5,16 +5,16 @@ export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', '
 export const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-const regular = (name, discipline, weekday, start, extra = {}) => ({ name, discipline, weekday, start, end: '', seasonStart: null, seasonEnd: null,
+const regular = (id, name, discipline, weekday, start, extra = {}) => ({ id, name, discipline, weekday, start, end: '', seasonStart: null, seasonEnd: null,
   location: '', notes: '', active: true, ...extra });
 /** Used until admins first save the timetable: the times previously written into the Disciplines tiles. */
 export const DEFAULT_TIMETABLE = [
-  regular('Advanced polo', 'Canoe polo', 1, '18:00'),
-  regular('Slalom training', 'Slalom', 2, '19:00', { location: 'On the canal' }),
-  regular('Intermediate polo', 'Canoe polo', 3, '19:00'),
-  regular('Sprint & marathon', 'Sprint & Marathon', 4, '18:00', { seasonStart: 4, seasonEnd: 9 }),
-  regular('Beginner-friendly polo', 'Canoe polo', 5, '18:00'),
-  regular('Sprint & marathon', 'Sprint & Marathon', 0, '14:00', { seasonStart: 10, seasonEnd: 3 })
+  regular('advanced-polo', 'Advanced polo', 'Canoe polo', 1, '18:00'),
+  regular('slalom-training', 'Slalom training', 'Slalom', 2, '19:00', { location: 'On the canal' }),
+  regular('intermediate-polo', 'Intermediate polo', 'Canoe polo', 3, '19:00'),
+  regular('sprint-marathon-summer', 'Sprint & marathon', 'Sprint & Marathon', 4, '18:00', { seasonStart: 4, seasonEnd: 9 }),
+  regular('beginner-friendly-polo', 'Beginner-friendly polo', 'Canoe polo', 5, '18:00'),
+  regular('sprint-marathon-winter', 'Sprint & marathon', 'Sprint & Marathon', 0, '14:00', { seasonStart: 10, seasonEnd: 3 })
 ];
 
 const text = (value, max) => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '';
@@ -33,6 +33,8 @@ export function validateTimetable(sessions) {
   for (const [index, session] of sessions.entries()) {
     const label = `Session ${index + 1}`;
     if (!session || typeof session !== 'object') return { error: `${label} is not valid.` };
+    const id = session.id === undefined || session.id === '' ? `session-${index + 1}` : session.id;
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(id)) return { error: `${label} has an invalid identifier.` };
     const name = text(session.name, TIMETABLE_LIMITS.name);
     if (!name) return { error: `${label} needs a name.` };
     const weekday = Number(session.weekday);
@@ -46,10 +48,11 @@ export function validateTimetable(sessions) {
     const seasonStart = parsedSeasonStart.value;
     const seasonEnd = parsedSeasonEnd.value;
     if (Boolean(seasonStart) !== Boolean(seasonEnd)) return { error: `Choose both the first and last month for ${name}, or neither for all year.` };
-    value.push({ name, discipline: text(session.discipline, TIMETABLE_LIMITS.discipline), weekday, start: session.start, end,
+    value.push({ id, name, discipline: text(session.discipline, TIMETABLE_LIMITS.discipline), weekday, start: session.start, end,
       seasonStart, seasonEnd, location: text(session.location, TIMETABLE_LIMITS.location), notes: text(session.notes, TIMETABLE_LIMITS.notes),
       active: session.active !== false });
   }
+  if (new Set(value.map(({ id }) => id)).size !== value.length) return { error: 'Each timetable session needs a unique identifier.' };
   return { value };
 }
 
