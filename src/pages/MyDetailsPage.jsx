@@ -173,7 +173,7 @@ export default function MyDetailsPage() {
 
   const signOut = (message = '') => { clearEmailSession('details'); setSession(null); setHouseholds(null); setPurchases([]); setMonthly([]); setNotice(message); };
 
-  return <div className="SectionContent PageFadeIn">
+  return <div className="SectionHero PageFadeIn">
     <h1 className="page_heading_bold_1">My details</h1>
     {notice && <p role="status">{notice}</p>}
     {!session ? <EmailCodeSignIn purpose="details" askDob onVerified={(verified) => { setNotice(''); setError(''); setSession(verified); }}
