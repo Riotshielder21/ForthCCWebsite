@@ -63,7 +63,7 @@ Some of these providers store or process data outside the UK, including in the U
 
 ## How long we keep it
 
-We keep information only as long as we need it. The periods are set out in the [Data Retention](/notices#data-retention) notice. Anonymous statistics, such as the number of members each year, are kept after the personal information behind them is deleted (see [Data Analytics](/notices#data-analytics)).
+We keep information only as long as we need it. The periods are set out in the [Data Retention](/notices#data-retention) notice. Backups of our records are deleted automatically after at most 14 days. Anonymous statistics, such as the number of members each year, are kept after the personal information behind them is deleted (see [Data Analytics](/notices#data-analytics)).
 
 ## Your rights
 
@@ -116,11 +116,14 @@ The club year runs from 1 March to the end of February. "After membership ends" 
 - Emails and contact form messages: 2 years, unless they are part of a record listed above.
 - Photos and videos: reviewed every year; removed sooner if consent is withdrawn.
 - Website security logs: 30 days.
+- Backups of the website's records: daily backups for 14 days, and point-in-time copies for 7 days, so that a mistake can be undone. They are then deleted automatically.
 - Website analytics (only with consent): Google Analytics retains event-level data according to the retention setting configured for the club's Google Analytics property. The club uses the reports in aggregate.
 
 ## Erasure on request
 
 You can ask us to erase your information at any time by emailing ${SECRETARY}. We do this within one month. We keep only what the law requires, such as financial records, and remove your name from them where we can.
+
+Erased information stays in backups taken before the erasure until those backups are deleted, at most 14 days later. If we ever restore records from a backup, anyone erased since the backup was taken stays erased.
 
 ## Anonymous statistics
 
