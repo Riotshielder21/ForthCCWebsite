@@ -27,7 +27,7 @@ function useGridColumns() {
   return columns;
 }
 
-export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, onNavigate, tripDiscounts = [] }) {
+export default function MembershipPage({ activeCategory, setActiveCategory, cart, availability = {}, stockLeft = () => Infinity, addToCart, removeOneFromCart, getItemDisplayPrice, products, shopNotice = '', onRetryShop = null, onNavigate, tripDiscounts = [] }) {
   const copy = usePageContent('membership');
   const { adminUser } = usePageEditor();
   const [selectedTier, setSelectedTier] = useState('adult');
@@ -107,6 +107,10 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
       </div>
 
       <div className="SectionBottom">
+        {shopNotice && <p className="text_container" role="status">
+          {shopNotice}
+          {onRetryShop && <>{' '}<button type="button" className="EditorCommand" onClick={onRetryShop}>Try again</button></>}
+        </p>}
         <div className="shop_catalogue_grid">
           {/* Membership tier card */}
           {showMembershipTile && (

@@ -65,7 +65,7 @@ export const saveEventRosterViewers = (productId, viewers, idToken) => eventRost
 const defer = (name) => (...args) => import('./contentFirebase.js').then((module) => module[name](...args));
 export const saveProduct = defer('saveProduct');
 export const removeProduct = defer('removeProduct');
-export const seedProducts = defer('seedProducts');
+export const addMissingStarterProducts = defer('addMissingStarterProducts');
 export const uploadProductImage = defer('uploadProductImage');
 export const uploadBannerImage = defer('uploadBannerImage');
 export const uploadPageImage = defer('uploadPageImage');

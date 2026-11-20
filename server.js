@@ -14,7 +14,6 @@ import { getStorage as getAdminStorage } from 'firebase-admin/storage';
 import { appCheckMiddleware } from './src/server/appCheck.js';
 import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
 import { contentDisposition, findSafeguardingPolicy, isPdf } from './src/utils/safeguardingPolicies.js';
-import { PRODUCTS } from './src/constants/products.js';
 import { calculateCart, expandClubYearLines, expandPeopleLines, NEXT_YEAR_LINE_SUFFIX } from './src/utils/pricing.js';
 import { clubYearOf, clubYearDates, clubYearLabel, clubYearKind, resolveClubYearChoice, holdsForClubYear } from './src/utils/clubYear.js';
 import { createClubYearSubscription, clubYearCancelAt } from './src/server/clubYearSubscription.js';
@@ -191,7 +190,7 @@ const adjustVolunteerSubscriptions = async (membershipId, now = new Date()) => {
   const snapshot = await adminDb.collection('subscriptions').where('membershipIds', 'array-contains', membershipId).limit(20).get();
   if (snapshot.empty) return [];
   const [tiers, catalogue] = await Promise.all([loadVolunteerBenefits(),
-    resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id })))]);
+    resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id })))]);
   const results = [];
   for (const document of snapshot.docs.filter((entry) => entry.data().status === 'active')) {
     const items = (document.data().items || []).filter((item) => item.membershipIds?.includes(membershipId));
@@ -1829,7 +1828,7 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
 
 registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail,
   sendEmail: (message) => sendEmail(message),
-  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
+  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   stopSubscriptionItems: async (subscriptionId, items, admin, stripeAdminRequest, reason) => {
     const reference = adminDb.collection('subscriptions').doc(subscriptionId);
     const record = (await reference.get()).data();
@@ -1849,7 +1848,7 @@ registerLifetimeMembershipRoutes(app, { requireAdmin, db: () => adminDb });
 const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
   toMembershipRecord, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
   adjustVolunteerSubscriptions: (membershipId) => adjustVolunteerSubscriptions(membershipId),
-  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerContactRoutes(app, { sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
@@ -1857,9 +1856,9 @@ registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEm
   raiseAttention: (kind, key, details) => attention.raise(kind, key, details) });
 const { sendDueRosters, canViewEventRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
   emailCodes, requestNow,
-  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerClubNightRoutes(app, { requireAdmin, db: () => adminDb, emailCodes, requestNow, live: () => isLive(), canViewEventRosters,
-  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerAttentionRoutes(app, { requireAdmin, db: () => adminDb, retry: attentionRetry });
 registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
   stopMonthlyItem: async (orderRef, item, admin, reason, action = 'revoke-item') => {
@@ -1876,10 +1875,10 @@ const { loadReceiptPersonFields, receiptPeopleWithRecords } = registerReceiptEma
 const { sendDueWelcomeEmails } = registerWelcomeEmailRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), attention });
 registerTimetableRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadTripDiscounts } = registerTripDiscountRoutes(app, { requireAdmin, db: () => adminDb,
-  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
   volunteerRenewalContent, sendVolunteerRenewals, live: () => isLive(),
-  loadCatalogue: async () => resolveCatalogue(PRODUCTS, (await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
+  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
 
 registerPagePublishingRoutes(app, {
@@ -2221,10 +2220,10 @@ app.post('/api/membership-names', rateLimit(8, 60 * 1000), async (req, res) => {
 /** Remaining stock for limited products, so the shop can hide anything sold out. */
 app.get('/api/availability', rateLimit(60, 60 * 1000), async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  if (!adminDb) return res.json({ availability: {}, products: PRODUCTS });
+  if (!adminDb) return res.status(503).json({ error: 'Availability is unavailable.' });
   try {
     const [productSnapshot, stockSnapshot] = await Promise.all([adminDb.collection('products').get(), adminDb.collection('stock').get()]);
-    const catalog = resolveCatalogue(PRODUCTS, productSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
+    const catalog = resolveCatalogue(productSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
     const holdsById = new Map(stockSnapshot.docs.map((document) => [document.id, document.data().holds || {}]));
     const availability = {};
     for (const product of catalog) {
@@ -2319,7 +2318,7 @@ const startCheckout = async (req, res, credit = null) => {
       return res.status(409).json({ code: 'already_paid', error: `Your monthly payments were already restarted with order ${restartRecord.restartedAs}, so you do not need to pay again.` });
     }
     const catalogSnapshot = await adminDb.collection('products').get();
-    const catalog = resolveCatalogue(PRODUCTS, catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
+    const catalog = resolveCatalogue(catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
     const lineIds = requestedItems.map((item) => typeof item?.lineId === 'string' ? item.lineId.slice(0, 64) : '');
     const catalogItems = requestedItems.map((item) => catalog.find((product) => product.id === item?.id));
     if (catalogItems.some((item) => !item || item.type === 'external' || !Number.isFinite(item.basePrice) || item.basePrice < 0) || lineIds.some((id) => !id || id.includes(NEXT_YEAR_LINE_SUFFIX)) || new Set(lineIds).size !== lineIds.length) {

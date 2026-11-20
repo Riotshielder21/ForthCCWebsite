@@ -12,7 +12,6 @@ import { getStorage, connectStorageEmulator, ref, uploadBytes, getDownloadURL } 
 import { assertLocalFirebase } from '../src/utils/localFirebase.js';
 import { importStripeSubscribers } from '../src/utils/stripeReports.js';
 import { resolveCatalogue } from '../src/utils/catalogue.js';
-import { PRODUCTS } from '../src/constants/products.js';
 import { checkoutWording } from '../src/utils/consents.js';
 
 const projectId = assertLocalFirebase(process.env);
@@ -129,7 +128,7 @@ try {
   const imageUrl = `https://firebasestorage.googleapis.com/v0/b/${projectId}.appspot.com/o/products%2FTEST-EVENT%2Freceipt.png?alt=media`;
   await db.collection('products').doc('TEST-EVENT').set({ name: 'Five-day course', category: 'EVENTS', type: 'event-ticket', basePrice: 50, eventSchedule, imageUrl });
   const savedCatalogue = await db.collection('products').get();
-  const resolved = resolveCatalogue(PRODUCTS, savedCatalogue.docs.map((document) => ({ ...document.data(), id: document.id })));
+  const resolved = resolveCatalogue(savedCatalogue.docs.map((document) => ({ ...document.data(), id: document.id })));
   assert.ok(resolved.some((product) => product.id === 'TEST-EVENT'));
   assert.ok(resolved.some((product) => product.id === 'membership-adult'));
   await db.collection('memberships').doc('TEST-EVENT-MEMBER').set({ firstName: 'Eve', lastName: 'Event', email: 'event@example.com', dob: '1990-01-01', status: 'active', validUntil: Timestamp.fromDate(new Date(Date.now() + 90 * 86400000)) });
