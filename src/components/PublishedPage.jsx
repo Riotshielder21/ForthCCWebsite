@@ -89,8 +89,10 @@ export function PublishedSupporterTiles() {
       const imageUrl = safeTileUrl(tile.imageUrl, true);
       return <div key={tile.id} className={`tile_editor sponsor_editor_tile ${tileAppearanceClass(tile)}`} data-tile-id={tile.id}>
         <a className="sponsor_subtile" href={safeTileUrl(tile.url) || undefined} target="_blank" rel="noreferrer" aria-label={imageUrl ? tile.name : undefined}>
-          {imageUrl ? <ResponsiveImage className="sponsor_logo" src={imageUrl} sources={tile.imageSources} placeholder={tile.imagePlaceholder} alt={tile.alt || tile.name} fit="contain" />
-            : <span className="sponsor_name">{tile.name}</span>}
+          {imageUrl ? <>
+            <ResponsiveImage className="sponsor_logo" src={imageUrl} sources={tile.imageSources} placeholder={tile.imagePlaceholder} alt={tile.alt || tile.name} fit="contain" />
+            {tile.name && <span className="sponsor_name">{tile.name}</span>}
+          </> : tile.name ? <span className="sponsor_name">{tile.name}</span> : null}
         </a>
       </div>;
     })}

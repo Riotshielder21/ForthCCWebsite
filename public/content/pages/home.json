@@ -103,31 +103,27 @@
   "supporterTiles": [
     {
       "id": "supporter-1",
-      "name": "Garfield Weston Foundation",
       "url": "https://garfieldweston.org/",
-      "imageUrl": "",
-      "alt": ""
+      "imageUrl": "/images/supporters/garfield-weston-foundation.png",
+      "alt": "Garfield Weston Foundation"
     },
     {
       "id": "supporter-2",
-      "name": "Paddle Scotland",
       "url": "https://www.paddlescotland.org.uk/",
-      "imageUrl": "",
-      "alt": ""
+      "imageUrl": "/images/supporters/paddle-scotland.webp",
+      "alt": "Paddle Scotland"
     },
     {
       "id": "supporter-3",
-      "name": "SportScotland",
       "url": "https://sportscotland.org.uk/",
-      "imageUrl": "",
-      "alt": ""
+      "imageUrl": "/images/supporters/sportscotland.svg",
+      "alt": "Sportscotland"
     },
     {
       "id": "supporter-4",
-      "name": "City of Edinburgh Council",
       "url": "https://www.edinburgh.gov.uk/",
-      "imageUrl": "",
-      "alt": ""
+      "imageUrl": "/images/supporters/city-of-edinburgh-council.svg",
+      "alt": "City of Edinburgh Council"
     },
     {
       "id": "supporter-5",
@@ -138,38 +134,33 @@
     },
     {
       "id": "supporter-6",
-      "name": "Analog Devices",
       "url": "https://www.analog.com/",
-      "imageUrl": "",
-      "alt": ""
+      "imageUrl": "/images/supporters/analog-devices.svg",
+      "alt": "Analog Devices"
     },
     {
       "id": "supporter-7",
-      "name": "Boroughmuir High School",
       "url": "https://boroughmuirhighschool.org/",
-      "imageUrl": "",
-      "alt": ""
+      "imageUrl": "/images/supporters/boroughmuir-high-school.png",
+      "alt": "Boroughmuir High School"
     },
     {
       "id": "supporter-8",
-      "name": "National Lottery Community Fund",
       "url": "https://www.tnlcommunityfund.org.uk/",
-      "imageUrl": "",
-      "alt": ""
+      "imageUrl": "/images/supporters/national-lottery-community-fund/The-National-Lottery-Community-Fund-colour-logo-in-English.png",
+      "alt": "The National Lottery Community Fund"
     },
     {
       "id": "supporter-9",
-      "name": "Scottish Building Society",
       "url": "https://www.scottishbs.co.uk/",
-      "imageUrl": "",
-      "alt": ""
+      "imageUrl": "/images/supporters/scottish-building-society.svg",
+      "alt": "Scottish Building Society"
     },
     {
       "id": "supporter-f00a8328-b197-4443-9245-83848b8aa28e",
-      "name": "Malcom Bell Decorators Ltd",
       "url": "",
-      "imageUrl": "",
-      "alt": ""
+      "imageUrl": "/images/supporters/malcolm-bell-decorators.png",
+      "alt": "Malcolm Bell Decorators Ltd"
     }
   ],
   "banner": {
