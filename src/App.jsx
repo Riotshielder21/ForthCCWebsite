@@ -70,13 +70,19 @@ const BASKET_LINKS = [
   { param: 'restart', path: (key) => `/api/subscriptions/${key}/restart`, resumes: 'restartOf', failure: 'Could not load your monthly payments. Add what you need to the basket instead.' }
 ];
 
+// Why the shop shows nothing and buying is paused; products only appear once this visit has loaded them from the database.
+const SHOP_NOTICES = {
+  loading: 'Loading what is on sale…',
+  offline: 'You are offline. Reconnect to see what is on sale and to buy.',
+  unavailable: 'Prices and availability could not be checked, so buying is paused.'
+};
+
 export default function App() {
   const [initialDraft] = useState(() => { loadCachedConsentWording(); return draftForCurrentWording(loadDraft()); });
   const { currentPage, setCurrentPage, onLinkClick, navigateTo } = useSiteRoute();
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const { products, availability, catalogueLive, refreshAvailability, refresh: catalogueRefresh } = usePublicCatalogue(currentPage, isCartOpen);
-  const productsRef = useRef(products);
-  productsRef.current = products;
+  const { products, availability, catalogueLive, refreshAvailability, shopState, refresh: catalogueRefresh } = usePublicCatalogue(currentPage, isCartOpen);
+  const purchasable = shopState === 'live';
   const [pageContent, setPageContent] = useState({});
   const [restoredCart] = useState(() => restoreDraftLines(initialDraft?.cart, products, draftLine));
   const [cart, setCart] = useState(restoredCart.lines);
@@ -145,6 +151,10 @@ export default function App() {
 
   const addToCart = (product, size = '', clubYearChoice = undefined) => {
     if (product.type === 'external') return;
+    if (!purchasable) {
+      showToast(SHOP_NOTICES[shopState]);
+      return;
+    }
     const label = itemLabel({ ...product, size });
     if (stockLeft(product, size) <= 0) {
       showToast(`${label} is sold out`);
@@ -183,6 +193,8 @@ export default function App() {
 
   // Emailed links replace the basket and then leave the address bar: a renewal (?renew=TOKEN) with next year's items, a
   // retry of a bank payment that did not clear (?retry=KEY) and a restart of monthly payments Stripe stopped (?restart=KEY).
+  // The link is applied once this visit's products have loaded, whichever arrives first.
+  const [basketLink, setBasketLink] = useState(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const link = BASKET_LINKS.find(({ param }) => params.get(param));
@@ -195,26 +207,36 @@ export default function App() {
       .then(async (response) => ({ ok: response.ok, result: await response.json().catch(() => null) }))
       .then(({ ok, result }) => {
         if (!ok || !result) throw new Error(result?.error || link.failure);
-        const lines = result.items.map((item) => {
-          const product = productsRef.current.find((candidate) => candidate.id === item.id);
-          return product ? { ...withClubYear(normaliseProduct(product), item.clubYearChoice), lineId: item.lineId, ...(item.size ? { size: item.size } : {}) } : null;
-        }).filter(Boolean);
-        waitingDraft.current = null;
-        setCart(lines);
-        setPeople(result.people.map((person) => applyConsentPrefill({ ...blankPerson(person.id), ...person, ...(person.returning ? { verifiedDob: person.dob,
-          verifiedEmail: result.email.trim().toLowerCase(), verifiedName: normaliseName(`${person.firstName} ${person.lastName}`) } : {}) }, person.prefill)));
-        setCheckoutEmail(result.email);
-        setIsAnnual(result.billingMode !== 'monthly');
-        setResumeLink(link.resumes ? { [link.resumes]: value } : null);
-        if (result.discountCode) {
-          setPromoInput(result.discountCode);
-          handleApplyPromo(result.discountCode);
-        }
-        setCheckoutError('');
+        setBasketLink({ link, value, result });
       })
-      .catch((error) => setCheckoutError(error.message))
-      .finally(() => setIsCartOpen(true));
+      .catch((error) => {
+        setCheckoutError(error.message);
+        setIsCartOpen(true);
+      });
   }, [currentPage]);
+
+  useEffect(() => {
+    if (!basketLink || !catalogueLive) return;
+    const { link, value, result } = basketLink;
+    setBasketLink(null);
+    const lines = result.items.map((item) => {
+      const product = products.find((candidate) => candidate.id === item.id);
+      return product ? { ...withClubYear(normaliseProduct(product), item.clubYearChoice), lineId: item.lineId, ...(item.size ? { size: item.size } : {}) } : null;
+    }).filter(Boolean);
+    waitingDraft.current = null;
+    setCart(lines);
+    setPeople(result.people.map((person) => applyConsentPrefill({ ...blankPerson(person.id), ...person, ...(person.returning ? { verifiedDob: person.dob,
+      verifiedEmail: result.email.trim().toLowerCase(), verifiedName: normaliseName(`${person.firstName} ${person.lastName}`) } : {}) }, person.prefill)));
+    setCheckoutEmail(result.email);
+    setIsAnnual(result.billingMode !== 'monthly');
+    setResumeLink(link.resumes ? { [link.resumes]: value } : null);
+    if (result.discountCode) {
+      setPromoInput(result.discountCode);
+      handleApplyPromo(result.discountCode);
+    }
+    setCheckoutError('');
+    setIsCartOpen(true);
+  }, [basketLink, catalogueLive, products]);
 
   useEffect(() => { if (!waitingDraft.current) setPeople((prev) => assignLines(prev, cart, newId)); }, [cart]);
   useEffect(() => { if (!cart.length && !waitingDraft.current) setResumeLink(null); }, [cart.length]);
@@ -268,6 +290,10 @@ export default function App() {
   const handlePay = async (noticeVersions = {}) => {
     if (!navigator.onLine) {
       setCheckoutErrors(['You are offline. Reconnect before checking availability and making a payment.']);
+      return;
+    }
+    if (!purchasable) {
+      setCheckoutErrors([SHOP_NOTICES[shopState]]);
       return;
     }
     const errors = [
@@ -445,7 +471,9 @@ export default function App() {
             addToCart={addToCart}
             removeOneFromCart={removeOneFromCart}
             getItemDisplayPrice={getItemDisplayPrice}
-            products={products}
+            products={purchasable ? products : []}
+            shopNotice={purchasable ? '' : SHOP_NOTICES[shopState]}
+            onRetryShop={shopState === 'unavailable' && !catalogueRefresh.refreshing ? () => void refreshAvailability() : null}
             onNavigate={setCurrentPage}
             tripDiscounts={tripDiscounts || []}
           />
@@ -611,7 +639,7 @@ export default function App() {
                           <button
                             onClick={() => addToCart(item, item.size || '', item.clubYearChoice)}
                             className="CartRemoveButton"
-                            disabled={stockLeft(item, item.size || '') <= 0}
+                            disabled={!purchasable || stockLeft(item, item.size || '') <= 0}
                             aria-label={`Add another ${itemLabel(item)}`}
                             title="Add another"
                           >
@@ -705,10 +733,15 @@ export default function App() {
                     Total £{calculations.total.toFixed(2)}
                   </div>
                   {checkoutError && <p className="StatusText StatusTextError" role="alert">{checkoutError}</p>}
+                  {!purchasable && <p className="StatusText" role="status">
+                    {SHOP_NOTICES[shopState]}
+                    {shopState === 'unavailable' && <>{' '}<button type="button" className="EditorCommand" disabled={catalogueRefresh.refreshing} onClick={() => void refreshAvailability()}>Try again</button></>}
+                  </p>}
                 </div>
                 <button
                   onClick={handleStartCheckout}
                   className="CheckoutButton"
+                  disabled={!purchasable}
                 >
                   <CreditCard className="IconMd" />
                   Checkout

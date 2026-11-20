@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ImagePlus, Loader2, LogOut, Save, Trash2, FileText, Upload } from 'lucide-react';
-import { loadEventRosterViewers, removeProduct, reserveProductId, saveEventRosterViewers, saveProduct, seedProducts, uploadProductImage } from '../utils/content';
+import { addMissingStarterProducts, loadEventRosterViewers, removeProduct, reserveProductId, saveEventRosterViewers, saveProduct, uploadProductImage } from '../utils/content';
 import { saveCatalogueItem } from '../utils/catalogueSave';
 import { isLockedProduct, tripDiscountForProduct } from '../utils/tripDiscount';
 import { CATEGORIES, PRODUCTS } from '../constants/products';
@@ -222,11 +222,11 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
     }
   };
 
-  const handleSeed = async () => {
-    if (!window.confirm('Reset starter products? This replaces edits to starter items and restores deleted starter items. New products are kept.')) return;
+  const handleAddStarterProducts = async () => {
+    if (!window.confirm('Add any starter product that is missing from the catalogue? Products already in the catalogue, including removed ones, are not changed.')) return;
     try {
-      await seedProducts(PRODUCTS);
-      setMessage('The starter catalog has been copied to the shared catalog.');
+      const added = await addMissingStarterProducts(PRODUCTS);
+      setMessage(added ? `Added ${added} starter ${added === 1 ? 'product' : 'products'}.` : 'Every starter product is already in the catalogue.');
     } catch (seedError) {
       setError(seedError.message);
     }
@@ -274,11 +274,11 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
         <div className="AdminLayout">
           <aside className="main_tile AdminProductList">
             <div className="AdminListHeader"><h3 className="tile_heading_bold_1">Catalogue ({products.length})</h3><button type="button" className="PrimaryActionButtonCompact" onClick={startNewProduct} disabled={reservingId || saving || uploading}>{reservingId ? 'Creating...' : 'New'}</button></div>
-            <button className="ContentLink AdminSeedButton" onClick={handleSeed}>Copy starter catalog</button>
+            <button className="ContentLink AdminSeedButton" onClick={handleAddStarterProducts}>Add missing starter products</button>
             <div className="AdminProducts">
               <PagedAdminList items={products} label="catalogue items" renderItem={(product) => <button key={product.id} className={`AdminProduct ${selectedProduct === product.id ? 'is-selected' : ''}`} disabled={uploading || saving} onClick={() => editProduct(product)}><strong>{product.name}</strong><span>{product.category}</span></button>} />
             </div>
-            {!products.length && <p className="text_container">No products. Add a new item or restore the starter catalogue.</p>}
+            {!products.length && <p className="text_container">No products. Add a new item or add the starter products.</p>}
           </aside>
           <form className="main_tile AdminEditor" onSubmit={handleSave}>
             <div className="AdminSaveTrack">

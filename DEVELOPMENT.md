@@ -73,8 +73,9 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-They exercise same-tab content freshness, retained cached products with availability retry, clearing consent ticks
-after wording changes, and admin reports using fresh tokens while requiring expired tokens to refresh successfully.
+They exercise same-tab content freshness, the shop offering only this visit's products and pausing buying offline,
+clearing consent ticks after wording changes, and admin reports using fresh tokens while requiring expired tokens to
+refresh successfully.
 Ordinary admin API requests should use `getIdToken()` so Firebase reuses valid tokens and refreshes only when needed;
 reserve forced refreshes for explicitly rechecking changed claims or retrying session verification.
 Playwright builds with test configuration, then starts and stops a production preview on port
@@ -117,8 +118,12 @@ Pages do not poll for edits while someone is reading them.
 Browser state and effects belong in [src/browser/](src/browser/), starting with catalogue refresh and consent wording.
 Keep that code out of server modules and keep shared rules free of React, storage and network side effects.
 The existing consent-client utility re-exports its browser implementation for compatibility while call sites migrate.
-Catalogue and consent refresh failures retain the displayed data but show a retry action; a wording save whose
-follow-up refresh fails explicitly reports that the save succeeded and the displayed copy is stale.
+The shop shows only products loaded from the database on this visit, never the starter list in
+[products.js](src/constants/products.js) or an earlier visit's copy. Buying is paused while offline or when the latest
+availability check failed, with a retry action. The starter list is only copied into an empty or incomplete catalogue,
+by **Add missing starter products** in admin, which never changes existing records. Consent refresh failures retain the
+displayed wording but show a retry action; a wording save whose follow-up refresh fails explicitly reports that the
+save succeeded and the displayed copy is stale.
 
 ### Public pages and missing links
 

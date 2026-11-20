@@ -1,12 +1,10 @@
-import { collection, doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from './firebase';
 import { isLockedProduct } from './tripDiscount';
-import { normaliseProduct, resolveCatalogue, validateEventSchedule } from './catalogue';
-import { cleanStockFields } from './inventory';
-import { PRODUCTS } from '../constants/products';
+import { resolveCatalogue } from './catalogue';
+import { productRecord } from './productRecord';
 import { prepareResponsiveImage } from './imageProcessing';
-import { validateImagePlaceholder, validateImageSources } from './responsiveImages';
 
 export const subscribeToProducts = (onProducts, onError) => {
   if (!db) return () => {};
@@ -15,21 +13,14 @@ export const subscribeToProducts = (onProducts, onError) => {
       console.warn('Live product catalogue is unavailable; retaining previously downloaded products.');
       return;
     }
-    onProducts(resolveCatalogue(PRODUCTS, snapshot.docs.map((productDoc) => ({ ...productDoc.data(), id: productDoc.id }))));
+    onProducts(resolveCatalogue(snapshot.docs.map((productDoc) => ({ ...productDoc.data(), id: productDoc.id }))));
   }, onError);
 };
 
 export const saveProduct = async (product) => {
   if (!db) throw new Error('Content database is unavailable.');
-  const { id, ...productData } = normaliseProduct(product);
-  if (productData.pricingMode !== 'subscription') productData.hasAnnualDiscount = false;
-  if (product.category === 'EVENTS') productData.eventSchedule = validateEventSchedule(product.eventSchedule);
-  if (Object.hasOwn(product, 'imageUrl')) {
-    const hasImage = Boolean(productData.imageUrl);
-    productData.imageSources = hasImage ? validateImageSources(product.imageSources) : [];
-    productData.imagePlaceholder = hasImage ? validateImagePlaceholder(product.imagePlaceholder) : '';
-  }
-  await setDoc(doc(db, 'products', id), { ...productData, ...cleanStockFields(product), active: true, updatedAt: serverTimestamp() }, { merge: true });
+  const { id, fields } = productRecord(product);
+  await setDoc(doc(db, 'products', id), { ...fields, active: true, updatedAt: serverTimestamp() }, { merge: true });
 };
 
 export const removeProduct = async (id, tripDiscounts) => {
@@ -38,7 +29,20 @@ export const removeProduct = async (id, tripDiscounts) => {
   await setDoc(doc(db, 'products', id), { active: false, updatedAt: serverTimestamp() }, { merge: true });
 };
 
-export const seedProducts = async (products) => Promise.all(products.map((product) => saveProduct(product)));
+/** Creates records for starter products that have none. Existing records, including removed products, are left alone. */
+export const addMissingStarterProducts = async (products) => {
+  if (!db) throw new Error('Content database is unavailable.');
+  const added = await Promise.all(products.map((product) => {
+    const { id, fields } = productRecord(product);
+    const reference = doc(db, 'products', id);
+    return runTransaction(db, async (transaction) => {
+      if ((await transaction.get(reference)).exists()) return false;
+      transaction.set(reference, { ...fields, active: true, updatedAt: serverTimestamp() });
+      return true;
+    });
+  }));
+  return added.filter(Boolean).length;
+};
 
 const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
 const extensionFor = (type) => ({ 'image/webp': 'webp', 'image/png': 'png' })[type] || 'jpg';

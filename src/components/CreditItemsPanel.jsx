@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Search, Trash2 } from 'lucide-react';
 import { apiUrl, apiFetch } from '../utils/api';
 import { subscribeToProducts } from '../utils/content';
-import { PRODUCTS } from '../constants/products';
-import { normaliseProduct } from '../utils/catalogue';
 import { calculateCart, expandClubYearLines } from '../utils/pricing';
 import { clubYearChoices, clubYearLabel, clubYearOf, defaultClubYearChoice } from '../utils/clubYear';
 import { assignLines, validateCheckout } from '../utils/checkout';
@@ -25,7 +23,7 @@ const ITEM_REFUSALS = ['membership_required', 'renews_via_justgo', 'membership_a
 
 /** Credits shop items to a member when they paid outside the website or are given them free. */
 export default function CreditItemsPanel({ adminUser }) {
-  const [products, setProducts] = useState(() => PRODUCTS.map(normaliseProduct));
+  const [products, setProducts] = useState([]);
   const [lookup, setLookup] = useState({ query: '', busy: false, result: null, error: '' });
   const [email, setEmail] = useState('');
   const [cart, setCart] = useState([]);
