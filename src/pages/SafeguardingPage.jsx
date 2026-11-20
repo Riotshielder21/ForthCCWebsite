@@ -58,7 +58,9 @@ export default function SafeguardingPage() {
   };
 
   return <div className="SectionContent PageFadeIn">
-    <h1 className="page_heading_bold_1">Safeguarding</h1>
+    <section className="main_tile main_tile_grey SpaceB4">
+      <h1 className="page_heading_bold_1">Safeguarding</h1>
+    </section>
     <section className="main_tile main_tile_grey">
       <h3 className="tile_heading_bold_2">Report a concern</h3>
       <p className="text_container"><strong>If someone is in immediate danger, call 999.</strong></p>
