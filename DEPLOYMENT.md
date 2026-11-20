@@ -54,6 +54,41 @@ gcloud firestore fields ttls list --project=fccwebsite-23cfc
 
 Without `--apply` the migration is read-only. It writes only `ttlAt`, logs counts rather than personal information, and refuses to overwrite a document changed since it was read. Rerun it after deploying if the older API created more records in the meantime. Use application default credentials instead by omitting `--gcloud`.
 
+## Backups and restore
+
+Set up on 20 November 2026 for the Firestore `(default)` database (about 1 MB; the cost is negligible):
+
+- **Delete protection** stops the database itself being deleted.
+- **Point-in-time recovery** keeps every version for 7 days, to the minute.
+- **Daily backups** are kept for 14 days. Firestore chooses the time of day.
+- **One-off exports** go to `gs://fccwebsite-23cfc-firestore-exports` (private, London). A lifecycle rule deletes them after 14 days, and soft delete is off so nothing lingers. Take one before any bulk change or migration:
+  `gcloud firestore export gs://fccwebsite-23cfc-firestore-exports/before-CHANGE-$(date -u +%Y%m%d) --database='(default)' --project=fccwebsite-23cfc`
+- **Storage** (`fccwebsite-23cfc.firebasestorage.app`, page and product images) has no separate backup. Uploads get unique names, so nothing is overwritten, and Google's 7-day soft delete covers deletions: `gcloud storage restore`.
+
+These periods are in the draft Data Retention and Privacy notices. The committee approves them in the approval checklist.
+
+**To restore**, never write over the live database directly:
+
+1. **Copy the restore point into a new database.** For any minute in the last 7 days, clone it:
+   `gcloud firestore databases clone --source-database='projects/fccwebsite-23cfc/databases/(default)' --snapshot-time=2026-11-20T16:45:00Z --destination-database=restore-YYYYMMDD --project=fccwebsite-23cfc`
+   For anything older, up to 14 days, use `gcloud firestore backups list` and `gcloud firestore databases restore --source-backup=BACKUP --destination-database=restore-YYYYMMDD`. For an export, create the database and run `gcloud firestore import`. Wait until it serves reads; a clone takes about 10 minutes.
+2. **Copy back only the collections the problem affected.** Run [restore-documents.mjs](scripts/restore-documents.mjs) as a dry run first, then add `--apply`:
+   ```bash
+   AUDIT_LOOKUP_SECRET="$(gcloud secrets versions access latest --secret=audit-lookup-secret --project=fccwebsite-23cfc)" \
+   GCLOUD_PROJECT=fccwebsite-23cfc node scripts/restore-documents.mjs --gcloud --from restore-YYYYMMDD \
+     --snapshot-time 2026-11-20T16:45:00Z --collection orders
+   ```
+   - Anyone erased since the restore point stays erased. Their member and household records, and anything that names them, are kept out, using the erasure audit entries, which hold only keyed hashes. A record an erasure redacted is never overwritten.
+   - Records changed since the restore point are left as they are and listed. Add `--overwrite-changed` only when those changes are the problem being undone.
+3. **Reconcile Stripe and JustGo for the time since the restore point.**
+   - Compare Stripe payments, refunds and subscription changes made since then with the restored orders and subscriptions.
+   - Resend missing webhook events from the Stripe Dashboard, then check **Needs attention**.
+   - Check the JustGo links of any restored members.
+4. **Delete the restored database**, which holds personal data:
+   `gcloud firestore databases update --database=restore-YYYYMMDD --no-delete-protection` (a clone copies delete protection), then `gcloud firestore databases delete --database=restore-YYYYMMDD`.
+
+The first test restore cloned 16:45 UTC on 20 November into a temporary database. A dry run found exactly the 110 records the beta clean-up had just removed, and none were copied back. The clone was then deleted.
+
 ## Stripe Dashboard
 
 Do this in each mode (test now, live later); each endpoint has its own signing secret.
