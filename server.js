@@ -443,7 +443,7 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
       }),
       // Non-members booking open events are kept as contact-only records until they buy a membership.
       ...(membershipLine || includedLine ? { contactOnly: FieldValue.delete() } : existingMember ? {} : { contactOnly: true }),
-      // Existing records keep their version so the migration still converts anything older they hold.
+      // Only new records are stamped: this write does not convert anything older an existing record holds.
       ...(existingMember ? {} : { schemaVersion: CURRENT_MEMBERSHIP_VERSION }),
       ...(householdId ? { householdId } : {}),
       ...Object.fromEntries(HOUSEHOLD_MEMBER_FIELDS.map((key) => [key, FieldValue.delete()])),

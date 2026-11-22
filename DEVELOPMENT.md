@@ -81,7 +81,7 @@ Playwright builds with test configuration, then starts and stops a production pr
 4175. Service workers are blocked in these scenarios; their offline behavior has separate unit coverage.
 CI runs the browser job separately and uploads traces on failure; no production credentials or emulators are needed.
 
-The emulator integration suite runs the API against fresh emulators with Stripe mocked. It covers checkout, renewals, failed payments, club night, volunteering, refunds, GDPR erasure, data migration and the JustGo jobs. It takes 5–10 minutes. Stop `npm run local` first, as it uses the same ports.
+The emulator integration suite runs the API against fresh emulators with Stripe mocked. It covers checkout, renewals, failed payments, club night, volunteering, refunds, GDPR erasure and the JustGo jobs. It takes 5–10 minutes. Stop `npm run local` first, as it uses the same ports.
 
 ```bash
 export PYTHON="$PWD/venv/bin/python"
