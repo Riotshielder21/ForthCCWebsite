@@ -11,6 +11,9 @@ export const parseAlertEmails = (value = '') => {
   return emails;
 };
 
+// Settings a re-sync applies to an existing check. The monitored host cannot change, so a new host replaces the check.
+export const UPTIME_CHECK_UPDATE_MASK = 'httpCheck,period,timeout,logCheckFailures';
+
 export const uptimeCheckConfig = (project, apiUrl) => {
   const { hostname, protocol } = new URL(apiUrl);
   if (protocol !== 'https:') throw new Error('The API URL must use https.');
@@ -19,7 +22,9 @@ export const uptimeCheckConfig = (project, apiUrl) => {
     monitoredResource: { type: 'uptime_url', labels: { project_id: project, host: hostname } },
     httpCheck: { path: '/health', port: 443, useSsl: true, validateSsl: true, requestMethod: 'GET' },
     period: '300s',
-    timeout: '10s'
+    // The API answers in under a second, but checks from the USA to London have taken over 10 seconds to arrive.
+    timeout: '30s',
+    logCheckFailures: true
   };
 };
 
@@ -47,9 +52,10 @@ export const alertPolicy = (checkId, channelNames, apiUrl) => ({
       `The Forth Canoe Club API (${apiUrl}) is failing its /health check, which also confirms Firestore can be read.`,
       'Shop, checkout, sign-ups and admin pages will fail; the Volunteering page shows its built-in default.',
       '',
-      '1. Open Cloud Run → fcc-website-api → Logs for the error.',
-      '2. If a recent deploy caused it, Cloud Run → Revisions → route traffic to the previous working revision.',
-      '3. Check Secret Manager secrets, project billing and status.cloud.google.com.',
+      '1. Logs Explorer → `resource.type="uptime_url" "UptimeCheckResult"` shows why each check failed. If only distant regions timed out and the Cloud Run logs show successful requests, it was a network delay and needs no action.',
+      '2. Open Cloud Run → fcc-website-api → Logs for the error.',
+      '3. If a recent deploy caused it, Cloud Run → Revisions → route traffic to the previous working revision.',
+      '4. Check Secret Manager secrets, project billing and status.cloud.google.com.',
       'A resolved email follows when the check passes again.'
     ].join('\n')
   }
@@ -83,7 +89,7 @@ export async function syncApiMonitoring({ request, project, apiUrl, emails, pres
     check = null;
   }
   if (check) {
-    check = await request({ method: 'PATCH', path: `${check.name}?updateMask=httpCheck,period,timeout`, body: wanted });
+    check = await request({ method: 'PATCH', path: `${check.name}?updateMask=${UPTIME_CHECK_UPDATE_MASK}`, body: wanted });
     log(`Uptime check up to date: ${wanted.monitoredResource.labels.host}/health every 5 minutes.`);
   } else {
     check = await request({ method: 'POST', path: `${parent}/uptimeCheckConfigs`, body: wanted });

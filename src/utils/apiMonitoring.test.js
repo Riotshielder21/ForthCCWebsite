@@ -14,7 +14,10 @@ const fakeMonitoring = () => {
     if (method === 'POST') { const item = { ...body, name: `${bare}/id${next++}` }; store[kind].push(item); return item; }
     const index = store[kind].findIndex((item) => item.name === bare);
     if (method === 'DELETE') { store[kind].splice(index, 1); return {}; }
-    store[kind][index] = { ...store[kind][index], ...body, name: bare };
+    // Like the real API, a PATCH with an update mask changes only the named fields.
+    const mask = new URLSearchParams(path.split('?')[1] || '').get('updateMask');
+    const changes = mask ? Object.fromEntries(mask.split(',').map((field) => [field, body[field]])) : body;
+    store[kind][index] = { ...store[kind][index], ...changes, name: bare };
     return store[kind][index];
   };
   return { store, calls, request };
@@ -59,6 +62,16 @@ test('re-running is idempotent and changing the emails updates who is alerted', 
   await syncApiMonitoring(options(fake, { emails: ['b@example.com'] }));
   assert.deepEqual(fake.store.notificationChannels.map((channel) => channel.labels.email_address), ['x@example.com', 'b@example.com'], 'old club alert address removed; unrelated channels untouched');
   assert.deepEqual(fake.store.alertPolicies[0].notificationChannels, [fake.store.notificationChannels[1].name]);
+});
+
+test('re-running brings a check made by an older setup up to date, including logging failed checks', async () => {
+  const fake = fakeMonitoring();
+  fake.store.uptimeCheckConfigs.push({ ...uptimeCheckConfig('fcc', 'https://api-abc.a.run.app'), name: 'projects/fcc/uptimeCheckConfigs/old',
+    timeout: '10s', logCheckFailures: undefined });
+  await syncApiMonitoring(options(fake));
+  const { name, ...current } = fake.store.uptimeCheckConfigs[0];
+  assert.equal(name, 'projects/fcc/uptimeCheckConfigs/old');
+  assert.deepEqual(current, uptimeCheckConfig('fcc', 'https://api-abc.a.run.app'));
 });
 
 test('a new API URL replaces the uptime check and repoints the policy', async () => {
