@@ -1,4 +1,4 @@
-import { alertPolicy, uptimeCheckConfig } from './apiMonitoring.js';
+import { UPTIME_CHECK_UPDATE_MASK, alertPolicy, uptimeCheckConfig } from './apiMonitoring.js';
 
 export const JOB_CHECK_NAME = 'FCC scheduled job health';
 export const BUDGET_NAME = 'FCC website monthly budget';
@@ -58,7 +58,7 @@ export async function syncSiteMonitoring({ request, project, apiUrl, channels, e
     await request({ method: 'DELETE', path: check.name });
     check = null;
   }
-  check = await request(check ? { method: 'PATCH', path: `${check.name}?updateMask=httpCheck,period,timeout`, body: wanted }
+  check = await request(check ? { method: 'PATCH', path: `${check.name}?updateMask=${UPTIME_CHECK_UPDATE_MASK}`, body: wanted }
     : { method: 'POST', path: `${parent}/uptimeCheckConfigs`, body: wanted });
   const jobHealth = {
     ...alertPolicy(check.name.split('/').pop(), channels, apiUrl),

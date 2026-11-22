@@ -94,7 +94,7 @@ recipient configuration and rerunning setup; do not delete an email channel stil
 
 | Alert | Meaning and action |
 | --- | --- |
-| FCC API outage | `/health` cannot read Firestore. The website maintainer checks Cloud Run logs, credentials and the latest revision, and rolls back a bad release if needed. |
+| FCC API outage | Checks from at least two of Google's six regions got no healthy `/health` response within 30 seconds; `/health` also reads Firestore. The website maintainer checks Cloud Run logs, credentials and the latest revision, and rolls back a bad release if needed. Logs Explorer → `resource.type="uptime_url" "UptimeCheckResult"` shows why each check failed. If only distant regions timed out and Cloud Run logged successful requests, it was a network delay: no action is needed and the alert clears itself, as on 21 November 2026. |
 | FCC browser errors | The browser reported a fixed error category/page, including caught API/sign-in network failures. Google Analytics or reCAPTCHA scripts blocked by privacy tools are not reported. The maintainer filters Cloud Run logs by `jsonPayload.event="fcc-client-error"` and reproduces the problem. Notifications are limited to once an hour per open incident. |
 | FCC scheduled job failures | Scheduler dispatch, JustGo execution or partial renewal/upload work failed. Check Scheduler and execution/API logs; reconcile uncertain JustGo writes before retrying. |
 | FCC scheduled job missed or unhealthy | `/health/jobs` found a missed/failed run or could not inspect jobs. Check **Reports & records → Needs attention**, then Scheduler/Run and monitoring permissions. Paused JustGo schedules are intentionally ignored. |
