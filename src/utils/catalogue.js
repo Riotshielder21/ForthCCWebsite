@@ -20,28 +20,6 @@ export const productTerms = (product) => {
   return { type: CATEGORY_TYPES[product.category] || 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false };
 };
 
-const LEGACY_FIXED_SERVICES = ['keyhire'];
-
-/**
- * Converts a saved product to the current shape. `active` replaces the soft-delete `deleted` flag (and any
- * `hidden`/`visible`), `sortOrder` is backfilled from the shop's display order (`displayIndex`), and products saved
- * before `pricingMode`/`allowMonthly` existed get the terms they were sold on: a `yearly-service` was prorated except
- * key hire, and a subscription could be paid monthly. A partial override with no `category` (a removed starter
- * product) keeps the starter terms. Returns only what changes.
- */
-export const productUpgrade = (fields, displayIndex) => {
-  const set = {};
-  const remove = ['deleted', 'hidden', 'visible'].filter((key) => key in fields);
-  if (typeof fields.active !== 'boolean') set.active = fields.deleted !== true && fields.hidden !== true && fields.visible !== false;
-  if (typeof fields.sortOrder !== 'number') set.sortOrder = (displayIndex + 1) * 10;
-  if (fields.category && !PRICING_MODES.includes(fields.pricingMode)) {
-    set.pricingMode = fields.category === 'SUBSCRIPTIONS' || (fields.category === 'SERVICES' && fields.type === 'subscription') ? 'subscription'
-      : fields.category === 'SERVICES' && fields.type === 'yearly-service' && !LEGACY_FIXED_SERVICES.includes(fields.id) ? 'prorated' : 'fixed';
-  }
-  if (fields.category && typeof fields.allowMonthly !== 'boolean') set.allowMonthly = (set.pricingMode || fields.pricingMode) === 'subscription';
-  return { set, remove };
-};
-
 /**
  * Who can buy an event, service or subscription: 'required' needs a club membership, 'none' is open to non-members
  * (kept as contacts), and 'included' makes each person a member for the club year. Older products only had

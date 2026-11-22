@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseProduct, productTerms, productUpgrade, productMembershipRule, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
+import { normaliseProduct, productTerms, productMembershipRule, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
 import { calculateCart } from './pricing.js';
 import { PRODUCTS } from '../constants/products.js';
 
@@ -12,20 +12,6 @@ test('first saved product preserves starter catalogue; overrides and removals st
   assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', active: false }, { id: 'other', active: false }]), []);
   assert.deepEqual(resolveCatalogue(defaults, [{ id: 'new', sortOrder: 5 }, { id: 'other', sortOrder: 1 }]).map(({ id }) => id), ['other', 'new', 'starter']);
   assert.deepEqual(resolveCatalogue(PRODUCTS, []).map(({ id }) => id), PRODUCTS.map(({ id }) => id));
-});
-
-test('saved products are upgraded to active, sortOrder and explicit pricing terms', () => {
-  assert.deepEqual(productUpgrade({ id: 'x', category: 'EVENTS', deleted: true }, 3), { set: { active: false, sortOrder: 40, pricingMode: 'fixed', allowMonthly: false }, remove: ['deleted'] });
-  assert.deepEqual(productUpgrade({ id: 'x', category: 'EVENTS', deleted: false, hidden: false }, 0).set.active, true);
-  assert.deepEqual(productUpgrade({ id: 'x', category: 'EVENTS', visible: false }, 0).set.active, false);
-  assert.deepEqual(productUpgrade({ id: 'boat-hire', category: 'SERVICES', type: 'yearly-service' }, 0).set.pricingMode, 'prorated');
-  assert.deepEqual(productUpgrade({ id: 'keyhire', category: 'SERVICES', type: 'yearly-service' }, 0).set.pricingMode, 'fixed');
-  assert.deepEqual(productUpgrade({ id: 's', category: 'SERVICES', type: 'subscription' }, 0).set, { active: true, sortOrder: 10, pricingMode: 'subscription', allowMonthly: true });
-  assert.deepEqual(productUpgrade({ id: 's', category: 'SUBSCRIPTIONS', allowMonthly: false }, 0).set, { active: true, sortOrder: 10, pricingMode: 'subscription' });
-  assert.deepEqual(productUpgrade({ id: 'boat-hire', deleted: true }, 0), { set: { active: false, sortOrder: 10 }, remove: ['deleted'] }, 'a partial override keeps the starter terms');
-  const current = { id: 'x', category: 'SERVICES', pricingMode: 'fixed', allowMonthly: false, active: true, sortOrder: 70 };
-  assert.deepEqual(productUpgrade(current, 2), { set: {}, remove: [] });
-  for (const product of PRODUCTS) assert.deepEqual(productUpgrade(product, 0), { set: {}, remove: [] }, `${product.id} is already current`);
 });
 
 test('only event products retain event schedule metadata', () => {

@@ -607,7 +607,7 @@ await test('a paid membership stays active for its club year whatever happens to
   assert.equal((await checkout(coachingEmail, build(['keyhire'], [coachingDetails]))).status, 200,
     'the separately paid membership counts as active');
 
-  // Older records may still name a Bookwhen subscription (scripts/migrate-schema.js); it is kept only so erasure can stop that billing.
+  // Older records may still name a Bookwhen subscription; it is kept only so erasure can stop that billing.
   const legacyEmail = email('stripe-cancelled');
   const legacyDetails = adultDetails({ firstName: 'Stripe', lastName: 'Cancelled', email: legacyEmail });
   await db.collection('memberships').doc(`stripe-cancelled-${run}`).set({

@@ -90,6 +90,6 @@ Paddle Scotland is the data controller for the JustGo membership register. The P
 | [src/utils/](src/utils/) | Shared logic (catalogue, pricing, checkout, consents, reports) and its unit tests |
 | [src/server/](src/server/), [server.js](server.js) | API routes and server logic, with unit tests |
 | [src/constants/](src/constants/), [public/](public/), [src/assets/](src/assets/) | Default copy, starter products, page content and bundled images |
-| [scripts/](scripts/) | Local startup, emulator seed data and tests, migrations, admin and deploy helpers |
+| [scripts/](scripts/) | Local startup, emulator seed data and tests, admin and deploy helpers |
 | [jobs/justgo/](jobs/justgo/) | JustGo jobs, operator commands and their tests |
 | [docs/](docs/) | JustGo API contract and hosting cost plan |
