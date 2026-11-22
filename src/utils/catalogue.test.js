@@ -4,14 +4,11 @@ import { normaliseProduct, productTerms, productMembershipRule, resolveCatalogue
 import { calculateCart } from './pricing.js';
 import { PRODUCTS } from '../constants/products.js';
 
-test('first saved product preserves starter catalogue; overrides and removals stay explicit; sorted by sortOrder', () => {
-  const defaults = [{ id: 'starter', name: 'Starter', sortOrder: 10 }, { id: 'other', sortOrder: 20 }];
-  assert.equal(resolveCatalogue(defaults, [{ id: 'new', sortOrder: 30 }]).length, 3);
-  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', name: 'Edited', sortOrder: 10 }])[0], normaliseProduct({ id: 'starter', name: 'Edited', sortOrder: 10 }));
-  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', active: false }]), [normaliseProduct({ id: 'other', sortOrder: 20 })]);
-  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'starter', active: false }, { id: 'other', active: false }]), []);
-  assert.deepEqual(resolveCatalogue(defaults, [{ id: 'new', sortOrder: 5 }, { id: 'other', sortOrder: 1 }]).map(({ id }) => id), ['other', 'new', 'starter']);
-  assert.deepEqual(resolveCatalogue(PRODUCTS, []).map(({ id }) => id), PRODUCTS.map(({ id }) => id));
+test('only saved products are on sale: starter products need a record, inactive records leave, sorted by sortOrder', () => {
+  assert.deepEqual(resolveCatalogue([]), []);
+  assert.deepEqual(resolveCatalogue([{ id: 'starter', name: 'Edited', sortOrder: 10 }]), [normaliseProduct({ id: 'starter', name: 'Edited', sortOrder: 10 })]);
+  assert.deepEqual(resolveCatalogue([{ id: 'starter', active: false }, { id: 'other', sortOrder: 20 }]), [normaliseProduct({ id: 'other', sortOrder: 20 })]);
+  assert.deepEqual(resolveCatalogue([{ id: 'new', sortOrder: 5 }, { id: 'other', sortOrder: 1 }]).map(({ id }) => id), ['other', 'new']);
 });
 
 test('only event products retain event schedule metadata', () => {
@@ -78,7 +75,7 @@ test('product terms follow the category, and only services choose a pricing mode
   for (const [category, type] of [['VOUCHERS', 'voucher'], ['EVENTS', 'event-ticket'], ['MERCHANDISE', 'merchandise']]) {
     assert.deepEqual(productTerms({ category, type: 'subscription', pricingMode: 'prorated', allowMonthly: true }), { type, pricingMode: 'fixed', allowMonthly: false });
   }
-  const defaults = resolveCatalogue(PRODUCTS, []);
+  const defaults = resolveCatalogue(PRODUCTS);
   assert.ok(defaults.every((product) => product.pricingMode));
   assert.deepEqual(['boat-hire', 'keyhire'].map((id) => defaults.find((product) => product.id === id).pricingMode), ['prorated', 'fixed']);
 });

@@ -43,15 +43,11 @@ export const normaliseProduct = (product) => {
   return { ...rest, ...productTerms(product), ...(rule ? { membershipRule: rule, membershipRequired: rule !== 'none' } : {}) };
 };
 
-// Inactive products leave the shop. Sorted by `sortOrder`. Trip discount products cannot be made inactive (firestore.rules).
-export const resolveCatalogue = (defaults, saved) => {
-  const products = new Map(defaults.map((product) => [product.id, product]));
-  for (const product of saved) {
-    if (product.active === false) products.delete(product.id);
-    else products.set(product.id, product);
-  }
-  return [...products.values()].map(normaliseProduct).sort((a, b) => a.sortOrder - b.sortOrder);
-};
+// Only products saved in the database are on sale: a starter product in src/constants/products.js is not, until it
+// has a record. Inactive products leave the shop. Sorted by `sortOrder`. Trip discount products cannot be made
+// inactive (firestore.rules).
+export const resolveCatalogue = (saved) => saved.filter((product) => product.active !== false)
+  .map(normaliseProduct).sort((a, b) => a.sortOrder - b.sortOrder);
 
 export const validateEventSchedule = (schedule) => {
   if (!schedule || !['single', 'consecutive', 'weekly'].includes(schedule.mode) || schedule.timeZone !== 'Europe/London') {

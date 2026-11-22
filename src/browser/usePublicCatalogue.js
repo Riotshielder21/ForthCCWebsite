@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PRODUCTS } from '../constants/products.js';
 import { apiFetch, apiUrl } from '../utils/api.js';
 import { subscribeToProducts } from '../utils/content.js';
-import { readPublicSnapshot, savePublicSnapshot } from '../utils/publicSnapshots.js';
+
+const isOnline = () => globalThis.navigator?.onLine !== false;
 
 export function usePublicCatalogue(currentPage, basketOpen) {
-  const [products, setProducts] = useState(() => readPublicSnapshot('products') || PRODUCTS);
+  // Only products loaded from the database on this visit are shown: never the starter list or an earlier visit's copy.
+  const [products, setProducts] = useState([]);
   const [availability, setAvailability] = useState({});
   const [catalogueLive, setCatalogueLive] = useState(false);
+  const [online, setOnline] = useState(isOnline);
   const [refresh, setRefresh] = useState({ refreshing: false, error: '' });
   const [adminError, setAdminError] = useState('');
   const revision = useRef(0);
@@ -33,14 +35,13 @@ export function usePublicCatalogue(currentPage, basketOpen) {
       if (!adminPage) {
         setProducts(result.products);
         setCatalogueLive(true);
-        savePublicSnapshot('products', result.products);
       }
       setRefresh({ refreshing: false, error: '' });
       return { ok: true };
     } catch (error) {
       if (request !== revision.current) return { ok: false, superseded: true };
       console.error('Availability refresh failed:', error);
-      const message = 'Prices and availability could not be checked. Displayed details may be out of date; checkout checks them again.';
+      const message = 'Prices and availability could not be checked, so buying is paused until they load.';
       setRefresh({ refreshing: false, error: message });
       return { ok: false, error: message };
     }
@@ -50,6 +51,19 @@ export function usePublicCatalogue(currentPage, basketOpen) {
     void refreshAvailability();
     return () => { revision.current += 1; };
   }, [currentPage, basketOpen, refreshAvailability]);
+
+  useEffect(() => {
+    const update = () => {
+      setOnline(isOnline());
+      if (isOnline()) void refreshAvailability();
+    };
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, [refreshAvailability]);
 
   useEffect(() => {
     setAdminError('');
@@ -70,6 +84,8 @@ export function usePublicCatalogue(currentPage, basketOpen) {
     availability,
     catalogueLive,
     refreshAvailability,
+    // Buying needs a connection and this visit's database prices; checkout checks them again.
+    shopState: !online ? 'offline' : refresh.error ? 'unavailable' : catalogueLive ? 'live' : 'loading',
     refresh: { ...refresh, error: adminError || refresh.error }
   };
 }

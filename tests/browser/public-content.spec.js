@@ -47,24 +47,35 @@ test('returning to a page loads published edits without a full reload', async ({
   expect(await page.evaluate(() => window.navigationTestMarker)).toBe('same-document');
 });
 
-test('failed availability keeps cached products visible and offers a working retry', async ({ page }) => {
-  const cached = { ...PRODUCTS.find((product) => product.id === 'membership-adult'), name: 'Cached adult membership' };
+test('the shop offers only products loaded on this visit, and pauses buying while offline', async ({ page, context }) => {
+  const saved = { ...PRODUCTS.find((product) => product.id === 'membership-adult'), name: 'Saved adult membership' };
   await page.addInitScript((products) => {
     localStorage.setItem('fcc-public-products', JSON.stringify(products));
-  }, [cached]);
+  }, [saved]);
   let failing = true;
   await page.route('**/api/availability', (route) => route.fulfill(failing
     ? { status: 503, json: { error: 'Temporarily unavailable' } }
-    : { json: { products: [{ ...cached, name: 'Refreshed adult membership' }], availability: {} } }));
+    : { json: { products: [{ ...saved, name: 'Live adult membership' }], availability: {} } }));
 
   await page.goto('/membership');
-  await expect(page.getByRole('button', { name: 'Add Cached adult membership to basket', exact: true })).toBeVisible();
-  await expect(page.getByText('Prices and availability could not be checked.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Prices and availability could not be checked', { exact: false }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /to basket$/ })).toHaveCount(0);
   failing = false;
-  await page.getByRole('button', { name: 'Retry availability', exact: true }).click();
+  await page.getByRole('button', { name: 'Try again', exact: true }).click();
 
-  await expect(page.getByRole('button', { name: 'Add Refreshed adult membership to basket', exact: true })).toBeVisible();
+  const add = page.getByRole('button', { name: 'Add Live adult membership to basket', exact: true });
+  await expect(add).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry availability', exact: true })).toHaveCount(0);
+  await add.click();
+
+  await context.setOffline(true);
+  await expect(page.getByText('You are offline. Reconnect to see what is on sale and to buy.', { exact: true }).first()).toBeVisible();
+  await expect(add).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open basket, 1 item', exact: true }).click();
+  const checkout = page.getByRole('button', { name: 'Checkout', exact: true });
+  await expect(checkout).toBeDisabled();
+  await context.setOffline(false);
+  await expect(checkout).toBeEnabled();
 });
 
 test('retrying changed consent wording clears ticks given to the old wording', async ({ page }) => {
