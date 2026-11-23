@@ -101,7 +101,7 @@ Subscription receipts are sent once per Stripe invoice even though Stripe can de
 
 ### Website replacement subscriptions (sandbox)
 
-**Status:** preview email and monthly sandbox checkout only. The full sandbox rehearsal is still to be run.
+**Status:** preview email, and monthly and yearly sandbox checkout with the replacement credit. The full sandbox rehearsal is still to be run.
 There is no live cutover command: the website rejects live Stripe checkout keys, and the cancellation
 Source key must also be a test key. The local preview below can read live product labels with a restricted
 key, but cannot change a live subscription. Do not email the live Bookwhen cohort or cancel their subscriptions yet.
@@ -155,7 +155,7 @@ the project must begin with `demo-`.
 
 Open the email on the computer serving localhost (or with the local port forwarded). Use the test inbox
 email at checkout, choose any available monthly website product and supply Stripe sandbox payment details.
-This tests the normal basket and monthly setup, not product mapping or annual credit. The receipt reports
+This tests the normal basket and monthly setup, not product mapping or the credit. The receipt reports
 **Sandbox checkout confirmed**; the live subscription is never cancelled. Production APIs reject these
 preview invitations. The preview does not require the separate replacement feature flag or a live key on
 the API. If the local stack was started without Stripe keys, restart just the API with `.env` followed by
@@ -182,10 +182,11 @@ node scripts/invite-subscription-replacements.mjs --dry-run replacement-map.json
 
 This checks active and trialling Source subscriptions and sends the same single fictional preview. It
 does not email the cohort, write to Stripe or Firestore, or verify the Destination catalogue. Separately
-check that each mapped product can actually be bought with monthly payments on staging. For annual
-payments, the check accepts supported subscriptions with a settled GBP invoice and an unrefunded charge,
-calculates the unused share of the amount actually paid, and reports how many qualify for the card-only
-rule. Mixed, unsupported, or unverifiable cases need review.
+check that each mapped product can actually be bought on staging with the same payment frequency as the
+old subscription. The check accepts one-item monthly or yearly subscriptions whose last invoice is a
+settled GBP payment with an unrefunded, undisputed charge, and reports under `credit` how many are monthly,
+yearly and card-only, with an estimate of the total credit today. Mixed, unsupported or unverifiable cases
+need review and are never invited.
 
 #### 3. Rehearse one real sandbox checkout
 
@@ -203,15 +204,19 @@ rule. Mixed, unsupported, or unverifiable cases need review.
    node scripts/invite-subscription-replacements.mjs --send-test replacement-map.json
    ```
 
-3. Open the working invitation. Use the original billing email, choose monthly payments for every
-   approved replacement product, and complete normal website checkout. No customer or card is copied;
-   no PostgreSQL or Stripe customer sharing is needed.
+3. Open the working invitation. Use the original billing email, keep the payment frequency the link
+   selects (monthly, or yearly for a yearly subscription) for every approved replacement product, and
+   complete normal website checkout. Checkout shows the credit taken off today's payment. No customer or
+   card is copied; no PostgreSQL or Stripe customer sharing is needed.
 4. Verify both dashboards. The server confirms the order and the new subscription's approved items
    before cancelling the matching Source subscription immediately, without an automatic refund or final
    invoice. Opening the link, leaving checkout, or an unconfirmed payment does not cancel anything.
    On return, the receipt shows the old stop as confirmed, pending or needing review. If cancellation
    fails (for example, Source has an open invoice or Stripe refuses the stop), reconcile it in **Needs
-   attention** and in the Source dashboard. Do not ask the subscriber to pay again.
+   attention** and in the Source dashboard. Do not ask the subscriber to pay again. Credit left over after
+   the first payment is then added to the subscriber's Destination customer balance, which Stripe takes
+   off their next subscription payments; check it under the customer's **Balance**. If it fails, **Needs
+   attention** retries it without adding it twice.
 
 Gmail has no send idempotency key. A functional invitation is recorded before sending, so an unresolved
 send blocks automatic resending. Reconcile Gmail Sent and the private Firestore invitation record before
@@ -223,12 +228,15 @@ Enable and rehearse live-ready checkout separately, verify Source cancellation p
 the cohort and product mapping. Do not bulk-cancel the old subscriptions in advance; non-responders
 keep their old subscriptions.
 
-Annual and other non-monthly subscriptions are excluded from functional test invitations. The agreed
-annual plan is to apply verified unused credit to the initial amount, then carry any balance forward.
-For more than 300 prepaid days left, the planned exception is to register the card at £0 and first
-charge on **1 March 2028**. Applying credit, the card-only checkout, and the separate continuation
-rules (monthly renewals on the 1st, annual renewals on 1 March, and cancellation only when requested)
-are not implemented.
+**Replacement credit.** Checkout rechecks the old subscription's last payment and credits what it will not
+use: for monthly, the whole unused days of that payment; for yearly, the unused share of the year in 20%
+steps, rounded down (for example, 2 months left of 12 is under 20%, so no credit). The credit comes off
+the replaced products' first payment, and anything left is carried forward to the next payments once
+the old subscription has stopped. With more than 300 days of a yearly payment left, nothing is charged
+at checkout: the card is saved and the first yearly payment is taken on the 1 March after the paid year
+ends. If the last payment cannot be checked, checkout refuses and nothing is charged. The new
+subscriptions then follow the normal rules: monthly payments on the 1st, yearly on 1 March, until the
+member cancels.
 
 ## One-Off Setup
 

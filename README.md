@@ -34,7 +34,7 @@ Purchase emails include a PDF receipt and, for scheduled bookings, a calendar fi
 
 **Subscription receipts.** Each paid monthly or yearly subscription payment emails the payer a club receipt listing the items paid under the person each is for, once per Stripe invoice. Subscriptions set up outside this site on the same Stripe account are receipted too.
 
-**Bookwhen subscription replacement.** The [sandbox runbook](DEPLOYMENT.md#website-replacement-subscriptions-sandbox) covers the test email, product mapping and normal website checkout. The old subscription is stopped only after the replacement is verified. Live cutover and annual credits at checkout are not enabled.
+**Bookwhen subscription replacement.** The [sandbox runbook](DEPLOYMENT.md#website-replacement-subscriptions-sandbox) covers the test email, product mapping and normal website checkout. Monthly subscriptions are replaced by monthly ones and yearly by yearly. The unused part of the old subscription's last payment is credited at checkout, and the old subscription is stopped only after the replacement is verified. Live cutover is not enabled.
 
 **Failed payments.** Stripe retries. The site emails the member on each failure, and on the last one sends compact first-party links to restart the monthly payments or confirm they are stopping. A failed one-off bank payment gets compact retry and cancel links too; older long links still work. Restarting buys the stopped items again from now, monthly or yearly as before, and does not wait for the renewal window. Each case appears under **Needs attention** for staff ([attention.js](src/server/attention.js)).
 

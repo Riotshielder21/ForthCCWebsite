@@ -59,6 +59,7 @@ import { allocateRecordIds, reserveRecordIds } from './src/utils/recordIds.js';
 import { registerEmailCodeRoutes } from './src/server/emailCodes.js';
 import { registerMyDetailsRoutes } from './src/server/myDetails.js';
 import { claimReplacement, completeReplacement, releaseReplacement } from './src/server/subscriptionReplacement.js';
+import { applyReplacementCredit } from './src/server/replacementCredit.js';
 import { registerClubNightRoutes } from './src/server/clubNight.js';
 import { volunteerCancellationPhases, scheduleWithoutPrices } from './src/utils/volunteerCancellation.js';
 import { nextChargeYear, subscriptionAdjustment, volunteerPriceFor } from './src/utils/volunteerAdjustments.js';
@@ -557,7 +558,7 @@ const recordPurchase = (transaction, { orderRef, order, paidAt, householdSnapsho
   }
 };
 
-const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, noticeAgreement = null, subscriptionPlan = null, retryOf = '', restartOf = '', photoConsentAsked = false, payment = null, replacementInvite = '' }) => {
+const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discountPence = 0, status, stripeSessionId = '', discountCode = '', people = [], siteUrl = '', billingMode = 'annual', receiptTokenHash = '', stockProductIds = [], policyVersions = null, noticeAgreement = null, subscriptionPlan = null, retryOf = '', restartOf = '', photoConsentAsked = false, payment = null, replacementInvite = '', replacementCredit = null }) => {
   if (!adminDb) throw new Error('Firebase Admin SDK is not configured.');
   const groups = newOrderGroups(stripeSessionId);
   if (replacementInvite) groups.stripe.mode = 'test';
@@ -583,6 +584,7 @@ const createFirestoreOrder = async ({ orderRef, email, items, totalPence, discou
     ...(retryOf ? { retryOf } : {}),
     ...(restartOf ? { restartOf } : {}),
     ...(replacementInvite ? { replacementInvite, replacementStatus: 'pending' } : {}),
+    ...(replacementCredit ? { replacementCredit } : {}),
     ...(payment ? { payment, paymentMethod: 'credit' } : {}),
     createdAt: Timestamp.now(),
     expiresAt: Timestamp.fromDate(new Date(Date.now() + ORDER_ACCESS_DAYS * 24 * 60 * 60 * 1000))
@@ -2391,8 +2393,11 @@ app.get('/api/checkout-receipt', rateLimit(20, 60 * 1000), async (req, res) => {
     if (!tokenMatches(token, order.receiptTokenHash)) return res.status(404).json({ error: 'Receipt not found.' });
     if (order.status !== 'paid') return res.status(409).json({ status: order.status || 'pending' });
     const receipt = buildReceiptSummary(document.id, await resolveOrderPeople(adminDb, order));
+    const credit = order.replacementCredit;
     return res.json({ receipt, copy: receiptEmailCopy(receipt), ...(order.replacementInvite ? {
-      replacementStatus: order.subscriptionPlan?.status === 'failed' ? 'needs-review' : order.replacementStatus
+      replacementStatus: order.subscriptionPlan?.status === 'failed' ? 'needs-review' : order.replacementStatus,
+      ...(credit ? { replacementCredit: { appliedPence: credit.appliedPence, carryForwardPence: credit.carryForwardPence, cardOnly: credit.cardOnly === true,
+        firstChargeAt: credit.firstChargeAt?.toDate?.().toISOString() || null } } : {})
     } : {}) });
   } catch (error) {
     console.error('Could not load checkout receipt:', error.message);
@@ -2649,7 +2654,7 @@ const startCheckout = async (req, res, credit = null) => {
       });
       reservedDocument = discountDocument.ref;
     }
-    const items = pricing.items.map((item) => ({
+    let items = pricing.items.map((item) => ({
       id: item.id, lineId: item.lineId, name: item.name, category: item.category, type: item.type, pricingMode: item.pricingMode, pricePence: toPence(item.displayPrice),
       monthly: Boolean(item.monthlyBilling && item.monthlyAmount > 0),
       ...(item.interval === 'year' && item.yearlyAmount > 0 ? { yearly: true } : {}),
@@ -2671,7 +2676,7 @@ const startCheckout = async (req, res, credit = null) => {
         ...(typeof item.imageUrl === 'string' && item.imageUrl ? { imageUrl: item.imageUrl } : {})
       } : {})
     }));
-    const totalPence = toPence(pricing.total);
+    let totalPence = toPence(pricing.total);
     reservedStockIds = await reserveStock(orderRef, selected, catalog);
     const policyVersions = consent.policies;
     const hasRecurringItem = items.some((item) => item.monthly);
@@ -2681,17 +2686,32 @@ const startCheckout = async (req, res, credit = null) => {
     // Checkout takes the first part payment (and anything paid up front) and saves the payment details. Subscription lines
     // are then set up after payment, one Stripe subscription for each interval, club year and first full payment date
     // (see setUpSubscriptions); they carry on until cancelled.
-    const debited = items.filter(isRecurringLine);
-    const groupKey = (item) => `${item.interval}:${item.clubYear}:${item.firstDebitAt.toMillis()}`;
-    const groups = [...new Set(debited.map(groupKey))].map((key) => {
-      const groupItems = debited.filter((item) => groupKey(item) === key);
-      return { interval: groupItems[0].interval, clubYear: groupItems[0].clubYear, lineIds: groupItems.map((item) => item.lineId), firstDebitAt: groupItems[0].firstDebitAt };
-    }).sort((a, b) => a.firstDebitAt.toMillis() - b.firstDebitAt.toMillis() || a.clubYear - b.clubYear || (a.interval === 'month' ? -1 : 1));
-    const subscriptionPlan = groups.length ? { status: 'pending', lineIds: debited.map((item) => item.lineId), groups } : null;
+    const planFor = (lines) => {
+      const recurring = lines.filter(isRecurringLine);
+      const groupKey = (item) => `${item.interval}:${item.clubYear}:${item.firstDebitAt.toMillis()}`;
+      const planned = [...new Set(recurring.map(groupKey))].map((key) => {
+        const groupItems = recurring.filter((item) => groupKey(item) === key);
+        return { interval: groupItems[0].interval, clubYear: groupItems[0].clubYear, lineIds: groupItems.map((item) => item.lineId), firstDebitAt: groupItems[0].firstDebitAt };
+      }).sort((a, b) => a.firstDebitAt.toMillis() - b.firstDebitAt.toMillis() || a.clubYear - b.clubYear || (a.interval === 'month' ? -1 : 1));
+      return { debited: recurring, groups: planned, subscriptionPlan: planned.length ? { status: 'pending', lineIds: recurring.map((item) => item.lineId), groups: planned } : null };
+    };
+    let { debited, groups, subscriptionPlan } = planFor(items);
+    let replacementCredit = null;
     if (!credit && req.body.replacementToken) {
-      replacementInvite = await claimReplacement(adminDb, {
+      const claimed = await claimReplacement(adminDb, {
         token: req.body.replacementToken, email, orderRef, items, subscriptionPlan, destination: stripeRequest
       });
+      replacementInvite = claimed.id;
+      if (claimed.plan) {
+        // The old subscription's unused payment comes off the first payment; anything left comes off the next payments.
+        const applied = applyReplacementCredit(items, claimed.productIds, claimed.plan, { timestamp: (iso) => Timestamp.fromDate(new Date(iso)) });
+        items = applied.items;
+        totalPence = items.reduce((sum, item) => sum + item.pricePence, 0);
+        ({ debited, groups, subscriptionPlan } = planFor(items));
+        replacementCredit = { interval: claimed.plan.interval, creditPence: claimed.plan.creditPence, appliedPence: applied.appliedPence,
+          carryForwardPence: applied.carryForwardPence, unusedDays: claimed.plan.unusedDays, cardOnly: claimed.plan.cardOnly,
+          ...(claimed.plan.cardOnly ? { firstChargeAt: Timestamp.fromDate(new Date(claimed.plan.firstChargeAt)) } : {}) };
+      }
     }
     // Stripe will not take a £0 payment, so a fully discounted basket with no monthly payments is completed here instead.
     const free = !credit && !subscriptionPlan && totalPence === 0;
@@ -2702,7 +2722,7 @@ const startCheckout = async (req, res, credit = null) => {
       people: storedPeople, siteUrl, billingMode: hasRecurringItem ? 'monthly' : 'annual', receiptTokenHash: hashAccessToken(receiptToken), stockProductIds: reservedStockIds, policyVersions,
       noticeAgreement: notices.versions.length ? { versions: notices.versions, agreedAt: Timestamp.now(), ...(credit ? { recordedBy: credit.creditedBy } : {}) } : null, subscriptionPlan,
       photoConsentAsked: people.length > 0, payment: credit,
-      retryOf: retried && retried.order.status === 'payment_failed' ? retried.reference.id : '', restartOf, replacementInvite });
+      retryOf: retried && retried.order.status === 'payment_failed' ? retried.reference.id : '', restartOf, replacementInvite, replacementCredit });
     orderCreated = true;
     if (credit) {
       const fields = await fulfilOrder({ orderRef, sessionId: creditId, amountTotal: totalPence, receiptToken });
@@ -2733,6 +2753,10 @@ const startCheckout = async (req, res, credit = null) => {
     }
     const dateLabel = (timestamp) => timestamp.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/London' });
     const money = (value) => `£${Number(value).toFixed(2)}`;
+    const replacementCreditText = (applied) => !applied ? '' : applied.cardOnly
+      ? ' Your previous subscription is paid up beyond this club year, so nothing is taken now.'
+      : ` ${money(toPounds(applied.appliedPence))} of credit from your previous subscription is taken off today's payment${applied.carryForwardPence
+        ? `, and ${money(toPounds(applied.carryForwardPence))} more comes off your next payments` : ''}.`;
     const debitText = groups.map((group) => {
       const yearly = group.interval === 'year';
       const lines = debited.filter((item) => group.lineIds.includes(item.lineId));
@@ -2764,7 +2788,7 @@ const startCheckout = async (req, res, credit = null) => {
         : [['payment_intent_data[metadata][order_ref]', orderRef],
           // Saves the card or bank account for the monthly direct debits set up after payment.
           ...(subscriptionPlan ? [['payment_intent_data[setup_future_usage]', 'off_session']] : [])]),
-      ...(debitText ? [['custom_text[submit][message]', `Your payment details are saved for ${debitText}, until you cancel.`.slice(0, 1200)]] : []),
+      ...(debitText ? [['custom_text[submit][message]', `Your payment details are saved for ${debitText}, until you cancel.${replacementCreditText(replacementCredit)}`.slice(0, 1200)]] : []),
       ['success_url', `${siteUrl}/payment-success?session_id={CHECKOUT_SESSION_ID}&receipt_token=${receiptToken}${replacementInvite ? '&replacement=1' : ''}`],
       ['cancel_url', `${siteUrl}/membership`],
       ['metadata[order_ref]', orderRef],

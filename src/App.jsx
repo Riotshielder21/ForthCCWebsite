@@ -90,10 +90,21 @@ export default function App() {
     const token = fromInvitation || window.sessionStorage.getItem('fcc-subscription-replacement');
     return /^[0-9a-f]{64}\.[0-9a-f]{64}$/.test(token || '') ? token : '';
   });
+  // A yearly subscription is replaced by a yearly one: its invitation link says `billing=annual`.
+  const [replacementYearly] = useState(() => {
+    const invitation = window.location.pathname === '/membership' ? new URLSearchParams(window.location.hash.slice(1)) : null;
+    return invitation?.get('replace') ? invitation.get('billing') === 'annual'
+      : window.sessionStorage.getItem('fcc-subscription-replacement-billing') === 'annual';
+  });
   useEffect(() => {
-    if (replacementToken) window.sessionStorage.setItem('fcc-subscription-replacement', replacementToken);
-    else window.sessionStorage.removeItem('fcc-subscription-replacement');
-  }, [replacementToken]);
+    if (replacementToken) {
+      window.sessionStorage.setItem('fcc-subscription-replacement', replacementToken);
+      window.sessionStorage.setItem('fcc-subscription-replacement-billing', replacementYearly ? 'annual' : 'monthly');
+    } else {
+      window.sessionStorage.removeItem('fcc-subscription-replacement');
+      window.sessionStorage.removeItem('fcc-subscription-replacement-billing');
+    }
+  }, [replacementToken, replacementYearly]);
   const { currentPage, setCurrentPage, onLinkClick, navigateTo } = useSiteRoute();
   const [isCartOpen, setIsCartOpen] = useState(false);
   const { products, availability, catalogueLive, refreshAvailability, shopState, refresh: catalogueRefresh } = usePublicCatalogue(currentPage, isCartOpen);
@@ -110,7 +121,7 @@ export default function App() {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = previousOverflow; };
   }, [isCartOpen]);
-  const [isAnnual, setIsAnnual] = useState(() => replacementToken ? false : initialDraft?.isAnnual ?? true);
+  const [isAnnual, setIsAnnual] = useState(() => replacementToken ? replacementYearly : initialDraft?.isAnnual ?? true);
   // Monthly billing is only offered when something in the basket allows it.
   const monthlyAvailable = cart.some((item) => item.allowMonthly);
   const annualBilling = isAnnual || !monthlyAvailable;

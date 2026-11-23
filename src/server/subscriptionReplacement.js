@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
+import { Timestamp } from 'firebase-admin/firestore';
 import { emailBlockId, normalEmailBlocked } from './emailSuppression.js';
+import { replacementCredit } from './replacementCredit.js';
+import { isRecurringLine } from '../utils/subscriptions.js';
 
 export const replacementInvites = 'subscriptionReplacementInvites';
 export const replacementTokenId = (token) => typeof token === 'string' && /^[0-9a-f]{64}\.[0-9a-f]{64}$/.test(token) ? token.slice(0, 64) : '';
@@ -11,12 +14,14 @@ const localPreview = invite => invite.previewOnly === true && process.env.LOCAL_
   /^(?:localhost|127\.0\.0\.1):[0-9]+$/.test(process.env.FIRESTORE_EMULATOR_HOST || '') &&
   (process.env.GCLOUD_PROJECT || '').startsWith('demo-');
 
+// An invitation replaces a monthly or a yearly subscription (`interval`, monthly for older invitations) with the same.
+const replacementInterval = invite => invite.interval === 'year' ? 'year' : 'month';
+const replacesLine = (invite, order) => item => isRecurringLine(item) && (item.yearly ? 'year' : 'month') === replacementInterval(invite) &&
+  !item.revokedAt && order.subscriptionPlan?.groups?.some(group => group.lineIds.includes(item.lineId));
+
 export function replacementItems(invite, order) {
-  if (localPreview(invite)) return order.items.some(item => item.monthly && item.debits > 0 && !item.revokedAt &&
-    order.subscriptionPlan?.groups?.some(group => group.lineIds.includes(item.lineId)));
-  return invite.productIds.length > 0 && invite.productIds.every(id => order.items.some(item =>
-    item.id === id && item.monthly && item.debits > 0 && !item.revokedAt &&
-    order.subscriptionPlan?.groups?.some(group => group.lineIds.includes(item.lineId))));
+  if (localPreview(invite)) return order.items.some(replacesLine(invite, order));
+  return invite.productIds.length > 0 && invite.productIds.every(id => order.items.some(item => item.id === id && replacesLine(invite, order)(item)));
 }
 
 export async function replacementSource(path, method = 'GET', params) {
@@ -57,9 +62,18 @@ export async function claimReplacement(db, { token, email, orderRef, items, subs
     throw refused('Use the billing email that received your replacement invitation, or contact the club.');
   }
   if (!replacementItems(invite, { items, subscriptionPlan })) {
-    throw refused('Choose monthly payments for all the replacement products listed in your invitation.');
+    throw refused(`Choose ${replacementInterval(invite) === 'year' ? 'yearly' : 'monthly'} payments for all the replacement products listed in your invitation.`);
   }
   await verifyReplacementAccounts(invite, replacementSource, destination);
+  // The credit is worked out from the old subscription's last payment now, as checkout starts.
+  let plan = null;
+  if (!invite.previewOnly) {
+    const original = await replacementSource(`subscriptions/${invite.sourceId}?expand%5B%5D=latest_invoice.charge`);
+    plan = original?.id === invite.sourceId && ['active', 'trialing'].includes(original.status) ? replacementCredit(original, original.latest_invoice) : null;
+    if (!plan || plan.interval !== replacementInterval(invite)) {
+      throw refused('We could not check the last payment on your current subscription, so nothing has been charged. Please contact the club.');
+    }
+  }
   await db.runTransaction(async tx => {
     const current = (await tx.get(ref)).data();
     if (!current || current.tokenHash !== invite.tokenHash || current.stopped || current.expiresAt.toMillis() <= Date.now()) throw refused('This replacement link is unavailable.');
@@ -71,7 +85,7 @@ export async function claimReplacement(db, { token, email, orderRef, items, subs
     }
     tx.update(ref, { orderRef });
   });
-  return id;
+  return { id, productIds: invite.productIds || [], plan };
 }
 
 export async function releaseReplacement(db, id, orderRef) {
@@ -89,8 +103,7 @@ async function verifyNewSubscription({ order, orderRef, invite, source, destinat
     throw new Error('The paid replacement subscription has not been verified.');
   }
   await verifyReplacementAccounts(invite, source, destination);
-  const lines = order.items.filter(item => (localPreview(invite) || invite.productIds.includes(item.id)) && item.monthly && item.debits > 0 && !item.revokedAt &&
-    order.subscriptionPlan.groups.some(group => group.lineIds.includes(item.lineId)));
+  const lines = order.items.filter(item => (localPreview(invite) || invite.productIds.includes(item.id)) && replacesLine(invite, order)(item));
   const targets = new Map();
   for (const line of lines) {
     const group = order.subscriptionPlan.groups.find(value => value.lineIds.includes(line.lineId));
@@ -107,17 +120,18 @@ async function verifyNewSubscription({ order, orderRef, invite, source, destinat
       throw new Error('The replacement Stripe subscription is not active or has changed.');
     }
   }
+  return targets;
 }
 
 export async function stopReplacedSubscription(params) {
   const { invite, source } = params;
   if (invite.previewOnly) throw new Error('Local previews must never cancel Source subscriptions.');
-  await verifyNewSubscription(params);
+  const targets = await verifyNewSubscription(params);
   const path = `subscriptions/${invite.sourceId}`;
   const original = await source(`${path}?expand%5B%5D=customer`);
   if (original.id !== invite.sourceId || original.livemode !== false || !original.customer?.email ||
     emailBlockId(original.customer.email) !== invite.emailHash) throw new Error('Source subscription or billing address changed.');
-  if (original.status === 'canceled') return;
+  if (original.status === 'canceled') return targets;
   if (!['active', 'trialing'].includes(original.status) || original.schedule || original.items?.has_more ||
     !Array.isArray(original.items?.data) || !Array.isArray(invite.sourcePriceIds) ||
     original.items.data.map(item => stripeId(item.price)).sort().join(',') !== invite.sourcePriceIds.join(',')) {
@@ -130,12 +144,33 @@ export async function stopReplacedSubscription(params) {
   }
   const canceled = await source(path, 'DELETE', { invoice_now: 'false', prorate: 'false' });
   if (canceled.id !== invite.sourceId || canceled.status !== 'canceled') throw new Error('Stripe did not confirm Source cancellation.');
+  return targets;
+}
+
+/**
+ * Credit left after the first payment comes off the new subscription's next payments: a Stripe customer balance on the
+ * Destination customer that pays for it. Added once, and only after the old subscription has stopped.
+ */
+async function carryForwardCredit(db, orderRefDoc, orderRef, order, destination) {
+  const credit = order.replacementCredit;
+  if (!(credit?.carryForwardPence > 0) || credit.carriedForwardAt) return;
+  const subscriptionId = (order.subscriptionPlan?.groups || []).find(group => group.stripeSubscriptionId)?.stripeSubscriptionId;
+  const customer = subscriptionId ? stripeId((await destination(`subscriptions/${subscriptionId}`, null, 'GET')).customer) : '';
+  if (!/^cus_[A-Za-z0-9]+$/.test(customer || '')) throw new Error('The new subscription has no Stripe customer to hold the credit.');
+  await destination(`customers/${customer}/balance_transactions`, [['amount', String(-credit.carryForwardPence)], ['currency', 'gbp'],
+    ['description', 'Credit from your previous subscription'], ['metadata[order_ref]', orderRef]], 'POST', { idempotencyKey: `${orderRef}-replacement-credit` });
+  await orderRefDoc.update({ 'replacementCredit.carriedForwardAt': Timestamp.now() });
 }
 
 export async function completeReplacement(db, orderRef, { destination, attention }) {
   const orderRefDoc = db.collection('orders').doc(orderRef);
   const order = (await orderRefDoc.get()).data();
-  if (!order?.replacementInvite || ['stopped', 'preview-complete'].includes(order.replacementStatus)) return;
+  if (!order?.replacementInvite || order.replacementStatus === 'preview-complete') return;
+  if (order.replacementStatus === 'stopped') {
+    await carryForwardCredit(db, orderRefDoc, orderRef, order, destination);
+    await attention.settle('subscription-replacement', orderRef);
+    return;
+  }
   const ref = db.collection(replacementInvites).doc(order.replacementInvite);
   const invite = (await ref.get()).data();
   try {
@@ -151,7 +186,6 @@ export async function completeReplacement(db, orderRef, { destination, attention
     batch.update(ref, invite.previewOnly ? { previewComplete: true } : { stopped: true });
     batch.update(orderRefDoc, { replacementStatus: invite.previewOnly ? 'preview-complete' : 'stopped' });
     await batch.commit();
-    await attention.settle('subscription-replacement', orderRef);
   } catch (error) {
     const pending = await db.runTransaction(async tx => {
       if (['stopped', 'preview-complete'].includes((await tx.get(orderRefDoc)).data()?.replacementStatus)) return false;
@@ -161,6 +195,15 @@ export async function completeReplacement(db, orderRef, { destination, attention
     if (!pending) return;
     await attention.raise('subscription-replacement', orderRef, { orderRef, subscriptionId: invite?.sourceId || '',
       detail: `New checkout exists, but the old subscription stop needs review: ${error.message}` });
+    throw error;
+  }
+  if (invite.previewOnly) return attention.settle('subscription-replacement', orderRef);
+  try {
+    await carryForwardCredit(db, orderRefDoc, orderRef, order, destination);
+    await attention.settle('subscription-replacement', orderRef);
+  } catch (error) {
+    await attention.raise('subscription-replacement', orderRef, { orderRef, subscriptionId: invite.sourceId,
+      detail: `The old subscription is stopped, but £${(order.replacementCredit.carryForwardPence / 100).toFixed(2)} of credit could not be added to the new one: ${error.message} Retry here, or add it in Stripe as a customer balance.` });
     throw error;
   }
 }

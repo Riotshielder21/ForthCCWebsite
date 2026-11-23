@@ -5,7 +5,7 @@ import { google } from 'googleapis';
 import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { emailBlockId, normalEmailBlocked } from '../src/server/emailSuppression.js';
-import { annualReplacementCredit } from '../src/server/annualReplacementCredit.js';
+import { replacementCredit } from '../src/server/replacementCredit.js';
 import { replacementInvites, replacementSource, replacementTokenHash } from '../src/server/subscriptionReplacement.js';
 import { buildRawEmail } from '../src/utils/mail.js';
 import { subscriptionReplacementEmail } from '../src/utils/subscriptionReplacementEmail.js';
@@ -158,7 +158,7 @@ async function main() {
       typeof target.name !== 'string' || !target.name.trim() || /[\r\n]/.test(target.name))) fail('Invalid legacy-price to website-product mapping.');
   const sending = mode === '--send-test';
   const report = { dryRun: !sending, checked: 0, mapped: 0, needsReview: 0, notTestInbox: 0, suppressed: 0, alreadySent: 0, sent: 0 };
-  const annual = { verified: 0, cardOnly: 0, needsReview: 0, excludedFromInvites: 0 };
+  const credit = { monthly: 0, yearly: 0, cardOnly: 0, needsReview: 0, estimatedPence: 0 };
   const asOf = Math.floor(Date.now() / 1000);
   let db, sendSettings;
   if (sending) {
@@ -181,24 +181,15 @@ async function main() {
         continue;
       }
       report.mapped++;
-      const monthly = original.items.data.every(item => item.price?.recurring?.interval === 'month' && item.price.recurring.interval_count === 1);
-      if (!monthly) {
-        annual.excludedFromInvites++;
-        const invoiceId = typeof original.latest_invoice === 'string' ? original.latest_invoice : original.latest_invoice?.id;
-        if (sending || !/^in_[A-Za-z0-9]+$/.test(invoiceId || '') ||
-          !original.items.data.some(item => item.price?.recurring?.interval === 'year')) {
-          annual.needsReview++;
-          continue;
-        }
-        const invoice = await replacementSource(`invoices/${invoiceId}?expand%5B%5D=charge`);
-        const plan = annualReplacementCredit(original, invoice, asOf);
-        if (!plan) annual.needsReview++;
-        else {
-          annual.verified++;
-          if (plan.cardOnly) annual.cardOnly++;
-        }
-        continue;
-      }
+      // Monthly and yearly subscriptions are both invited, but only when their last payment can be checked for the
+      // credit; checkout works the credit out again from the latest payment.
+      const invoiceId = typeof original.latest_invoice === 'string' ? original.latest_invoice : original.latest_invoice?.id;
+      const plan = /^in_[A-Za-z0-9]+$/.test(invoiceId || '')
+        ? replacementCredit(original, await replacementSource(`invoices/${invoiceId}?expand%5B%5D=charge`), asOf) : null;
+      if (!plan) { credit.needsReview++; continue; }
+      credit[plan.interval === 'year' ? 'yearly' : 'monthly']++;
+      if (plan.cardOnly) credit.cardOnly++;
+      credit.estimatedPence += plan.creditPence;
       if (!sending) continue;
       if (email !== sendSettings.testInbox) { report.notTestInbox++; continue; }
       const targets = [...new Map(prices.map(id => [mapping[id].id, mapping[id]])).values()];
@@ -207,7 +198,7 @@ async function main() {
       const token = `${id}.${createHmac('sha256', sendSettings.tokenSecret).update(`${id}:${destinationAccount}`).digest('hex')}`;
       const ref = db.collection(replacementInvites).doc(id);
       const productIds = targets.map(target => target.id).sort();
-      const invite = { sourceId: original.id, sourceAccount, destinationAccount, sourcePriceIds: prices,
+      const invite = { sourceId: original.id, sourceAccount, destinationAccount, sourcePriceIds: prices, interval: plan.interval,
         productIds, emailHash: emailBlockId(email), tokenHash: replacementTokenHash(token) };
       const send = await db.runTransaction(async tx => {
         const prior = (await tx.get(ref)).data();
@@ -220,14 +211,17 @@ async function main() {
       if (!send) { report.alreadySent++; continue; }
       if (await normalEmailBlocked(db, email, { subscriptionId: original.id })) { report.suppressed++; continue; }
       const link = new URL('/membership', sendSettings.site);
-      link.hash = new URLSearchParams({ replace: token }).toString();
-      await sendSettings.mailer.send({ email, ...subscriptionReplacementEmail({ names: targets.map(target => target.name), link: link.href }) });
+      link.hash = new URLSearchParams({ replace: token, ...(plan.interval === 'year' ? { billing: 'annual' } : {}) }).toString();
+      const creditText = plan.cardOnly ? 'Your current subscription is paid up for most of a year, so nothing is taken at checkout: the first yearly payment is on 1 March after it ends.'
+        : plan.creditPence > 0 ? `About £${(plan.creditPence / 100).toFixed(2)} of credit for the unused part of your last payment comes off your first payment, and anything left over comes off the next ones. Checkout shows the exact amount.` : '';
+      await sendSettings.mailer.send({ email, ...subscriptionReplacementEmail({ names: targets.map(target => target.name), link: link.href,
+        yearly: plan.interval === 'year', creditText }) });
       await ref.update({ sent: true });
       report.sent++;
     }
   }
   if (!sending) await sendDryRunPreview();
-  console.log(JSON.stringify({ ...report, annual, ...(!sending ? { previewSent: true } : {}) }, null, 2));
+  console.log(JSON.stringify({ ...report, credit, ...(!sending ? { previewSent: true } : {}) }, null, 2));
 }
 
 main().catch(error => {
