@@ -25,9 +25,10 @@ export const tileIsWide = (tile, templateWide = false) => tile.width === 'wide' 
 export const PAGE_TILE_GROUPS = {
   home: { intro: ['welcome', 'start'], mission: ['mission'], quick: ['quick1', 'quick2', 'quick3'], supporters: ['supporters'], location: ['location'] },
   beginners: { hero: ['hero'], tiles: ['open', 'club', 'courses', 'essentials'] },
-  disciplines: { hero: ['hero'], tiles: ['slalom', 'polo', 'sprint', 'whitewater', 'touring', 'surf', 'canoe', 'paddleboarding'] },
+  disciplines: { hero: ['hero'], tiles: ['slalom', 'polo', 'sprint', 'whitewater', 'touring', 'surf', 'canoe', 'paddleboarding'], support: ['supported'] },
   about: { hero: ['hero'], tiles: ['tile1', 'tile2', 'tile3', 'tile4'] },
   'access-project': { hero: ['hero'], tiles: ['tile1', 'tile2', 'tile3', 'tile4'] },
+  'everything-else': { hero: ['hero'], faq: ['trial', 'membership', 'what-to-bring', 'children', 'hire', 'trips', 'experienced', 'supported'], history: ['history'], magazine: ['magazine'] },
   contact: { hero: ['hero'], tiles: ['address', 'email', 'social'], support: ['support'] }
 };
 

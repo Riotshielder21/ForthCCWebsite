@@ -1,4 +1,5 @@
 import { parseContentLinks, validateContentLinks } from './contentLinks.js';
+import { DISCLAIMER, PHOTO_CONSENT } from '../constants/consentWording.js';
 
 /**
  * Club notices (privacy, data retention, terms of sale, …) shown on the Notices page. Before launch, edits replace the
@@ -7,6 +8,7 @@ import { parseContentLinks, validateContentLinks } from './contentLinks.js';
  */
 export const NOTICE_LIMITS = { title: 120, body: 60000, notices: 50 };
 export const NOTICE_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,58}[a-z0-9])?$/;
+export const CONSENT_TAB_IDS = [DISCLAIMER.id, PHOTO_CONSENT.id];
 
 export const noticeIdFromTitle = (title) => String(title || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '');
@@ -68,6 +70,16 @@ export const sortNotices = (notices) => [...notices].sort((a, b) => (a.order ?? 
 
 /** Notices shown on the page and agreed to at checkout. Notices stay published; changes are new versions. */
 export const publishedNotices = (notices) => sortNotices(notices.filter((notice) => notice.currentVersion > 0));
+
+export const noticeTabs = (notices, statements) => {
+  const published = publishedNotices(notices);
+  const ids = new Set(published.map((notice) => notice.id));
+  const lastOrder = Math.max(-1, ...published.map((notice) => notice.order ?? 0));
+  return sortNotices([...published, ...statements.filter((statement) => !ids.has(statement.id)).map((statement, index) => ({
+    ...statement,
+    order: notices.find((notice) => notice.id === statement.id)?.order ?? lastOrder + index + 1
+  }))]);
+};
 
 /** `{ noticeId: version }` for the notices someone must agree to now. */
 export const noticeVersionMap = (notices) => Object.fromEntries(publishedNotices(notices).map((notice) => [notice.id, notice.currentVersion]));

@@ -38,6 +38,7 @@ const ContactUsPage = lazy(pageModules['contact-us']);
 const SafeguardingPage = lazy(pageModules.safeguarding);
 const NoticesPage = lazy(pageModules.notices);
 const AccessProjectPage = lazy(pageModules['access-project']);
+const EverythingElsePage = lazy(pageModules['everything-else']);
 const AdminPage = lazy(pageModules.admin);
 const AdminReportsPage = lazy(pageModules['admin-reports']);
 const ClubNightPage = lazy(pageModules['club-night']);
@@ -502,6 +503,8 @@ export default function App() {
         return <NoticesPage />;
       case 'access-project':
         return <AccessProjectPage />;
+      case 'everything-else':
+        return <EverythingElsePage />;
       default:
         return <NotFoundPage />;
     }

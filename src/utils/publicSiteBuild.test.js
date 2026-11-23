@@ -71,6 +71,7 @@ test('offline digests use final written assets, not code before Vite resolves pr
     assert.equal(manifest.digests['/assets/entry.js'], createHash('sha256').update('final resolved preload references').digest('hex'));
     assert.ok(manifest.digests['/index.html']);
     assert.ok(manifest.files.includes('/content/pages/home.json'));
+    assert.ok(manifest.files.includes('/content/pages/everything-else.json'));
     assert.ok(!manifest.files.some((path) => path.includes('/admin')));
     assert.ok(!manifest.files.some((path) => path.includes('/payment-issue')));
   } finally {

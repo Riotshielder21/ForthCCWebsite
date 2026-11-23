@@ -8,14 +8,19 @@ export const PUBLIC_ROUTES = {
   'contact-us': { path: '/contact-us', title: 'Contact Us', content: 'contact' },
   safeguarding: { path: '/safeguarding', title: 'Safeguarding' },
   notices: { path: '/notices', title: 'Notices' },
-  'access-project': { path: '/access-project', title: 'Access Project', content: 'access-project' }
+  'access-project': { path: '/access-project', title: 'Access Project', content: 'access-project' },
+  'everything-else': { path: '/everything-else', title: 'Everything Else', content: 'everything-else' }
 };
 
 export const PRIVATE_ROUTES = {
   admin: '/admin', 'admin-reports': '/admin/reports', 'club-night': '/check-ins',
   'my-details': '/my-details', checkout: '/checkout', 'payment-success': '/payment-success', 'payment-issue': '/payment-issue'
 };
-export const LEGACY_REDIRECTS = { '/home': '/', '/activites': '/disciplines', '/activities': '/disciplines', '/contact': '/contact-us', '/club-night': '/check-ins' };
+export const LEGACY_REDIRECTS = {
+  '/home': '/', '/activites': '/disciplines', '/activities': '/disciplines', '/contact': '/contact-us', '/club-night': '/check-ins',
+  '/faq': '/everything-else', '/history': '/everything-else'
+};
+const LEGACY_REDIRECT_HASHES = { '/faq': '#faq', '/history': '#history' };
 const CLUB_HOSTS = new Set(['forthcanoeclub.co.uk', 'www.forthcanoeclub.co.uk', 'new.forthcanoeclub.co.uk']);
 
 export const pagePath = (page) => PUBLIC_ROUTES[page]?.path || PRIVATE_ROUTES[page] || null;
@@ -23,6 +28,7 @@ export const pagePath = (page) => PUBLIC_ROUTES[page]?.path || PRIVATE_ROUTES[pa
 export function resolveRoute(value) {
   const url = new URL(value, 'https://forthcanoeclub.co.uk');
   const path = url.pathname.replace(/\/+$/, '') || '/';
+  if (!url.hash && LEGACY_REDIRECT_HASHES[path]) url.hash = LEGACY_REDIRECT_HASHES[path];
   if (path.startsWith('/_preview/')) {
     const content = path.slice('/_preview/'.length);
     const page = Object.keys(PUBLIC_ROUTES).find((key) => PUBLIC_ROUTES[key].content === content);

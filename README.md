@@ -68,6 +68,8 @@ A refund is made first, then billing stopped, then access removed. If a step fai
 
 **Images.** The admin's browser resizes each upload into WebP copies of several widths, a plain JPEG/PNG copy and a tiny blurred preview; the original is never uploaded ([imageProcessing.js](src/utils/imageProcessing.js)). [ResponsiveImage.jsx](src/components/ResponsiveImage.jsx) shows the preview, then downloads the smallest copy that is sharp for the box on that screen. Costs are in [hosting-cost-plan.md](docs/hosting-cost-plan.md).
 
+Admins can move any published notice tab, including Participation Disclaimer and Photo/Video Consent, using **Move tab earlier/later**. Tab order is saved independently of wording; moving a tab does not create a version or require fresh consent.
+
 **Live mode.** `WEBSITE_ISLIVE=true` turns on versioning of consent and policy wording and record retention. It is off until the policies are published and live Stripe keys are supported.
 
 **Security.** Firebase App Check on the website and API ([appCheck.js](src/server/appCheck.js)), rate limits on every route ([rateLimit.js](src/server/rateLimit.js)), and audit logs for admin actions.

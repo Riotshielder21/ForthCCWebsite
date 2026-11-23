@@ -11,7 +11,8 @@ const DESCRIPTIONS = {
   'contact-us': 'Contact Forth Canoe Club for membership, beginner sessions and club enquiries.',
   safeguarding: 'Read Forth Canoe Club safeguarding information and find support and reporting contacts.',
   notices: 'Read Forth Canoe Club notices covering privacy, data use and the terms for joining or booking.',
-  'access-project': 'Learn about Forth Canoe Club improvements to paddling access and facilities.'
+  'access-project': 'Learn about Forth Canoe Club improvements to paddling access and facilities.',
+  'everything-else': 'Find Forth Canoe Club answers to common questions, plus draft club history and Kayak Magazine pages.'
 };
 const PRIVATE_TITLES = {
   admin: 'Admin', 'admin-reports': 'Admin Reports', 'club-night': 'Check-ins',

@@ -32,6 +32,18 @@ export default function DisciplinesPage() {
         </div>
         <Timetable />
       </div>
+
+      <div className="SectionContent" data-tile-group="support">
+        <div className="main_tile main_tile_grey" data-tile-id="supported">
+          <span className="tile_eyebrow">Supported paddling</span>
+          <h2 className="tile_heading_bold_1" data-content-field="supportedTitle">{copy.supportedTitle}</h2>
+          <p className="text_container SpaceT4 SpaceB4" data-content-field="supportedBody">{copy.supportedBody}</p>
+          <div className="EverythingElseActions">
+            <a className="PrimaryActionButton" data-content-field="supportedCoordinatorLabel" data-link-field="supportedCoordinatorUrl" href={copy.supportedCoordinatorUrl}>{copy.supportedCoordinatorLabel}</a>
+            <a className="ContentLink" data-content-field="supportedProjectLabel" data-link-field="supportedProjectUrl" href={copy.supportedProjectUrl}>{copy.supportedProjectLabel}</a>
+          </div>
+        </div>
+      </div>
     </EditablePage>
   );
 }

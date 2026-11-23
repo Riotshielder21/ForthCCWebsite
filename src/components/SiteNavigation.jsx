@@ -15,7 +15,8 @@ const MORE_NAV_ITEMS = [
   { id: 'volunteering', label: 'Volunteering' },
   { id: 'about', label: 'About' },
   { id: 'contact-us', label: 'Contact Us' },
-  { id: 'access-project', label: 'Access Project' }
+  { id: 'access-project', label: 'Access Project' },
+  { id: 'everything-else', label: 'Everything Else' }
 ];
 
 export default function SiteNavigation({ currentPage, setCurrentPage, cartCount, onCartOpen }) {

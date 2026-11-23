@@ -126,7 +126,40 @@ export const PAGE_CONTENT = {
       canoeTitle: field('Tile 8 title', ''),
       canoeBody: field('Tile 8 description', '', true),
       paddleboardingTitle: field('Tile 9 title', ''),
-      paddleboardingBody: field('Tile 9 description', '', true)
+      paddleboardingBody: field('Tile 9 description', '', true),
+      supportedTitle: field('Supported paddling heading', 'Supported and adaptive paddling'),
+      supportedBody: field('Supported paddling text', 'We welcome enquiries from paddlers with disabilities and additional support needs. Please contact the Supported Paddling coordinator before visiting to discuss your needs and confirm current arrangements. Our Access Project is working to improve independence and facilities.', true),
+      supportedCoordinatorLabel: field('Supported paddling contact link text', 'Contact the Supported Paddling coordinator'),
+      supportedCoordinatorUrl: field('Supported paddling contact URL', '/contact-us#support'),
+      supportedProjectLabel: field('Access Project link text', 'Learn about the Access Project'),
+      supportedProjectUrl: field('Access Project URL', '/access-project')
+    }
+  },
+  'everything-else': {
+    label: 'Everything Else',
+    fields: {
+      title: field('Page heading', 'Everything Else'),
+      intro: field('Page introduction', 'Frequently asked questions and a few other parts of the club website.', true),
+      faqTrialHeading: field('FAQ: sessions heading', 'How do I try paddling with the club?'),
+      faqTrialAnswer: field('FAQ: sessions answer', 'Open-night sessions run seasonally and need to be booked online. You do not need to be a member to attend, and your first three trial sessions are free. Check the [Beginners page](/beginners) for current details and booking information.', true),
+      faqMembershipHeading: field('FAQ: membership heading', 'When do I need to become a member?'),
+      faqMembershipAnswer: field('FAQ: membership answer', 'Membership is required after your first three trial sessions. Current membership options and prices are listed on the [Membership and Events page](/membership); prices can change, so check the live listing.', true),
+      faqWhatToBringHeading: field('FAQ: what to bring heading', 'What should I bring to a session?'),
+      faqWhatToBringAnswer: field('FAQ: what to bring answer', 'Bring a towel, clothes that can get wet, a warm change of clothes, and flat shoes that will stay on in the water. A wetsuit is optional. See the [Beginners page](/beginners) for current guidance.', true),
+      faqChildrenHeading: field('FAQ: children heading', 'Can children come paddling?'),
+      faqChildrenAnswer: field('FAQ: children answer', 'Young people under 16 must be supervised by an accompanying adult at club nights. Children under 8 may paddle in an open canoe with a supervising adult; children need to be at least 8 to join a kids class or paddle in a one-person boat. Check the [Beginners page](/beginners) before booking.', true),
+      faqHireHeading: field('FAQ: equipment hire heading', 'Can I hire a boat or equipment?'),
+      faqHireAnswer: field('FAQ: equipment hire answer', 'Current boat and kit hire options, prices and terms are shown on the [Membership and Events page](/membership). If you need equipment for a single visit or are not yet a member, contact the club before booking to confirm what is available and who can use it.', true),
+      faqTripsHeading: field('FAQ: trips heading', 'How do I find out about paddling trips?'),
+      faqTripsAnswer: field('FAQ: trips answer', 'White water trips are organised by request. See the [Disciplines page](/disciplines) for more information, check the [Membership and Events page](/membership) for current listings, or contact the club to ask about a trip.', true),
+      faqExperiencedHeading: field('FAQ: experienced paddlers heading', 'I have paddling experience. How do I join a session?'),
+      faqExperiencedAnswer: field('FAQ: experienced paddlers answer', 'Contact the club through the [Contact Us page](/contact-us) and describe your experience, qualifications and the discipline you are interested in. A club lead can advise which session is appropriate and whether an introduction or skills check is needed.', true),
+      faqSupportedHeading: field('FAQ: supported paddling heading', 'Can the club support paddlers with additional access needs?'),
+      faqSupportedAnswer: field('FAQ: supported paddling answer', 'Please contact our [Supported Paddling coordinator](mailto:supported.paddling@forthcanoeclub.co.uk) before visiting to discuss your needs and confirm current access arrangements. You can also read about the [Access Project](/access-project).', true),
+      historyTitle: field('History tab heading', 'Club History'),
+      historyBody: field('History draft text', 'Draft: the legacy history content could not be verified for this migration. Please do not treat this as the club’s definitive history; this section is awaiting review.', true),
+      magazineTitle: field('Kayak Magazine tab heading', 'Kayak Magazine'),
+      magazineBody: field('Kayak Magazine draft text', 'Draft: the legacy magazine content and archive links have not yet been verified. This section is awaiting review and migration.', true)
     }
   },
   about: {

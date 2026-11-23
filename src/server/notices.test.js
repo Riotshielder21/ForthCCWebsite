@@ -113,6 +113,23 @@ test('reordering needs each known notice once', async () => {
   await assert.rejects(reorderNotices(db, []), { status: 400 });
 });
 
+test('consent tabs can move among notices without publishing or changing wording versions', async () => {
+  const db = fakeDb();
+  await publishNotice(db, 'terms', { title: 'Terms', body: 'Be nice.' }, admin, at(1));
+  const version = db.store.get('noticeVersions/terms@1');
+  await reorderNotices(db, ['photo-video-consent', 'terms', 'participation-disclaimer'], at(2));
+  assert.equal(db.store.get('notices/photo-video-consent').order, 0);
+  assert.equal(db.store.get('notices/terms').order, 1);
+  assert.equal(db.store.get('notices/participation-disclaimer').order, 2);
+  assert.equal(db.store.get('notices/terms').currentVersion, 1);
+  assert.deepEqual(db.store.get('noticeVersions/terms@1'), version);
+  assert.equal(db.store.get('notices/photo-video-consent').currentVersion, undefined);
+  assert.equal(db.store.get('notices/participation-disclaimer').body, undefined);
+  await reorderNotices(db, ['participation-disclaimer', 'photo-video-consent', 'terms'], at(3));
+  assert.equal(db.store.get('notices/participation-disclaimer').order, 0);
+  assert.equal(db.store.get('notices/terms').body, 'Be nice.');
+});
+
 test('each version prints as a PDF', async () => {
   const pdf = await noticePdf({
     title: 'Privacy notice', version: 2, publishedAt: at(3),

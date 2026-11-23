@@ -17,6 +17,12 @@
   "canoeBody": "Hi David, try writing a description here as an admin",
   "paddleboardingTitle": "",
   "paddleboardingBody": "",
+  "supportedTitle": "Supported and adaptive paddling",
+  "supportedBody": "We welcome enquiries from paddlers with disabilities and additional support needs. Please contact the Supported Paddling coordinator before visiting to discuss your needs and confirm current arrangements. Our Access Project is working to improve independence and facilities.",
+  "supportedCoordinatorLabel": "Contact the Supported Paddling coordinator",
+  "supportedCoordinatorUrl": "/contact-us#support",
+  "supportedProjectLabel": "Learn about the Access Project",
+  "supportedProjectUrl": "/access-project",
   "tileLayout": [
     {
       "id": "hero",
@@ -56,6 +62,11 @@
     {
       "id": "canoe",
       "group": "tiles",
+      "type": "existing"
+    },
+    {
+      "id": "supported",
+      "group": "support",
       "type": "existing"
     }
   ],
