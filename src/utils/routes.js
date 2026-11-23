@@ -18,9 +18,9 @@ export const PRIVATE_ROUTES = {
 };
 export const LEGACY_REDIRECTS = {
   '/home': '/', '/activites': '/disciplines', '/activities': '/disciplines', '/contact': '/contact-us', '/club-night': '/check-ins',
-  '/faq': '/everything-else', '/history': '/everything-else'
+  '/faq': '/everything-else', '/history': '/everything-else', '/magazine': '/everything-else'
 };
-const LEGACY_REDIRECT_HASHES = { '/faq': '#faq', '/history': '#history' };
+const LEGACY_REDIRECT_HASHES = { '/faq': '#faq', '/history': '#history', '/magazine': '#magazine' };
 const CLUB_HOSTS = new Set(['forthcanoeclub.co.uk', 'www.forthcanoeclub.co.uk', 'new.forthcanoeclub.co.uk']);
 
 export const pagePath = (page) => PUBLIC_ROUTES[page]?.path || PRIVATE_ROUTES[page] || null;

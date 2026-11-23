@@ -19,6 +19,7 @@ test('public paths resolve directly and legacy links canonicalise without losing
   assert.deepEqual(resolveRoute('/faq'), { page: 'everything-else', url: '/everything-else#faq', preview: false });
   assert.deepEqual(resolveRoute('/history'), { page: 'everything-else', url: '/everything-else#history', preview: false });
   assert.equal(resolveRoute('/history#magazine').url, '/everything-else#magazine');
+  assert.deepEqual(resolveRoute('/magazine'), { page: 'everything-else', url: '/everything-else#magazine', preview: false });
   for (const path of ['/unknown', '/timetable', '/?page=unknown']) assert.equal(resolveRoute(path).page, 'not-found');
 });
 

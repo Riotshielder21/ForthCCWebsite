@@ -28,7 +28,7 @@ export const PAGE_TILE_GROUPS = {
   disciplines: { hero: ['hero'], tiles: ['slalom', 'polo', 'sprint', 'whitewater', 'touring', 'surf', 'canoe', 'paddleboarding'], support: ['supported'] },
   about: { hero: ['hero'], tiles: ['tile1', 'tile2', 'tile3', 'tile4'] },
   'access-project': { hero: ['hero'], tiles: ['tile1', 'tile2', 'tile3', 'tile4'] },
-  'everything-else': { hero: ['hero'], faq: ['trial', 'membership', 'what-to-bring', 'children', 'hire', 'trips', 'experienced', 'supported'], history: ['history'], magazine: ['magazine'] },
+  'everything-else': { hero: ['hero'], faq: ['trial', 'membership', 'what-to-bring', 'children', 'club-night', 'courses', 'polo', 'slalom', 'hire', 'trips', 'experienced', 'supported', 'access', 'volunteering', 'socials'], history: ['history'], magazine: ['magazine'] },
   contact: { hero: ['hero'], tiles: ['address', 'email', 'social'], support: ['support'] }
 };
 

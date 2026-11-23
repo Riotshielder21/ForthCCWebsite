@@ -18,10 +18,17 @@ const FAQ_ITEMS = [
   ['membership', 'faqMembershipHeading', 'faqMembershipAnswer'],
   ['what-to-bring', 'faqWhatToBringHeading', 'faqWhatToBringAnswer'],
   ['children', 'faqChildrenHeading', 'faqChildrenAnswer'],
+  ['club-night', 'faqClubNightHeading', 'faqClubNightAnswer'],
+  ['courses', 'faqCoursesHeading', 'faqCoursesAnswer'],
+  ['polo', 'faqPoloHeading', 'faqPoloAnswer'],
+  ['slalom', 'faqSlalomHeading', 'faqSlalomAnswer'],
   ['hire', 'faqHireHeading', 'faqHireAnswer'],
   ['trips', 'faqTripsHeading', 'faqTripsAnswer'],
   ['experienced', 'faqExperiencedHeading', 'faqExperiencedAnswer'],
-  ['supported', 'faqSupportedHeading', 'faqSupportedAnswer']
+  ['supported', 'faqSupportedHeading', 'faqSupportedAnswer'],
+  ['access', 'faqAccessHeading', 'faqAccessAnswer'],
+  ['volunteering', 'faqVolunteeringHeading', 'faqVolunteeringAnswer'],
+  ['socials', 'faqSocialsHeading', 'faqSocialsAnswer']
 ];
 
 export default function EverythingElsePage() {
@@ -80,7 +87,7 @@ export default function EverythingElsePage() {
                 onClick={() => selectTab(tab.id)}
                 onKeyDown={(event) => onTabKeyDown(event, index)}
               >
-                {tab.title}{tab.id !== 'faq' && <span className="EverythingElseDraftTab"> (draft)</span>}
+                {tab.title}
               </button>
             ))}
           </div>
@@ -99,28 +106,19 @@ export default function EverythingElsePage() {
                 ))}
               </div>
             </>}
-            {selectedId === 'history' && <>
-              <header className="NoticePanelHeader">
-                <span className="EverythingElseDraftLabel">Draft — awaiting review</span>
-              </header>
-              <div className="EverythingElseDraftPanel" data-tile-group="history">
-                <div className="main_tile" data-tile-id="history">
-                  <h2 className="tile_heading_bold_1" data-content-field="historyTitle">{copy.historyTitle}</h2>
-                  <p className="text_container AdminPreserveLines" data-content-field="historyBody">{copy.historyBody}</p>
-                </div>
+            {selectedId === 'history' && <div className="EverythingElsePanel" data-tile-group="history">
+              <div className="main_tile" data-tile-id="history">
+                <h2 className="tile_heading_bold_1" data-content-field="historyTitle">{copy.historyTitle}</h2>
+                <p className="text_container AdminPreserveLines" data-content-field="historyBody">{copy.historyBody}</p>
               </div>
-            </>}
-            {selectedId === 'magazine' && <>
-              <header className="NoticePanelHeader">
-                <span className="EverythingElseDraftLabel">Draft — awaiting review</span>
-              </header>
-              <div className="EverythingElseDraftPanel" data-tile-group="magazine">
-                <div className="main_tile" data-tile-id="magazine">
-                  <h2 className="tile_heading_bold_1" data-content-field="magazineTitle">{copy.magazineTitle}</h2>
-                  <p className="text_container AdminPreserveLines" data-content-field="magazineBody">{copy.magazineBody}</p>
-                </div>
+            </div>}
+            {selectedId === 'magazine' && <div className="EverythingElsePanel" data-tile-group="magazine">
+              <div className="main_tile" data-tile-id="magazine">
+                <h2 className="tile_heading_bold_1" data-content-field="magazineTitle">{copy.magazineTitle}</h2>
+                <p className="text_container AdminPreserveLines" data-content-field="magazineBody">{copy.magazineBody}</p>
+                <p className="text_container AdminPreserveLines EverythingElseIssues SpaceT4" data-content-field="magazineIssues">{copy.magazineIssues}</p>
               </div>
-            </>}
+            </div>}
           </section>
         </div>
       </div>

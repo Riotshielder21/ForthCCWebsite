@@ -12,7 +12,7 @@ const DESCRIPTIONS = {
   safeguarding: 'Read Forth Canoe Club safeguarding information and find support and reporting contacts.',
   notices: 'Read Forth Canoe Club notices covering privacy, data use and the terms for joining or booking.',
   'access-project': 'Learn about Forth Canoe Club improvements to paddling access and facilities.',
-  'everything-else': 'Find Forth Canoe Club answers to common questions, plus draft club history and Kayak Magazine pages.'
+  'everything-else': 'Find Forth Canoe Club answers to common questions, the club history since 1934, and the Kayak Magazine archive.'
 };
 const PRIVATE_TITLES = {
   admin: 'Admin', 'admin-reports': 'Admin Reports', 'club-night': 'Check-ins',
