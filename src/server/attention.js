@@ -6,6 +6,7 @@ export const ATTENTION_KINDS = {
   'scheduled-job': { title: 'Scheduled job failed or missed', retry: false },
   'order-unrecorded': { title: 'Paid order not recorded', retry: true },
   'subscription-setup': { title: 'Monthly payments not set up', retry: true },
+  'subscription-replacement': { title: 'Old subscription not confirmed stopped', retry: true },
   'receipt-email': { title: 'Receipt email not sent', retry: true },
   'payment-failed': { title: 'Payment did not clear', retry: false },
   'invoice-failed': { title: 'Monthly debits failed and Stripe stopped retrying', retry: false },

@@ -120,6 +120,12 @@ export default function PaymentSuccessPage({ onPaymentConfirmed, onReturnToBaske
           <p className="PageIntroCentered">{message}</p>
         </div>
         {paid && receipt && <PurchaseReceipt receipt={receipt.receipt} />}
+        {paid && receipt?.replacementStatus && <p className="text_container SpaceT4 text-center" role="status">
+          {receipt.replacementStatus === 'stopped' ? 'Your old subscription has been stopped.'
+            : receipt.replacementStatus === 'preview-complete' ? 'Sandbox checkout confirmed. Your existing live subscription has not been changed.'
+            : receipt.replacementStatus === 'needs-review' ? 'The club needs to check the old subscription. Please do not pay again.'
+              : 'The old subscription stop is not confirmed yet. Please do not pay again.'}
+        </p>}
         {paid && receiptUnavailable && <p className="text_container SpaceT4 text-center" role="status">The {free ? 'booking' : 'payment'} is confirmed, but the website receipt could not be loaded. Please check your email for its copy.</p>}
         {paid && <p className="text_container SpaceT4 text-center">Please allow a few minutes for the confirmation email to arrive.</p>}
         {(failed || expired) && <div className="text-center"><button className="PrimaryActionButtonCompact SpaceT4" type="button" onClick={onReturnToBasket}>Return to basket</button></div>}

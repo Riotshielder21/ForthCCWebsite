@@ -84,6 +84,16 @@ const SHOP_NOTICES = {
 
 export default function App() {
   const [initialDraft] = useState(() => { loadCachedConsentWording(); return draftForCurrentWording(loadDraft()); });
+  const [replacementToken, setReplacementToken] = useState(() => {
+    const fromInvitation = window.location.pathname === '/membership'
+      ? new URLSearchParams(window.location.hash.slice(1)).get('replace') : null;
+    const token = fromInvitation || window.sessionStorage.getItem('fcc-subscription-replacement');
+    return /^[0-9a-f]{64}\.[0-9a-f]{64}$/.test(token || '') ? token : '';
+  });
+  useEffect(() => {
+    if (replacementToken) window.sessionStorage.setItem('fcc-subscription-replacement', replacementToken);
+    else window.sessionStorage.removeItem('fcc-subscription-replacement');
+  }, [replacementToken]);
   const { currentPage, setCurrentPage, onLinkClick, navigateTo } = useSiteRoute();
   const [isCartOpen, setIsCartOpen] = useState(false);
   const { products, availability, catalogueLive, refreshAvailability, shopState, refresh: catalogueRefresh } = usePublicCatalogue(currentPage, isCartOpen);
@@ -100,7 +110,7 @@ export default function App() {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = previousOverflow; };
   }, [isCartOpen]);
-  const [isAnnual, setIsAnnual] = useState(initialDraft?.isAnnual ?? true);
+  const [isAnnual, setIsAnnual] = useState(() => replacementToken ? false : initialDraft?.isAnnual ?? true);
   // Monthly billing is only offered when something in the basket allows it.
   const monthlyAvailable = cart.some((item) => item.allowMonthly);
   const annualBilling = isAnnual || !monthlyAvailable;
@@ -255,6 +265,7 @@ export default function App() {
   // The draft lives in this tab's sessionStorage only, so a customer can return to add a membership.
   useEffect(() => {
     if (currentPage === 'payment-success') {
+      if (new URLSearchParams(window.location.search).has('replacement')) setReplacementToken('');
       waitingDraft.current = null;
       clearDraft();
       setCart([]);
@@ -322,6 +333,7 @@ export default function App() {
           discountCode: activePromo?.code || '',
           billingMode: annualBilling ? 'annual' : 'monthly',
           ...(resumeLink || {}),
+          ...(replacementToken ? { replacementToken } : {}),
           noticeVersions,
           wording: checkoutWording()
         })

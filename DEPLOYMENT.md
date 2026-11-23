@@ -99,6 +99,137 @@ Subscriptions carry on until cancelled: the website never sets an end date when 
 
 Subscription receipts are sent once per Stripe invoice even though Stripe can deliver an event more than once: website subscriptions record it in `subscriptions/{id}.receiptedInvoices`, and subscriptions set up outside the site (such as the old Bookwhen ones) in `invoiceReceipts/{invoiceId}`. Do not delete these records, or receipts may be sent again.
 
+### Website replacement subscriptions (sandbox)
+
+**Status:** preview email and monthly sandbox checkout only. The full sandbox rehearsal is still to be run.
+There is no live cutover command: the website rejects live Stripe checkout keys, and the cancellation
+Source key must also be a test key. The local preview below can read live product labels with a restricted
+key, but cannot change a live subscription. Do not email the live Bookwhen cohort or cancel their subscriptions yet.
+
+#### 1. Send yourself a preview
+
+Use the same Google Workspace setup as the website: `GOOGLE_WORKSPACE_DELEGATED_USER`,
+`GOOGLE_WORKSPACE_SENDER` (or omit it to send as the delegated user), and either
+`FIREBASE_SERVICE_ACCOUNT_PATH` or `FIREBASE_SERVICE_ACCOUNT_JSON`. The service account needs
+domain-wide delegation for `https://www.googleapis.com/auth/gmail.send`, and Gmail API must be enabled.
+No separate email-provider API key is needed. The script requests only the Gmail send scope.
+
+From the repository root, with the website's local settings in the ignored `.env` file:
+
+```bash
+export STRIPE_REPLACEMENT_TEST_INBOX='jack.watt@forthcanoeclub.co.uk'
+node --env-file=.env scripts/invite-subscription-replacements.mjs --dry-run
+```
+
+This sends one professionally formatted `[TEST ONLY]` email with official invitation wording but no working checkout link. It needs neither a
+Stripe key nor a Firestore connection. A successful run reports Gmail acceptance, not inbox delivery.
+If you already exported the settings in your shell, omit `--env-file=.env`. Each preview invocation sends
+a new email. If Gmail fails or times out, check the delegated mailbox's Sent folder before retrying.
+
+##### Working localhost link using the first live subscription
+
+Start the [local emulator stack](DEVELOPMENT.md#run-locally) with its Firestore emulator on
+`127.0.0.1:8080` and website on `http://localhost:3000`. To complete real Stripe sandbox checkout,
+run the local API with the sandbox `STRIPE_SECRET_KEY` and webhook signing secret as described under
+[Stripe testing](DEVELOPMENT.md). The API must have `LOCAL_FIREBASE_EMULATORS=true`,
+`FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`, and `GCLOUD_PROJECT=demo-fcc`.
+
+In a separate terminal, keep Workspace settings and the **same Destination sandbox key** in `.env`, then:
+
+```bash
+set +x
+export STRIPE_REPLACEMENT_TEST_INBOX='jack.watt@forthcanoeclub.co.uk'
+read -rs -p 'Read-only Source rk_live key: ' PREVIEW_KEY
+printf '\n'
+STRIPE_REPLACEMENT_PREVIEW_SOURCE_KEY="$PREVIEW_KEY" \
+  node --env-file=.env scripts/invite-subscription-replacements.mjs --dry-run --local-link
+unset PREVIEW_KEY
+```
+
+Only GET requests are made to live Stripe. The script picks the first active subscription and includes
+its product names in the email sent **only to the test inbox**, never to the subscriber. It creates a
+24-hour invitation in the **local demo Firestore emulator**. No live customer or subscription identifier
+is stored there, and no customer or card is copied. `STRIPE_REPLACEMENT_TEST_URL` may override the local
+website URL, but only HTTP `localhost` or `127.0.0.1` is accepted; the emulator must also be loopback and
+the project must begin with `demo-`.
+
+Open the email on the computer serving localhost (or with the local port forwarded). Use the test inbox
+email at checkout, choose any available monthly website product and supply Stripe sandbox payment details.
+This tests the normal basket and monthly setup, not product mapping or annual credit. The receipt reports
+**Sandbox checkout confirmed**; the live subscription is never cancelled. Production APIs reject these
+preview invitations. The preview does not require the separate replacement feature flag or a live key on
+the API. If the local stack was started without Stripe keys, restart just the API with `.env` followed by
+`.env.emulator` (`node --env-file=.env --env-file=.env.emulator server.js`) and the test webhook secret.
+
+#### 2. Check the sandbox cohort
+
+Use two isolated Stripe sandboxes. **Source** is the old subscription account; **Destination** is the
+account used by website checkout. Create a synthetic Source subscription using the test inbox. In a
+private local `replacement-map.json`, map each old Stripe price ID to the approved website product ID
+and its shop name. The new price comes from normal website checkout, not from this file or the old invoice:
+
+```json
+{ "price_SANDBOX": { "id": "website-product-id", "name": "Website product name" } }
+```
+
+Export `STRIPE_SOURCE_ACCOUNT_ID`, `STRIPE_DEST_ACCOUNT_ID` and `STRIPE_REPLACEMENT_SOURCE_KEY`. The
+CLI can use a read-only Source test key with access to the account, subscriptions, customers, invoices
+and charges. Then run:
+
+```bash
+node scripts/invite-subscription-replacements.mjs --dry-run replacement-map.json
+```
+
+This checks active and trialling Source subscriptions and sends the same single fictional preview. It
+does not email the cohort, write to Stripe or Firestore, or verify the Destination catalogue. Separately
+check that each mapped product can actually be bought with monthly payments on staging. For annual
+payments, the check accepts supported subscriptions with a settled GBP invoice and an unrefunded charge,
+calculates the unused share of the amount actually paid, and reports how many qualify for the card-only
+rule. Mixed, unsupported, or unverifiable cases need review.
+
+#### 3. Rehearse one real sandbox checkout
+
+1. On the HTTPS staging API, use the Destination test key for normal checkout and configure its signed
+   Stripe webhook. Enable `STRIPE_REPLACEMENT_ENABLED=true` on staging only. Give staging its own
+   `STRIPE_REPLACEMENT_SOURCE_KEY` with permission to read the Source account, subscriptions, customers
+   and invoices, and to cancel subscriptions. The CLI's read-only key cannot do that. Keep these staging
+   settings out of the default production deploy, which does not configure them.
+2. In your shell, keep the settings from steps 1 and 2. Also set `STRIPE_REPLACEMENT_TEST_PROJECT`,
+   `STRIPE_REPLACEMENT_TEST_URL` and `STRIPE_REPLACEMENT_TOKEN_SECRET` (at least 32 random bytes,
+   base64url). Use Firebase Application Default Credentials for the same isolated Firestore project
+   as the staging API. Start with only one eligible synthetic subscription for the test inbox:
+
+   ```bash
+   node scripts/invite-subscription-replacements.mjs --send-test replacement-map.json
+   ```
+
+3. Open the working invitation. Use the original billing email, choose monthly payments for every
+   approved replacement product, and complete normal website checkout. No customer or card is copied;
+   no PostgreSQL or Stripe customer sharing is needed.
+4. Verify both dashboards. The server confirms the order and the new subscription's approved items
+   before cancelling the matching Source subscription immediately, without an automatic refund or final
+   invoice. Opening the link, leaving checkout, or an unconfirmed payment does not cancel anything.
+   On return, the receipt shows the old stop as confirmed, pending or needing review. If cancellation
+   fails (for example, Source has an open invoice or Stripe refuses the stop), reconcile it in **Needs
+   attention** and in the Source dashboard. Do not ask the subscriber to pay again.
+
+Gmail has no send idempotency key. A functional invitation is recorded before sending, so an unresolved
+send blocks automatic resending. Reconcile Gmail Sent and the private Firestore invitation record before
+retrying; never delete the record merely to force a resend. Successful sends are skipped on subsequent runs.
+
+#### Before a live cutover
+
+Enable and rehearse live-ready checkout separately, verify Source cancellation permissions, and approve
+the cohort and product mapping. Do not bulk-cancel the old subscriptions in advance; non-responders
+keep their old subscriptions.
+
+Annual and other non-monthly subscriptions are excluded from functional test invitations. The agreed
+annual plan is to apply verified unused credit to the initial amount, then carry any balance forward.
+For more than 300 prepaid days left, the planned exception is to register the card at £0 and first
+charge on **1 March 2028**. Applying credit, the card-only checkout, and the separate continuation
+rules (monthly renewals on the 1st, annual renewals on 1 March, and cancellation only when requested)
+are not implemented.
+
 ## One-Off Setup
 
 **Scheduled jobs.** As a project owner, before the first deployment that includes them:
