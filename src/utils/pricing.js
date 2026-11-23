@@ -45,9 +45,11 @@ export const yearShareText = (share) => {
   return off > 0 ? `Rest of the club year now (${off}% off)` : 'This club year now';
 };
 
-// e.g. "Rest of October now (80% off), then £25.00 a month from 1 Nov 2026 until you cancel".
-const subscriptionLabel = ({ first, amount, interval, firstCharge }) =>
-  `${first ? `${first}, then ` : ''}${recurringText({ amount, interval, firstCharge })} until you cancel`;
+// e.g. "Rest of October now (80% off), then £25.00 a month from 1 Nov 2026 until you cancel", with the new club year's
+// price from 1 March when that differs: "… from 1 Nov 2026 and £30.00 a month from 1 Mar 2027 until you cancel".
+const subscriptionLabel = ({ first, amount, interval, firstCharge, renewalAmount, renewsAt }) =>
+  `${first ? `${first}, then ` : ''}${recurringText({ amount, interval, firstCharge })}${renewalAmount !== undefined
+    ? ` and ${recurringText({ amount: renewalAmount, interval, firstCharge: renewsAt })}` : ''} until you cancel`;
 
 /**
  * Subscriptions carry on until cancelled. Paid monthly, checkout takes the rest of this month and the 1st of each month
@@ -116,9 +118,20 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date(), { 
       monthlyRate = money(monthlyRate * (1 - promo.discountValue));
       yearlyRate = money(yearlyRate * (1 - promo.discountValue));
     }
+    // On 1 March every subscription moves to the new club year's shop price: a discount code or this year's volunteer
+    // price covers only the line's own club year. Payments in a later year are quoted at today's shop price; the
+    // volunteer price for that year can only lower them (see renewalPrice).
+    const renewsAt = interval ? clubYearDates((clubYear ?? currentYear) + 1).start : null;
+    const shopMonthly = item.volunteerOriginalPrice ?? item.basePrice;
+    const renewalRate = interval === 'year' ? money(shopMonthly * 12 * (item.hasAnnualDiscount ? 1 - DISCOUNTS.ANNUAL : 1)) : money(shopMonthly);
+    if (interval && firstCharge >= renewsAt) {
+      if (monthlyBilling) monthlyRate = renewalRate;
+      else yearlyRate = renewalRate;
+    }
+    const renewalAmount = interval && firstCharge < renewsAt && renewalRate !== (monthlyBilling ? monthlyRate : yearlyRate) ? renewalRate : undefined;
     if (interval) {
       const first = nextYear ? '' : monthlyBilling ? joiningText(monthName(now), share) : yearShareText(firstShare);
-      label = subscriptionLabel({ first, amount: monthlyBilling ? monthlyRate : yearlyRate, interval, firstCharge });
+      label = subscriptionLabel({ first, amount: monthlyBilling ? monthlyRate : yearlyRate, interval, firstCharge, renewalAmount, renewsAt });
     } else if (subscription) {
       label = nextYear ? yearLabel : `Until ${dayLabel(nextClubYearStart)}`;
     }
@@ -126,7 +139,7 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date(), { 
     const recurringYearlyCost = interval === 'year' ? yearlyRate : 0;
     return { ...item, label, subtotalPrice, displayPrice, annualSaving, promoSaving, tripSaving, promoEligible, recurringMonthlyCost, recurringYearlyCost, monthlyBilling,
       clubYearInfo, ...(kind ? { clubYear, clubYearPart: nextYear ? 'next' : 'this' } : {}),
-      ...(interval ? { interval, firstDebit: firstCharge } : {}),
+      ...(interval ? { interval, firstDebit: firstCharge } : {}), ...(renewalAmount !== undefined ? { renewalAmount, renewsAt } : {}),
       ...(monthlyBilling ? { monthlyAmount: monthlyRate } : {}), ...(interval === 'year' ? { yearlyAmount: yearlyRate } : {}) };
   });
   let credit = promo?.type === 'credit' ? promo.discountValue : 0;

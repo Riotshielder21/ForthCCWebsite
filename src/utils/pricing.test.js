@@ -155,7 +155,8 @@ test('flat annual subscription discounts stack with annual savings only when exp
     [withStacking.subtotal, withStacking.total, withStacking.annualSaving, withStacking.promoDiscountValue],
     [144, 115.2, 36, 28.8]
   );
-  assert.deepEqual([withoutStacking.recurringYearlyTotal, withStacking.recurringYearlyTotal], [240, 192]);
+  assert.deepEqual([withoutStacking.recurringYearlyTotal, withStacking.recurringYearlyTotal], [240, 240],
+    'a code covers only this club year: the 1 March payment is next year\'s full price');
 });
 
 test('monthly subscription pricing has no annual saving and reports its discounted recurring amount', () => {
@@ -295,4 +296,19 @@ test('next year: membership and up-front items are charged now; subscriptions st
   const annualNextYear = calculateCart([{ ...subscription, clubYearPart: 'next' }], true, null, january);
   assert.deepEqual([annualNextYear.total, annualNextYear.recurringYearlyTotal], [0, 240], 'the card is saved now and the year is charged on 1 March');
   assert.deepEqual(expandPeopleLines([{ id: 'p', lineIds: ['m', 's', 'b'] }], [{ lineId: 'b', clubYearChoice: 'both' }])[0].lineIds, ['m', 's', 'b', 'b~next']);
+});
+
+test('payments in a later club year are quoted at the shop price, without this year\'s discount code or volunteer price', () => {
+  const gold = { ...subscription, id: 'gold', basePrice: 30, hasAnnualDiscount: true, allowMonthly: true };
+  const half = { type: 'multiplier', discountValue: 0.5 };
+  const october = new Date('2026-10-10T12:00:00Z');
+  const monthly = calculateCart([gold], false, half, october).items[0];
+  assert.deepEqual([monthly.monthlyAmount, monthly.renewalAmount, monthly.renewsAt.toISOString()], [15, 30, '2027-03-01T00:00:00.000Z']);
+  assert.match(monthly.label, /then £15\.00 a month from 1 Nov 2026 and £30\.00 a month from 1 Mar 2027 until you cancel/);
+  const yearly = calculateCart([gold], true, half, new Date('2027-01-10T12:00:00Z')).items[0];
+  assert.deepEqual([yearly.yearlyAmount, yearly.renewalAmount], [288, undefined], 'all its yearly payments are in later club years');
+  const volunteer = calculateCart([{ ...gold, basePrice: 10, volunteerOriginalPrice: 30, volunteerBenefit: true }], false, null, new Date('2027-02-05T12:00:00Z')).items[0];
+  assert.equal(volunteer.monthlyAmount, 30, 'bought in February, the first full payment is on 1 March: next year\'s price');
+  const nextYear = calculateCart([{ ...gold, clubYearPart: 'next' }], false, half, new Date('2027-01-10T12:00:00Z')).items[0];
+  assert.deepEqual([nextYear.monthlyAmount, nextYear.renewalAmount], [15, 30], 'a code used on next year\'s line covers next year');
 });

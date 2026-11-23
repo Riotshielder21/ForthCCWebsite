@@ -110,7 +110,7 @@ test('renewal email lists the basket, the link and the expiry date', () => {
   assert.doesNotMatch(email.html, /Confirm all|Cancel/, 'with nothing else to confirm there is just the basket');
 });
 
-test('one renewal email has a Confirm for each part, then Confirm all, then Cancel at the bottom', () => {
+test('one renewal email lists everything, then Confirm all, a row of each part\'s own Confirm, and Cancel at the bottom', () => {
   const basket = renewalBasket([{ id: 'm1', firstName: 'Ann', lastName: 'Lee', membershipTier: 'adult' }], catalog, 2027, counter());
   const subscription = { lines: [{ name: 'Gold', names: ['Ann Lee'], price: '£15.00 a month', nextPrice: '£30.00 a month', ifVolunteering: '£10.00 a month', volunteers: ['Ann'] }],
     confirmUrl: 'https://site/subscription?key=k&answer=confirm', cancelUrl: 'https://site/subscription?key=k&answer=cancel' };
@@ -118,10 +118,10 @@ test('one renewal email has a Confirm for each part, then Confirm all, then Canc
     basket: { ...basket, catalog: [{ id: 'membership-adult', name: 'Adult membership' }], link: 'https://site/membership?renew=abc', expiresAt: renewalWindow(january).expiresAt },
     volunteers: [{ name: 'Ann Lee', firstName: 'Ann', commitment: '40+ hour', keepUrl: 'https://site/volunteering?volunteerRenew=v', changeUrl: 'https://site/volunteering?volunteerRenew=v&change=1' }],
     subscriptions: [subscription] });
-  const buttons = ['Confirm: go to the basket', 'Confirm volunteering for Ann', 'Confirm subscription', 'Confirm all and go to the basket', 'Cancel subscription']
-    .map((label) => email.html.indexOf(`>${label}</a>`));
-  assert.ok(buttons.every((position, index) => position > (index ? buttons[index - 1] : -1)), `in order: ${buttons}`);
-  assert.match(email.html, /background:#15803d"><a href="https:\/\/site\/subscription\?key=k&amp;answer=confirm"[^>]*>Confirm subscription<\/a>/);
+  const order = ['Adult membership (Ann)', 'Gold (Ann Lee)', '>Confirm all and go to the basket</a>', '>Confirm membership and services</a>', '>Confirm volunteering for Ann</a>',
+    '>Confirm subscription</a>', '>Cancel subscription</a>'].map((part) => email.html.indexOf(part));
+  assert.ok(order.every((position, index) => position > (index ? order[index - 1] : -1)), `in order: ${order}`);
+  assert.match(email.html, /<a href="https:\/\/site\/subscription\?key=k&amp;answer=confirm" style="[^"]*font-size:14px[^"]*">Confirm subscription<\/a>/, 'a smaller button');
   assert.match(email.html, /background:#b91c1c"><a href="https:\/\/site\/subscription\?key=k&amp;answer=cancel"[^>]*>Cancel subscription<\/a>/);
   assert.match(email.body, /- Gold \(Ann Lee\): £10\.00 a month if Ann volunteers again, otherwise £30\.00 a month/);
   assert.match(email.body, /Keep your 40\+ hour commitment/);

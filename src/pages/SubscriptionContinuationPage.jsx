@@ -136,8 +136,12 @@ function ConfirmAll({ params }) {
               ? `${volunteer.name}: signed up to volunteer next club year.` : `${volunteer.name}: volunteer again next club year, with the same hours.`}</li>)}</ul>
           </>}
           {details.subscriptions.map((subscription, index) => <React.Fragment key={index}>
-            <h3 className="text_container SpaceT4">Subscription: {subscription.status === 'confirmed' ? 'confirmed' : 'carries on'} from 1 March</h3>
-            <ul className="text_container">{subscription.items.map((item, line) => <li key={line}>{itemText(item)}</li>)}</ul>
+            <h3 className="text_container SpaceT4">Subscription</h3>
+            <p className="text_container">{subscription.stopped ? 'These payments have already stopped.'
+              : subscription.status === 'cancelled' ? 'Cancelled: it stops at the end of February. Confirm all leaves it cancelled; to keep it after all, use its own Confirm button in your email.'
+                : `${subscription.status === 'confirmed' ? 'Confirmed: it carries' : 'It carries'} on from 1 March, at the new club year's price:`}</p>
+            {!subscription.stopped && subscription.status !== 'cancelled'
+              && <ul className="text_container">{subscription.items.map((item, line) => <li key={line}>{itemText(item)}</li>)}</ul>}
           </React.Fragment>)}
           {basket && <p className="text_container SpaceT4">Then your basket opens, to pay for next year's membership and services.</p>}
           <div className="text-center SpaceT4">

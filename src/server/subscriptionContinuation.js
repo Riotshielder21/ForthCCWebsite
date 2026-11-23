@@ -4,7 +4,8 @@ import { rateLimit } from './rateLimit.js';
 import { createPaymentLink, resolvePaymentLink } from './paymentLinks.js';
 import { suppressesNormalEmail } from './emailSuppression.js';
 import { auditEntry } from '../utils/auditLog.js';
-import { clubYearDates, clubYearOf, subscriptionRunsFrom } from '../utils/clubYear.js';
+import { clubYearDates, clubYearOf, holdsSubscriptionFrom } from '../utils/clubYear.js';
+import { loadEntitlements } from './membershipTerms.js';
 import { renewalEmail } from '../utils/renewals.js';
 import { activeSubscriptionItems, itemPrice } from '../utils/subscriptions.js';
 import { continuationAnswer, continuationOpen, continuationResult, needsContinuation, renewalPrice } from '../utils/subscriptionContinuation.js';
@@ -91,9 +92,10 @@ export const registerContinuationRoutes = (app, { db, stripeRequest, sendEmail, 
 
   /**
    * After the renewal emails, asks every payer not already asked this round about their subscriptions, in one email per
-   * payer: they had nothing to renew, or their renewal email went to another address.
+   * payer: they had nothing to renew, or their renewal email went to another address. `confirmAll(email, ids)` makes
+   * the Confirm all link for a payer with more than one (see renewals.js).
    */
-  const send = async (now, { reminder = false } = {}) => {
+  const send = async (now, { reminder = false, confirmAll = null } = {}) => {
     const renewalYear = clubYearOf(now) + 1;
     if (!continuationOpen(renewalYear, now)) return { emails: 0, failures: 0 };
     const byPayer = new Map();
@@ -107,10 +109,12 @@ export const registerContinuationRoutes = (app, { db, stripeRequest, sendEmail, 
     let failures = 0;
     for (const [email, references] of byPayer) {
       let parts = [];
+      let all = null;
       try {
         parts = await claimParts(references, now, { reminder, context });
         if (!parts.length) continue;
-        const mail = renewalEmail({ renewalYear, reminder, contact, subscriptions: parts });
+        all = parts.length > 1 && confirmAll ? await confirmAll(email, parts.map((part) => part.id)) : null;
+        const mail = renewalEmail({ renewalYear, reminder, contact, subscriptions: parts, confirmAllUrl: all?.url || '' });
         if (!await sendEmail({ to: email, ...mail, record: { kind: 'subscription-continuation', renewalYear, reminder,
           subscriptionIds: parts.map((part) => part.id), ...(parts.length === 1 ? { subscriptionId: parts[0].id } : {}) } })) {
           throw new Error('Email is not configured.');
@@ -119,7 +123,8 @@ export const registerContinuationRoutes = (app, { db, stripeRequest, sendEmail, 
       } catch (error) {
         failures += 1;
         console.error('Could not send a continue/cancel email:', error.message);
-        await Promise.all(parts.map((part) => part.undo().catch((undoError) => console.error('Could not undo a continue/cancel email mark:', undoError.message))));
+        await Promise.all([...(all ? [all.remove()] : []),
+          ...parts.map((part) => part.undo().catch((undoError) => console.error('Could not undo a continue/cancel email mark:', undoError.message)))]);
       }
     }
     return { emails, failures };
@@ -178,10 +183,12 @@ export const registerContinuationRoutes = (app, { db, stripeRequest, sendEmail, 
     const changing = new Set(current.map((item) => `${item.orderRef || record.orderRef}/${item.lineId}`));
     const members = (record.membershipIds || []).length ? await db().getAll(...record.membershipIds.map((id) => db().collection('memberships').doc(id))) : [];
     if (wanted === 'confirmed' && record.cancelAt) {
-      // Undoing a cancellation would charge twice for anything bought again for next club year since.
+      // Undoing a cancellation would charge twice for anything bought again for next club year since, on another
+      // subscription or as a one-off (a staff credit, or a free volunteer price).
+      const entitlements = await loadEntitlements(db(), members.filter((member) => member.exists).map((member) => member.id));
       const rebought = current.find((item) => members.some((member) => (item.membershipIds || []).includes(member.id)
-        && (member.data()?.subscriptionItems || []).some((other) => other.subscriptionId !== document.id && other.productId === item.productId
-          && subscriptionRunsFrom(other, view.renewalYear))));
+        && holdsSubscriptionFrom({ entitlements: entitlements.get(member.id) || [],
+          subscriptionItems: (member.data()?.subscriptionItems || []).filter((other) => other.subscriptionId !== document.id) }, item.productId, view.renewalYear)));
       if (rebought) {
         return [409, { code: 'continuation_replaced', ...view, error: `${rebought.name} has been bought again since this subscription was cancelled, so it stays cancelled. Please email ${contact} if that is not right.` }];
       }
@@ -220,12 +227,17 @@ export const registerContinuationRoutes = (app, { db, stripeRequest, sendEmail, 
     return [200, { ...view, status: wanted, message: continuationResult(wanted, view.renewalYear) }];
   };
 
-  /** Confirms a subscription for Confirm all in a renewal email; a refusal (closed, another change waiting) is returned, not thrown. */
+  /**
+   * Confirms a subscription for Confirm all in a renewal email. One the payer cancelled stays cancelled: only its own
+   * Confirm button undoes that. A refusal (closed, another change waiting) is returned, not thrown.
+   */
   const confirm = async (id, now) => {
     const document = await subscriptions().doc(id).get();
     const record = document.data();
     if (!record?.continuation || suppressesNormalEmail(record)) return [404, { error: 'This subscription could not be found.' }];
-    return answer({ document, record, view: await viewOf(record, now) }, 'confirmed', now);
+    const shown = await viewOf(record, now);
+    if (shown.status === 'cancelled') return [200, shown];
+    return answer({ document, record, view: shown }, 'confirmed', now);
   };
 
   /** What Confirm all shows for a subscription, or null. */

@@ -2644,6 +2644,7 @@ const startCheckout = async (req, res, credit = null) => {
       ...(item.monthlyBilling ? { monthlyPence: toPence(item.monthlyAmount) } : {}),
       ...(item.interval === 'year' ? { yearlyPence: toPence(item.yearlyAmount) } : {}),
       ...(item.interval ? { interval: item.interval, firstDebitAt: Timestamp.fromDate(item.firstDebit) } : {}),
+      ...(item.renewalAmount !== undefined ? { renewalPence: toPence(item.renewalAmount) } : {}),
       ...(lineMembershipRule(item) && item.category !== 'MERCHANDISE' && item.category !== 'VOUCHERS' ? { membershipRule: lineMembershipRule(item) } : {}),
       ...(item.tripSaving > 0 ? { tripDiscountPence: toPence(item.tripSaving), tripDiscountReasons: item.tripDiscountReasons } : {}),
       ...(item.size ? { size: item.size } : {}),
@@ -2714,9 +2715,14 @@ const startCheckout = async (req, res, credit = null) => {
     const money = (value) => `£${Number(value).toFixed(2)}`;
     const debitText = groups.map((group) => {
       const yearly = group.interval === 'year';
-      const amount = debited.filter((item) => group.lineIds.includes(item.lineId)).reduce((sum, item) => sum + toPounds(yearly ? item.yearlyPence : item.monthlyPence), 0);
-      return yearly ? `${money(amount)} a year, taken every 1 March from ${dateLabel(group.firstDebitAt)}`
-        : `${money(amount)} a month, taken on the 1st from ${dateLabel(group.firstDebitAt)}`;
+      const lines = debited.filter((item) => group.lineIds.includes(item.lineId));
+      const pence = lines.reduce((sum, item) => sum + (yearly ? item.yearlyPence : item.monthlyPence), 0);
+      // From 1 March the new club year's shop price applies (see calculateCart).
+      const renewalPence = lines.reduce((sum, item) => sum + (item.renewalPence ?? (yearly ? item.yearlyPence : item.monthlyPence)), 0);
+      const then = renewalPence !== pence
+        ? `, then ${money(toPounds(renewalPence))} a ${yearly ? 'year' : 'month'} from ${dateLabel(Timestamp.fromDate(clubYearDates(group.clubYear + 1).start))}` : '';
+      return yearly ? `${money(toPounds(pence))} a year, taken every 1 March from ${dateLabel(group.firstDebitAt)}${then}`
+        : `${money(toPounds(pence))} a month, taken on the 1st from ${dateLabel(group.firstDebitAt)}${then}`;
     }).join('; ');
     // Nothing due now but monthly payments to come: Checkout only saves the payment details.
     const setupOnly = totalPence === 0;

@@ -54,6 +54,18 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       .filter((group) => group.members.length && (!membershipId || group.members.some((member) => member.id === membershipId)));
   };
 
+  /** Records what a renewal email's Confirm all covers, and returns its link and how to remove it if the email fails. */
+  const confirmAllFor = async ({ email, now, volunteerMemberIds = [], subscriptionIds = [], basketToken = '' }) => {
+    const window = renewalWindow(now);
+    const key = crypto.randomBytes(32).toString('hex');
+    const reference = db().collection('renewalConfirmations').doc(hashToken(key));
+    await reference.create({ email, renewalYear: window.renewalYear, volunteerMemberIds, subscriptionIds,
+      expiresAt: Timestamp.fromDate(window.expiresAt), createdAt: Timestamp.now() });
+    return { url: `${siteUrl()}/subscription?all=${key}${basketToken ? `&basket=${basketToken}` : ''}`, remove: () => reference.delete() };
+  };
+  const subscriptionsOnly = (now, reminder) => continuations.send(now, { reminder,
+    confirmAll: (email, subscriptionIds) => confirmAllFor({ email, now, subscriptionIds }) });
+
   /**
    * Marks the group's members as sent in a transaction first, so overlapping runs never email anyone twice. A reminder
    * also counts as their first email if they never had one. A failed send undoes only the marks it added.
@@ -91,20 +103,16 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       const site = siteUrl();
       const volunteers = (await volunteerRenewalContent(members, window.renewalYear, site)).entries || [];
       parts = continuations ? await continuations.forPayer(group.email, now, { reminder }) : [];
-      let confirmAllUrl = '';
       if (volunteers.length || parts.length) {
-        const key = crypto.randomBytes(32).toString('hex');
-        confirmation = db().collection('renewalConfirmations').doc(hashToken(key));
-        await confirmation.create({ email: group.email, renewalYear: window.renewalYear, volunteerMemberIds: volunteers.map((entry) => entry.memberId),
-          subscriptionIds: parts.map((part) => part.id), expiresAt: Timestamp.fromDate(window.expiresAt), createdAt: Timestamp.now() });
-        confirmAllUrl = `${site}/subscription?all=${key}&basket=${token}`;
+        confirmation = await confirmAllFor({ email: group.email, now, volunteerMemberIds: volunteers.map((entry) => entry.memberId),
+          subscriptionIds: parts.map((part) => part.id), basketToken: token });
       }
-      const email = renewalEmail({ renewalYear: window.renewalYear, reminder, contact, volunteers, subscriptions: parts, confirmAllUrl,
+      const email = renewalEmail({ renewalYear: window.renewalYear, reminder, contact, volunteers, subscriptions: parts, confirmAllUrl: confirmation?.url || '',
         basket: { ...basket, catalog, link: `${site}/membership?renew=${token}`, expiresAt: window.expiresAt } });
       if (!await sendEmail({ to: group.email, ...email, record: { kind: 'renewal', membershipIds: members.map((member) => member.id),
         ...(parts.length ? { subscriptionIds: parts.map((part) => part.id) } : {}) } })) throw new Error('Email is not configured.');
     } catch (error) {
-      await Promise.all([invite.delete(), ...(confirmation ? [confirmation.delete()] : []), ...parts.map((part) => part.undo()),
+      await Promise.all([invite.delete(), ...(confirmation ? [confirmation.remove()] : []), ...parts.map((part) => part.undo()),
         ...added.filter((entry) => entry.fields.length || entry.volunteerMark).map((entry) => memberships().doc(entry.id)
         .update({ ...Object.fromEntries(entry.fields.map((name) => [name, FieldValue.arrayRemove(window.renewalYear)])),
           ...(entry.volunteerMark ? { volunteerRenewalSentFor: FieldValue.arrayRemove(`${window.renewalYear}:${reminder ? 'reminder' : 'first'}`) } : {}) }))]);
@@ -156,7 +164,7 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       if (now < renewalWindow(now).opens) return res.status(400).json({ code: 'renewals_closed', error: 'Renewal emails can be sent from 1 January.' });
       const membershipId = typeof req.body?.membershipId === 'string' ? req.body.membershipId.slice(0, 128) : '';
       const result = await sendAll(now, { membershipId });
-      const subscriptions = continuations && !membershipId ? await continuations.send(now) : { emails: 0, failures: 0 };
+      const subscriptions = continuations && !membershipId ? await subscriptionsOnly(now, false) : { emails: 0, failures: 0 };
       res.json({ ...result, subscriptionEmails: subscriptions.emails, subscriptionFailures: subscriptions.failures });
     } catch (error) {
       console.error('Could not send renewal emails:', error.message);
@@ -182,7 +190,7 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       if (!round) return res.json({ emails: 0, members: 0, failures: 0, waiting: true });
       const result = await sendAll(now, { round });
       const volunteers = await sendVolunteerRenewals(now, round, siteUrl());
-      const subscriptions = continuations ? await continuations.send(now, { reminder: round === 'reminder' }) : { emails: 0, failures: 0 };
+      const subscriptions = continuations ? await subscriptionsOnly(now, round === 'reminder') : { emails: 0, failures: 0 };
       const prices = reprice ? await reprice(now) : { changed: 0, failures: 0 };
       if (result.failures || volunteers.failures || subscriptions.failures || prices.failures) {
         console.error(JSON.stringify({ severity: 'ERROR', event: 'fcc-job-problems', job: 'fcc-renewals' }));
