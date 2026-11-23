@@ -789,6 +789,8 @@
     @apply bg-white rounded-2xl border p-5 flex items-center justify-center text-center hover:shadow-md transition-all;
     border-color: #f1f5f9;
     min-height: 90px;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 
   .sponsor_name {
@@ -1332,7 +1334,15 @@
   .tile_button_settings { margin: 12px 0; padding: 12px 0 0; border: 0; border-top: 1px solid #ccd5dc; }
   .page_edit_canvas [data-content-field="sponsors"] { display: block; }
   .sponsor_editor_tile .sponsor_subtile { width: 100%; min-height: 90px; }
-  .sponsor_logo { display: block; width: 100%; height: 50px; object-fit: contain; }
+  .sponsor_logo { display: block; width: 100%; height: 50px; margin-inline: auto; object-fit: contain; object-position: center; }
+  [data-tile-id="supporter-7"] .sponsor_subtile {
+    align-items: center;
+  }
+  [data-tile-id="supporter-7"] .sponsor_logo {
+    width: 85%;
+    max-width: 180px;
+    margin-inline: auto;
+  }
   .sponsor_grid_editing { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
   .sponsor_editor_tile .tile_editor_controls { padding: 0 2px 0 6px; gap: 0; }
   .sponsor_editor_tile .tile_editor_number { font-size: 11px; }
@@ -2028,7 +2038,7 @@
 .CartRemoveButton:hover { color: #dc2626; background: #fef2f2; }
 .CartItemActions { gap: 0.25rem; }
 .FooterLink { display: inline-block; padding: 0.5rem 0; }
-.FooterLinkButton { background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
+.FooterLinkButton { background: none; border: 0; font: inherit; text-align: left; text-transform: uppercase; cursor: pointer; }
 
 /* A tick box with its full wording a click away. */
 .PolicyTick { display: grid; gap: 0.35rem; }

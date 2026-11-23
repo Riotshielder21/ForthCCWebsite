@@ -236,9 +236,11 @@ export default function NoticesPage() {
   };
 
   return <div className="SectionContent PageFadeIn NoticesPage">
-    <span className="tile_eyebrow">Policies and terms</span>
-    <h1 className="page_heading_bold_2">Notices</h1>
-    <p className="text_container text_container_intro">How Forth Canoe Club uses your information, and the terms you agree to when you join or book. Choose a notice to read it, or download it as a PDF.</p>
+    <section className="main_tile main_tile_grey SpaceB4">
+      <span className="tile_eyebrow">Policies and terms</span>
+      <h1 className="page_heading_bold_2">Notices</h1>
+      <p className="text_container text_container_intro">How Forth Canoe Club uses your information, and the terms you agree to when you join or book. Choose a notice to read it, or download it as a PDF.</p>
+    </section>
 
     {adminUser && <div className="NoticeAdminBar" data-editor-control="true">
       <label className="EditorModeSwitch"><input type="checkbox" checked={editing} onChange={(event) => setEditing(event.target.checked)} /> Edit notices</label>

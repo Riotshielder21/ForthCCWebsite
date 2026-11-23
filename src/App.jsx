@@ -550,7 +550,7 @@ export default function App() {
             <a href="/contact-us" className="FooterLink">Contact</a>
             <a href="/safeguarding" className="FooterLink">Safeguarding</a>
             <a href="/notices" className="FooterLink">Notices</a>
-            <button type="button" className="FooterLink FooterLinkButton" onClick={() => setAnalyticsSettingsOpen(true)}>Analytics settings</button>
+            <button type="button" className="FooterLink FooterLinkButton" onClick={() => setAnalyticsSettingsOpen(true)}>Analytics Settings</button>
             <a href="/check-ins" onClick={(event) => {
               if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
               event.preventDefault();

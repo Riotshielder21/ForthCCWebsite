@@ -151,7 +151,7 @@ function SupporterTile({ tile, number, updateTile, onDelete }) {
   const [error, setError] = useState('');
   const imageUrl = safeTileUrl(tile.imageUrl, true);
   const settings = <>
-    <label className="FormLabel">Supporter {number} name<input className="FormInput" value={tile.name} onChange={(event) => updateTile('name', event.target.value)} /></label>
+    <label className="FormLabel">Supporter {number} name<input className="FormInput" value={tile.name || ''} onChange={(event) => updateTile('name', event.target.value)} /></label>
     <label className="FormLabel">Website URL<input className="FormInput" value={tile.url} onChange={(event) => updateTile('url', event.target.value)} /></label>
     <label className="FormLabel">Logo URL<input className="FormInput" value={tile.imageUrl} onChange={(event) => updateTile({ imageUrl: event.target.value, ...NO_TILE_IMAGE_SIZES })} /></label>
     <label className="FormLabel">Logo description<input className="FormInput" value={tile.alt} onChange={(event) => updateTile('alt', event.target.value)} /></label>
@@ -169,8 +169,10 @@ function SupporterTile({ tile, number, updateTile, onDelete }) {
   </>;
   return <SortableTile tile={tile} number={number} label={`Supporter ${number}`} className="sponsor_editor_tile" settings={settings} onDelete={onDelete} onPresentationChange={updateTile} allowWidth={false}>
     <a className="sponsor_subtile" href={safeTileUrl(tile.url) || undefined} target="_blank" rel="noreferrer" aria-label={imageUrl ? tile.name : undefined}>
-      {imageUrl ? <ResponsiveImage className="sponsor_logo" src={imageUrl} sources={tile.imageSources} placeholder={tile.imagePlaceholder} alt={tile.alt || tile.name} fit="contain" />
-        : <span className="sponsor_name">{editing ? <InlineText value={tile.name} label={`Supporter ${number} name`} multiline={false} onChange={(value) => updateTile('name', value)} /> : tile.name}</span>}
+      {imageUrl ? <>
+        <ResponsiveImage className="sponsor_logo" src={imageUrl} sources={tile.imageSources} placeholder={tile.imagePlaceholder} alt={tile.alt || tile.name} fit="contain" />
+        {tile.name && <span className="sponsor_name">{editing ? <InlineText value={tile.name} label={`Supporter ${number} name`} multiline={false} onChange={(value) => updateTile('name', value)} /> : tile.name}</span>}
+      </> : tile.name ? <span className="sponsor_name">{editing ? <InlineText value={tile.name} label={`Supporter ${number} name`} multiline={false} onChange={(value) => updateTile('name', value)} /> : tile.name}</span> : null}
     </a>
   </SortableTile>;
 }

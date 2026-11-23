@@ -173,8 +173,10 @@ export default function MyDetailsPage() {
 
   const signOut = (message = '') => { clearEmailSession('details'); setSession(null); setHouseholds(null); setPurchases([]); setMonthly([]); setNotice(message); };
 
-  return <div className="SectionContent PageFadeIn">
-    <h1 className="page_heading_bold_1">My details</h1>
+  return <div className="SectionHero PageFadeIn">
+    <section className="main_tile main_tile_grey SpaceB4">
+      <h1 className="page_heading_bold_1">My details</h1>
+    </section>
     {notice && <p role="status">{notice}</p>}
     {!session ? <EmailCodeSignIn purpose="details" askDob onVerified={(verified) => { setNotice(''); setError(''); setSession(verified); }}
       intro="See your current purchases, ask to stop monthly payments, give or withdraw photo and video consent, and update the phone number, address, emergency contact or email address we hold for your membership. Enter the email you joined or bought with and your date of birth, and we will send you a 6-digit code. Booking for a child or family member? Use their date of birth instead. Name and date of birth changes: contact secretary@forthcanoeclub.co.uk." />
