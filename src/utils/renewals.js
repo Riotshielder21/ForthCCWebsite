@@ -170,5 +170,5 @@ export const renewalEmail = ({ renewalYear, reminder = false, contact = '', bask
   if (contact) paragraph(`Questions: ${contact}.`);
   text.push('', 'Forth Canoe Club');
   return { subject, body: text.join('\n'),
-    html: `<!doctype html><html lang="en"><body style="font-family:ui-sans-serif,system-ui,Arial,sans-serif;color:#002147;font-size:14px;line-height:1.6">\n${html.join('\n')}\n<p>Forth Canoe Club</p></body></html>` };
+    html: `<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body style="font-family:ui-sans-serif,system-ui,Arial,sans-serif;color:#002147;font-size:14px;line-height:1.6">\n${html.join('\n')}\n<p>Forth Canoe Club</p></body></html>` };
 };
