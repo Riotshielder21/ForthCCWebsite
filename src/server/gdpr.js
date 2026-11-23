@@ -324,12 +324,14 @@ export const registerGdprRoutes = (app, { requireAdmin, db, stripeReportRequest,
         const ids = scope.targets.slice(index, index + 30).map((record) => record.id);
         linkedRecords.push(...(await adminDb.collection('renewalInvites').where('membershipIds', 'array-contains-any', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('volunteerRenewals').where('memberId', 'in', ids).get()).docs);
+        linkedRecords.push(...(await adminDb.collection('renewalConfirmations').where('volunteerMemberIds', 'array-contains-any', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('membershipTerms').where('membershipId', 'in', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('clubNightCheckins').where('memberId', 'in', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('clubNightAccessLog').where('memberId', 'in', ids).get()).docs);
         linkedRecords.push(...(await adminDb.collection('selfAssessmentLog').where('memberId', 'in', ids).get()).docs);
       }
       for (const id of scope.erasedHouseholdIds) linkedRecords.push(...(await adminDb.collection('selfServiceChanges').where('householdId', '==', id).get()).docs);
+      for (const email of scope.erasedEmails) linkedRecords.push(...(await adminDb.collection('renewalConfirmations').where('email', '==', email).get()).docs);
       for (const email of scope.erasedEmails) {
         linkedRecords.push(...(await adminDb.collection('emailSessions').where('email', '==', email).get()).docs);
         linkedRecords.push(...(await adminDb.collection('eventRosterAccessLog').where('email', '==', email).get()).docs);

@@ -278,7 +278,8 @@ The club year runs from 1 March to the end of February.
 - Subscriptions carry on until you cancel them. You pay monthly by Direct Debit on the 1st of each month, or yearly on 1 March.
 - Your first payment: paying monthly, you first pay for the rest of the month you join in, shown as a percentage off a full month. Paying yearly, you first pay for the rest of the club year: the full year's price until a fifth of the year has gone, then 80%, 60%, 40% and finally 20% of it. Some subscriptions charge the full year whenever you join; checkout shows the price before you pay.
 - Paying yearly costs less than twelve monthly payments, and the saving is shown at checkout.
-- Each January or February we email whoever pays for a subscription to confirm it or cancel it. If you cancel, it stops at the end of February: the last monthly payment is on 1 February, and no yearly payment is taken on 1 March. If you do not answer, it carries on. You can change your answer until 1 March.
+- Each club year's price: on 1 March every subscription moves to the new club year's price in the shop. The volunteer price applies only if you are signed up to volunteer that year. A discount code covers only the club year it was used in.
+- Each January or February we email whoever pays for a subscription, with its price from 1 March, to confirm it or cancel it. If you cancel, it stops at the end of February: the last monthly payment is on 1 February, and no yearly payment is taken on 1 March. If you do not answer, it carries on at the new price. You can change your answer until 1 March.
 - Receipts: we email a receipt for every subscription payment.
 - Stopping your payments: you can ask us to stop at any time. Use [My details](/my-details), or email the treasurer. We stop future payments, but we do not refund the month or year you have already paid for. What you have paid for continues to the end of that period. Stopping a subscription does not end your membership.
 

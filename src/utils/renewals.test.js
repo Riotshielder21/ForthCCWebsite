@@ -67,9 +67,9 @@ test('renewal basket shares one family membership and carries this year\'s servi
 
 test('renewal basket gives individual memberships and leaves subscriptions, which carry on, out', () => {
   const members = [
-    { id: 'm1', membershipTier: 'junior', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, status: 'active' }],
+    { id: 'm1', membershipTier: 'junior', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, interval: 'month', status: 'active' }],
       entitlements: [{ productId: 'coaching', clubYear: 2027 }] },
-    { id: 'm2', membershipTier: 'adult', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, status: 'cancelled' }] },
+    { id: 'm2', membershipTier: 'adult', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, interval: 'month', status: 'cancelled' }] },
     { id: 'm3', membershipTier: 'adult', entitlements: [{ productId: 'retired', clubYear: 2027 }] }
   ];
   const basket = renewalBasket(members, catalog, 2027, counter());
@@ -77,6 +77,8 @@ test('renewal basket gives individual memberships and leaves subscriptions, whic
   assert.deepEqual(basket.people[0].lineIds, ['id4']);
   assert.deepEqual([basket.billingMode, basket.subscriptionsContinue], ['annual', true]);
   assert.equal(renewalBasket([members[1]], catalog, 2027, counter()).subscriptionsContinue, false, 'a cancelled one does not carry on');
+  const stopping = { id: 'm4', membershipTier: 'adult', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, interval: 'month', status: 'active', endsAt: new Date('2028-03-01T00:00:00Z') }] };
+  assert.equal(renewalBasket([stopping], catalog, 2027, counter()).subscriptionsContinue, false, 'nor one stopping when the renewal year starts');
 });
 
 test('renewal basket lists the oldest first, so an adult is the family contact', () => {
@@ -96,13 +98,35 @@ test('renewal lines are for next year until 1 March, then this year', () => {
 
 test('renewal email lists the basket, the link and the expiry date', () => {
   const basket = renewalBasket([{ id: 'm1', firstName: 'Ann', lastName: 'Lee', membershipTier: 'adult', entitlements: [{ productId: 'locker', clubYear: 2027 }] }], [...catalog.slice(0, 4), { ...catalog[4], name: 'Locker <rental>' }], 2027, counter());
-  const email = renewalEmail({ ...basket, catalog: [{ id: 'membership-adult', name: 'Adult membership' }, { id: 'locker', name: 'Locker <rental>' }], renewalYear: 2028,
-    link: 'https://example.test/membership?renew=abc', expiresAt: renewalWindow(january).expiresAt });
+  const email = renewalEmail({ renewalYear: 2028, basket: { ...basket, catalog: [{ id: 'membership-adult', name: 'Adult membership' }, { id: 'locker', name: 'Locker <rental>' }],
+    link: 'https://example.test/membership?renew=abc', expiresAt: renewalWindow(january).expiresAt } });
   assert.equal(email.subject, 'Renew your Forth Canoe Club membership for 2028/29');
-  assert.match(email.body, /Renew Ann Lee using the link/);
+  assert.match(email.body, /Renew Ann Lee: the link fills your basket with:/);
   assert.match(email.body, /- Adult membership \(Ann\)\n- Locker <rental> \(Ann\)/);
   assert.match(email.body, /works until 31 March 2028/);
   assert.match(email.html, /Locker &lt;rental&gt;/);
   assert.match(email.html, /href="https:\/\/example.test\/membership\?renew=abc"/);
-  assert.match(renewalEmail({ ...basket, catalog: [], renewalYear: 2028, link: 'x', expiresAt: renewalWindow(january).expiresAt, reminder: true }).subject, /^Reminder: renew your/);
+  assert.match(renewalEmail({ renewalYear: 2028, reminder: true, basket: { ...basket, catalog: [], link: 'x', expiresAt: renewalWindow(january).expiresAt } }).subject, /^Reminder: renew your/);
+  assert.doesNotMatch(email.html, /Confirm all|Cancel/, 'with nothing else to confirm there is just the basket');
+});
+
+test('one renewal email has a Confirm for each part, then Confirm all, then Cancel at the bottom', () => {
+  const basket = renewalBasket([{ id: 'm1', firstName: 'Ann', lastName: 'Lee', membershipTier: 'adult' }], catalog, 2027, counter());
+  const subscription = { lines: [{ name: 'Gold', names: ['Ann Lee'], price: '£15.00 a month', nextPrice: '£30.00 a month', ifVolunteering: '£10.00 a month', volunteers: ['Ann'] }],
+    confirmUrl: 'https://site/subscription?key=k&answer=confirm', cancelUrl: 'https://site/subscription?key=k&answer=cancel' };
+  const email = renewalEmail({ renewalYear: 2028, contact: 'treasurer@example.test', confirmAllUrl: 'https://site/subscription?all=b&basket=abc',
+    basket: { ...basket, catalog: [{ id: 'membership-adult', name: 'Adult membership' }], link: 'https://site/membership?renew=abc', expiresAt: renewalWindow(january).expiresAt },
+    volunteers: [{ name: 'Ann Lee', firstName: 'Ann', commitment: '40+ hour', keepUrl: 'https://site/volunteering?volunteerRenew=v', changeUrl: 'https://site/volunteering?volunteerRenew=v&change=1' }],
+    subscriptions: [subscription] });
+  const buttons = ['Confirm: go to the basket', 'Confirm volunteering for Ann', 'Confirm subscription', 'Confirm all and go to the basket', 'Cancel subscription']
+    .map((label) => email.html.indexOf(`>${label}</a>`));
+  assert.ok(buttons.every((position, index) => position > (index ? buttons[index - 1] : -1)), `in order: ${buttons}`);
+  assert.match(email.html, /background:#15803d"><a href="https:\/\/site\/subscription\?key=k&amp;answer=confirm"[^>]*>Confirm subscription<\/a>/);
+  assert.match(email.html, /background:#b91c1c"><a href="https:\/\/site\/subscription\?key=k&amp;answer=cancel"[^>]*>Cancel subscription<\/a>/);
+  assert.match(email.body, /- Gold \(Ann Lee\): £10\.00 a month if Ann volunteers again, otherwise £30\.00 a month/);
+  assert.match(email.body, /Keep your 40\+ hour commitment/);
+  assert.match(email.body, /Confirm all and go to the basket: https:\/\/site\/subscription\?all=b&basket=abc/);
+  const only = renewalEmail({ renewalYear: 2028, subscriptions: [subscription] });
+  assert.equal(only.subject, 'Confirm or cancel your Forth Canoe Club subscription for 2028/29', 'a payer with nothing to renew');
+  assert.doesNotMatch(only.body, /Confirm all|basket/);
 });

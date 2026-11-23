@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  holdsForClubYear,
+  holdsForClubYear, holdsSubscriptionFrom,
   londonMidnight, clubYearOf, clubYearDates, joiningShare, nextFirst, fullMonthsAfterCurrent, clubYearChoices,
   resolveClubYearChoice, clubYearsFor, firstRecurringCharge, thresholdShare, clubYearLabel, recordClubYear, clubYearKind
 } from './clubYear.js';
@@ -100,7 +100,7 @@ test('older records take their club year from when they were granted', () => {
 test('an item already held for a club year is recognised from term entitlements and subscription items', () => {
   const member = {
     entitlements: [{ productId: 'hire', grantedAt: new Date(2026, 5, 1) }, { productId: 'old', clubYear: 2026, endedAt: new Date(2026, 6, 1) }],
-    subscriptionItems: [{ productId: 'coach', clubYear: 2027, status: 'active' }, { productId: 'gone', clubYear: 2026, status: 'cancelled' }]
+    subscriptionItems: [{ productId: 'coach', clubYear: 2027, interval: 'month', status: 'active' }, { productId: 'gone', clubYear: 2026, interval: 'month', status: 'cancelled' }]
   };
   assert.equal(holdsForClubYear(member, 'hire', 2026), true);
   assert.equal(holdsForClubYear(member, 'hire', 2027), false);
@@ -109,7 +109,20 @@ test('an item already held for a club year is recognised from term entitlements 
   assert.equal(holdsForClubYear(member, 'coach', 2026), false, 'not before it started');
   assert.equal(holdsForClubYear(member, 'coach', 2029), true, 'a subscription carries on into later years');
   assert.equal(holdsForClubYear(member, 'gone', 2026), false);
-  const ending = { subscriptionItems: [{ productId: 'coach', clubYear: 2027, status: 'active', endsAt: clubYearDates(2027).end }] };
+  const ending = { subscriptionItems: [{ productId: 'coach', clubYear: 2027, interval: 'month', status: 'active', endsAt: clubYearDates(2027).end }] };
   assert.deepEqual([2027, 2028].map((year) => holdsForClubYear(ending, 'coach', year)), [true, false], 'one cancelled at the year end can be bought again for next year');
   assert.equal(holdsForClubYear(undefined, 'hire', 2026), false);
+});
+
+test('a subscription cannot be bought for a club year if it would overlap one the member has, whichever year that started', () => {
+  const starting = { subscriptionItems: [{ productId: 'coach', clubYear: 2028, interval: 'month', status: 'active' }] };
+  assert.deepEqual([2027, 2028, 2030].map((year) => holdsSubscriptionFrom(starting, 'coach', year)), [true, true, true],
+    'one starting on 1 March would also be charged alongside this year\'s, which carries on');
+  assert.equal(holdsForClubYear(starting, 'coach', 2027), false);
+  const ending = { subscriptionItems: [{ productId: 'coach', clubYear: 2027, interval: 'year', status: 'active', endsAt: clubYearDates(2027).end }] };
+  assert.deepEqual([2027, 2028].map((year) => holdsSubscriptionFrom(ending, 'coach', year)), [true, false]);
+  assert.equal(holdsSubscriptionFrom({ entitlements: [{ productId: 'coach', clubYear: 2028 }] }, 'coach', 2027), true, 'nor a later year given outside a subscription');
+  const older = { subscriptionItems: [{ productId: 'coach', clubYear: 2027, status: 'active' }] };
+  assert.deepEqual([2027, 2028].map((year) => [holdsForClubYear(older, 'coach', year), holdsSubscriptionFrom(older, 'coach', year)]), [[true, true], [false, false]],
+    'items from before subscriptions carried on (no interval) end with their club year');
 });

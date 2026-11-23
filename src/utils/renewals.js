@@ -1,4 +1,4 @@
-import { clubYearDates, clubYearKind, clubYearOf, londonMidnight, recordClubYear } from './clubYear.js';
+import { clubYearDates, clubYearKind, clubYearOf, londonMidnight, recordClubYear, subscriptionCoversYear } from './clubYear.js';
 
 const millis = (value) => {
   if (!value) return 0;
@@ -49,7 +49,7 @@ const membershipProduct = (catalog, tier) => catalog.find((product) => product.c
 /**
  * The basket a renewal link fills: each member's membership (one family membership shared by a family) and the
  * services they hold this club year that are still sold, all for the renewal year. Subscriptions are left out: they
- * carry on by themselves, and the payer gets a separate continue/cancel email (`subscriptionsContinue` says whether
+ * carry on by themselves, and the payer is asked about them in their own renewal email (`subscriptionsContinue` says whether
  * anyone in the basket has one). Line ids come from `makeId`.
  */
 export const renewalBasket = (unordered, catalog, clubYear, makeId) => {
@@ -74,7 +74,7 @@ export const renewalBasket = (unordered, catalog, clubYear, makeId) => {
   let subscriptionsContinue = false;
   people.forEach((person, index) => {
     const { entitlements = [], subscriptionItems = [] } = members[index];
-    if (subscriptionItems.some((item) => item.status === 'active')) subscriptionsContinue = true;
+    if (subscriptionItems.some((item) => subscriptionCoversYear(item, clubYear + 1))) subscriptionsContinue = true;
     const held = entitlements.filter((item) => !item.endedAt && recordClubYear(item) === clubYear).map((item) => item.productId);
     for (const productId of new Set(held)) {
       const product = catalog.find((candidate) => candidate.id === productId);
@@ -91,26 +91,84 @@ export const renewalChoice = (renewalYear, now = new Date()) => renewalYear === 
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 
+const GREEN = '#15803d';
+const RED = '#b91c1c';
+const dayLabel = (date) => date.toLocaleDateString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'long', year: 'numeric' });
+const emailButton = (href, label, colour) => `<td style="border-radius:8px;background:${colour}"><a href="${escapeHtml(href)}" style="display:inline-block;padding:12px 24px;color:#ffffff;font-weight:bold;font-size:16px;text-decoration:none;border-radius:8px">${escapeHtml(label)}</a></td>`;
+const buttonRow = (button) => `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:8px 0 16px"><tr>${button}</tr></table>`;
+const joinNames = (names) => names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0] || '';
+
+/** A subscription line's price from 1 March, with the volunteer price when its holders could volunteer again. */
+export const subscriptionLineText = (line) => `${line.name}${line.names?.length ? ` (${line.names.join(', ')})` : ''}: ${line.ifVolunteering
+  ? `${line.ifVolunteering} if ${joinNames(line.volunteers || [])} ${(line.volunteers || []).length > 1 ? 'volunteer' : 'volunteers'} again, otherwise ${line.nextPrice}`
+  : line.nextPrice}`;
+
 /**
- * The renewal email for one contact address: who is renewing, what the link puts in the basket, and when it expires.
- * The wording is a template until the club agrees the final text (issue #43).
+ * The renewal email for one contact address, with a separate green Confirm for each part: the basket of next year's
+ * membership and services (`basket`), each volunteer signing up again (`volunteers`), and each subscription carrying on
+ * at the new club year's price (`subscriptions`). Confirm all (`confirmAllUrl`) does every part at once and opens the
+ * basket; the red Cancel at the bottom stops a subscription at the end of February. Parts that do not apply are left
+ * out, so a payer with nothing to renew is asked only about their subscriptions. Every button only opens a page where
+ * the member confirms, so a mail scanner following links changes nothing. The wording is a template until the club
+ * agrees the final text (issue #43).
  */
-export const renewalEmail = ({ people, items, catalog, renewalYear, link, expiresAt, reminder = false, subscriptionsContinue = false, volunteering = { body: '', html: '' } }) => {
+export const renewalEmail = ({ renewalYear, reminder = false, contact = '', basket = null, volunteers = [], subscriptions = [], confirmAllUrl = '' }) => {
   const year = `${renewalYear}/${String((renewalYear + 1) % 100).padStart(2, '0')}`;
-  const names = people.map((person) => [person.firstName, person.lastName].filter(Boolean).join(' ')).filter(Boolean);
-  const lines = items.map((item) => {
-    const holders = people.filter((person) => person.lineIds.includes(item.lineId)).map((person) => person.firstName).filter(Boolean);
-    return `${catalog.find((product) => product.id === item.id)?.name || item.id}${holders.length ? ` (${holders.join(', ')})` : ''}`;
-  });
-  const expiry = new Date(expiresAt.getTime() - 1).toLocaleDateString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'long', year: 'numeric' });
-  const subject = `${reminder ? 'Reminder: renew' : 'Renew'} your Forth Canoe Club membership for ${year}`;
-  const intro = `Club year ${year} starts on 1 March. Renew ${names.join(', ') || 'your membership'} using the link below. It fills your basket with:`;
-  const after = `Remove anything you no longer want, or add more, before paying. Nothing is charged until you check out. The link works until ${expiry}. Renewing through JustGo instead? Ignore this email.`
-    + (subscriptionsContinue ? ' Subscriptions are not in the basket: they carry on by themselves, and whoever pays for them gets a separate email to confirm or cancel.' : '');
-  const body = `${intro}\n\n${lines.map((line) => `- ${line}`).join('\n')}\n\n${link}\n\n${after}\n\n${volunteering.body}\n\nForth Canoe Club`;
-  const html = `<!doctype html><html lang="en"><body style="font-family:ui-sans-serif,system-ui,Arial,sans-serif;color:#002147;font-size:14px;line-height:1.6">
-<p>${escapeHtml(intro)}</p><ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>
-<p><a href="${escapeHtml(link)}" style="display:inline-block;padding:10px 18px;background:#002147;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:bold">Renew for ${escapeHtml(year)}</a></p>
-<p>${escapeHtml(after)}</p>${volunteering.html}<p>Forth Canoe Club</p></body></html>`;
-  return { subject, body, html };
+  const subject = basket ? `${reminder ? 'Reminder: renew' : 'Renew'} your Forth Canoe Club membership for ${year}`
+    : `${reminder ? 'Reminder: confirm' : 'Confirm'} or cancel your Forth Canoe Club subscription for ${year}`;
+  const text = [];
+  const html = [];
+  const paragraph = (value) => { text.push(value); html.push(`<p>${escapeHtml(value)}</p>`); };
+  const heading = (title) => { text.push('', title.toUpperCase()); html.push(`<h3 style="margin:24px 0 4px;font-size:16px">${escapeHtml(title)}</h3>`); };
+  const list = (values) => { text.push(...values.map((value) => `- ${value}`)); html.push(`<ul>${values.map((value) => `<li>${escapeHtml(value)}</li>`).join('')}</ul>`); };
+  const button = (label, href, colour = GREEN) => { text.push(`${label}: ${href}`); html.push(buttonRow(emailButton(href, label, colour))); };
+  const named = (part, verb) => subscriptions.length > 1 ? `${verb} ${joinNames(part.lines.map((line) => line.name))}` : `${verb} subscription`;
+  paragraph(`Club year ${year} starts on 1 March. ${confirmAllUrl ? 'Confirm each part below, or everything at once with Confirm all.' : 'Please check the details below.'}`);
+  if (basket) {
+    const { people, items, catalog, link, expiresAt } = basket;
+    const names = people.map((person) => [person.firstName, person.lastName].filter(Boolean).join(' ')).filter(Boolean);
+    heading('Membership and services');
+    paragraph(`Renew ${names.join(', ') || 'your membership'}: the link fills your basket with:`);
+    list(items.map((item) => {
+      const holders = people.filter((person) => person.lineIds.includes(item.lineId)).map((person) => person.firstName).filter(Boolean);
+      return `${catalog.find((product) => product.id === item.id)?.name || item.id}${holders.length ? ` (${holders.join(', ')})` : ''}`;
+    }));
+    button('Confirm: go to the basket', link);
+    paragraph(`Remove anything you no longer want, or add more, before paying. Nothing is charged until you check out. The link works until ${dayLabel(new Date(expiresAt.getTime() - 1))}. Renewing through JustGo instead? Ignore this part.`
+      + (basket.subscriptionsContinue && !subscriptions.length ? ' Subscriptions are not in the basket: they carry on by themselves, and whoever pays for them is asked about them.' : ''));
+  }
+  if (volunteers.length) {
+    heading('Volunteering');
+    for (const entry of volunteers) {
+      paragraph(`${entry.name}: you have not signed up to volunteer next club year. Keep your ${entry.commitment} commitment, or choose different hours.`);
+      button(`Confirm volunteering for ${entry.firstName || entry.name}`, entry.keepUrl);
+      text.push(`Choose different hours: ${entry.changeUrl}`);
+      html.push(`<p><a href="${escapeHtml(entry.changeUrl)}">Choose different hours</a></p>`);
+    }
+  }
+  if (subscriptions.length) {
+    heading(subscriptions.length > 1 ? 'Subscriptions' : 'Subscription');
+    paragraph(`${subscriptions.length > 1 ? 'These carry' : 'This carries'} on into club year ${year} unless you cancel. On 1 March every subscription moves to the new club year's price, and a discount code covered only the year it was used in. From 1 March:`);
+    for (const part of subscriptions) {
+      list(part.lines.map(subscriptionLineText));
+      button(named(part, 'Confirm'), part.confirmUrl);
+    }
+    if (volunteers.length && subscriptions.some((part) => part.lines.some((line) => line.ifVolunteering))) {
+      paragraph('The volunteer price applies once volunteering is confirmed for next club year.');
+    }
+  }
+  if (confirmAllUrl) {
+    heading('Confirm all');
+    paragraph(`Confirms ${[volunteers.length && 'the volunteering', subscriptions.length && `the ${subscriptions.length > 1 ? 'subscriptions' : 'subscription'}`].filter(Boolean).join(' and ')}${basket ? ', then opens your basket to pay for the membership and services' : ''}.`);
+    button(basket ? 'Confirm all and go to the basket' : 'Confirm all', confirmAllUrl);
+  }
+  if (subscriptions.length) {
+    heading(`Cancel ${subscriptions.length > 1 ? 'a subscription' : 'your subscription'}`);
+    paragraph(`Cancelling stops the payments from 1 March; payments already taken are not refunded. If you do not answer, it carries on. You can change your answer until ${dayLabel(new Date(clubYearDates(renewalYear).start.getTime() - 1))}.`);
+    for (const part of subscriptions) button(named(part, 'Cancel'), part.cancelUrl, RED);
+  }
+  if (contact) paragraph(`Questions: ${contact}.`);
+  text.push('', 'Forth Canoe Club');
+  return { subject, body: text.join('\n'),
+    html: `<!doctype html><html lang="en"><body style="font-family:ui-sans-serif,system-ui,Arial,sans-serif;color:#002147;font-size:14px;line-height:1.6">\n${html.join('\n')}\n<p>Forth Canoe Club</p></body></html>` };
 };

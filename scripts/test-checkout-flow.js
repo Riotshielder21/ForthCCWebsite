@@ -2058,6 +2058,29 @@ await test('yearly subscriptions take the rest of the club year now, then the fu
   assert.deepEqual(second.stripeSubscriptionIds, [subscriptionId], 'items paid yearly with the same details and the same next payment join it');
 });
 
+await test('a yearly payment missed while a bank payment cleared is charged now by its own subscription, not a year later with another', async () => {
+  const payer = email('late-yearly');
+  // Paid yearly now, so its first full payment is the coming 1 March; it waits for that in a Stripe trial.
+  const current = await orderData(await buy(payer, lessonFor('Lia'), { billingMode: 'annual' }));
+  // Checked out on 20 February for the club year starting that 1 March, and cleared only now: that payment was missed.
+  const late = await orderData(await buy(payer, withChoice(lessonFor('Lex'), 'next'), { billingMode: 'annual' },
+    testNow(londonNoon(clubYearOf(new Date()), 1, 20))));
+  assert.equal(late.subscriptionPlan.status, 'active', late.subscriptionPlan.error);
+  assert.equal(late.subscriptionPlan.groups[0].created, true, 'a new subscription, backdated so the missed year is charged now');
+  assert.notDeepEqual(late.stripeSubscriptionIds, current.stripeSubscriptionIds);
+});
+
+await test('one person cannot have the same subscription in the basket twice, as it carries on until cancelled', async () => {
+  const basket = withChoice(lessonFor('Twice'), 'this');
+  const again = { ...lessonLine(), clubYearChoice: 'next' };
+  basket.lines.push(again);
+  basket.people[0].lineIds.push(again.lineId);
+  const refused = await checkout(basket.people[0].email, basket, { billingMode: 'monthly' }, january);
+  assert.equal(refused.status, 409, refused.text);
+  assert.deepEqual([refused.json.code, refused.json.lineId], ['already_held', again.lineId]);
+  assert.match(refused.json.error, /in the basket twice/);
+});
+
 await test('next year\'s monthly items with nothing due now only save the payment details', async () => {
   const payer = email('renew-next');
   const details = adultDetails({ firstName: 'Nat', lastName: 'Next', email: payer });
@@ -2569,21 +2592,24 @@ await test('renewal emails: one per contact address, a basket link, sent on 1 Fe
   assert.equal((await mails()).length, 2);
 });
 
-await test('subscription payers get a separate continue/cancel email; Cancel stops it at the end of February and can be undone until 1 March', async () => {
+await test('a payer is asked about their subscription in their renewal email; Cancel stops it at the end of February and can be undone until 1 March', async () => {
   const payer = email('carry-on');
   const details = adultDetails({ firstName: 'Cora', lastName: 'Carry', email: payer });
   const order = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'this'), { billingMode: 'monthly' }, autumn));
   const [subscriptionId] = order.stripeSubscriptionIds;
   const record = async () => (await db.collection('subscriptions').doc(subscriptionId).get()).data();
   const adminAt = (when) => ({ ...admin, ...when });
-  const continuationMails = async () => (await db.collection('testMail').where('kind', '==', 'subscription-continuation').where('email', '==', payer).get()).docs
+  const continuationMails = async () => (await db.collection('testMail').where('kind', 'in', ['renewal', 'subscription-continuation']).where('email', '==', payer).get()).docs
     .map((document) => document.data());
   assert.equal((await call('POST', '/api/admin/renewals/send', { body: {}, headers: adminAt(january) })).status, 200);
   const [mail, ...others] = await continuationMails();
-  assert.equal(others.length, 0, 'one email per subscription');
-  assert.match(mail.subject, /^Confirm or cancel your Forth Canoe Club subscription for /);
-  assert.match(mail.html, /background:#15803d"><a href="[^"]+answer=confirm"[^>]*>Confirm</, 'a green Confirm button');
-  assert.match(mail.html, /background:#b91c1c"><a href="[^"]+answer=cancel"[^>]*>Cancel</, 'and a red Cancel button');
+  assert.equal(others.length, 0, 'one email covers the membership renewal and the subscription');
+  assert.deepEqual([mail.kind, mail.subscriptionIds], ['renewal', [subscriptionId]]);
+  assert.match(mail.subject, /^Renew your Forth Canoe Club membership for /);
+  assert.match(mail.body, /\(Cora Carry\): £30\.00 a month\n/, 'with its price from 1 March');
+  assert.match(mail.html, /background:#15803d"><a href="[^"]+answer=confirm"[^>]*>Confirm subscription</, 'a green Confirm for the subscription');
+  assert.match(mail.html, /background:#15803d"><a href="[^"]+\/subscription\?all=[a-f0-9]{64}&amp;basket=[a-f0-9]{64}"[^>]*>Confirm all and go to the basket</);
+  assert.match(mail.html, /background:#b91c1c"><a href="[^"]+answer=cancel"[^>]*>Cancel subscription</, 'and a red Cancel at the bottom');
   const key = /\/subscription\?key=([A-Za-z0-9_-]+)&answer=cancel/.exec(mail.body)[1];
   const opened = await call('GET', `/api/subscription-continuation/${key}`, { headers: january });
   assert.equal(opened.status, 200, opened.text);
@@ -2608,6 +2634,15 @@ await test('subscription payers get a separate continue/cancel email; Cancel sto
   const confirmed = await call('POST', `/api/subscription-continuation/${key}`, { body: { answer: 'confirm' }, headers: january });
   assert.equal(confirmed.status, 200, confirmed.text);
   assert.deepEqual([(await record()).cancelAt, (await record()).continuation.status], [null, 'confirmed'], 'changing the answer removes the stop');
+  const carriesOn = await checkout(payer, withChoice(build(['membership-adult', 'gold-sub'], [returning]), 'next'), { billingMode: 'monthly' }, january);
+  assert.equal(carriesOn.status, 409, carriesOn.text);
+  assert.equal(carriesOn.json.code, 'already_held', 'while it carries on, next year cannot be bought as well');
+  assert.equal((await call('POST', `/api/subscription-continuation/${key}`, { body: { answer: 'cancel' }, headers: january })).status, 200);
+  await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [returning]), 'next'), { billingMode: 'monthly' }, january);
+  const replaced = await call('POST', `/api/subscription-continuation/${key}`, { body: { answer: 'confirm' }, headers: january });
+  assert.equal(replaced.status, 409, replaced.text);
+  assert.equal(replaced.json.code, 'continuation_replaced', 'once next year is bought again, undoing the cancellation would charge twice');
+  assert.equal((await record()).continuation.status, 'cancelled');
   const job = (when) => call('POST', '/api/jobs/renewals', { body: {}, headers: { Authorization: `Bearer ${process.env.RENEWAL_JOB_TOKEN}`, ...when } });
   assert.equal((await job(testNow(londonNoon(autumnYear + 1, 1, 20)))).status, 200);
   assert.equal((await continuationMails()).length, 1, 'nobody who answered gets the reminder');
@@ -2617,6 +2652,58 @@ await test('subscription payers get a separate continue/cancel email; Cancel sto
 });
 
 await db.collection('products').doc(lessonId).delete();
+
+await test('a discount code covers only its club year: the renewal job moves the subscription to the new year\'s price for 1 March', async () => {
+  const code = `HALF${run.toUpperCase()}`;
+  assert.equal((await call('POST', '/api/admin/discount-codes', { headers: admin, body: { code, label: 'Half Gold', type: 'multiplier', discountValue: 0.5, productIds: ['gold-sub'] } })).status, 200);
+  const payer = email('reset');
+  const order = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [adultDetails({ firstName: 'Pat', lastName: 'Reset', email: payer })]), 'this'),
+    { billingMode: 'monthly', discountCode: code }, autumn));
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const item = async () => (await db.collection('subscriptions').doc(subscriptionId).get()).data().items[0];
+  assert.equal((await item()).monthlyAmount, 15, 'half price this club year');
+  assert.equal((await call('POST', '/api/admin/renewals/send', { body: {}, headers: { ...admin, ...january } })).status, 200);
+  const [mail] = (await db.collection('testMail').where('kind', '==', 'renewal').where('email', '==', payer).get()).docs.map((document) => document.data());
+  assert.match(mail.body, /\(Pat Reset\): £30\.00 a month\n/, 'the email quotes the new club year\'s price');
+  const job = (day) => call('POST', '/api/jobs/renewals', { body: {}, headers: { Authorization: `Bearer ${process.env.RENEWAL_JOB_TOKEN}`, ...testNow(londonNoon(autumnYear + 1, 1, day)) } });
+  assert.equal((await job(1)).status, 200);
+  assert.equal((await item()).monthlyAmount, 15, 'not before February\'s payment is taken');
+  const moved = await job(15);
+  assert.equal(moved.status, 200, moved.text);
+  assert.ok(moved.json.pricesChanged >= 1);
+  assert.deepEqual([(await item()).monthlyAmount, (await item()).priceYear], [30, autumnYear + 1], 'full price from 1 March');
+  const audit = await db.collection('auditLog').where('stripeSubscriptionId', '==', subscriptionId).where('action', '==', 'club-year-price-change').get();
+  assert.equal(audit.size, 1);
+  assert.equal((await job(27)).status, 200);
+  assert.equal((await db.collection('auditLog').where('stripeSubscriptionId', '==', subscriptionId).where('action', '==', 'club-year-price-change').get()).size, 1,
+    'checking again changes nothing');
+});
+
+await test('Confirm all signs a volunteer up again, confirms the subscription at the volunteer price and leads to the basket', async () => {
+  const payer = email('confirm-all');
+  const order = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [adultDetails({ firstName: 'Vera', lastName: 'Volunteer', email: payer })]), 'this'),
+    { billingMode: 'annual' }, autumn));
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const [member] = await membershipsFor(payer);
+  await db.collection('memberships').doc(member.id).update({ volunteer: { inducted: true, years: { [autumnYear]: { active: true, tier: '40', hours: 40 } } } });
+  assert.equal((await call('POST', '/api/admin/renewals/send', { body: {}, headers: { ...admin, ...january } })).status, 200);
+  const [mail] = (await db.collection('testMail').where('kind', '==', 'renewal').where('email', '==', payer).get()).docs.map((document) => document.data());
+  assert.match(mail.body, /\(Vera Volunteer\): £96\.00 a year if Vera volunteers again, otherwise £288\.00 a year/, 'both prices until she signs up again');
+  assert.match(mail.html, />Confirm volunteering for Vera</);
+  const [, key, basket] = /\/subscription\?all=([a-f0-9]{64})&basket=([a-f0-9]{64})/.exec(mail.body);
+  const shown = await call('GET', `/api/renewal-confirmation/${key}`, { headers: january });
+  assert.equal(shown.status, 200, shown.text);
+  assert.deepEqual([shown.json.volunteers, shown.json.subscriptions[0].status], [[{ name: 'Vera Volunteer', renewed: false }], 'unconfirmed'], 'opening the link changes nothing');
+  const confirmed = await call('POST', `/api/renewal-confirmation/${key}`, { body: {}, headers: january });
+  assert.equal(confirmed.status, 200, confirmed.text);
+  assert.deepEqual([confirmed.json.problems, confirmed.json.volunteers[0].renewed, confirmed.json.subscriptions[0].status], [[], true, 'confirmed']);
+  assert.equal(confirmed.json.subscriptions[0].items[0].nextPrice, '£96.00 a year');
+  const volunteered = (await db.collection('memberships').doc(member.id).get()).data().volunteer.years[autumnYear + 1];
+  assert.deepEqual([volunteered.active, volunteered.tier], [true, '40'], 'signed up again with the same hours');
+  assert.equal((await db.collection('subscriptions').doc(subscriptionId).get()).data().items[0].yearlyAmount, 96, 'the 1 March payment is the volunteer price');
+  assert.equal((await call('GET', `/api/renewals/${basket}`, { headers: january })).status, 200, 'the basket link it leads to works');
+  assert.equal((await call('GET', `/api/renewal-confirmation/${'0'.repeat(64)}`, { headers: january })).status, 404);
+});
 
 await test('checkout needs agreement to the current version of every published notice', async () => {
   const noticeId = `test-notice-${run}`;

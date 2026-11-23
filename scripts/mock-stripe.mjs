@@ -172,9 +172,12 @@ globalThis.fetch = async (url, options) => {
       return fail('Every item must share the monthly or yearly interval and the subscription\'s club year.');
     }
     const nextCharge = Number(params.get('trial_end') || params.get('billing_cycle_anchor'));
-    // Items paid with the same details and next charged on the same day must join the existing subscription instead.
+    // Items paid with the same details and next charged on the same day must join the existing subscription instead,
+    // unless they missed a payment (backdated): that must be charged now, which joining a yearly or trialling one would not do.
+    const backdated = params.has('backdate_start_date');
     if ([...subscriptions.values()].some((owned) => owned.customer === params.get('customer') && live(owned) && !owned.cancel_at
-      && owned.items.data[0]?.price.recurring.interval === interval && owned.default_payment_method === paymentMethod && owned.current_period_end === nextCharge)) {
+      && owned.items.data[0]?.price.recurring.interval === interval && owned.default_payment_method === paymentMethod && owned.current_period_end === nextCharge
+      && !(backdated && (interval === 'year' || owned.status !== 'active')))) {
       return fail('These payment details already pay a subscription charged on that day.');
     }
     let subscription;

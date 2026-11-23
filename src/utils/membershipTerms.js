@@ -30,7 +30,8 @@ export const continuingEntitlements = (subscriptionItems = [], now = new Date())
   const current = clubYearOf(now);
   return (Array.isArray(subscriptionItems) ? subscriptionItems : []).flatMap((item) => {
     const started = recordClubYear(item);
-    if (!item?.productId || !Number.isInteger(started) || started >= current) return [];
+    // Items from before subscriptions carried on (no `interval`) ended with their own club year.
+    if (!item?.productId || !item.interval || !Number.isInteger(started) || started >= current) return [];
     const ended = toDate(item.status === 'active' ? item.endsAt : item.paidUntil || item.cancelledAt || item.endedAt);
     if (item.status !== 'active' && !ended) return [];
     const years = [];

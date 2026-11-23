@@ -85,9 +85,11 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       return 'failed';
     }
   };
+  /** Renewal links for members who volunteered last year: text and HTML for an email, and `entries` for the renewal email's buttons. */
   const volunteerRenewalContent = async (members, year, siteUrl) => {
     const lines = [];
     const html = [];
+    const entries = [];
     const levels = await loadVolunteerBenefits();
     for (const member of members.filter((member) => needsVolunteerRenewal(member, year))) {
       const token = crypto.randomBytes(32).toString('hex');
@@ -95,10 +97,46 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
         expiresAt: Timestamp.fromDate(new Date(clubYearDates(year).start.getTime() + 31 * 86400000)) });
       const link = `${siteUrl}/volunteering?volunteerRenew=${token}`;
       const name = `${member.firstName || ''} ${member.lastName || ''}`.trim();
-      lines.push(`${name}: you have not signed up to volunteer next club year. Keep your ${volunteerLevelLabel(levels, volunteerYear(member, year - 1).tier).replace(/ hours$/, ' hour')} commitment: ${link}\nChoose different hours: ${link}&change=1`);
+      const commitment = volunteerLevelLabel(levels, volunteerYear(member, year - 1).tier).replace(/ hours$/, ' hour');
+      lines.push(`${name}: you have not signed up to volunteer next club year. Keep your ${commitment} commitment: ${link}\nChoose different hours: ${link}&change=1`);
+      entries.push({ memberId: member.id, name, firstName: member.firstName || '', commitment, keepUrl: link, changeUrl: `${link}&change=1` });
       html.push(`<p>${escape(name)}: <a href="${escape(link)}">Keep my volunteer hours next year</a> or <a href="${escape(link)}&amp;change=1">Choose a different commitment</a>. Confirm on the form to renew your volunteering.</p>`);
     }
-    return { body: lines.join('\n\n'), html: html.join('') };
+    return { body: lines.join('\n\n'), html: html.join(''), entries };
+  };
+  /**
+   * Signs an inducted volunteer up again for `year` at a volunteer level (`tierId`), as their renewal link does: the
+   * year is active on their record and on the volunteer list. Repeating it changes nothing more.
+   */
+  const renewVolunteering = async (memberId, year, tierId, now = new Date()) => {
+    const tier = (await loadVolunteerBenefits()).find((candidate) => candidate.id === tierId);
+    if (!tier) throw new Error('That volunteer level no longer exists.');
+    const reference = db().collection('memberships').doc(memberId);
+    const data = (await reference.get()).data();
+    const benefits = [volunteerBenefitText(tier, await loadCatalogue())];
+    const household = data?.householdId ? (await db().collection('households').doc(data.householdId).get()).data() : null;
+    const email = household?.email || data?.email || data?.guardian?.email || '';
+    await db().runTransaction(async (transaction) => {
+      const current = (await transaction.get(reference)).data();
+      if (!current?.volunteer?.inducted) throw new Error('The volunteer membership no longer exists or is no longer inducted.');
+      const signups = await transaction.get(lists().where('memberId', '==', memberId));
+      const signup = signups.docs.find((document) => document.data().listType === VOLUNTEER_LIST && signupYear(document.data()) === year);
+      const reservation = await reserveRecordIds(db(), transaction, 'volunteers', signup ? 0 : 1);
+      const signupId = signup?.id || reservation.ids[0];
+      reservation.save();
+      const years = current.volunteer.years || {};
+      transaction.update(reference, { volunteer: { ...current.volunteer, years: { ...years,
+        [year]: { active: true, tier: tier.id, hours: tier.hours, benefits, freeProductIds: tier.freeProductIds, signupId } } } });
+      transaction.set(lists().doc(signupId), { name: `${current.firstName || ''} ${current.lastName || ''}`.trim(),
+        email, memberId, listType: VOLUNTEER_LIST, clubYear: year, tier: tier.id,
+        inducted: true, active: true,
+        ...(!signup ? { items: [], notes: '', createdAt: Timestamp.now() } : {}) }, { merge: true });
+    });
+    // Their subscriptions take the volunteer price from the next payment it covers (from 1 March for next year's).
+    const adjusted = await adjustVolunteerSubscriptions(memberId, now).catch((error) => [{ status: 'failed', error: error.message }]);
+    for (const failed of adjusted.filter((result) => result.status === 'failed')) {
+      console.error('Could not apply a renewed volunteer price to a subscription: %s', failed.error);
+    }
   };
   const renewalInvite = async (token, now) => {
     if (!/^[a-f0-9]{64}$/.test(token)) return null;
@@ -129,28 +167,10 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
       res.set('Cache-Control', 'no-store');
       const loaded = await renewalInvite(req.params.token, requestNow(req));
       if (!loaded) return res.status(404).json({ error: 'This volunteer renewal link is invalid or expired.' });
-      const tier = (await loadVolunteerBenefits()).find((candidate) => candidate.id === req.body?.tier);
-      if (!tier) return res.status(400).json({ error: 'Choose your volunteer hours bracket.' });
-      const { invite, member } = loaded;
-      const benefits = [volunteerBenefitText(tier, await loadCatalogue())];
-      const household = member.data().householdId ? (await db().collection('households').doc(member.data().householdId).get()).data() : null;
-      const email = household?.email || member.data().email || member.data().guardian?.email || '';
-      await db().runTransaction(async (transaction) => {
-        const current = (await transaction.get(member.ref)).data();
-        if (!current?.volunteer?.inducted) throw new Error('The volunteer membership no longer exists or is no longer inducted.');
-        const signups = await transaction.get(lists().where('memberId', '==', member.id));
-        const signup = signups.docs.find((document) => document.data().listType === VOLUNTEER_LIST && signupYear(document.data()) === invite.year);
-        const reservation = await reserveRecordIds(db(), transaction, 'volunteers', signup ? 0 : 1);
-        const signupId = signup?.id || reservation.ids[0];
-        reservation.save();
-        const years = current.volunteer.years || {};
-        transaction.update(member.ref, { volunteer: { ...current.volunteer, years: { ...years,
-          [invite.year]: { active: true, tier: tier.id, hours: tier.hours, benefits, freeProductIds: tier.freeProductIds, signupId } } } });
-        transaction.set(lists().doc(signupId), { name: `${current.firstName || ''} ${current.lastName || ''}`.trim(),
-          email, memberId: member.id, listType: VOLUNTEER_LIST, clubYear: invite.year, tier: tier.id,
-          inducted: true, active: true,
-          ...(!signup ? { items: [], notes: '', createdAt: Timestamp.now() } : {}) }, { merge: true });
-      });
+      if (!(await loadVolunteerBenefits()).some((candidate) => candidate.id === req.body?.tier)) {
+        return res.status(400).json({ error: 'Choose your volunteer hours bracket.' });
+      }
+      await renewVolunteering(loaded.member.id, loaded.invite.year, req.body.tier, requestNow(req));
       res.json({ success: true });
     } catch (error) {
       console.error('Could not confirm volunteer renewal:', error.message);
@@ -752,5 +772,5 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
     }
   };
 
-  return { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals };
+  return { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals, renewVolunteering };
 };

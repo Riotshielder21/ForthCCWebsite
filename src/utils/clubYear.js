@@ -148,14 +148,41 @@ export const recordClubYear = (record) => {
   return granted ? clubYearOf(granted) : null;
 };
 
-/** Whether an active subscription item covers a club year: it carries on from the year it started until its end, if set. */
-export const subscriptionCoversYear = (item, clubYear) => {
+/**
+ * The club years an active subscription item covers: from the year it started until its end (`endsAt`), if set. Items
+ * recorded before subscriptions carried on until cancelled have no `interval` and cover only their own club year.
+ */
+const subscriptionSpan = (item) => {
   const started = recordClubYear(item);
-  const ends = toDate(item?.endsAt);
-  return item?.status === 'active' && Number.isInteger(started) && started <= clubYear && !(ends && ends <= clubYearDates(clubYear).start);
+  if (item?.status !== 'active' || !Number.isInteger(started)) return null;
+  return { started, ends: toDate(item.endsAt), singleYear: !item.interval };
+};
+
+/** Whether an active subscription item covers a club year. */
+export const subscriptionCoversYear = (item, clubYear) => {
+  const span = subscriptionSpan(item);
+  if (!span) return false;
+  if (span.singleYear) return span.started === clubYear;
+  return span.started <= clubYear && !(span.ends && span.ends <= clubYearDates(clubYear).start);
+};
+
+/** Whether an active subscription item covers a club year or any later one, whichever year it started. */
+export const subscriptionRunsFrom = (item, clubYear) => {
+  const span = subscriptionSpan(item);
+  if (!span) return false;
+  if (span.singleYear) return span.started >= clubYear;
+  return !(span.ends && span.ends <= clubYearDates(clubYear).start);
 };
 
 /** Whether a member already holds a product for a club year, from a term entitlement or an active subscription item. */
 export const holdsForClubYear = ({ entitlements = [], subscriptionItems = [] } = {}, productId, clubYear) =>
   entitlements.some((item) => item.productId === productId && !item.endedAt && recordClubYear(item) === clubYear)
   || subscriptionItems.some((item) => item.productId === productId && subscriptionCoversYear(item, clubYear));
+
+/**
+ * Whether a subscription bought for a club year would overlap one the member already has. It carries on until cancelled,
+ * so anything they hold of that product for that year or later counts, including a subscription that starts later.
+ */
+export const holdsSubscriptionFrom = ({ entitlements = [], subscriptionItems = [] } = {}, productId, clubYear) =>
+  entitlements.some((item) => item.productId === productId && !item.endedAt && recordClubYear(item) >= clubYear)
+  || subscriptionItems.some((item) => item.productId === productId && subscriptionRunsFrom(item, clubYear));

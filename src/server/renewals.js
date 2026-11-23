@@ -4,7 +4,7 @@ import { clubYearDates } from '../utils/clubYear.js';
 import { ageOn } from '../utils/checkout.js';
 import { needsRenewal, renewalBasket, renewalChoice, renewalEmail, renewalRound, renewalWindow } from '../utils/renewals.js';
 import { rateLimit } from './rateLimit.js';
-import { needsVolunteerRenewal } from '../utils/volunteering.js';
+import { needsVolunteerRenewal, volunteerYear } from '../utils/volunteering.js';
 import { loadEntitlements } from './membershipTerms.js';
 import { currentCheckoutPolicies } from './policies.js';
 import { loadNotices } from './notices.js';
@@ -16,15 +16,19 @@ const normaliseEmail = (value) => String(value || '').trim().toLowerCase();
 const DAY = 24 * 60 * 60 * 1000;
 
 /**
- * Renewal emails: one per contact address with a link that fills the basket with next year's membership and the
- * services held this year. Staff can send them from 1 January. The scheduled job sends on 1 February to anyone not yet
- * emailed and a reminder on 15 February to anyone not yet reminded; members who have renewed are never emailed. Links
- * are random tokens stored hashed in `renewalInvites` and expire after 31 March. Subscriptions carry on by themselves;
- * each round also sends their payers the separate continue/cancel email (`continuations`, see subscriptionContinuation.js).
+ * Renewal emails: one per contact address, with a separate Confirm for each part (see renewalEmail): a link that fills
+ * the basket with next year's membership and the services held this year, each volunteer signing up again, and each
+ * subscription the address pays for (`continuations`, see subscriptionContinuation.js), plus Confirm all and a Cancel
+ * for the subscriptions. Staff can send them from 1 January. The scheduled job sends on 1 February to anyone not yet
+ * emailed and a reminder on 15 February to anyone not yet reminded; members who have renewed are never emailed, and
+ * payers with nothing to renew are asked about their subscriptions on their own. Each run from 2 February also moves
+ * subscriptions to the new club year's prices (`reprice`). Links are random tokens stored hashed in `renewalInvites`
+ * (and `renewalConfirmations` for Confirm all) and expire after 31 March.
  */
 const SENT = 'renewalInviteSentFor';
 const REMINDED = 'renewalReminderSentFor';
-export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow, volunteerRenewalContent, sendVolunteerRenewals, live = () => false, continuations = null }) => {
+export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow, volunteerRenewalContent, sendVolunteerRenewals,
+  live = () => false, continuations = null, contact = '', renewVolunteering = null, reprice = null }) => {
   const memberships = () => db().collection('memberships');
 
   /** Members needing renewal grouped by contact email; `onlyUnsent` leaves out anyone whose `field` already has this year. */
@@ -81,12 +85,27 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
     let index = 0;
     const entitlements = await loadEntitlements(db(), members.map((member) => member.id), null, { members: new Map(members.map((member) => [member.id, member])) });
     const basket = renewalBasket(members.map((member) => ({ ...member, entitlements: entitlements.get(member.id) || [] })), catalog, window.clubYear, () => `r${++index}`);
+    let parts = [];
+    let confirmation = null;
     try {
-      const volunteering = await volunteerRenewalContent(members, window.renewalYear, siteUrl());
-      const email = renewalEmail({ ...basket, catalog, renewalYear: window.renewalYear, link: `${siteUrl()}/membership?renew=${token}`, expiresAt: window.expiresAt, reminder, volunteering });
-      if (!await sendEmail({ to: group.email, ...email, record: { kind: 'renewal', membershipIds: members.map((member) => member.id) } })) throw new Error('Email is not configured.');
+      const site = siteUrl();
+      const volunteers = (await volunteerRenewalContent(members, window.renewalYear, site)).entries || [];
+      parts = continuations ? await continuations.forPayer(group.email, now, { reminder }) : [];
+      let confirmAllUrl = '';
+      if (volunteers.length || parts.length) {
+        const key = crypto.randomBytes(32).toString('hex');
+        confirmation = db().collection('renewalConfirmations').doc(hashToken(key));
+        await confirmation.create({ email: group.email, renewalYear: window.renewalYear, volunteerMemberIds: volunteers.map((entry) => entry.memberId),
+          subscriptionIds: parts.map((part) => part.id), expiresAt: Timestamp.fromDate(window.expiresAt), createdAt: Timestamp.now() });
+        confirmAllUrl = `${site}/subscription?all=${key}&basket=${token}`;
+      }
+      const email = renewalEmail({ renewalYear: window.renewalYear, reminder, contact, volunteers, subscriptions: parts, confirmAllUrl,
+        basket: { ...basket, catalog, link: `${site}/membership?renew=${token}`, expiresAt: window.expiresAt } });
+      if (!await sendEmail({ to: group.email, ...email, record: { kind: 'renewal', membershipIds: members.map((member) => member.id),
+        ...(parts.length ? { subscriptionIds: parts.map((part) => part.id) } : {}) } })) throw new Error('Email is not configured.');
     } catch (error) {
-      await Promise.all([invite.delete(), ...added.filter((entry) => entry.fields.length || entry.volunteerMark).map((entry) => memberships().doc(entry.id)
+      await Promise.all([invite.delete(), ...(confirmation ? [confirmation.delete()] : []), ...parts.map((part) => part.undo()),
+        ...added.filter((entry) => entry.fields.length || entry.volunteerMark).map((entry) => memberships().doc(entry.id)
         .update({ ...Object.fromEntries(entry.fields.map((name) => [name, FieldValue.arrayRemove(window.renewalYear)])),
           ...(entry.volunteerMark ? { volunteerRenewalSentFor: FieldValue.arrayRemove(`${window.renewalYear}:${reminder ? 'reminder' : 'first'}`) } : {}) }))]);
       throw error;
@@ -146,9 +165,10 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
   });
 
   /**
-   * The scheduled job (Cloud Scheduler job fcc-renewals, on 1 and 15 February), authorised by RENEWAL_JOB_TOKEN. From 1 February
-   * it sends the first email to anyone not yet emailed; from 15 February the reminder to anyone not yet reminded. Running it
-   * again in the same round sends nothing new. Outside February it does nothing.
+   * The scheduled job (Cloud Scheduler job fcc-renewals, on 1, 15 and 27 February), authorised by RENEWAL_JOB_TOKEN. From 1
+   * February it sends the first email to anyone not yet emailed; from 15 February the reminder to anyone not yet reminded.
+   * Running it again in the same round sends nothing new. From 2 February each run also moves subscriptions to the new
+   * club year's prices, so the 27 February run picks up volunteers who signed up since. Outside February it does nothing.
    */
   app.post('/api/jobs/renewals', rateLimit(5, 60 * 1000), async (req, res) => {
     try {
@@ -163,15 +183,74 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       const result = await sendAll(now, { round });
       const volunteers = await sendVolunteerRenewals(now, round, siteUrl());
       const subscriptions = continuations ? await continuations.send(now, { reminder: round === 'reminder' }) : { emails: 0, failures: 0 };
-      if (result.failures || volunteers.failures || subscriptions.failures) {
+      const prices = reprice ? await reprice(now) : { changed: 0, failures: 0 };
+      if (result.failures || volunteers.failures || subscriptions.failures || prices.failures) {
         console.error(JSON.stringify({ severity: 'ERROR', event: 'fcc-job-problems', job: 'fcc-renewals' }));
       }
       res.json({ round, ...result, volunteerEmails: volunteers.emails, volunteerFailures: volunteers.failures,
-        subscriptionEmails: subscriptions.emails, subscriptionFailures: subscriptions.failures });
+        subscriptionEmails: subscriptions.emails, subscriptionFailures: subscriptions.failures, pricesChanged: prices.changed, priceFailures: prices.failures });
     } catch (error) {
       console.error('Renewal job failed:', error.message);
       console.error(JSON.stringify({ severity: 'ERROR', event: 'fcc-job-problems', job: 'fcc-renewals' }));
       res.status(500).json({ error: 'Renewal job failed.' });
+    }
+  });
+
+  const confirmationFor = async (key, now) => {
+    if (!/^[a-f0-9]{64}$/.test(key)) return null;
+    const data = (await db().collection('renewalConfirmations').doc(hashToken(key)).get()).data();
+    return data && data.expiresAt.toMillis() > now.getTime() ? data : null;
+  };
+  const volunteersOn = async (data) => (data.volunteerMemberIds || []).length
+    ? (await db().getAll(...data.volunteerMemberIds.map((id) => memberships().doc(id)))).filter((document) => document.exists)
+      .map((document) => ({ ...document.data(), id: document.id })) : [];
+  /** What Confirm all covers: each volunteer (and whether they are signed up for next year) and each subscription. */
+  const confirmationView = async (data, now) => ({ renewalYear: data.renewalYear,
+    volunteers: (await volunteersOn(data)).map((member) => ({ name: `${member.firstName || ''} ${member.lastName || ''}`.trim(),
+      renewed: Boolean(volunteerYear(member, data.renewalYear)) })),
+    subscriptions: continuations ? (await Promise.all((data.subscriptionIds || []).map((id) => continuations.view(id, now)))).filter(Boolean) : [] });
+  const expiredConfirmation = { error: 'This link has expired or is not valid. Use the separate buttons in your email instead.' };
+
+  app.get('/api/renewal-confirmation/:key', rateLimit(20, 60 * 1000), async (req, res) => {
+    try {
+      res.set('Cache-Control', 'no-store');
+      const now = requestNow(req);
+      const data = await confirmationFor(String(req.params.key), now);
+      if (!data) return res.status(404).json(expiredConfirmation);
+      res.json(await confirmationView(data, now));
+    } catch (error) {
+      console.error('Could not load a renewal confirmation:', error.message);
+      res.status(500).json({ error: 'Could not load this link. Please try again.' });
+    }
+  });
+
+  /**
+   * Confirm all: signs each volunteer up again with this year's hours and confirms each subscription. The basket is then
+   * opened by the page. Anything that could not be confirmed is listed in `problems`; the rest still counts.
+   */
+  app.post('/api/renewal-confirmation/:key', rateLimit(10, 60 * 1000), async (req, res) => {
+    try {
+      res.set('Cache-Control', 'no-store');
+      const now = requestNow(req);
+      const data = await confirmationFor(String(req.params.key), now);
+      if (!data) return res.status(404).json(expiredConfirmation);
+      const problems = [];
+      for (const member of renewVolunteering ? await volunteersOn(data) : []) {
+        if (!needsVolunteerRenewal(member, data.renewalYear)) continue;
+        try { await renewVolunteering(member.id, data.renewalYear, volunteerYear(member, data.renewalYear - 1).tier, now); }
+        catch (error) {
+          console.error('Could not renew volunteering from Confirm all:', error.message);
+          problems.push(`${member.firstName || 'A volunteer'}'s volunteering could not be renewed. Use the volunteering button in your email instead.`);
+        }
+      }
+      for (const id of continuations ? data.subscriptionIds || [] : []) {
+        const [status, body] = await continuations.confirm(id, now);
+        if (status !== 200) problems.push(body.error);
+      }
+      res.json({ ...await confirmationView(data, now), confirmed: true, problems });
+    } catch (error) {
+      console.error('Could not confirm a renewal:', error.message);
+      res.status(500).json({ error: 'Could not save your answers. Please try again, or use the separate buttons in your email.' });
     }
   });
 

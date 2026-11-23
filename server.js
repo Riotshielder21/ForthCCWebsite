@@ -15,7 +15,7 @@ import { appCheckMiddleware } from './src/server/appCheck.js';
 import { getFirestore as getAdminFirestore, Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
 import { contentDisposition, findSafeguardingPolicy, isPdf } from './src/utils/safeguardingPolicies.js';
 import { calculateCart, expandClubYearLines, expandPeopleLines, NEXT_YEAR_LINE_SUFFIX } from './src/utils/pricing.js';
-import { clubYearOf, clubYearDates, clubYearLabel, clubYearKind, resolveClubYearChoice, holdsForClubYear } from './src/utils/clubYear.js';
+import { clubYearOf, clubYearDates, clubYearLabel, clubYearKind, resolveClubYearChoice, holdsForClubYear, holdsSubscriptionFrom } from './src/utils/clubYear.js';
 import { createRecurringSubscription, nextBillingDate } from './src/server/recurringSubscription.js';
 import { summariseVoucherCodes, voucherScope } from './src/utils/vouchers.js';
 import { DISCOUNT_TYPES, discountDisplayStatus, discountFailure } from './src/utils/discountCodes.js';
@@ -41,6 +41,7 @@ import { toPence, toPounds, newOrderGroups, paymentFailureRecord, orderPersonRef
 import { resolveOrderPeople } from './src/server/orderPeople.js';
 import { householdForPerson, HOUSEHOLD_MEMBER_FIELDS, householdGroupKey } from './src/utils/households.js';
 import { lineHolders, stripeItemLines, activeSubscriptionItems, subscriptionLive, endedAtCutoff, isRecurringLine } from './src/utils/subscriptions.js';
+import { pricingYear, renewalPrice } from './src/utils/subscriptionContinuation.js';
 import { registerGdprRoutes } from './src/server/gdpr.js';
 import { registerPagePublishingRoutes } from './src/server/pagePublishing.js';
 import { registerPolicyRoutes, syncPolicies, currentCheckoutPolicies, loadCheckoutConsent } from './src/server/policies.js';
@@ -151,14 +152,22 @@ const scheduleVolunteerRemoval = async (reference, lineId, actor) => {
   }
   const cancelScheduledAt = Timestamp.fromMillis(endsAt * 1000);
   await reference.update({ items: document.data().items.map((entry) => entry.lineId === item.lineId
-    ? { ...entry, cancelScheduledAt, cancellationScheduleId: schedule.id } : entry) });
+    ? { ...entry, cancelScheduledAt, cancellationScheduleId: schedule.id, endsAt: cancelScheduledAt } : entry) });
+  // The members' copies end then too, so the item is not held in later club years once the volunteer benefit stops.
+  for (const member of (await adminDb.getAll(...item.membershipIds.map((id) => adminDb.collection('memberships').doc(id)))).filter((entry) => entry.exists)) {
+    await member.ref.update({ subscriptionItems: (member.data().subscriptionItems || []).map((entry) => entry.subscriptionId === document.id
+      && entry.lineId === item.lineId && entry.status === 'active' ? { ...entry, endsAt: cancelScheduledAt } : entry) });
+  }
   await adminDb.collection('auditLog').add(auditEntry({ kind: 'subscription', action: 'schedule-volunteer-benefit-cancellation',
     actor, at: Timestamp.now(), stripeSubscriptionId: document.id, lineIds: [item.lineId], cancelScheduledAt }));
   return cancelScheduledAt;
 };
 
-/** Charges a subscription item at the volunteer price from its next payment, without prorating the current period. */
-const repriceVolunteerItem = async (reference, lineId, to, actor) => {
+/**
+ * Charges a subscription item a new price from its next payment, without prorating the current period: the volunteer
+ * price, or with `year` the price for that club year (see repriceSubscription).
+ */
+const repriceVolunteerItem = async (reference, lineId, to, actor, { year = null } = {}) => {
   const document = await reference.get();
   const record = document.data();
   const item = record?.items?.find((entry) => entry.lineId === lineId && entry.status === 'active');
@@ -172,18 +181,18 @@ const repriceVolunteerItem = async (reference, lineId, to, actor) => {
   const field = yearly ? 'yearlyAmount' : 'monthlyAmount';
   await stripeRequest(`subscription_items/${encodeURIComponent(item.stripeItemId)}`, [['proration_behavior', 'none'],
     ...recurringPriceParams('', yearly ? { yearly: true, yearlyPence: toPence(to) } : { monthlyPence: toPence(to) }, stripeId(stripeItem.price?.product))], 'POST',
-  { idempotencyKey: `volunteer-price-${item.stripeItemId}-${Math.round(to * 100)}` });
+  { idempotencyKey: `${year ? `club-year-price-${year}` : 'volunteer-price'}-${item.stripeItemId}-${Math.round(to * 100)}` });
   const at = Timestamp.now();
-  const adjustment = { from: item[field], to, at };
+  const change = year ? { priceYear: year, volunteerAdjustment: null } : { volunteerAdjustment: { from: item[field], to, at } };
   await reference.update({ items: record.items.map((entry) => entry.lineId === lineId && (entry.orderRef || record.orderRef) === (item.orderRef || record.orderRef)
-    ? { ...entry, [field]: to, volunteerAdjustment: adjustment } : entry), updatedAt: at });
+    ? { ...entry, [field]: to, ...change } : entry), updatedAt: at });
   const members = await adminDb.getAll(...item.membershipIds.map((id) => adminDb.collection('memberships').doc(id)));
   for (const member of members.filter((entry) => entry.exists)) {
     await member.ref.update({ subscriptionItems: (member.data().subscriptionItems || []).map((entry) => entry.subscriptionId === document.id
       && entry.lineId === lineId && entry.status === 'active' ? { ...entry, [field]: to } : entry) });
   }
-  await adminDb.collection('auditLog').add(auditEntry({ kind: 'subscription', action: 'volunteer-price-change', actor, at,
-    stripeSubscriptionId: document.id, lineIds: [lineId], from: item[field], to }));
+  await adminDb.collection('auditLog').add(auditEntry({ kind: 'subscription', action: year ? 'club-year-price-change' : 'volunteer-price-change', actor, at,
+    stripeSubscriptionId: document.id, lineIds: [lineId], from: item[field], to, ...(year ? { clubYear: year } : {}) }));
 };
 
 /**
@@ -220,6 +229,78 @@ const adjustVolunteerSubscriptions = async (membershipId, now = new Date()) => {
     }
   }
   return results;
+};
+
+const shopCatalogue = async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id })));
+
+/**
+ * Subscriptions carry on at each new club year's prices (see renewalPrice): the shop price, or the volunteer price for
+ * holders volunteering that year, with no discount code. From 2 February, once February's monthly payment is taken,
+ * every item bought for an earlier club year is set to next year's price, so 1 March charges it; checking again later
+ * in February picks up volunteers who have signed up since. At other times only an item that missed this is moved,
+ * from its next payment. A free volunteer benefit is removed at the end of the paid period instead. Returns what changed.
+ */
+const repriceSubscription = async (reference, now = new Date(), context = null) => {
+  const year = pricingYear(now);
+  const record = (await reference.get()).data();
+  if (!record || record.status !== 'active' || record.cancelAt || record.gdprErasurePending) return [];
+  const checkAll = year > clubYearOf(now);
+  const due = activeSubscriptionItems(record).filter((item) => !item.cancelScheduledAt && (Number(item.clubYear) || 0) < year
+    && (checkAll || (Number(item.priceYear ?? item.clubYear) || 0) < year));
+  if (!due.length) return [];
+  const { tiers, catalogue } = context || { tiers: await loadVolunteerBenefits(), catalogue: await shopCatalogue() };
+  const ids = [...new Set(due.flatMap((item) => item.membershipIds || []))];
+  const members = new Map(ids.length ? (await adminDb.getAll(...ids.map((id) => adminDb.collection('memberships').doc(id))))
+    .filter((member) => member.exists).map((member) => [member.id, member.data()]) : []);
+  const plans = [];
+  const problems = [];
+  for (const item of due) {
+    const product = catalogue.find((entry) => entry.id === item.productId);
+    if (!product) {
+      problems.push(`${item.name || item.productId} is no longer in the shop, so it has no price for ${clubYearLabel(year)}.`);
+      continue;
+    }
+    const from = Number(item.interval === 'year' ? item.yearlyAmount : item.monthlyAmount) || 0;
+    const { price: to } = renewalPrice({ item, product, members, tiers, renewalYear: year, now });
+    plans.push({ item, from, to, action: to === from ? 'keep' : to === 0 ? 'remove' : 'reprice' });
+  }
+  // Prices first: removing an item creates a Stripe schedule, after which prices must be changed in Stripe.
+  plans.sort((a, b) => (a.action === 'remove') - (b.action === 'remove'));
+  for (const plan of plans.filter((entry) => entry.action !== 'keep')) {
+    try {
+      if (plan.action === 'remove') await scheduleVolunteerRemoval(reference, plan.item.lineId, { uid: 'club-year-prices' });
+      else await repriceVolunteerItem(reference, plan.item.lineId, plan.to, { uid: 'club-year-prices' }, { year });
+    } catch (error) {
+      problems.push(`${plan.item.name}: ${error.message}`);
+    }
+  }
+  const kept = new Set(plans.filter((plan) => plan.action === 'keep' && plan.item.priceYear !== year).map((plan) => `${plan.item.orderRef}/${plan.item.lineId}`));
+  if (kept.size) {
+    const latest = (await reference.get()).data();
+    await reference.update({ items: latest.items.map((item) => item.status === 'active' && kept.has(`${item.orderRef}/${item.lineId}`) ? { ...item, priceYear: year } : item) });
+  }
+  if (problems.length) throw new Error(problems.join(' '));
+  return plans.filter((plan) => plan.action !== 'keep');
+};
+
+/** Runs repriceSubscription for every live subscription (from the renewal job); a failure is flagged in Needs attention. */
+const repriceSubscriptions = async (now = new Date()) => {
+  if (!adminDb) return { changed: 0, failures: 0 };
+  const context = { tiers: await loadVolunteerBenefits(), catalogue: await shopCatalogue() };
+  let changed = 0;
+  let failures = 0;
+  for (const document of (await adminDb.collection('subscriptions').where('status', '==', 'active').get()).docs) {
+    try {
+      changed += (await repriceSubscription(document.ref, now, context)).length;
+      await attention.settle('subscription-price', document.id);
+    } catch (error) {
+      failures += 1;
+      console.error('Could not move subscription %s to the new club year prices: %s', document.id, error.message);
+      await attention.raise('subscription-price', document.id, { subscriptionId: document.id, email: document.data().email || '',
+        detail: `Not moved to the ${clubYearLabel(pricingYear(now))} prices before its next payment: ${error.message} The renewal job tries again on 15 and 27 February; otherwise change the price in Stripe and on the subscription record.` });
+    }
+  }
+  return { changed, failures };
 };
 
 const scheduleVolunteerCancellation = async (req, res) => {
@@ -753,11 +834,15 @@ const setUpSubscriptionGroup = async ({ order, orderRef, group, lineById, paymen
     if (['canceled', 'incomplete_expired'].includes(target.status)) {
       throw new Error(`Subscription ${target.id} was cancelled after set-up started, so nothing more was added to it. Set up the remaining items by hand if they are still wanted.`);
     }
-  } else {
+  } else if (!(debitPassed && interval === 'year')) {
+    // A missed yearly payment gets its own backdated subscription, which charges it now: joining another would only
+    // collect it with that one's next payment, a year later.
     const owned = await adminDb.collection('subscriptions').where('email', '==', order.email).where('status', '==', 'active').limit(20).get();
     for (const document of owned.docs.filter((candidate) => (candidate.data().interval || 'month') === interval)) {
       const candidate = await stripeRequest(`subscriptions/${encodeURIComponent(document.id)}`, null, 'GET');
       if (!subscriptionLive(candidate) || candidate.schedule || candidate.cancel_at || periodEnd(candidate) !== nextCharge) continue;
+      // Nothing is charged for items added during a trial, so a missed payment never joins one.
+      if (debitPassed && candidate.status !== 'active') continue;
       if (await paymentFingerprint(stripeId(candidate.default_payment_method)) === fingerprint) {
         target = candidate;
         break;
@@ -1858,9 +1943,9 @@ registerNoticeRoutes(app, { requireAdmin, db: () => adminDb, live: isLive });
 registerConsentWordingRoutes(app, { requireAdmin, db: () => adminDb, live: isLive });
 const { settleKeyAccess, notifyKeyAccess } = registerKeyAccessRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message) });
 registerLifetimeMembershipRoutes(app, { requireAdmin, db: () => adminDb });
-const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals } = registerVolunteerRoutes(app, { requireAdmin, db: () => adminDb, sheets: () => sheets,
-  toMembershipRecord, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
-  adjustVolunteerSubscriptions: (membershipId) => adjustVolunteerSubscriptions(membershipId),
+const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals, renewVolunteering } = registerVolunteerRoutes(app, {
+  requireAdmin, db: () => adminDb, sheets: () => sheets, toMembershipRecord, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
+  adjustVolunteerSubscriptions: (membershipId, now) => adjustVolunteerSubscriptions(membershipId, now),
   loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 registerContactRoutes(app, { sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
@@ -1890,10 +1975,11 @@ registerTimetableRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadTripDiscounts } = registerTripDiscountRoutes(app, { requireAdmin, db: () => adminDb,
   loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
 const subscriptionContinuations = registerContinuationRoutes(app, { db: () => adminDb, stripeRequest: (...args) => stripeRequest(...args),
-  sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req), contact: TREASURER_REPLY_TO,
+  sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req), contact: TREASURER_REPLY_TO, loadCatalogue: shopCatalogue, loadVolunteerBenefits,
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
-  volunteerRenewalContent, sendVolunteerRenewals, live: () => isLive(), continuations: subscriptionContinuations,
+  volunteerRenewalContent, sendVolunteerRenewals, live: () => isLive(), continuations: subscriptionContinuations, contact: TREASURER_REPLY_TO,
+  renewVolunteering, reprice: (now) => repriceSubscriptions(now),
   loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
 
@@ -2483,7 +2569,18 @@ const startCheckout = async (req, res, credit = null) => {
           error: `Your earlier payment for ${paid.itemNames.join(', ')} (order ${paid.orderRef}) has gone through, so you do not need to pay again. Your receipt is on its way by email. Questions: secretary@forthcanoeclub.co.uk.` });
       }
     }
-    // Club-year items cannot be bought twice for the same person and club year.
+    // A subscription carries on until cancelled, so one person needs it only once. Staff credits are one-off for their
+    // club year, so those may cover this year and next.
+    const recurringLine = (line) => !credit && clubYearKind(line) === 'monthly';
+    for (const person of storedPeople) {
+      const subscriptionLines = person.lineIds.map((id) => lines.find((line) => line.lineId === id)).filter((line) => line && recurringLine(line));
+      const twice = subscriptionLines.find((line, index) => subscriptionLines.findIndex((other) => other.id === line.id) !== index);
+      if (twice) {
+        return res.status(409).json({ code: 'already_held', personIds: [person.id], lineId: twice.sourceLineId,
+          error: `${person.firstName} ${person.lastName} has ${twice.name} in the basket twice. A subscription carries on until it is cancelled, so it only needs buying once.` });
+      }
+    }
+    // Club-year items cannot be bought twice for the same person and club year, nor a subscription that would overlap one they have.
     const existingIds = [...new Set(storedPeople.filter((person) => person.existingMember).map((person) => person.membershipId))];
     const heldEntitlements = await loadEntitlements(adminDb, existingIds);
     const memberData = new Map(existingIds.length ? (await adminDb.getAll(...existingIds.map((id) => adminDb.collection('memberships').doc(id))))
@@ -2491,13 +2588,14 @@ const startCheckout = async (req, res, credit = null) => {
     for (const person of storedPeople.filter((candidate) => memberData.has(candidate.membershipId))) {
       const held = person.lineIds.map((id) => lines.find((line) => line.lineId === id))
         .find((line) => line && !isMembership(line) && line.category !== 'EVENTS' && clubYearKind(line)
-          && holdsForClubYear(memberData.get(person.membershipId), line.id, clubYearOf(now) + (line.clubYearPart === 'next' ? 1 : 0)));
+          && (recurringLine(line) ? holdsSubscriptionFrom : holdsForClubYear)(memberData.get(person.membershipId), line.id, clubYearOf(now) + (line.clubYearPart === 'next' ? 1 : 0)));
       if (held) {
         const nextYearOnSale = now >= clubYearDates(clubYearOf(now)).renewalOpens;
-        const year = nextYearOnSale ? ` for club year ${clubYearLabel(clubYearOf(now) + (held.clubYearPart === 'next' ? 1 : 0))}` : '';
+        const year = nextYearOnSale && !recurringLine(held) ? ` for club year ${clubYearLabel(clubYearOf(now) + (held.clubYearPart === 'next' ? 1 : 0))}` : '';
+        const carriesOn = recurringLine(held) ? ', and a subscription carries on until it is cancelled' : '';
         const nextStep = nextYearOnSale ? ' Remove it from your basket or choose another club year.' : ' Remove it from your basket.';
         return res.status(409).json({ code: 'already_held', personIds: [person.id], lineId: held.sourceLineId,
-          error: `${person.firstName} ${person.lastName} already has ${held.name}${year}.${nextStep}` });
+          error: `${person.firstName} ${person.lastName} already has ${held.name}${year}${carriesOn}.${nextStep}` });
       }
     }
     const clearing = await clearingOrderFor(email, people, selected);

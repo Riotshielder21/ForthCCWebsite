@@ -21,7 +21,7 @@ test('a membership starts when it is paid for, or on 1 March when bought ahead',
 
 test('a subscription that carries on is an entitlement in each later club year until it stops', () => {
   const now = new Date('2028-06-01T12:00:00Z');
-  const item = { productId: 'blue-sub', name: 'Blue', subscriptionId: 'sub_1', lineId: 'l1', orderRef: 'O1', clubYear: 2026, status: 'active' };
+  const item = { productId: 'blue-sub', name: 'Blue', subscriptionId: 'sub_1', lineId: 'l1', orderRef: 'O1', clubYear: 2026, interval: 'month', status: 'active' };
   assert.deepEqual(continuingEntitlements([item], now).map((entry) => [entry.productId, entry.clubYear, entry.endedAt]), [['blue-sub', 2027, undefined], ['blue-sub', 2028, undefined]],
     'the year it was bought for is already on its term');
   const cancelling = { ...item, endsAt: ts('2028-03-01T00:00:00Z') };
@@ -30,4 +30,5 @@ test('a subscription that carries on is an entitlement in each later club year u
   assert.deepEqual(continuingEntitlements([stopped], now).map((entry) => [entry.clubYear, entry.endedAt.toISOString()]), [[2027, '2027-09-01T00:00:00.000Z']]);
   assert.deepEqual(continuingEntitlements([{ ...item, clubYear: 2028 }], now), [], 'nothing extra in the year it started');
   assert.deepEqual(continuingEntitlements([{ ...item, status: 'cancelled' }], now), [], 'a stop with no date leaves nothing');
+  assert.deepEqual(continuingEntitlements([{ ...item, interval: undefined }], now), [], 'items from before subscriptions carried on end with their club year');
 });
