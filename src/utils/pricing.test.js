@@ -312,3 +312,12 @@ test('payments in a later club year are quoted at the shop price, without this y
   const nextYear = calculateCart([{ ...gold, clubYearPart: 'next' }], false, half, new Date('2027-01-10T12:00:00Z')).items[0];
   assert.deepEqual([nextYear.monthlyAmount, nextYear.renewalAmount], [15, 30], 'a code used on next year\'s line covers next year');
 });
+
+test('a subscription bought in January for this year pays this year\'s price until 1 March, then next year\'s, as quoted', () => {
+  const gold = { ...subscription, id: 'gold', basePrice: 30, nextYearPrice: 32, hasAnnualDiscount: true, allowMonthly: true };
+  const january = new Date('2027-01-10T12:00:00Z');
+  const monthly = calculateCart([gold], false, null, january).items[0];
+  assert.deepEqual([monthly.monthlyAmount, monthly.renewalAmount], [30, 32]);
+  assert.match(monthly.label, /£30\.00 a month from 1 Feb 2027 and £32\.00 a month from 1 Mar 2027 until you cancel/);
+  assert.equal(calculateCart([gold], true, null, january).items[0].yearlyAmount, 307.2, 'the 1 March yearly payment is next year\'s price: 32 × 12 less 20%');
+});

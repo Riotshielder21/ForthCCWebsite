@@ -107,7 +107,7 @@ export const subscriptionLineText = (line) => `${line.name}${line.names?.length 
 
 /**
  * The renewal email for one contact address. It lists everything for the new club year: the basket of next year's
- * membership and services (`basket`), each volunteer who could sign up again (`volunteers`), and each subscription the
+ * membership and services (`basket`, each item with next year's `price`), each volunteer who could sign up again (`volunteers`), and each subscription the
  * address pays for, at its price from 1 March (`subscriptions`). Confirm all (`confirmAllUrl`) comes first: it confirms
  * the volunteering and subscriptions, then opens the basket. A row of smaller buttons confirms each part on its own,
  * and the red Cancel at the bottom stops a subscription at the end of February. Parts that do not apply are left out,
@@ -141,7 +141,7 @@ export const renewalEmail = ({ renewalYear, reminder = false, contact = '', bask
     paragraph(`Renew ${names.join(', ') || 'your membership'}: the link fills your basket with:`);
     list(items.map((item) => {
       const holders = people.filter((person) => person.lineIds.includes(item.lineId)).map((person) => person.firstName).filter(Boolean);
-      return `${catalog.find((product) => product.id === item.id)?.name || item.id}${holders.length ? ` (${holders.join(', ')})` : ''}`;
+      return `${catalog.find((product) => product.id === item.id)?.name || item.id}${holders.length ? ` (${holders.join(', ')})` : ''}${Number.isFinite(item.price) ? `: £${item.price.toFixed(2)}` : ''}`;
     }));
   }
   if (volunteers.length) {
@@ -166,7 +166,7 @@ export const renewalEmail = ({ renewalYear, reminder = false, contact = '', bask
   }
 
   if (basket) {
-    paragraph(`Remove anything you no longer want from the basket, or add more, before paying. Nothing is charged until you check out. The basket link works until ${dayLabel(new Date(basket.expiresAt.getTime() - 1))}. Renewing through JustGo instead? Ignore the basket.`
+    paragraph(`${basket.items.some((item) => Number.isFinite(item.price)) ? 'Prices are next club year\'s; checkout takes off any discount you are due. ' : ''}Remove anything you no longer want from the basket, or add more, before paying. Nothing is charged until you check out. The basket link works until ${dayLabel(new Date(basket.expiresAt.getTime() - 1))}. Renewing through JustGo instead? Ignore the basket.`
       + (basket.subscriptionsContinue && !subscriptions.length ? ' Subscriptions are not in the basket: they carry on by themselves, and whoever pays for them is asked about them.' : ''));
   }
   for (const entry of volunteers) {

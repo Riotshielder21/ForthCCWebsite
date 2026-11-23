@@ -26,14 +26,14 @@ export const registerContinuationRoutes = (app, { db, stripeRequest, sendEmail, 
   const subscriptions = () => db().collection('subscriptions');
   const memberRecords = async (ids) => new Map(ids.length ? (await db().getAll(...ids.map((id) => db().collection('memberships').doc(id))))
     .filter((document) => document.exists).map((document) => [document.id, { ...document.data(), id: document.id }]) : []);
-  const pricing = async () => {
-    const [catalogue, tiers] = await Promise.all([loadCatalogue(), loadVolunteerBenefits()]);
+  const pricing = async (now) => {
+    const [catalogue, tiers] = await Promise.all([loadCatalogue(now), loadVolunteerBenefits()]);
     return { catalogue, tiers };
   };
 
   /** Each item with its price now and from 1 March of `renewalYear`, and the volunteer price if lapsing volunteers sign up again. */
   const pricedLines = async (record, renewalYear, now, context = null) => {
-    const { catalogue, tiers } = context || await pricing();
+    const { catalogue, tiers } = context || await pricing(now);
     const items = activeSubscriptionItems(record);
     const members = await memberRecords([...new Set(items.flatMap((item) => item.membershipIds || []))]);
     return items.map((item) => {
@@ -104,7 +104,7 @@ export const registerContinuationRoutes = (app, { db, stripeRequest, sendEmail, 
       const email = normaliseEmail(document.data().email);
       byPayer.set(email, [...(byPayer.get(email) || []), document.ref]);
     }
-    const context = byPayer.size ? await pricing() : null;
+    const context = byPayer.size ? await pricing(now) : null;
     let emails = 0;
     let failures = 0;
     for (const [email, references] of byPayer) {

@@ -2705,6 +2705,36 @@ await test('Confirm all signs a volunteer up again, confirms the subscription at
   assert.equal((await call('GET', `/api/renewal-confirmation/${'0'.repeat(64)}`, { headers: january })).status, 404);
 });
 
+await test('next club year\'s price is quoted and charged for next year, this year\'s still applies in January, and it is the price from 1 March', async () => {
+  const gold = db.collection('products').doc('gold-sub');
+  await gold.update({ nextYearPrice: 35, nextYearPriceFrom: autumnYear + 1 });
+  try {
+    const goldLine = async (name, choice, headers) => {
+      const address = email(`next-price-${name.toLowerCase()}`);
+      const started = await checkout(address, withChoice(build(['membership-adult', 'gold-sub'], [adultDetails({ firstName: name, lastName: 'Price', email: address })]), choice),
+        { billingMode: 'monthly' }, headers);
+      assert.equal(started.status, 200, started.text);
+      return (await orderData(started.json.orderRef)).items.find((item) => item.id === 'gold-sub');
+    };
+    const autumnGold = await goldLine('Ada', 'this', autumn);
+    assert.deepEqual([autumnGold.monthlyPence, autumnGold.renewalPence], [3000, 3500], 'this year\'s price, quoting next year\'s from 1 March');
+    const payer = email('next-price');
+    const order = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [adultDetails({ firstName: 'Nia', lastName: 'Next', email: payer })]), 'this'),
+      { billingMode: 'monthly' }, autumn));
+    const [subscriptionId] = order.stripeSubscriptionIds;
+    assert.equal((await call('POST', '/api/admin/renewals/send', { body: {}, headers: { ...admin, ...january } })).status, 200);
+    const [mail] = (await db.collection('testMail').where('kind', '==', 'renewal').where('email', '==', payer).get()).docs.map((document) => document.data());
+    assert.match(mail.body, /\(Nia Next\): £35\.00 a month\n/, 'the renewal email quotes next year\'s price');
+    assert.deepEqual([(await goldLine('Jan', 'this', january)).monthlyPence, (await goldLine('Neve', 'next', january)).monthlyPence], [3000, 3500],
+      'in January this year\'s price still applies to this year, and next year\'s to next year');
+    assert.equal((await call('POST', '/api/jobs/renewals', { body: {}, headers: { Authorization: `Bearer ${process.env.RENEWAL_JOB_TOKEN}`, ...testNow(londonNoon(autumnYear + 1, 1, 15)) } })).status, 200);
+    assert.equal((await db.collection('subscriptions').doc(subscriptionId).get()).data().items[0].monthlyAmount, 35, 'charged from 1 March');
+    assert.equal((await goldLine('Mae', 'this', testNow(londonNoon(autumnYear + 1, 2, 10)))).monthlyPence, 3500, 'from 1 March it is the price');
+  } finally {
+    await gold.update({ nextYearPrice: FieldValue.delete(), nextYearPriceFrom: FieldValue.delete() });
+  }
+});
+
 await test('checkout needs agreement to the current version of every published notice', async () => {
   const noticeId = `test-notice-${run}`;
   const publish = (body) => call('PUT', `/api/admin/notices/${noticeId}`, { body: { title: 'Test notice', body }, headers: admin });

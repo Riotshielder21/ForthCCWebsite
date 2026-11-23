@@ -39,7 +39,8 @@ export const continuationResult = (status, renewalYear) => status === 'cancelled
 
 /**
  * What a continuing subscription item costs from 1 March of `renewalYear`, when every subscription moves to the new
- * club year's prices: the shop price (`basePrice` a month; a yearly item is twelve months, less the annual discount when
+ * club year's prices: the shop price for that year (`nextYearPrice` or `basePrice` a month, from the catalogue priced at
+ * `now`; a yearly item is twelve months, less the annual discount when
  * the product has one), or the volunteer price when every holder volunteers that year. A discount code covered only the
  * year it was used in. When holders volunteered this year but have not signed up again, `ifVolunteering` is the price if
  * they do with the same hours, when that is lower, and `volunteers` names them. An item bought for the renewal year or
@@ -49,7 +50,8 @@ export const renewalPrice = ({ item, product, members = new Map(), tiers = [], r
   const yearly = item.interval === 'year';
   if ((Number(item.clubYear) || 0) >= renewalYear) return { price: Number(yearly ? item.yearlyAmount : item.monthlyAmount) || 0 };
   const perPayment = (monthly) => twoPlaces(yearly ? monthly * 12 * (product.hasAnnualDiscount ? 1 - DISCOUNTS.ANNUAL : 1) : monthly);
-  const basePrice = Number(product.basePrice) || 0;
+  // `product` is priced at `now` (see yearPrices): next club year's price is set apart until it starts.
+  const basePrice = Number(renewalYear > clubYearOf(now) ? product.nextYearPrice ?? product.basePrice : product.basePrice) || 0;
   const monthlyFor = (people) => volunteerPriceFor({ productId: item.productId, basePrice, membershipIds: item.membershipIds, clubYear: renewalYear,
     members: people, tiers, now }) ?? basePrice;
   const price = perPayment(monthlyFor(members));

@@ -41,6 +41,8 @@ test('from 1 March a subscription costs the new club year\'s shop price, with th
     'volunteered this year only: both prices, until they sign up again');
   assert.deepEqual(priced({ m1: volunteering({ 2026: { active: true, tier: '60' } }) }, { interval: 'year', yearlyAmount: 0 }), { price: 288, ifVolunteering: 0, volunteers: ['Cora'] });
   assert.deepEqual(priced({ m1: {} }, { clubYear: 2027 }), { price: 15 }, 'one bought for the new club year keeps its price');
+  assert.deepEqual(renewalPrice({ item, product: { ...gold, nextYearPrice: 32 }, members: new Map([['m1', {}]]), tiers: DEFAULT_VOLUNTEER_BENEFITS, renewalYear: 2027, now: february }),
+    { price: 32 }, 'next club year\'s price, set ahead in the shop');
 });
 
 test('subscriptions are charged the new club year\'s prices from 2 February, once February\'s payment is taken', () => {

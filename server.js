@@ -117,8 +117,9 @@ const monthlyVolunteerPrice = async (item, tiers, catalogue, now = new Date()) =
   if (!product || !item.membershipIds?.length) return null;
   const members = new Map((await adminDb.getAll(...item.membershipIds.map((id) => adminDb.collection('memberships').doc(id))))
     .filter((member) => member.exists).map((member) => [member.id, member.data()]));
-  return volunteerPriceFor({ productId: item.productId, basePrice: Number(product.basePrice), membershipIds: item.membershipIds,
-    clubYear: nextChargeYear(item, now), members, tiers, now });
+  const clubYear = nextChargeYear(item, now);
+  return volunteerPriceFor({ productId: item.productId, basePrice: Number(clubYear > clubYearOf(now) ? product.nextYearPrice ?? product.basePrice : product.basePrice),
+    membershipIds: item.membershipIds, clubYear, members, tiers, now });
 };
 
 /** Removes a monthly item that is now a free volunteer benefit at the end of its paid period, keeping the other items. */
@@ -204,7 +205,7 @@ const adjustVolunteerSubscriptions = async (membershipId, now = new Date()) => {
   const snapshot = await adminDb.collection('subscriptions').where('membershipIds', 'array-contains', membershipId).limit(20).get();
   if (snapshot.empty) return [];
   const [tiers, catalogue] = await Promise.all([loadVolunteerBenefits(),
-    resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id })))]);
+    resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id })), now)]);
   const results = [];
   for (const document of snapshot.docs.filter((entry) => entry.data().status === 'active')) {
     const items = (document.data().items || []).filter((item) => item.membershipIds?.includes(membershipId));
@@ -231,7 +232,7 @@ const adjustVolunteerSubscriptions = async (membershipId, now = new Date()) => {
   return results;
 };
 
-const shopCatalogue = async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id })));
+const shopCatalogue = async (now = new Date()) => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id })), now);
 
 /**
  * Subscriptions carry on at each new club year's prices (see renewalPrice): the shop price, or the volunteer price for
@@ -248,7 +249,7 @@ const repriceSubscription = async (reference, now = new Date(), context = null) 
   const due = activeSubscriptionItems(record).filter((item) => !item.cancelScheduledAt && (Number(item.clubYear) || 0) < year
     && (checkAll || (Number(item.priceYear ?? item.clubYear) || 0) < year));
   if (!due.length) return [];
-  const { tiers, catalogue } = context || { tiers: await loadVolunteerBenefits(), catalogue: await shopCatalogue() };
+  const { tiers, catalogue } = context || { tiers: await loadVolunteerBenefits(), catalogue: await shopCatalogue(now) };
   const ids = [...new Set(due.flatMap((item) => item.membershipIds || []))];
   const members = new Map(ids.length ? (await adminDb.getAll(...ids.map((id) => adminDb.collection('memberships').doc(id))))
     .filter((member) => member.exists).map((member) => [member.id, member.data()]) : []);
@@ -286,7 +287,7 @@ const repriceSubscription = async (reference, now = new Date(), context = null) 
 /** Runs repriceSubscription for every live subscription (from the renewal job); a failure is flagged in Needs attention. */
 const repriceSubscriptions = async (now = new Date()) => {
   if (!adminDb) return { changed: 0, failures: 0 };
-  const context = { tiers: await loadVolunteerBenefits(), catalogue: await shopCatalogue() };
+  const context = { tiers: await loadVolunteerBenefits(), catalogue: await shopCatalogue(now) };
   let changed = 0;
   let failures = 0;
   for (const document of (await adminDb.collection('subscriptions').where('status', '==', 'active').get()).docs) {
@@ -1926,7 +1927,7 @@ app.delete('/api/admin/records/:kind/:id', rateLimit(20, 60 * 1000), async (req,
 
 registerGdprRoutes(app, { requireAdmin, db: () => adminDb, stripeReportRequest, localFirebase, normalizeEmail, isValidEmail,
   sendEmail: (message) => sendEmail(message),
-  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
+  loadCatalogue: shopCatalogue,
   stopSubscriptionItems: async (subscriptionId, items, admin, stripeAdminRequest, reason) => {
     const reference = adminDb.collection('subscriptions').doc(subscriptionId);
     const record = (await reference.get()).data();
@@ -1946,7 +1947,7 @@ registerLifetimeMembershipRoutes(app, { requireAdmin, db: () => adminDb });
 const { settleVolunteersFor, loadVolunteerBenefits, volunteerRenewalContent, sendVolunteerRenewals, renewVolunteering } = registerVolunteerRoutes(app, {
   requireAdmin, db: () => adminDb, sheets: () => sheets, toMembershipRecord, settleKeyAccess, sendEmail: (message) => sendEmail(message), requestNow,
   adjustVolunteerSubscriptions: (membershipId, now) => adjustVolunteerSubscriptions(membershipId, now),
-  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+  loadCatalogue: shopCatalogue });
 registerContactRoutes(app, { sendEmail: (message) => sendEmail(message) });
 registerBoathouseRoutes(app, { requireAdmin, db: () => adminDb, onCodeChanged: notifyKeyAccess });
 const emailCodes = registerEmailCodeRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEmail(message) });
@@ -1954,9 +1955,9 @@ registerMyDetailsRoutes(app, { db: () => adminDb, sendEmail: (message) => sendEm
   raiseAttention: (kind, key, details) => attention.raise(kind, key, details) });
 const { sendDueRosters, canViewEventRosters } = registerEventRosterRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (message) => sendEmail(message),
   emailCodes, requestNow,
-  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+  loadCatalogue: shopCatalogue });
 registerClubNightRoutes(app, { requireAdmin, db: () => adminDb, emailCodes, requestNow, live: () => isLive(), canViewEventRosters,
-  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+  loadCatalogue: shopCatalogue });
 registerAttentionRoutes(app, { requireAdmin, db: () => adminDb, retry: attentionRetry });
 registerItemActionRoutes(app, { requireAdmin, db: () => adminDb, stripeRequest,
   stopMonthlyItem: async (orderRef, item, admin, reason, action = 'revoke-item') => {
@@ -1973,14 +1974,14 @@ const { loadReceiptPersonFields, receiptPeopleWithRecords } = registerReceiptEma
 const { sendDueWelcomeEmails } = registerWelcomeEmailRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), attention });
 registerTimetableRoutes(app, { requireAdmin, db: () => adminDb });
 const { loadTripDiscounts } = registerTripDiscountRoutes(app, { requireAdmin, db: () => adminDb,
-  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))) });
+  loadCatalogue: shopCatalogue });
 const subscriptionContinuations = registerContinuationRoutes(app, { db: () => adminDb, stripeRequest: (...args) => stripeRequest(...args),
   sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req), contact: TREASURER_REPLY_TO, loadCatalogue: shopCatalogue, loadVolunteerBenefits,
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
 registerRenewalRoutes(app, { requireAdmin, db: () => adminDb, sendEmail: (...args) => sendEmail(...args), requestNow: (req) => requestNow(req),
   volunteerRenewalContent, sendVolunteerRenewals, live: () => isLive(), continuations: subscriptionContinuations, contact: TREASURER_REPLY_TO,
   renewVolunteering, reprice: (now) => repriceSubscriptions(now),
-  loadCatalogue: async () => resolveCatalogue((await adminDb.collection('products').get()).docs.map((document) => ({ ...document.data(), id: document.id }))),
+  loadCatalogue: shopCatalogue,
   siteUrl: () => (process.env.PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/+$/, '') });
 
 registerPagePublishingRoutes(app, {
@@ -2420,7 +2421,7 @@ const startCheckout = async (req, res, credit = null) => {
       return res.status(409).json({ code: 'already_paid', error: `Your monthly payments were already restarted with order ${restartRecord.restartedAs}, so you do not need to pay again.` });
     }
     const catalogSnapshot = await adminDb.collection('products').get();
-    const catalog = resolveCatalogue(catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })));
+    const catalog = resolveCatalogue(catalogSnapshot.docs.map((document) => ({ ...document.data(), id: document.id })), requestNow(req));
     const lineIds = requestedItems.map((item) => typeof item?.lineId === 'string' ? item.lineId.slice(0, 64) : '');
     const catalogItems = requestedItems.map((item) => catalog.find((product) => product.id === item?.id));
     if (catalogItems.some((item) => !item || item.type === 'external' || !Number.isFinite(item.basePrice) || item.basePrice < 0) || lineIds.some((id) => !id || id.includes(NEXT_YEAR_LINE_SUFFIX)) || new Set(lineIds).size !== lineIds.length) {

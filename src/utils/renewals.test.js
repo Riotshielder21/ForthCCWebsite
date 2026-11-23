@@ -126,6 +126,10 @@ test('one renewal email lists everything, then Confirm all, a row of each part\'
   assert.match(email.body, /- Gold \(Ann Lee\): £10\.00 a month if Ann volunteers again, otherwise £30\.00 a month/);
   assert.match(email.body, /Keep your 40\+ hour commitment/);
   assert.match(email.body, /Confirm all and go to the basket: https:\/\/site\/subscription\?all=b&basket=abc/);
+  const quoted = renewalEmail({ renewalYear: 2028, basket: { ...basket, items: basket.items.map((item) => ({ ...item, price: 52 })),
+    catalog: [{ id: 'membership-adult', name: 'Adult membership' }], link: 'x', expiresAt: renewalWindow(january).expiresAt } });
+  assert.match(quoted.body, /- Adult membership \(Ann\): £52\.00\n/, 'basket items are quoted at next club year\'s price');
+  assert.match(quoted.body, /Prices are next club year's/);
   const only = renewalEmail({ renewalYear: 2028, subscriptions: [subscription] });
   assert.equal(only.subject, 'Confirm or cancel your Forth Canoe Club subscription for 2028/29', 'a payer with nothing to renew');
   assert.doesNotMatch(only.body, /Confirm all|basket/);

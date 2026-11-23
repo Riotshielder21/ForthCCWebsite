@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseProduct, productTerms, productMembershipRule, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
-import { calculateCart } from './pricing.js';
+import { normaliseProduct, productTerms, productMembershipRule, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel, nextYearPriceFields, nextYearPriceInput } from './catalogue.js';
+import { calculateCart, expandClubYearLines } from './pricing.js';
 import { PRODUCTS } from '../constants/products.js';
 
 test('only saved products are on sale: starter products need a record, inactive records leave, sorted by sortOrder', () => {
@@ -109,4 +109,19 @@ test('the membership rule applies to events, services and subscriptions, mapping
   assert.deepEqual([included.membershipRule, included.membershipRequired], ['included', true]);
   const merch = normaliseProduct({ id: 'm', category: 'MERCHANDISE', membershipRule: 'included', membershipRequired: true });
   assert.equal('membershipRule' in merch || 'membershipRequired' in merch, false);
+});
+
+test('next club year\'s price is charged for next year and becomes the price on 1 March; this year\'s price applies until then', () => {
+  const gold = { id: 'gold', category: 'SUBSCRIPTIONS', type: 'subscription', pricingMode: 'subscription', allowMonthly: true, basePrice: 30, sortOrder: 1,
+    ...nextYearPriceFields('32', new Date('2027-01-10T12:00:00Z')) };
+  assert.deepEqual([gold.nextYearPrice, gold.nextYearPriceFrom], [32, 2027]);
+  const priced = (iso) => resolveCatalogue([gold], new Date(iso))[0];
+  assert.deepEqual([priced('2027-01-10T12:00:00Z').basePrice, priced('2027-01-10T12:00:00Z').nextYearPrice], [30, 32], 'January: this year\'s price still applies');
+  assert.deepEqual([priced('2027-03-01T00:00:00Z').basePrice, priced('2027-03-01T00:00:00Z').nextYearPrice], [32, 32], 'it rolls over on 1 March');
+  const lines = expandClubYearLines([{ ...priced('2027-01-10T12:00:00Z'), lineId: 'a', clubYearChoice: 'this' }, { ...priced('2027-01-10T12:00:00Z'), lineId: 'b', clubYearChoice: 'next' }]);
+  assert.deepEqual(lines.map((line) => line.basePrice), [30, 32]);
+  assert.equal(nextYearPriceInput(gold, new Date('2027-01-10T12:00:00Z')), '32', 'the editor shows the price set for the coming year');
+  assert.equal(nextYearPriceInput(gold, new Date('2027-04-01T12:00:00Z')), '', 'and nothing once it has started');
+  assert.deepEqual(nextYearPriceFields(' ', new Date('2027-01-10T12:00:00Z')), { nextYearPrice: null, nextYearPriceFrom: null });
+  assert.deepEqual(resolveCatalogue([{ ...gold, nextYearPrice: null, nextYearPriceFrom: null }], new Date('2027-01-10T12:00:00Z')).map((product) => [product.basePrice, product.nextYearPrice]), [[30, 30]]);
 });

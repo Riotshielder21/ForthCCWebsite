@@ -8,7 +8,8 @@ import { usePageEditor } from '../utils/PageContentContext';
 import PagedAdminList from '../components/PagedAdminList';
 import EventRosterControl from '../components/EventRosterControl';
 import { apiUrl, apiFetch } from '../utils/api';
-import { validateEventSchedule, eventScheduleLabel, normaliseProduct } from '../utils/catalogue';
+import { validateEventSchedule, eventScheduleLabel, normaliseProduct, nextYearPriceFields, nextYearPriceInput } from '../utils/catalogue';
+import { clubYearKind, clubYearLabel, clubYearOf } from '../utils/clubYear';
 import { cleanStockFields } from '../utils/inventory';
 import { cleanEventDetails } from '../utils/eventRoster';
 
@@ -17,6 +18,7 @@ const EMPTY_PRODUCT = {
   name: '',
   category: 'SERVICES',
   basePrice: 0,
+  nextYearPriceInput: '',
   description: '',
   type: 'yearly-service',
   pricingMode: 'fixed',
@@ -120,7 +122,8 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
     setViewerProductId(product.category === 'EVENTS' ? product.id : null);
     setViewerLoadAttempt((attempt) => attempt + 1);
     setSelectedProduct(product.id);
-    setDraft({ ...EMPTY_PRODUCT, ...normaliseProduct(product), eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
+    setDraft({ ...EMPTY_PRODUCT, ...normaliseProduct(product), nextYearPriceInput: nextYearPriceInput(product),
+      eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
     setMessage('');
     resetImageInput();
   };
@@ -154,11 +157,17 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
       setError('Upload the selected image or remove it before saving the product.');
       return;
     }
+    const { nextYearPriceInput: nextPrice, ...fields } = draft;
+    if (String(nextPrice ?? '').trim() !== '' && !(Number(nextPrice) >= 0)) {
+      setError('Enter next club year\'s price in pounds, or leave it blank to keep the same price.');
+      return;
+    }
     setSaving(true);
     try {
       const product = {
-        ...draft,
-        ...normaliseProduct(draft),
+        ...fields,
+        ...normaliseProduct(fields),
+        ...(clubYearKind(fields) ? nextYearPriceFields(nextPrice) : nextYearPriceFields('')),
         basePrice: Number(draft.basePrice),
         sortOrder: Number(draft.sortOrder),
         hasAnnualDiscount: Boolean(draft.hasAnnualDiscount) && normaliseProduct(draft).pricingMode === 'subscription'
@@ -173,7 +182,7 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
       }
       if (!product.id) {
         product.id = await reserveProductId(await adminUser.getIdToken());
-        setDraft(product);
+        setDraft({ ...product, nextYearPriceInput: nextPrice });
       }
       const viewers = await saveCatalogueItem(product, viewerText, {
         saveProduct,
@@ -298,6 +307,11 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
                 {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{CATEGORIES.filter((category) => category !== 'ALL').map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required />}
               </label>
             ))}
+            {clubYearKind(draft) && <label className="FormLabel">{`${draft.pricingMode === 'subscription' ? 'Monthly price' : 'Price'} for club year ${clubYearLabel(clubYearOf() + 1)}`}
+              <input className="FormInput" type="number" min="0" step="0.01" placeholder="Same as now" value={draft.nextYearPriceInput}
+                onChange={(event) => updateDraft('nextYearPriceInput', event.target.value)} />
+              <span className="text_container_note">Quoted and charged for anything bought for next club year, in renewal emails, and for subscription payments from 1 March, when it becomes the price. This club year&apos;s price still applies to this year until then. Leave blank to keep the same price.</span>
+            </label>}
             <fieldset className="AdminEventSchedule">
               <legend className="tile_heading_bold_1">Product image</legend>
               {draft.imageUrl ? <img className="AdminImagePreview" src={draft.imageUrl} alt="Product preview" />

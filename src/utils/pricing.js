@@ -10,14 +10,16 @@ const dayLabel = (date) => date.toLocaleDateString('en-GB', { day: 'numeric', mo
 
 /**
  * Basket lines carry `clubYearChoice` ('this', 'next' or 'both'). Pricing, orders and records work per club year, so a
- * 'both' line becomes this year's line plus a next-year line with the same details and a derived line id.
+ * 'both' line becomes this year's line plus a next-year line with the same details and a derived line id. A next-year
+ * line costs next club year's price (`nextYearPrice`, see yearPrices).
  */
+const nextYearLine = (line, fields) => ({ ...line, ...fields, clubYearPart: 'next', sourceLineId: line.lineId,
+  ...(typeof line.nextYearPrice === 'number' ? { basePrice: line.nextYearPrice } : {}) });
 export const expandClubYearLines = (lines) => lines.flatMap((line) => {
   if (line.clubYearChoice === 'both') {
-    return [{ ...line, clubYearPart: 'this', sourceLineId: line.lineId },
-      { ...line, lineId: `${line.lineId}${NEXT_YEAR_LINE_SUFFIX}`, clubYearPart: 'next', sourceLineId: line.lineId }];
+    return [{ ...line, clubYearPart: 'this', sourceLineId: line.lineId }, nextYearLine(line, { lineId: `${line.lineId}${NEXT_YEAR_LINE_SUFFIX}` })];
   }
-  return [line.clubYearChoice === 'next' ? { ...line, clubYearPart: 'next', sourceLineId: line.lineId } : { ...line, sourceLineId: line.lineId }];
+  return [line.clubYearChoice === 'next' ? nextYearLine(line, {}) : { ...line, sourceLineId: line.lineId }];
 });
 
 /** Whoever holds a 'both' line also holds its next-year line. */
@@ -119,10 +121,10 @@ export const calculateCart = (cart, isAnnual, promo = null, now = new Date(), { 
       yearlyRate = money(yearlyRate * (1 - promo.discountValue));
     }
     // On 1 March every subscription moves to the new club year's shop price: a discount code or this year's volunteer
-    // price covers only the line's own club year. Payments in a later year are quoted at today's shop price; the
-    // volunteer price for that year can only lower them (see renewalPrice).
+    // price covers only the line's own club year. Payments in a later year are quoted at next club year's shop price
+    // (`nextYearPrice`, see yearPrices); the volunteer price for that year can only lower them (see renewalPrice).
     const renewsAt = interval ? clubYearDates((clubYear ?? currentYear) + 1).start : null;
-    const shopMonthly = item.volunteerOriginalPrice ?? item.basePrice;
+    const shopMonthly = item.nextYearPrice ?? item.volunteerOriginalPrice ?? item.basePrice;
     const renewalRate = interval === 'year' ? money(shopMonthly * 12 * (item.hasAnnualDiscount ? 1 - DISCOUNTS.ANNUAL : 1)) : money(shopMonthly);
     if (interval && firstCharge >= renewsAt) {
       if (monthlyBilling) monthlyRate = renewalRate;

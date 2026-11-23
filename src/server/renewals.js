@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
-import { clubYearDates } from '../utils/clubYear.js';
+import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
 import { ageOn } from '../utils/checkout.js';
 import { needsRenewal, renewalBasket, renewalChoice, renewalEmail, renewalRound, renewalWindow } from '../utils/renewals.js';
 import { rateLimit } from './rateLimit.js';
@@ -107,8 +107,11 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
         confirmation = await confirmAllFor({ email: group.email, now, volunteerMemberIds: volunteers.map((entry) => entry.memberId),
           subscriptionIds: parts.map((part) => part.id), basketToken: token });
       }
+      // The catalogue is priced at `now`: next club year's price is quoted until the renewal year has started.
+      const yearPrice = (product) => Number(window.renewalYear > clubYearOf(now) ? product?.nextYearPrice ?? product?.basePrice : product?.basePrice);
       const email = renewalEmail({ renewalYear: window.renewalYear, reminder, contact, volunteers, subscriptions: parts, confirmAllUrl: confirmation?.url || '',
-        basket: { ...basket, catalog, link: `${site}/membership?renew=${token}`, expiresAt: window.expiresAt } });
+        basket: { ...basket, catalog, link: `${site}/membership?renew=${token}`, expiresAt: window.expiresAt,
+          items: basket.items.map((item) => ({ ...item, price: yearPrice(catalog.find((product) => product.id === item.id)) })) } });
       if (!await sendEmail({ to: group.email, ...email, record: { kind: 'renewal', membershipIds: members.map((member) => member.id),
         ...(parts.length ? { subscriptionIds: parts.map((part) => part.id) } : {}) } })) throw new Error('Email is not configured.');
     } catch (error) {
@@ -122,7 +125,7 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
   };
 
   const sendAll = async (now, options = {}) => {
-    const catalog = await loadCatalogue();
+    const catalog = await loadCatalogue(now);
     const reminder = options.round === 'reminder';
     const groups = await renewalGroups(now, { onlyUnsent: !options.membershipId, membershipId: options.membershipId, field: reminder ? REMINDED : SENT });
     let emails = 0, members = 0, failures = 0;
@@ -281,7 +284,7 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       if (!members.length) return res.status(410).json({ code: 'renewal_done', error: 'Everyone on this renewal link has already renewed.' });
       let index = 0;
       const entitlements = await loadEntitlements(db(), members.map((member) => member.id), null, { members: new Map(members.map((member) => [member.id, member])) });
-      const basket = renewalBasket(members.map((member) => ({ ...member, entitlements: entitlements.get(member.id) || [] })), await loadCatalogue(),
+      const basket = renewalBasket(members.map((member) => ({ ...member, entitlements: entitlements.get(member.id) || [] })), await loadCatalogue(now),
         invite.renewalYear - 1, () => `renew-${++index}`);
       // The link went to the household's contact email, so checkout can tick what each person agreed to the current wording.
       const [policies, noticeVersions] = await Promise.all([currentCheckoutPolicies(db(), live()), loadNotices(db()).then(noticeVersionMap)]);

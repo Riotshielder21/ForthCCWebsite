@@ -1,3 +1,4 @@
+import { clubYearOf } from './clubYear.js';
 
 /**
  * How a product is charged. Fixed is the full price whenever bought; prorated is the full price, or 60% from 1 October;
@@ -47,11 +48,35 @@ export const normaliseProduct = (product) => {
   return { ...rest, ...productTerms(product), ...(rule ? { membershipRule: rule, membershipRequired: rule !== 'none' } : {}) };
 };
 
+const scheduled = (product) => Number.isInteger(product.nextYearPriceFrom) && typeof product.nextYearPrice === 'number'
+  && Number.isFinite(product.nextYearPrice) && product.nextYearPrice >= 0;
+
+/**
+ * A product's price this club year (`basePrice`) and next (`nextYearPrice`) at `now`. Staff can set next club year's
+ * price ahead (`nextYearPrice`, from club year `nextYearPriceFrom`): it is quoted and charged for anything bought for
+ * that year and for subscription payments from its 1 March, and it becomes the price on that 1 March. Until then this
+ * year's price still applies to this year, so a January purchase for this year costs this year's price.
+ */
+export const yearPrices = (product, now = new Date()) => {
+  if (product.basePrice === undefined && !scheduled(product)) return {};
+  const current = clubYearOf(now);
+  const thisYear = scheduled(product) && product.nextYearPriceFrom <= current ? product.nextYearPrice : Number(product.basePrice);
+  return { basePrice: thisYear, nextYearPrice: scheduled(product) && product.nextYearPriceFrom <= current + 1 ? product.nextYearPrice : thisYear };
+};
+
+/** The product editor's next club year price: blank unless one is set for the coming club year. */
+export const nextYearPriceInput = (product, now = new Date()) =>
+  scheduled(product) && product.nextYearPriceFrom === clubYearOf(now) + 1 ? String(product.nextYearPrice) : '';
+
+/** What the product editor saves for next club year's price: it starts on the coming 1 March, or is cleared when blank. */
+export const nextYearPriceFields = (input, now = new Date()) => String(input ?? '').trim() === ''
+  ? { nextYearPrice: null, nextYearPriceFrom: null } : { nextYearPrice: Number(input), nextYearPriceFrom: clubYearOf(now) + 1 };
+
 // Only products saved in the database are on sale: a starter product in src/constants/products.js is not, until it
 // has a record. Inactive products leave the shop. Sorted by `sortOrder`. Trip discount products cannot be made
-// inactive (firestore.rules).
-export const resolveCatalogue = (saved) => saved.filter((product) => product.active !== false)
-  .map(normaliseProduct).sort((a, b) => a.sortOrder - b.sortOrder);
+// inactive (firestore.rules). Prices are those in force at `now` (see yearPrices).
+export const resolveCatalogue = (saved, now = new Date()) => saved.filter((product) => product.active !== false)
+  .map((product) => ({ ...normaliseProduct(product), ...yearPrices(product, now) })).sort((a, b) => a.sortOrder - b.sortOrder);
 
 export const validateEventSchedule = (schedule) => {
   if (!schedule || !['single', 'consecutive', 'weekly'].includes(schedule.mode) || schedule.timeZone !== 'Europe/London') {
