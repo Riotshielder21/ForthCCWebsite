@@ -273,18 +273,19 @@ The club year runs from 1 March to the end of February.
 - Annual kit hire covers the club year it is bought for and ends at the end of February.
 - This year's items stop being sold in February. Memberships for the current year are sold until 7 February, and other items until 15 February. From 1 January you can also buy for the next club year.
 
-## Monthly payments
+## Subscriptions
 
-- Payment dates: subscriptions, and other items you choose to pay monthly, are collected by Direct Debit on the 1st of each month. The last payment is on 1 February, and the payments stop on 1 March. You buy again for the next club year.
-- Your first payment: when you join part way through a month, you first pay for the rest of that month. This is shown as a percentage off a full month.
-- Paying for the year up front: this costs less than twelve monthly payments, and the saving is shown at checkout.
-- Receipts: we email a receipt for every monthly payment.
-- Stopping your payments: you can ask us to stop at any time. Use [My details](/my-details), or email the treasurer. We stop future payments, but we do not refund the month you have already paid for. What you have paid for continues to the end of that month. Stopping monthly payments does not end your membership.
+- Subscriptions carry on until you cancel them. You pay monthly by Direct Debit on the 1st of each month, or yearly on 1 March.
+- Your first payment: paying monthly, you first pay for the rest of the month you join in, shown as a percentage off a full month. Paying yearly, you first pay for the rest of the club year: the full year's price until a fifth of the year has gone, then 80%, 60%, 40% and finally 20% of it. Some subscriptions charge the full year whenever you join; checkout shows the price before you pay.
+- Paying yearly costs less than twelve monthly payments, and the saving is shown at checkout.
+- Each January or February we email whoever pays for a subscription to confirm it or cancel it. If you cancel, it stops at the end of February: the last monthly payment is on 1 February, and no yearly payment is taken on 1 March. If you do not answer, it carries on. You can change your answer until 1 March.
+- Receipts: we email a receipt for every subscription payment.
+- Stopping your payments: you can ask us to stop at any time. Use [My details](/my-details), or email the treasurer. We stop future payments, but we do not refund the month or year you have already paid for. What you have paid for continues to the end of that period. Stopping a subscription does not end your membership.
 
 ## If a payment fails
 
-- When a monthly payment fails: Stripe tries again over the following days, and we email you each time.
-- If every attempt fails: your monthly payments stop. What they paid for ends on the date you had paid up to. Your membership is not affected. We email you a link to restart your payments or to confirm that you are stopping. We do not collect the months you missed.
+- When a subscription payment fails: Stripe tries again over the following days, and we email you each time.
+- If every attempt fails: your subscription payments stop. What they paid for ends on the date you had paid up to. Your membership is not affected. We email you a link to restart your payments or to confirm that you are stopping. We do not collect the payments you missed.
 
 ## Your right to cancel (14 days)
 

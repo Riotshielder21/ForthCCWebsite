@@ -16,5 +16,6 @@ export const pageModules = {
   checkout: () => import('./CheckoutPage'),
   'order-lookup': () => import('./OrderLookupPage'),
   'payment-success': () => import('./PaymentSuccessPage'),
-  'payment-issue': () => import('./PaymentIssuePage')
+  'payment-issue': () => import('./PaymentIssuePage'),
+  subscription: () => import('./SubscriptionContinuationPage')
 };

@@ -7,7 +7,7 @@ import { checkSummary, checksManagedByJustgo } from '../utils/safeguarding.js';
 import { rateLimit } from './rateLimit.js';
 import { clubYearOf, clubYearDates } from '../utils/clubYear.js';
 import { normaliseVolunteerLevels, validateVolunteerBenefits, volunteerBenefitText, volunteerBenefitsEmail, volunteerLevelLabel, volunteerYear, needsVolunteerRenewal } from '../utils/volunteering.js';
-import { annualAdjustment, monthlyAdjustment, monthsLeftIn, volunteerPriceFor, volunteerSignupYear } from '../utils/volunteerAdjustments.js';
+import { annualAdjustment, monthsLeftIn, nextChargeYear, subscriptionAdjustment, volunteerPriceFor, volunteerSignupYear } from '../utils/volunteerAdjustments.js';
 import { needsRenewal } from '../utils/renewals.js';
 import { allocateRecordIds, reserveRecordIds } from '../utils/recordIds.js';
 import { validateVolunteerPage, volunteerPageFromLegacy } from '../utils/volunteerPage.js';
@@ -673,12 +673,14 @@ export const registerVolunteerRoutes = (app, { requireAdmin, db, sheets, toMembe
     const subscriptions = await db().collection('subscriptions').where('membershipIds', 'array-contains', member.id).limit(20).get();
     for (const document of subscriptions.docs) {
       for (const item of document.data().items || []) {
-        if (!item.membershipIds?.includes(member.id) || item.clubYear !== year) continue;
-        const { price } = await priceFor(item.productId, item.membershipIds, item.clubYear);
-        const pending = document.data().status === 'active' ? monthlyAdjustment({ item, volunteerPrice: price, now }) : null;
+        // A subscription carries on, so the year that matters is the one its next payment is for.
+        if (!item.membershipIds?.includes(member.id) || nextChargeYear(item, now) !== year) continue;
+        const { product, price } = await priceFor(item.productId, item.membershipIds, year);
+        const pending = document.data().status === 'active' ? subscriptionAdjustment({ item, volunteerPrice: price, product }) : null;
         const last = (signup.monthlyAdjustments || []).find((entry) => entry.subscriptionId === document.id && entry.lineId === item.lineId);
         if (!pending && !item.volunteerAdjustment && !(item.cancelScheduledAt && last)) continue;
-        monthly.push({ subscriptionId: document.id, lineId: item.lineId, name: item.name, monthlyAmount: item.monthlyAmount, status: item.status,
+        monthly.push({ subscriptionId: document.id, lineId: item.lineId, name: item.name, monthlyAmount: item.monthlyAmount, yearlyAmount: item.yearlyAmount,
+          interval: item.interval || 'month', status: item.status,
           adjustedFrom: item.volunteerAdjustment?.from ?? null, cancelScheduledAt: item.cancelScheduledAt?.toDate?.().toISOString() || '',
           pending, error: pending && last?.status === 'failed' ? last.error : '' });
       }

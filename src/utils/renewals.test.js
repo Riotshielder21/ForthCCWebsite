@@ -65,16 +65,18 @@ test('renewal basket shares one family membership and carries this year\'s servi
   assert.equal(basket.billingMode, 'annual');
 });
 
-test('renewal basket gives individual memberships and keeps monthly billing for active subscriptions', () => {
+test('renewal basket gives individual memberships and leaves subscriptions, which carry on, out', () => {
   const members = [
-    { id: 'm1', membershipTier: 'junior', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, status: 'active' }] },
+    { id: 'm1', membershipTier: 'junior', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, status: 'active' }],
+      entitlements: [{ productId: 'coaching', clubYear: 2027 }] },
     { id: 'm2', membershipTier: 'adult', subscriptionItems: [{ productId: 'coaching', clubYear: 2027, status: 'cancelled' }] },
     { id: 'm3', membershipTier: 'adult', entitlements: [{ productId: 'retired', clubYear: 2027 }] }
   ];
   const basket = renewalBasket(members, catalog, 2027, counter());
-  assert.deepEqual(basket.items.map((item) => item.id), ['membership-junior', 'membership-adult', 'membership-adult', 'coaching']);
-  assert.deepEqual(basket.people[0].lineIds, ['id4', 'id7']);
-  assert.equal(basket.billingMode, 'monthly');
+  assert.deepEqual(basket.items.map((item) => item.id), ['membership-junior', 'membership-adult', 'membership-adult']);
+  assert.deepEqual(basket.people[0].lineIds, ['id4']);
+  assert.deepEqual([basket.billingMode, basket.subscriptionsContinue], ['annual', true]);
+  assert.equal(renewalBasket([members[1]], catalog, 2027, counter()).subscriptionsContinue, false, 'a cancelled one does not carry on');
 });
 
 test('renewal basket lists the oldest first, so an adult is the family contact', () => {

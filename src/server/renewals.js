@@ -17,13 +17,14 @@ const DAY = 24 * 60 * 60 * 1000;
 
 /**
  * Renewal emails: one per contact address with a link that fills the basket with next year's membership and the
- * services and subscriptions held this year. Staff can send them from 1 January. The scheduled job sends on 1 February
- * to anyone not yet emailed and a reminder on 15 February to anyone not yet reminded; members who have renewed are
- * never emailed. Links are random tokens stored hashed in `renewalInvites` and expire after 31 March.
+ * services held this year. Staff can send them from 1 January. The scheduled job sends on 1 February to anyone not yet
+ * emailed and a reminder on 15 February to anyone not yet reminded; members who have renewed are never emailed. Links
+ * are random tokens stored hashed in `renewalInvites` and expire after 31 March. Subscriptions carry on by themselves;
+ * each round also sends their payers the separate continue/cancel email (`continuations`, see subscriptionContinuation.js).
  */
 const SENT = 'renewalInviteSentFor';
 const REMINDED = 'renewalReminderSentFor';
-export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow, volunteerRenewalContent, sendVolunteerRenewals, live = () => false }) => {
+export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, sendEmail, siteUrl, requestNow, volunteerRenewalContent, sendVolunteerRenewals, live = () => false, continuations = null }) => {
   const memberships = () => db().collection('memberships');
 
   /** Members needing renewal grouped by contact email; `onlyUnsent` leaves out anyone whose `field` already has this year. */
@@ -78,7 +79,7 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
     });
     if (!members.length) return 0;
     let index = 0;
-    const entitlements = await loadEntitlements(db(), members.map((member) => member.id));
+    const entitlements = await loadEntitlements(db(), members.map((member) => member.id), null, { members: new Map(members.map((member) => [member.id, member])) });
     const basket = renewalBasket(members.map((member) => ({ ...member, entitlements: entitlements.get(member.id) || [] })), catalog, window.clubYear, () => `r${++index}`);
     try {
       const volunteering = await volunteerRenewalContent(members, window.renewalYear, siteUrl());
@@ -121,7 +122,7 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       res.set('Cache-Control', 'no-store');
       res.json({ renewalYear: window.renewalYear, opens: window.opens.getTime(), scheduledFrom: window.scheduledFrom.getTime(), reminderFrom: window.reminderFrom.getTime(), closes: window.closes.getTime(),
         open: now >= window.opens, contacts: groups.length, members: groups.reduce((sum, group) => sum + group.total, 0),
-        unsentContacts: groups.filter((group) => group.sentCount < group.total).length });
+        unsentContacts: groups.filter((group) => group.sentCount < group.total).length, subscriptions: continuations ? await continuations.summary(now) : null });
     } catch (error) {
       console.error('Could not load renewals:', error.message);
       res.status(500).json({ error: 'Could not load renewals.' });
@@ -135,7 +136,9 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       const now = requestNow(req);
       if (now < renewalWindow(now).opens) return res.status(400).json({ code: 'renewals_closed', error: 'Renewal emails can be sent from 1 January.' });
       const membershipId = typeof req.body?.membershipId === 'string' ? req.body.membershipId.slice(0, 128) : '';
-      res.json(await sendAll(now, { membershipId }));
+      const result = await sendAll(now, { membershipId });
+      const subscriptions = continuations && !membershipId ? await continuations.send(now) : { emails: 0, failures: 0 };
+      res.json({ ...result, subscriptionEmails: subscriptions.emails, subscriptionFailures: subscriptions.failures });
     } catch (error) {
       console.error('Could not send renewal emails:', error.message);
       res.status(500).json({ error: 'Could not send renewal emails.' });
@@ -159,10 +162,12 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
       if (!round) return res.json({ emails: 0, members: 0, failures: 0, waiting: true });
       const result = await sendAll(now, { round });
       const volunteers = await sendVolunteerRenewals(now, round, siteUrl());
-      if (result.failures || volunteers.failures) {
+      const subscriptions = continuations ? await continuations.send(now, { reminder: round === 'reminder' }) : { emails: 0, failures: 0 };
+      if (result.failures || volunteers.failures || subscriptions.failures) {
         console.error(JSON.stringify({ severity: 'ERROR', event: 'fcc-job-problems', job: 'fcc-renewals' }));
       }
-      res.json({ round, ...result, volunteerEmails: volunteers.emails, volunteerFailures: volunteers.failures });
+      res.json({ round, ...result, volunteerEmails: volunteers.emails, volunteerFailures: volunteers.failures,
+        subscriptionEmails: subscriptions.emails, subscriptionFailures: subscriptions.failures });
     } catch (error) {
       console.error('Renewal job failed:', error.message);
       console.error(JSON.stringify({ severity: 'ERROR', event: 'fcc-job-problems', job: 'fcc-renewals' }));
@@ -188,7 +193,7 @@ export const registerRenewalRoutes = (app, { requireAdmin, db, loadCatalogue, se
         .filter((member) => !(member.clubYears || []).includes(invite.renewalYear) && !((member.validUntil?.toMillis() || 0) >= renewedBy));
       if (!members.length) return res.status(410).json({ code: 'renewal_done', error: 'Everyone on this renewal link has already renewed.' });
       let index = 0;
-      const entitlements = await loadEntitlements(db(), members.map((member) => member.id));
+      const entitlements = await loadEntitlements(db(), members.map((member) => member.id), null, { members: new Map(members.map((member) => [member.id, member])) });
       const basket = renewalBasket(members.map((member) => ({ ...member, entitlements: entitlements.get(member.id) || [] })), await loadCatalogue(),
         invite.renewalYear - 1, () => `renew-${++index}`);
       // The link went to the household's contact email, so checkout can tick what each person agreed to the current wording.

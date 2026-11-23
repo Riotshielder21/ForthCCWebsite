@@ -4,7 +4,7 @@ import { itemActionLabel, describeItemAction } from '../utils/itemActions';
 
 const money = (pence) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(pence / 100);
 // Billing can only be stopped here while the item's monthly payments are still running.
-const billing = (item) => ({ monthly: Boolean(item?.monthly && !item.monthlyCancelledAt) });
+const billing = (item) => ({ monthly: Boolean(item?.monthly && !item.monthlyCancelledAt), yearly: Boolean(item?.yearly && !item.monthlyCancelledAt) });
 
 export default function PurchasedItemActions({ order, adminUser, onChanged }) {
   const [draft, setDraft] = useState(null);
@@ -48,7 +48,7 @@ export default function PurchasedItemActions({ order, adminUser, onChanged }) {
       const result = await request(`${base(lineId)}/actions`, { method: 'POST', body: JSON.stringify({ ...body, ...(body.action === 'refund' ? { amount: Number(body.amount) } : {}) }) });
       setMessage([result.refundId && `Stripe refund ${result.refundId}: ${result.refundStatus}.`,
         draft.action === 'revoke' || draft.revoke ? 'Access removed.' : 'Access kept.',
-        result.monthlyPaymentsStopped ? 'Future monthly payments for this item stopped.' : billing(item).monthly && 'Monthly payments carry on.',
+        result.monthlyPaymentsStopped ? 'Future subscription payments for this item stopped.' : (billing(item).monthly || billing(item).yearly) && 'Subscription payments carry on.',
         'The order is retained.'].filter(Boolean).join(' '));
       setDraft(null);
       await onChanged();
@@ -61,12 +61,12 @@ export default function PurchasedItemActions({ order, adminUser, onChanged }) {
   return <section className="SpaceT4">
     <h4 className="CartItemTitle">Purchased item actions</h4>
     <ul className="text_container">
-      <li><strong>Revoke access</strong> removes the benefit now. No money is returned. For a monthly item it also stops future payments.</li>
-      <li><strong>Refund one payment</strong> (or <strong>Refund only</strong>) returns money through Stripe. Access stays and monthly payments carry on.</li>
-      <li><strong>Refund and cancel</strong> (monthly) or <strong>Refund and revoke</strong> (one-off) returns money, removes the benefit now and stops future monthly payments. If nothing else is on the Stripe subscription, the whole subscription is cancelled.</li>
+      <li><strong>Revoke access</strong> removes the benefit now. No money is returned. For a subscription item (monthly or yearly) it also stops future payments.</li>
+      <li><strong>Refund one payment</strong> (or <strong>Refund only</strong>) returns money through Stripe. Access stays and subscription payments carry on.</li>
+      <li><strong>Refund and cancel</strong> (subscription) or <strong>Refund and revoke</strong> (one-off) returns money, removes the benefit now and stops future subscription payments. If nothing else is on the Stripe subscription, the whole subscription is cancelled.</li>
       <li><strong>Resume unfinished action</strong> finishes a recorded action that was interrupted. It never issues a second refund.</li>
     </ul>
-    <p className="text_container">None of these deletes the order. To stop monthly payments without a refund and let access run to the paid-up date (membership is not affected), use Monthly payments below or the Subscriptions tab.</p>
+    <p className="text_container">None of these deletes the order. To stop subscription payments without a refund and let access run to the paid-up date (membership is not affected), use Subscription payments below or the Subscriptions tab.</p>
     {order.credited && <p className="ReportWarning">This order was credited by staff and paid outside Stripe. Refund the customer directly and tell the treasurer; revoke the items here if needed.</p>}
     {order.items.map((item) => <div key={item.lineId} className="SpaceT4">
       <strong>{item.name}</strong>

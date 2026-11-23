@@ -84,7 +84,7 @@
         ]
       },
       {
-        "source": "/{admin,api,order,my-details,check-ins,club-night,checkout,payment-success,payment-issue,_preview}{,/**}",
+        "source": "/{admin,api,order,my-details,check-ins,club-night,checkout,payment-success,payment-issue,subscription,_preview}{,/**}",
         "headers": [
           {
             "key": "X-Robots-Tag",
@@ -139,6 +139,19 @@
             "value": "no-referrer"
           }
         ]
+      },
+      {
+        "source": "/subscription",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "no-referrer"
+          }
+        ]
       }
     ],
     "redirects": [
@@ -150,7 +163,7 @@
     ],
     "rewrites": [
       {
-        "source": "/{admin,my-details,check-ins,checkout,payment-success,payment-issue}{,/**}",
+        "source": "/{admin,my-details,check-ins,checkout,payment-success,payment-issue,subscription}{,/**}",
         "destination": "/index.html"
       },
       {

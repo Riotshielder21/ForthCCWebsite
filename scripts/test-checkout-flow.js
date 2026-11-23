@@ -19,7 +19,7 @@ import { activeSubscriptionItems } from '../src/utils/subscriptions.js';
 import { tickWording } from '../src/constants/consentWording.js';
 import { policyHash } from '../src/utils/policies.js';
 import { loadCheckoutConsent } from '../src/server/policies.js';
-import { joiningShare, fullMonthsAfterCurrent, clubYearOf, clubYearDates, monthlyDebits, nextFirst } from '../src/utils/clubYear.js';
+import { clubYearOf, clubYearDates, thresholdShare } from '../src/utils/clubYear.js';
 
 const projectId = assertLocalFirebase(process.env);
 const apiPort = Number(process.env.TEST_API_PORT || 3010);
@@ -537,8 +537,8 @@ await test('multiple copies of shop services can be bought by different members 
   const now = new Date();
   const monthsRemaining = Math.max(1, (now.getMonth() >= 2 ? 1 : 0) * 12 + 2 - now.getMonth());
   const boatPrice = monthsRemaining <= 5 ? 51 : 85;
-  // Paid up front: the joining share of this month plus the full months to 1 March, less the annual discount.
-  const goldPrice = Math.round(30 * (joiningShare(now) + fullMonthsAfterCurrent(now)) * 0.8 * 100) / 100;
+  // Paid yearly: the rest of this club year in 20% steps of twelve months, less the annual discount; the full year follows on 1 March.
+  const goldPrice = Math.round(30 * 12 * 0.8 * thresholdShare(now) * 100) / 100;
   assert.equal(order.totalPence, Math.round((60 + boatPrice * 2 + 100 + goldPrice) * 100), 'each member and product line is priced, including the annual gold subscription');
   assert.equal(order.totalPence, order.items.reduce((total, item) => total + item.pricePence, 0));
   assert.ok(order.items.every((item) => Number.isInteger(item.pricePence) && !('price' in item)), 'order lines hold whole pence');
@@ -1780,7 +1780,7 @@ const orderData = async (orderRef) => (await db.collection('orders').doc(orderRe
 const subscriptionIdsPaidBy = async (address) => (await db.collection('subscriptions').where('email', '==', address).get()).docs.map((document) => document.id).sort();
 await db.collection('products').doc(lessonId).set({ name: 'E2E lesson block', category: 'SERVICES', pricingMode: 'subscription', allowMonthly: true, basePrice: 20, membershipRule: 'none' });
 
-await test('a payer has one monthly subscription per club year for everyone they pay for, and staff can stop one member\'s items', async () => {
+await test('a payer has one monthly subscription for everyone they pay for, carrying on until cancelled, and staff can stop one member\'s items', async () => {
   const payer = email('monthly-split');
   const lines = [...['membership-adult', 'membership-adult', 'gold-sub', 'gold-sub'].map(lineFor), lessonLine()];
   const basket = { lines, people: assignLines([], lines, makeId).map((person, index) => ({ ...person, ...adultDetails(index === 0
@@ -1790,21 +1790,19 @@ await test('a payer has one monthly subscription per club year for everyone they
   const orderRef = await buy(payer, basket, { billingMode: 'monthly' }, autumn);
   const order = await orderData(orderRef);
   const golds = order.items.filter((item) => item.id === 'gold-sub');
-  assert.deepEqual(golds.map(({ pricePence, monthlyPence, debits }) => ({ pricePence, monthlyPence, debits })), [0, 1].map(() => ({ pricePence: 2400, monthlyPence: 3000, debits: 4 })),
-    'checkout takes 80% of October; debits run November to February');
+  assert.deepEqual(golds.map(({ pricePence, monthlyPence, interval }) => ({ pricePence, monthlyPence, interval })), [0, 1].map(() => ({ pricePence: 2400, monthlyPence: 3000, interval: 'month' })),
+    'checkout takes 80% of October; debits run from 1 November until cancelled');
   assert.equal(order.subscriptionPlan.groups.length, 1);
   const [group] = order.subscriptionPlan.groups;
-  assert.equal(group.clubYear, autumnYear);
+  assert.deepEqual([group.clubYear, group.interval, 'cutoffAt' in group], [autumnYear, 'month', false]);
   assert.equal(group.firstDebitAt.toMillis(), seconds(new Date(Date.UTC(autumnYear, 10, 1))) * 1000, 'debits start on 1 November');
-  assert.equal(group.cutoffAt.toMillis(), thisYear.end.getTime(), 'and stop at the 1 March club-year end');
   assert.equal(group.created, true);
   assert.equal(order.stripeSubscriptionIds.length, 1, 'one Stripe subscription (one direct debit) for everything the payer pays monthly');
   const [subscriptionId] = order.stripeSubscriptionIds;
   assert.ok(order.items.filter((item) => item.monthly).every((item) => item.stripeSubscriptionId === subscriptionId && item.stripeSubscriptionItemId), 'every monthly line knows its Stripe item');
   assert.equal(order.subscriptionSetupNeedsStaff, false);
   const stored = (await db.collection('subscriptions').doc(subscriptionId).get()).data();
-  assert.equal(stored.clubYear, autumnYear);
-  assert.equal(stored.cancelAt.toMillis(), thisYear.end.getTime());
+  assert.deepEqual([stored.clubYear, stored.interval, stored.cancelAt], [autumnYear, 'month', null], 'no end date: it carries on until cancelled');
   assert.deepEqual(await subscriptionIdsPaidBy(payer), [subscriptionId]);
 
   const named = await Promise.all(order.people.map(async ({ membershipId }) => [(await db.collection('memberships').doc(membershipId).get()).data().firstName, membershipId]));
@@ -2009,37 +2007,55 @@ await test('starting again after paying, before Stripe tells us, is refused rath
   assert.equal((await orderData(first.json.orderRef)).status, 'paid', 'the earlier order is recorded from Stripe');
 });
 
-await test('from January members renew for next club year or buy both, with a separate direct debit for each year', async () => {
+await test('from January members buy next club year; a subscription starts now or on 1 March and then carries on', async () => {
   const payer = email('renew-both');
   const details = adultDetails({ firstName: 'Bea', lastName: 'Both', email: payer });
   const october = await checkout(payer, withChoice(build(['membership-adult'], [details]), 'next'), {}, autumn);
   assert.equal(october.status, 400, 'next club year is not sold before 1 January');
   assert.equal(october.json.code, 'club_year_unavailable');
+  const bothYears = await checkout(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'both'), { billingMode: 'monthly' }, january);
+  assert.equal(bothYears.status, 400, 'a subscription carries on, so it is never bought for both club years');
+  assert.equal(bothYears.json.code, 'club_year_unavailable');
 
-  const orderRef = await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'both'), { billingMode: 'monthly' }, january);
+  const basket = build(['membership-adult', 'gold-sub'], [details]);
+  const orderRef = await buy(payer, { ...basket, lines: basket.lines.map((line) => ({ ...line, clubYearChoice: line.id === 'gold-sub' ? 'this' : 'both' })) },
+    { billingMode: 'monthly' }, january);
   const order = await orderData(orderRef);
   assert.deepEqual(order.items.map(({ id, clubYear, pricePence }) => ({ id, clubYear, pricePence })).sort((a, b) => a.id.localeCompare(b.id) || a.clubYear - b.clubYear), [
-    { id: 'gold-sub', clubYear: autumnYear, pricePence: 2400 }, { id: 'gold-sub', clubYear: autumnYear + 1, pricePence: 0 },
+    { id: 'gold-sub', clubYear: autumnYear, pricePence: 2400 },
     { id: 'membership-adult', clubYear: autumnYear, pricePence: order.items.find((item) => item.id === 'membership-adult' && item.clubYear === autumnYear).pricePence },
     { id: 'membership-adult', clubYear: autumnYear + 1, pricePence: order.items.find((item) => item.id === 'membership-adult' && item.clubYear === autumnYear + 1).pricePence }
-  ], '"both" is one basket line charged as two club years; next year\'s monthly item has nothing due now');
-  assert.deepEqual(order.subscriptionPlan.groups.map(({ clubYear, firstDebitAt, cutoffAt }) => [clubYear, firstDebitAt.toMillis(), cutoffAt.toMillis()]), [
-    [autumnYear, Date.UTC(autumnYear + 1, 1, 1), thisYear.end.getTime()],
-    [autumnYear + 1, nextYear.start.getTime(), nextYear.end.getTime()]
-  ], 'this year gets its 1 February debit; next year gets twelve debits from 1 March through 1 February');
-  assert.equal(new Set(order.stripeSubscriptionIds).size, 2, 'each club year has its own subscription, cancelled at its own cut-off');
+  ], 'membership is bought for both years; the subscription once');
+  assert.deepEqual(order.subscriptionPlan.groups.map(({ clubYear, interval, firstDebitAt }) => [clubYear, interval, firstDebitAt.toMillis()]),
+    [[autumnYear, 'month', Date.UTC(autumnYear + 1, 1, 1)]], 'debits from 1 February, carrying on into next club year');
+  assert.equal(new Set(order.stripeSubscriptionIds).size, 1);
   const [member] = await membershipsFor(payer);
   assert.deepEqual([...member.clubYears].sort(), [autumnYear, autumnYear + 1]);
   assert.equal(member.validUntil.toMillis(), nextYear.end.getTime(), 'membership runs to the end of next club year');
-  assert.deepEqual(member.subscriptionItems.map((item) => item.clubYear).sort(), [autumnYear, autumnYear + 1]);
+  assert.deepEqual(member.subscriptionItems.map((item) => item.clubYear), [autumnYear]);
 
   const returning = { returning: true, firstName: details.firstName, lastName: details.lastName, dob: details.dob, disclaimerAccepted: true };
   const again = await checkout(payer, withChoice(build(['gold-sub'], [returning]), 'next'), { billingMode: 'monthly' }, january);
-  assert.equal(again.status, 409, 'a service already held for that club year cannot be bought again');
+  assert.equal(again.status, 409, 'a subscription that carries on is already held for next club year');
   assert.equal(again.json.code, 'already_held');
   const membershipAgain = await checkout(payer, withChoice(build(['membership-adult'], [returning]), 'next'), {}, january);
   assert.equal(membershipAgain.status, 409);
   assert.equal(membershipAgain.json.code, 'membership_active');
+});
+
+await test('yearly subscriptions take the rest of the club year now, then the full year every 1 March, sharing one subscription', async () => {
+  const payer = email('yearly');
+  const details = adultDetails({ firstName: 'Yan', lastName: 'Yearly', email: payer });
+  const first = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'this'), { billingMode: 'annual' }, autumn));
+  const gold = first.items.find((item) => item.id === 'gold-sub');
+  // 10 October: three fifths of the club year have gone, so 40% of twelve discounted months (£288).
+  assert.deepEqual([gold.pricePence, gold.yearlyPence, gold.yearly, gold.interval], [11520, 28800, true, 'year']);
+  assert.deepEqual(first.subscriptionPlan.groups.map(({ interval, firstDebitAt }) => [interval, firstDebitAt.toMillis()]), [['year', thisYear.end.getTime()]]);
+  const [subscriptionId] = first.stripeSubscriptionIds;
+  const stored = (await db.collection('subscriptions').doc(subscriptionId).get()).data();
+  assert.deepEqual([stored.interval, stored.cancelAt, stored.items[0].yearlyAmount, stored.items[0].interval], ['year', null, 288, 'year']);
+  const second = await orderData(await buy(payer, lessonFor('Yara'), { billingMode: 'annual' }, autumn));
+  assert.deepEqual(second.stripeSubscriptionIds, [subscriptionId], 'items paid yearly with the same details and the same next payment join it');
 });
 
 await test('next year\'s monthly items with nothing due now only save the payment details', async () => {
@@ -2058,16 +2074,16 @@ await test('next year\'s monthly items with nothing due now only save the paymen
   assert.equal(order.subscriptionPlan.groups[0].firstDebitAt.toMillis(), nextYear.start.getTime());
 });
 
-await test('this year\'s membership stops on 8 February and its monthly items are the joining charge only in February', async () => {
+await test('this year\'s membership stops on 8 February, and monthly items bought in February carry on from 1 March', async () => {
   const payer = email('february');
   const details = adultDetails({ firstName: 'Fen', lastName: 'February', email: payer });
   const orderRef = await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'this'), { billingMode: 'monthly' }, earlyFebruary);
   const order = await orderData(orderRef);
   const gold = order.items.find((item) => item.id === 'gold-sub');
   assert.equal(gold.pricePence, 3000, 'all of February');
-  assert.equal(gold.debits, 0);
-  assert.ok(!order.subscriptionPlan, 'no direct debit is set up');
-  assert.ok(!order.stripeSubscriptionIds?.length);
+  assert.deepEqual(order.subscriptionPlan.groups.map(({ interval, firstDebitAt }) => [interval, firstDebitAt.toMillis()]), [['month', thisYear.end.getTime()]],
+    'debits start on 1 March and carry on');
+  assert.equal(order.stripeSubscriptionIds.length, 1);
 
   const late = adultDetails({ firstName: 'Lou', lastName: 'Late', email: email('february-late') });
   const refused = await checkout(late.email, withChoice(build(['membership-adult'], [late]), 'this'), {}, lateFebruary);
@@ -2076,7 +2092,7 @@ await test('this year\'s membership stops on 8 February and its monthly items ar
   assert.equal((await checkout(late.email, withChoice(build(['membership-adult'], [late]), 'next'), {}, lateFebruary)).status, 200);
 });
 
-await test('a subscription ending at the club-year boundary voids an unpaid February debit and is flagged for staff', async () => {
+await test('a subscription stopped at the year end, as the member asked, voids an unpaid February debit and is flagged for staff', async () => {
   const ending = async (address, name, endedAt) => {
     const order = await orderData(await buy(address, lessonFor(name), { billingMode: 'monthly' }, autumn));
     const [id] = order.stripeSubscriptionIds;
@@ -2428,9 +2444,6 @@ await test('earlier answers are offered only for the wording in force now; a no 
 await test('a delayed bank payment backdates the subscription to its missed 1st', async () => {
   // Checkout 40 days ago, paid only now: the first 1st has passed.
   const checkedOut = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
-  const { debits, subscriptionEnd } = monthlyDebits(clubYearOf(checkedOut), checkedOut);
-  const schedule = debits > 0 && nextFirst(new Date()) < subscriptionEnd;
-  if (!schedule) { console.log('       (skipped: too close to the club-year change)'); return; }
   const orderRef = await buy(email('delayed'), lessonFor('Del'), { billingMode: 'monthly' }, testNow(checkedOut));
   const order = await orderData(orderRef);
   assert.equal(order.subscriptionPlan.status, 'active', order.subscriptionPlan.error);
@@ -2554,6 +2567,53 @@ await test('renewal emails: one per contact address, a basket link, sent on 1 Fe
   await Promise.all(ids.map((id) => db.collection('memberships').doc(id).update({ clubYears: FieldValue.arrayUnion(autumnYear + 1), renewalReminderSentFor: [] })));
   assert.equal((await job(lateFebruary)).json.emails, 0, 'renewed members are skipped');
   assert.equal((await mails()).length, 2);
+});
+
+await test('subscription payers get a separate continue/cancel email; Cancel stops it at the end of February and can be undone until 1 March', async () => {
+  const payer = email('carry-on');
+  const details = adultDetails({ firstName: 'Cora', lastName: 'Carry', email: payer });
+  const order = await orderData(await buy(payer, withChoice(build(['membership-adult', 'gold-sub'], [details]), 'this'), { billingMode: 'monthly' }, autumn));
+  const [subscriptionId] = order.stripeSubscriptionIds;
+  const record = async () => (await db.collection('subscriptions').doc(subscriptionId).get()).data();
+  const adminAt = (when) => ({ ...admin, ...when });
+  const continuationMails = async () => (await db.collection('testMail').where('kind', '==', 'subscription-continuation').where('email', '==', payer).get()).docs
+    .map((document) => document.data());
+  assert.equal((await call('POST', '/api/admin/renewals/send', { body: {}, headers: adminAt(january) })).status, 200);
+  const [mail, ...others] = await continuationMails();
+  assert.equal(others.length, 0, 'one email per subscription');
+  assert.match(mail.subject, /^Confirm or cancel your Forth Canoe Club subscription for /);
+  assert.match(mail.html, /background:#15803d"><a href="[^"]+answer=confirm"[^>]*>Confirm</, 'a green Confirm button');
+  assert.match(mail.html, /background:#b91c1c"><a href="[^"]+answer=cancel"[^>]*>Cancel</, 'and a red Cancel button');
+  const key = /\/subscription\?key=([A-Za-z0-9_-]+)&answer=cancel/.exec(mail.body)[1];
+  const opened = await call('GET', `/api/subscription-continuation/${key}`, { headers: january });
+  assert.equal(opened.status, 200, opened.text);
+  assert.deepEqual([opened.json.status, opened.json.open, opened.json.items.map((item) => item.price)], ['unconfirmed', true, ['£30.00 a month']]);
+  assert.equal((await record()).continuation.status, 'unconfirmed', 'opening the link changes nothing');
+  assert.equal((await call('POST', `/api/subscription-continuation/${key}`, { body: { answer: 'maybe' }, headers: january })).status, 400);
+
+  const cancelled = await call('POST', `/api/subscription-continuation/${key}`, { body: { answer: 'cancel' }, headers: january });
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal(cancelled.json.status, 'cancelled');
+  assert.equal((await record()).cancelAt.toMillis(), nextYear.start.getTime(), 'Stripe stops it at the start of 1 March');
+  const [member] = await membershipsFor(payer);
+  assert.equal(member.subscriptionItems[0].endsAt.toMillis(), nextYear.start.getTime());
+  const returning = { returning: true, firstName: details.firstName, lastName: details.lastName, dob: details.dob, disclaimerAccepted: true };
+  const nextYearGold = await checkout(payer, withChoice(build(['membership-adult', 'gold-sub'], [returning]), 'next'), { billingMode: 'monthly' }, january);
+  assert.equal(nextYearGold.status, 200, `once it ends with this club year, next year can be bought again: ${nextYearGold.text}`);
+  assert.equal((await db.collection('testMail').where('kind', '==', 'subscription-continuation-answer').where('email', '==', payer).get()).size, 1,
+    'the cancellation is confirmed by email');
+  const counts = (await call('GET', '/api/admin/renewals', { headers: adminAt(january) })).json.subscriptions;
+  assert.ok(counts.cancelled >= 1 && counts.renewalYear === autumnYear + 1, JSON.stringify(counts));
+
+  const confirmed = await call('POST', `/api/subscription-continuation/${key}`, { body: { answer: 'confirm' }, headers: january });
+  assert.equal(confirmed.status, 200, confirmed.text);
+  assert.deepEqual([(await record()).cancelAt, (await record()).continuation.status], [null, 'confirmed'], 'changing the answer removes the stop');
+  const job = (when) => call('POST', '/api/jobs/renewals', { body: {}, headers: { Authorization: `Bearer ${process.env.RENEWAL_JOB_TOKEN}`, ...when } });
+  assert.equal((await job(testNow(londonNoon(autumnYear + 1, 1, 20)))).status, 200);
+  assert.equal((await continuationMails()).length, 1, 'nobody who answered gets the reminder');
+  const closed = await call('POST', `/api/subscription-continuation/${key}`, { body: { answer: 'cancel' }, headers: testNow(londonNoon(autumnYear + 1, 2, 2)) });
+  assert.equal(closed.status, 409);
+  assert.equal(closed.json.code, 'continuation_closed', 'answers close when the club year starts');
 });
 
 await db.collection('products').doc(lessonId).delete();

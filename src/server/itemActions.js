@@ -232,13 +232,14 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
         if (wantsRevoke) {
           const item = current.items[index];
           const plan = current.subscriptionPlan;
-          if (item.monthly && plan && !plan.recordedAt) {
-            throw fail(409, 'Monthly payment setup is unfinished. Reconcile that setup before revoking this item so billing cannot restart later.');
+          const recurring = item.monthly || item.yearly;
+          if (recurring && plan && !plan.recordedAt) {
+            throw fail(409, 'Subscription setup is unfinished. Reconcile that setup before revoking this item so billing cannot restart later.');
           }
           // A failed setup may have left this item live in Stripe without a record the website could stop.
           const group = (plan?.groups || []).find((candidate) => candidate.lineIds?.includes(item.lineId));
-          if (item.monthly && plan?.status === 'failed' && group?.stripeSubscriptionId && !group.recorded && !group.partialLineIds?.includes(item.lineId)) {
-            throw fail(409, `Monthly payments for this item may be live in Stripe (${group.stripeSubscriptionId}) but are not recorded. Retry the setup under Needs attention, or cancel it in Stripe, before revoking.`);
+          if (recurring && plan?.status === 'failed' && group?.stripeSubscriptionId && !group.recorded && !group.partialLineIds?.includes(item.lineId)) {
+            throw fail(409, `Subscription payments for this item may be live in Stripe (${group.stripeSubscriptionId}) but are not recorded. Retry the setup under Needs attention, or cancel it in Stripe, before revoking.`);
           }
           if (!item.lineId && (isMembership(item) || item.category === 'SERVICES')) {
             throw fail(409, 'This legacy item has no person-level line ID. Reconcile its entitlement on the member record before revoking it.');
@@ -315,7 +316,7 @@ export const registerItemActionRoutes = (app, { requireAdmin, db, stripeRequest,
       });
       res.set('Cache-Control', 'no-store');
       res.json({ success: true, ...(refund ? { refundId: refund.id, refundStatus: refund.status } : {}),
-        monthlyPaymentsStopped: Boolean(wantsRevoke && loaded.item.monthly) });
+        monthlyPaymentsStopped: Boolean(wantsRevoke && (loaded.item.monthly || loaded.item.yearly)) });
     } catch (error) {
       if (claimed && freshRefundRequest && error.stripeStatus >= 400 && error.stripeStatus < 500 && error.stripeCode !== 'idempotency_key_in_use') {
         // A definite Stripe rejection has no refund to reconcile. Network/5xx failures keep the claim.

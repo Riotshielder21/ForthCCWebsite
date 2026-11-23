@@ -159,13 +159,13 @@ stripe listen --forward-to localhost:3002/api/stripe/webhook \
 
 Then restart the API with a Stripe **test** secret key in `STRIPE_SECRET_KEY` and the signing secret the CLI prints in `STRIPE_WEBHOOK_SECRET`. Pay with card `4242 4242 4242 4242`, any future expiry and any CVC. Cancel any test subscriptions afterwards, and never commit keys.
 
-To test monthly billing over time, [test-stripe-clocks.js](scripts/test-stripe-clocks.js) uses Stripe Test Clocks in a separate Stripe sandbox and cleans up after itself. Put a restricted test key (`STRIPE_SANDBOX_TEST_KEY=rk_test_...`) in a file outside the repository, `chmod 600` it, then:
+To test subscription billing over time (monthly and yearly, carrying on past 1 March, and the year-end stop from the continue/cancel email), [test-stripe-clocks.js](scripts/test-stripe-clocks.js) uses Stripe Test Clocks in a separate Stripe sandbox and cleans up after itself. Put a restricted test key (`STRIPE_SANDBOX_TEST_KEY=rk_test_...`) in a file outside the repository, `chmod 600` it, then:
 
 ```bash
 node scripts/test-stripe-clocks.js /absolute/path/to/stripe-sandbox.env
 ```
 
-The key needs write access to test clocks, customers, payment methods, products and subscriptions, and read access to invoices. Set `STRIPE_CLOCK_CASE` to `current-year`, `next-year`, `delayed-payment` or `failed-payment` to run one case.
+The key needs write access to test clocks, customers, payment methods, products and subscriptions, and read access to invoices. Set `STRIPE_CLOCK_CASE` to `current-year`, `next-year`, `yearly`, `delayed-payment`, `year-end-cancel` or `failed-payment` to run one case.
 
 ### Committee and Stripe acceptance
 
@@ -173,7 +173,7 @@ The remaining checks for issues #41–#62 belong in [launch acceptance #138](htt
 
 1. In Stripe's test Dashboard, disable customer trial-ending reminder emails for the club subscriptions. Keep other payment-failure notifications as agreed.
 2. Forward actual sandbox webhooks with the `stripe listen` command above, restart the local API with the sandbox key, and use the real website checkout (not `stripe trigger`, which produces unrelated fixture events). Choose Bacs with Stripe's current documented Bacs test account details. Confirm the mandate appears and the order stays pending until the asynchronous payment succeeds, then becomes paid exactly once and grants the right items. Repeat with Stripe's documented failure account: no membership should be granted, and retry/cancel should work.
-3. Use two made-up people sharing one monthly subscription. In Reports, schedule one item's removal as a volunteer benefit, then cancel/revoke that same item. Inspect the **actual Stripe schedule phases**: the removed price must not occur in any current/future phase, the other person's price must remain, and no unwanted proration or new charge should appear. Cancel test subscriptions afterwards.
+3. Use two made-up people sharing one monthly subscription. In Reports, schedule one item's removal as a volunteer benefit, then cancel/revoke that same item. Inspect the **actual Stripe schedule phases**: the removed price must not occur in any current/future phase, the other person's price must remain (the schedule then releases the subscription, which carries on), and no unwanted proration or new charge should appear. Cancel test subscriptions afterwards.
 4. Submit GDPR erasure for a synthetic Stripe customer with no remaining payer obligations: billing stops, current identifying fields are redacted, and deletion completes. Repeat for one person sharing billing: only that person's item ends, while the other person's payments and payment method remain. The existing isolated GDPR script covers a failed-delete retry; verifying a real permission failure needs a deliberately restricted test key and must not be done to a live customer. Record any Stripe historical invoices/mandates that need separate retention review.
 5. A genuinely live Bacs payment, settlement and refund is a separate controlled launch check requiring explicit agreement on the payer, amount and refund. Sandbox results do not prove bank settlement in live mode.
 

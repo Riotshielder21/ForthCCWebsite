@@ -1,23 +1,27 @@
 
 /**
  * How a product is charged. Fixed is the full price whenever bought; prorated is the full price, or 60% from 1 October;
- * subscription ("prorated monthly" for services) is a monthly price for each month left until the next 1 March.
+ * subscription is a monthly price paid on the 1st, or twelve months paid every 1 March, until cancelled.
  */
 export const PRICING_MODES = ['fixed', 'prorated', 'subscription'];
 const CATEGORY_TYPES = { VOUCHERS: 'voucher', EVENTS: 'event-ticket', SUBSCRIPTIONS: 'subscription', MERCHANDISE: 'merchandise' };
 
 /**
  * The type follows the category; only services choose a pricing mode, and only subscription pricing can be paid
- * monthly (when `allowMonthly` is set).
+ * monthly (when `allowMonthly` is set). Paid annually, a subscription's first payment covers the rest of the club year
+ * in 20% steps unless `thresholdProration` is turned off, when it is the full year.
  */
 export const productTerms = (product) => {
-  if (product.category === 'MEMBERSHIP') return { type: product.type === 'external' ? 'external' : 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false };
+  const subscriptionTerms = (allowMonthly) => ({ type: 'subscription', pricingMode: 'subscription', allowMonthly, thresholdProration: product.thresholdProration !== false });
+  const fixed = { pricingMode: 'fixed', allowMonthly: false, thresholdProration: false };
+  if (product.category === 'MEMBERSHIP') return { type: product.type === 'external' ? 'external' : 'annual-oneoff', ...fixed };
   if (product.category === 'SERVICES') {
     const pricingMode = PRICING_MODES.includes(product.pricingMode) ? product.pricingMode : 'fixed';
-    return { type: pricingMode === 'subscription' ? 'subscription' : 'yearly-service', pricingMode, allowMonthly: pricingMode === 'subscription' && product.allowMonthly === true };
+    return pricingMode === 'subscription' ? subscriptionTerms(product.allowMonthly === true)
+      : { type: 'yearly-service', pricingMode, allowMonthly: false, thresholdProration: false };
   }
-  if (product.category === 'SUBSCRIPTIONS') return { type: 'subscription', pricingMode: 'subscription', allowMonthly: product.allowMonthly === true };
-  return { type: CATEGORY_TYPES[product.category] || 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false };
+  if (product.category === 'SUBSCRIPTIONS') return subscriptionTerms(product.allowMonthly === true);
+  return { type: CATEGORY_TYPES[product.category] || 'annual-oneoff', ...fixed };
 };
 
 /**

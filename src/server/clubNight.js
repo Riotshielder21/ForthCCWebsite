@@ -180,7 +180,7 @@ export const registerClubNightRoutes = (app, { requireAdmin, db, emailCodes, req
       }
       const memberDocument = matches.length === 1 ? matches[0] : null;
       const member = memberDocument
-        ? { ...memberDocument.data(), entitlements: (await loadEntitlements(db(), [memberDocument.id])).get(memberDocument.id) || [] } : undefined;
+        ? { ...memberDocument.data(), entitlements: (await loadEntitlements(db(), [memberDocument.id], null, { members: new Map([[memberDocument.id, memberDocument.data()]]) })).get(memberDocument.id) || [] } : undefined;
       const memberStatus = member ? membershipStatus(member, now, await readJustgoSync(db(), now)) : matches.length > 1 ? 'Needs review' : 'No';
       const membershipActive = memberStatus.startsWith('Active');
       const clubYear = clubYearOf(now);

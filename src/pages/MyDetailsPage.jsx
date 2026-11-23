@@ -134,8 +134,9 @@ function MonthlyPayment({ subscription, onRequested }) {
   };
   return <section className="main_tile SpaceT4">
     {!subscription.paidByYou && <p className="text_container">Paid by someone else for people in your household.</p>}
+    {subscription.continuation && <p className="text_container">{subscription.continuation}</p>}
     <ul className="text_container">{subscription.items.map((item) => <li key={item.key}>
-      {item.name}{item.names.length ? ` for ${item.names.join(', ')}` : ''} · £{item.monthlyAmount.toFixed(2)} a month
+      {item.name}{item.names.length ? ` for ${item.names.join(', ')}` : ''} · {item.price}
       {item.cancelRequested && <strong> · Cancellation requested</strong>}
     </li>)}</ul>
     {requestable.length > 0 && !open && <button className="EditorCommand" type="button" onClick={() => { setOpen(true); setMessage(''); setChosen(requestable.map((item) => item.key)); }}>Request cancellation</button>}
@@ -177,7 +178,7 @@ export default function MyDetailsPage() {
     <h1 className="page_heading_bold_1">My details</h1>
     {notice && <p role="status">{notice}</p>}
     {!session ? <EmailCodeSignIn purpose="details" askDob onVerified={(verified) => { setNotice(''); setError(''); setSession(verified); }}
-      intro="See your current purchases, ask to stop monthly payments, give or withdraw photo and video consent, and update the phone number, address, emergency contact or email address we hold for your membership. Enter the email you joined or bought with and your date of birth, and we will send you a 6-digit code. Booking for a child or family member? Use their date of birth instead. Name and date of birth changes: contact secretary@forthcanoeclub.co.uk." />
+      intro="See your current purchases, ask to stop subscription payments, give or withdraw photo and video consent, and update the phone number, address, emergency contact or email address we hold for your membership. Enter the email you joined or bought with and your date of birth, and we will send you a 6-digit code. Booking for a child or family member? Use their date of birth instead. Name and date of birth changes: contact secretary@forthcanoeclub.co.uk." />
       : <>
         <p className="text_container">Signed in as {session.email}. <button className="EditorCommand" type="button" onClick={() => signOut()}>Sign out</button></p>
         {error && <p className="StatusTextError" role="alert">{error}</p>}
@@ -185,7 +186,7 @@ export default function MyDetailsPage() {
           onSaved={(saved) => setHouseholds((current) => current.map((entry) => entry.id === saved.id ? saved : entry))}
           onEmailChanged={signOut} />)}
         {monthly.length > 0 && <section className="SpaceT4">
-          <h3 className="tile_heading_bold_1">Monthly payments</h3>
+          <h3 className="tile_heading_bold_1">Subscriptions</h3>
           {monthly.map((subscription) => <MonthlyPayment key={subscription.subscriptionId} subscription={subscription}
             onRequested={(id, keys) => setMonthly((current) => current.map((entry) => entry.subscriptionId !== id ? entry
               : { ...entry, items: entry.items.map((item) => keys.includes(item.key) ? { ...item, cancelRequested: true } : item) }))} />)}

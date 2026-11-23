@@ -116,8 +116,12 @@ test('scheduled cancellation preserves all items in the paid phase and the unrel
   assert.equal(params['phases[0][items][1][price]'], 'p2');
   assert.equal(params['phases[1][items][0][price]'], 'p2');
   assert.equal(params['phases[1][items][0][quantity]'], '2');
-  assert.equal(params['phases[1][end_date]'], '900');
+  assert.equal(params['phases[1][end_date]'], '900', 'an end the member asked for is kept');
+  assert.equal(params['end_behavior'], 'cancel');
   assert.equal(params['proration_behavior'], 'none');
+  const continuing = Object.fromEntries(volunteerCancellationPhases({ ...subscription, cancel_at: null }, { current_phase: { start_date: 100 } }, 'free').params);
+  assert.deepEqual([continuing['phases[1][iterations]'], continuing['phases[1][end_date]'], continuing['end_behavior'], continuing['phases[1][items][0][price]']],
+    ['1', undefined, 'release', 'p2'], 'without an end the other items carry on after the schedule is released');
   assert.throws(() => volunteerCancellationPhases({ ...subscription, discounts: [{}] }, {}, 'free'), /additional billing/);
   const whole = volunteerCancellationPhases({ ...subscription, items: { data: [subscription.items.data[0]] } }, { current_phase: { start_date: 100 } }, 'free');
   assert.equal(Object.fromEntries(whole.params)['phases[1][start_date]'], undefined, 'nothing else is charged when the final item ends');

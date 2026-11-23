@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   holdsForClubYear,
   londonMidnight, clubYearOf, clubYearDates, joiningShare, nextFirst, fullMonthsAfterCurrent, clubYearChoices,
-  resolveClubYearChoice, clubYearsFor, monthlyDebits, clubYearLabel, recordClubYear, clubYearKind
+  resolveClubYearChoice, clubYearsFor, firstRecurringCharge, thresholdShare, clubYearLabel, recordClubYear, clubYearKind
 } from './clubYear.js';
 
 const london = (year, month, day, hour = 12) => new Date(londonMidnight(year, month, day).getTime() + hour * 60 * 60 * 1000);
@@ -41,18 +41,24 @@ test('the joining-month charge rounds the rest of the month up to the next 20%',
   assert.equal(joiningShare(london(2027, 0, 8)), 0.8);
 });
 
-test('monthly debits include the full February payment and stop at the 1 March club-year end', () => {
+test('subscriptions first charge in full on the next 1st (monthly) or 1 March (annual) and then carry on', () => {
   assert.equal(nextFirst(london(2027, 9, 15)).toISOString(), '2027-11-01T00:00:00.000Z');
   assert.equal(nextFirst(london(2027, 11, 31)).toISOString(), '2028-01-01T00:00:00.000Z');
   assert.equal(fullMonthsAfterCurrent(london(2027, 2, 1)), 11);
   assert.equal(fullMonthsAfterCurrent(london(2027, 9, 9)), 4);
   assert.equal(fullMonthsAfterCurrent(london(2028, 0, 20)), 1);
   assert.equal(fullMonthsAfterCurrent(london(2028, 1, 3)), 0);
-  const january = monthlyDebits(2027, london(2028, 0, 20));
-  assert.deepEqual([january.firstDebit.toISOString(), january.debits], ['2028-02-01T00:00:00.000Z', 1]);
-  assert.deepEqual(monthlyDebits(2027, london(2028, 1, 3)), { firstDebit: null, debits: 0, subscriptionEnd: clubYearDates(2027).end });
-  const next = monthlyDebits(2028, london(2028, 0, 20));
-  assert.deepEqual([next.firstDebit.toISOString(), next.debits, next.subscriptionEnd.toISOString()], ['2028-03-01T00:00:00.000Z', 12, '2029-03-01T00:00:00.000Z']);
+  assert.equal(firstRecurringCharge(2027, 'month', london(2028, 0, 20)).toISOString(), '2028-02-01T00:00:00.000Z');
+  assert.equal(firstRecurringCharge(2027, 'month', london(2028, 1, 3)).toISOString(), '2028-03-01T00:00:00.000Z', 'February joiners carry on from 1 March');
+  assert.equal(firstRecurringCharge(2028, 'month', london(2028, 0, 20)).toISOString(), '2028-03-01T00:00:00.000Z');
+  assert.equal(firstRecurringCharge(2027, 'year', london(2027, 9, 9)).toISOString(), '2028-03-01T00:00:00.000Z');
+  assert.equal(firstRecurringCharge(2028, 'year', london(2028, 0, 20)).toISOString(), '2028-03-01T00:00:00.000Z');
+});
+
+test('the first annual payment drops by 20% each time another fifth of the club year has gone', () => {
+  // 2027/28 has 366 days, so the fifths fall after 73.2, 146.4, 219.6 and 292.8 days.
+  assert.deepEqual([[2027, 2, 1], [2027, 4, 13], [2027, 4, 14], [2027, 6, 25], [2027, 6, 26], [2027, 9, 6], [2027, 9, 7], [2027, 11, 18], [2027, 11, 19], [2028, 1, 29]]
+    .map(([year, month, day]) => thresholdShare(london(year, month, day, 0.5))), [1, 1, 0.8, 0.8, 0.6, 0.6, 0.4, 0.4, 0.2, 0.2]);
 });
 
 test('only membership, services and subscriptions have a club year', () => {
@@ -67,7 +73,7 @@ test('next year is on sale from 1 January; this year stops on 8 February for mem
   assert.deepEqual(clubYearChoices(membership, at(0, 1)), ['this', 'next', 'both']);
   assert.deepEqual(clubYearChoices(membership, at(1, 7)), ['this', 'next', 'both']);
   assert.deepEqual(clubYearChoices(membership, at(1, 8)), ['next']);
-  assert.deepEqual(clubYearChoices(monthly, at(1, 14)), ['this', 'next', 'both']);
+  assert.deepEqual(clubYearChoices(monthly, at(1, 14)), ['this', 'next'], 'a subscription carries on, so it is never bought for both years');
   assert.deepEqual(clubYearChoices(monthly, at(1, 15)), ['next']);
   assert.deepEqual(clubYearChoices(boatHire, at(1, 15)), ['next']);
   assert.deepEqual(clubYearChoices(monthly, london(2028, 2, 1)), ['this']);
@@ -78,16 +84,10 @@ test('next year is on sale from 1 January; this year stops on 8 February for mem
   assert.deepEqual(clubYearsFor('next', at(0, 5)), [2028]);
 });
 
-test('sales close on 15 February while subscriptions continue through the February debit', () => {
-  const monthlySalesEnd = clubYearDates(2027).salesCutoff;
-  const subscriptionEnd = clubYearDates(2027).end;
-  assert.equal(monthlySalesEnd.toISOString(), '2028-02-15T00:00:00.000Z');
-  assert.equal(subscriptionEnd.toISOString(), '2028-03-01T00:00:00.000Z');
-  assert.deepEqual(clubYearChoices(monthly, new Date('2028-02-14T12:00:00Z')), ['this', 'next', 'both']);
+test('this year\'s sales close on 15 February; later subscriptions start on 1 March', () => {
+  assert.equal(clubYearDates(2027).salesCutoff.toISOString(), '2028-02-15T00:00:00.000Z');
+  assert.deepEqual(clubYearChoices(monthly, new Date('2028-02-14T12:00:00Z')), ['this', 'next']);
   assert.deepEqual(clubYearChoices(monthly, new Date('2028-02-15T00:00:00Z')), ['next']);
-  assert.deepEqual(monthlyDebits(2027, london(2028, 0, 20)), {
-    firstDebit: londonMidnight(2028, 1, 1), debits: 1, subscriptionEnd
-  });
 });
 
 test('older records take their club year from when they were granted', () => {
@@ -97,7 +97,7 @@ test('older records take their club year from when they were granted', () => {
   assert.equal(recordClubYear({}), null);
 });
 
-test('an item already held for a club year is recognised from term entitlements and monthly items', () => {
+test('an item already held for a club year is recognised from term entitlements and subscription items', () => {
   const member = {
     entitlements: [{ productId: 'hire', grantedAt: new Date(2026, 5, 1) }, { productId: 'old', clubYear: 2026, endedAt: new Date(2026, 6, 1) }],
     subscriptionItems: [{ productId: 'coach', clubYear: 2027, status: 'active' }, { productId: 'gone', clubYear: 2026, status: 'cancelled' }]
@@ -106,6 +106,10 @@ test('an item already held for a club year is recognised from term entitlements 
   assert.equal(holdsForClubYear(member, 'hire', 2027), false);
   assert.equal(holdsForClubYear(member, 'old', 2026), false);
   assert.equal(holdsForClubYear(member, 'coach', 2027), true);
+  assert.equal(holdsForClubYear(member, 'coach', 2026), false, 'not before it started');
+  assert.equal(holdsForClubYear(member, 'coach', 2029), true, 'a subscription carries on into later years');
   assert.equal(holdsForClubYear(member, 'gone', 2026), false);
+  const ending = { subscriptionItems: [{ productId: 'coach', clubYear: 2027, status: 'active', endsAt: clubYearDates(2027).end }] };
+  assert.deepEqual([2027, 2028].map((year) => holdsForClubYear(ending, 'coach', year)), [true, false], 'one cancelled at the year end can be bought again for next year');
   assert.equal(holdsForClubYear(undefined, 'hire', 2026), false);
 });

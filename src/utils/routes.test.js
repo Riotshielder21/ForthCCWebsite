@@ -38,7 +38,7 @@ test('hosting serves canonical paths and revalidates pages and the worker separa
   }
   for (const path of ['/assets/index-abc123.js', '/sw.js', '/content/pages/home.json']) assert.doesNotMatch(path, pageHtml);
   assert.equal(hosting.headers.find((rule) => rule.source === '404.html').headers[0].value, 'no-cache');
-  for (const source of ['/order/**', '/payment-success', '/payment-issue']) {
+  for (const source of ['/order/**', '/payment-success', '/payment-issue', '/subscription']) {
     const headers = Object.fromEntries(hosting.headers.find((rule) => rule.source === source).headers.map(({ key, value }) => [key, value]));
     assert.equal(headers['Cache-Control'], 'no-store', source);
     assert.equal(headers['Referrer-Policy'], 'no-referrer', source);

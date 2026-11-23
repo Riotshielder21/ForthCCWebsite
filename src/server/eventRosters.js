@@ -41,7 +41,7 @@ export const registerEventRosterRoutes = (app, { requireAdmin, db, sendEmail, lo
     const households = new Map(householdIds.length
       ? (await db().getAll(...householdIds.map((id) => db().collection('households').doc(id)))).filter((document) => document.exists).map((document) => [document.id, document.data()])
       : []);
-    const entitlements = await loadEntitlements(db(), members.map(([id]) => id));
+    const entitlements = await loadEntitlements(db(), members.map(([id]) => id), null, { members: new Map(members) });
     return new Map(members.map(([id, member]) => [id, { ...member, household: households.get(member.householdId) || {}, entitlements: entitlements.get(id) || [] }]));
   };
 
