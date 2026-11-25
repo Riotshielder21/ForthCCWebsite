@@ -39,14 +39,14 @@ function ExistingPayments({ volunteer, request }) {
   if (!data.linked) return <p className="text_container">Not linked to a membership yet, so there are no existing payments to adjust.</p>;
   const monthlyPending = data.monthly.some((entry) => entry.pending);
   return <>
-    <h4 className="FormLabel">Monthly payments (adjusted automatically)</h4>
+    <h4 className="FormLabel">Subscription payments (adjusted automatically)</h4>
     {data.monthly.length ? <ul className="ReportItems">{data.monthly.map((entry) => <li key={`${entry.subscriptionId}/${entry.lineId}`}>
       <strong>{entry.name}</strong>: {entry.cancelScheduledAt ? `free as a volunteer benefit; removed from the debit after ${dayLabel(entry.cancelScheduledAt)}`
-        : entry.pending ? `not adjusted yet (${entry.pending.action === 'remove' ? 'to be removed as free' : `${pounds(entry.pending.from)} → ${pounds(entry.pending.to)} a month`})`
-          : `${pounds(entry.adjustedFrom)} → ${pounds(entry.monthlyAmount)} a month from the next payment`}
+        : entry.pending ? `not adjusted yet (${entry.pending.action === 'remove' ? 'to be removed as free' : `${pounds(entry.pending.from)} → ${pounds(entry.pending.to)} a ${entry.interval === 'year' ? 'year' : 'month'}`})`
+          : `${pounds(entry.adjustedFrom)} → ${pounds(entry.interval === 'year' ? entry.yearlyAmount : entry.monthlyAmount)} a ${entry.interval === 'year' ? 'year' : 'month'} from the next payment`}
       {entry.error && <><br /><span className="StatusTextError">{entry.error}</span></>}
-    </li>)}</ul> : <p className="text_container">{data.monthsLeft ? 'No monthly payments to adjust.' : 'The last monthly payment of this club year has been taken; nothing to adjust.'}</p>}
-    {monthlyPending && <button type="button" className="EditorCommand" disabled={Boolean(busy)} onClick={retryMonthly}>{busy === 'monthly' ? 'Adjusting…' : 'Retry monthly adjustment'}</button>}
+    </li>)}</ul> : <p className="text_container">No subscription payments to adjust for this club year.</p>}
+    {monthlyPending && <button type="button" className="EditorCommand" disabled={Boolean(busy)} onClick={retryMonthly}>{busy === 'monthly' ? 'Adjusting…' : 'Retry subscription adjustment'}</button>}
     <h4 className="FormLabel">Paid in full (admin refund)</h4>
     {data.annual.length ? <ul className="ReportItems">{data.annual.map((entry) => {
       const key = `${entry.orderRef}/${entry.lineId}`;

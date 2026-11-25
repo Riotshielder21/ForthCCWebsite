@@ -16,7 +16,7 @@ const DESCRIPTIONS = {
 const PRIVATE_TITLES = {
   admin: 'Admin', 'admin-reports': 'Admin Reports', 'club-night': 'Check-ins',
   'my-details': 'My Details', checkout: 'Checkout', 'order-lookup': 'Order',
-  'payment-success': 'Payment', 'payment-issue': 'Payment'
+  'payment-success': 'Payment', 'payment-issue': 'Payment', subscription: 'Subscription'
 };
 
 export function pageMetadata(page) {

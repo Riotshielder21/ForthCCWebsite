@@ -75,7 +75,7 @@ export const membershipStatus = (fields, now = new Date(), justgoSync = { health
 // Anything that may have recurring Stripe billing: older single subscriptions, monthly items and members' payments.
 export const subscriptionWarning = (fields) => Boolean(fields.stripeSubscriptionId || fields.stripeSubscriptionIds?.length
   || fields.stripeMembershipSubscriptionId || fields.subscriptionIds?.length || fields.subscriptionPlan
-  || (fields.items || []).some((item) => item.type === 'subscription' || item.monthly));
+  || (fields.items || []).some((item) => item.type === 'subscription' || item.monthly || item.yearly));
 
 // `member` is the person's current membership record: existing members only confirm a few details at checkout,
 // so the rest (contact, emergency, medical) is read from their record.
@@ -132,6 +132,7 @@ export const orderReport = (id, fields, members = new Map()) => ({
     type: String(item.type || ''), price: Number.isFinite(Number(item.pricePence)) ? Number(item.pricePence) / 100 : null,
     revokedAt: reportDate(item.revokedAt), revokedBy: item.revokedBy || '', revokeReason: item.revokeReason || '',
     ...(item.monthly ? { monthly: true } : {}),
+    ...(item.yearly ? { yearly: true } : {}),
     ...(item.monthlyCancelledAt ? { monthlyCancelledAt: reportDate(item.monthlyCancelledAt) } : {}),
     ...(fields.itemActionPending?.lineId === orderLineId(item, index) ? { actionPending: true } : {}),
     ...(item.attendeeErased ? { attendeeErased: true } : {}),

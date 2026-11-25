@@ -1,4 +1,8 @@
-/** Preserve this paid period and every other line, then remove the selected item at its end. */
+/**
+ * Keep this paid period and every other line, then remove the selected item at its end. The other items carry on: the
+ * schedule runs them for one more period and then releases the subscription, unless the member asked for it to end
+ * (`cancel_at`), which is kept. With nothing left, the subscription is cancelled at the end of the paid period.
+ */
 export const volunteerCancellationPhases = (subscription, schedule, stripeItemId) => {
   if (subscription.discounts?.length || subscription.automatic_tax?.enabled || subscription.default_tax_rates?.length || subscription.pending_update) {
     throw new Error('This subscription has additional billing settings. Arrange its cancellation in Stripe.');
@@ -6,12 +10,14 @@ export const volunteerCancellationPhases = (subscription, schedule, stripeItemId
   const items = subscription.items?.data || [];
   if (!items.some((item) => item.id === stripeItemId)) throw new Error('The benefit is no longer on this subscription.');
   const end = subscription.current_period_end || items[0]?.current_period_end;
-  const cutoff = subscription.cancel_at;
-  if (!Number.isFinite(end) || !Number.isFinite(cutoff)) throw new Error('The paid period and club-year cutoff must be recorded in Stripe.');
+  if (!Number.isFinite(end)) throw new Error('The paid period must be recorded in Stripe.');
+  const cutoff = Number.isFinite(subscription.cancel_at) ? subscription.cancel_at : null;
   const start = schedule.current_phase?.start_date || schedule.phases?.[0]?.start_date;
   if (!Number.isFinite(start)) throw new Error('The current Stripe schedule start is not recorded.');
-  const boundary = Math.min(end, cutoff);
-  const params = [['end_behavior', 'cancel'], ['proration_behavior', 'none'],
+  const boundary = cutoff ? Math.min(end, cutoff) : end;
+  const remaining = items.filter((item) => item.id !== stripeItemId);
+  const continues = remaining.length > 0 && (!cutoff || cutoff > boundary);
+  const params = [['end_behavior', continues && !cutoff ? 'release' : 'cancel'], ['proration_behavior', 'none'],
     ['phases[0][start_date]', String(start)],
     ['phases[0][end_date]', String(boundary)], ['phases[0][proration_behavior]', 'none']];
   if (subscription.trial_end && subscription.trial_end > start) params.push(['phases[0][trial_end]', String(Math.min(subscription.trial_end, boundary))]);
@@ -21,9 +27,8 @@ export const volunteerCancellationPhases = (subscription, schedule, stripeItemId
       [`phases[${phase}][items][${index}][quantity]`, String(item.quantity || 1)]);
   });
   add(0, items);
-  const remaining = items.filter((item) => item.id !== stripeItemId);
-  if (remaining.length && cutoff > boundary) {
-    params.push(['phases[1][start_date]', String(boundary)], ['phases[1][end_date]', String(cutoff)],
+  if (continues) {
+    params.push(['phases[1][start_date]', String(boundary)], cutoff ? ['phases[1][end_date]', String(cutoff)] : ['phases[1][iterations]', '1'],
       ['phases[1][proration_behavior]', 'none']);
     add(1, remaining);
   }

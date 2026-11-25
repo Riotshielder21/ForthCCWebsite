@@ -39,8 +39,8 @@ test('item action wording separates money back, access removal and stopping mont
   assert.equal(itemActionLabel({ action: 'refund', revoke: true }), 'Refund and revoke');
   assert.equal(itemActionLabel({ action: 'refund', revoke: false }, monthly), 'Refund one payment (billing continues)');
   assert.equal(itemActionLabel({ action: 'revoke' }), 'Revoke access (no refund)');
-  assert.match(describeItemAction({ action: 'refund', revoke: false }, monthly, '£5.00'), /Returns £5\.00.*Access and benefits stay.*Monthly payments carry on/);
-  assert.match(describeItemAction({ action: 'refund', revoke: true }, monthly), /Removes.*Stops this item's future monthly payments/);
+  assert.match(describeItemAction({ action: 'refund', revoke: false }, monthly, '£5.00'), /Returns £5\.00.*Access and benefits stay.*Subscription payments carry on/);
+  assert.match(describeItemAction({ action: 'refund', revoke: true }, monthly), /Removes.*Stops this item's future subscription payments/);
   assert.match(describeItemAction({ action: 'revoke' }, {}), /^No money is returned\. Removes/);
   assert.doesNotMatch(describeItemAction({ action: 'revoke' }, {}), /monthly/);
 });

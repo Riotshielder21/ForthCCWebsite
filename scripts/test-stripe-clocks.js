@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { createClubYearSubscription } from '../src/server/clubYearSubscription.js';
-import { clubYearDates, monthlyDebits } from '../src/utils/clubYear.js';
+import { createRecurringSubscription } from '../src/server/recurringSubscription.js';
+import { clubYearDates, firstRecurringCharge } from '../src/utils/clubYear.js';
 
 const keyFile = process.argv[2];
 if (!keyFile) throw new Error('Usage: node scripts/test-stripe-clocks.js /absolute/path/to/sandbox-key-file');
@@ -10,7 +10,7 @@ const text = await readFile(keyFile, 'utf8');
 const key = text.match(/\brk_test_[A-Za-z0-9]+\b/)?.[0];
 if (!key || /\b(?:sk|rk)_live_/.test(text)) throw new Error('Use a restricted test-mode key only, with no live key in the file.');
 const run = `fcc-clock-${randomUUID()}`;
-const caseNames = ['current-year', 'next-year', 'delayed-payment', 'failed-payment'];
+const caseNames = ['current-year', 'next-year', 'yearly', 'delayed-payment', 'year-end-cancel', 'failed-payment'];
 if (process.env.STRIPE_CLOCK_CASE && !caseNames.includes(process.env.STRIPE_CLOCK_CASE)) {
   throw new Error(`STRIPE_CLOCK_CASE must be one of: ${caseNames.join(', ')}`);
 }
@@ -61,15 +61,27 @@ const fixture = async (name, date, paymentMethod = 'pm_card_visa') => {
   return { clock: clock.id, customer: customer.id, method: method.id, product: product.id, name };
 };
 
-const create = async (f, { now, firstDebit, subscriptionEnd, clubYear = 2026, amount = 2000 }) => {
+// Subscriptions carry on until cancelled, as the website creates them (server.js setUpSubscriptionGroup).
+const create = async (f, { now, firstDebit, clubYear = 2026, amount = 2000, interval = 'month' }) => {
   const orderRef = `${run}-${f.name}`;
-  return createClubYearSubscription(request, {
-    now: new Date(now), firstDebit: seconds(firstDebit), subscriptionEnd: seconds(subscriptionEnd), clubYear, orderRef,
+  return createRecurringSubscription(request, {
+    now: new Date(now), firstCharge: seconds(firstDebit), interval, idempotencyKey: `${orderRef}-${interval}-${seconds(firstDebit)}-subscription`,
     base: [['customer', f.customer], ['default_payment_method', f.method],
-      ['metadata[order_ref]', orderRef], ['metadata[club_year]', String(clubYear)], ['metadata[cutoff_at]', String(seconds(subscriptionEnd))],
+      ['metadata[order_ref]', orderRef], ['metadata[club_year]', String(clubYear)],
       ['items[0][price_data][currency]', 'gbp'], ['items[0][price_data][product]', f.product],
-      ['items[0][price_data][unit_amount]', String(amount)], ['items[0][price_data][recurring][interval]', 'month']]
+      ['items[0][price_data][unit_amount]', String(amount)], ['items[0][price_data][recurring][interval]', interval]]
   });
+};
+// What the continue/cancel email's Cancel does: stop at the start of 1 March without prorating.
+const cancelAtYearEnd = (subscription, clubYear) => {
+  const end = String(seconds(clubYearDates(clubYear).end));
+  return request(`subscriptions/${subscription.id}`, [['cancel_at', end], ['proration_behavior', 'none'], ['metadata[cutoff_at]', end]]);
+};
+const monthly = async (f, dates) => {
+  for (const date of dates) {
+    await advance(f.clock, `${date}T00:00:00Z`);
+    await advance(f.clock, `${date}T02:00:00Z`);
+  }
 };
 const invoices = async (f) => {
   const result = await get(`invoices?${new URLSearchParams({ customer: f.customer, limit: '100' })}`);
@@ -92,93 +104,95 @@ const test = async (name, fn) => {
 try {
   await test('current-year', async () => {
     const f = await fixture('current', '2026-11-10T12:00:00Z');
-    const schedule = monthlyDebits(2026, new Date('2026-11-10T12:00:00Z'));
-    const sub = await create(f, { now: '2026-11-10T12:00:00Z', firstDebit: schedule.firstDebit, subscriptionEnd: schedule.subscriptionEnd });
+    const firstDebit = firstRecurringCharge(2026, 'month', new Date('2026-11-10T12:00:00Z'));
+    const sub = await create(f, { now: '2026-11-10T12:00:00Z', firstDebit });
     assert.equal(sub.status, 'trialing');
     assert.equal(sub.trial_end, seconds('2026-12-01T00:00:00Z'));
+    assert.equal(sub.cancel_at, null, 'No end date');
     assert.equal(charged(await invoices(f)).length, 0, 'No recurring charge on purchase day');
-    const repeated = await create(f, { now: '2026-11-10T12:00:00Z', firstDebit: schedule.firstDebit, subscriptionEnd: schedule.subscriptionEnd });
+    const repeated = await create(f, { now: '2026-11-10T12:00:00Z', firstDebit });
     assert.equal(repeated.id, sub.id, 'Retry must return the same subscription');
-    for (const date of ['2026-12-01', '2027-01-01', '2027-02-01']) {
-      await advance(f.clock, `${date}T00:00:00Z`);
-      await advance(f.clock, `${date}T02:00:00Z`);
-    }
+    await monthly(f, ['2026-12-01', '2027-01-01', '2027-02-01', '2027-03-01', '2027-04-01']);
     const rows = charged(await invoices(f));
-    assert.equal(rows.length, 3, 'December, January and February only');
-    await advance(f.clock, '2027-02-15T00:00:00Z');
-    assert.notEqual((await get(`subscriptions/${sub.id}`)).status, 'canceled', 'Subscription remains active through the full February payment period');
-    await advance(f.clock, '2027-03-01T00:00:00Z');
-    assert.equal((await get(`subscriptions/${sub.id}`)).status, 'canceled');
-    await advance(f.clock, '2027-03-02T00:00:00Z');
-    const final = await invoices(f);
-    assert.equal(charged(final).length, 3, 'No March debit');
-    assert.ok(final.every((invoice) => invoice.total >= 0), 'No cancellation credit');
-    assert.ok(rows.every((invoice) => invoice.status === 'paid' && invoice.amount_paid === 2000), `Cancellation/no-March checks passed, but every debit must be paid and exactly £20: ${invoiceSummary(rows)}`);
+    assert.equal(rows.length, 5, 'December to April: it carries on past 1 March');
+    assert.notEqual((await get(`subscriptions/${sub.id}`)).status, 'canceled');
+    assert.ok(rows.every((invoice) => invoice.status === 'paid' && invoice.amount_paid === 2000), `Every debit must be paid and exactly £20: ${invoiceSummary(rows)}`);
   });
 
   await test('next-year', async () => {
     const now = '2027-01-05T12:00:00Z';
     const f = await fixture('next', now);
-    const schedule = monthlyDebits(2027, new Date(now));
-    const sub = await create(f, { now, firstDebit: schedule.firstDebit, subscriptionEnd: schedule.subscriptionEnd, clubYear: 2027 });
+    const sub = await create(f, { now, firstDebit: firstRecurringCharge(2027, 'month', new Date(now)), clubYear: 2027 });
     assert.equal(sub.status, 'trialing');
     assert.equal(sub.trial_end, seconds('2027-03-01T00:00:00Z'));
     await advance(f.clock, '2027-02-28T23:59:00Z');
-    assert.equal(charged(await invoices(f)).length, 0, 'Renewing in January must not debit January or February');
-    for (let month = 2; month < 14; month += 1) {
-      const date = new Date(Date.UTC(2027, month, 1));
-      await advance(f.clock, date);
-      await advance(f.clock, new Date(date.getTime() + 7200000));
-    }
+    assert.equal(charged(await invoices(f)).length, 0, 'Starting next club year must not debit January or February');
+    await monthly(f, ['2027-03-01', '2027-04-01']);
     const rows = charged(await invoices(f));
-    assert.equal(rows.length, 12, 'Exactly twelve debits from March to February');
-    await advance(f.clock, '2028-02-15T00:00:00Z');
-    assert.notEqual((await get(`subscriptions/${sub.id}`)).status, 'canceled', 'Subscription remains active through the full February payment period');
-    await advance(f.clock, clubYearDates(2027).end);
-    assert.equal((await get(`subscriptions/${sub.id}`)).status, 'canceled');
-    await advance(f.clock, '2028-03-02T00:00:00Z');
-    assert.equal(charged(await invoices(f)).length, 12, 'No thirteenth debit');
-    assert.ok(rows.every((invoice) => invoice.status === 'paid' && invoice.amount_paid === 2000), `Cancellation/no-thirteenth-debit checks passed, but monthly amounts differ: ${invoiceSummary(rows)}`);
+    assert.equal(rows.length, 2, 'Debits start on 1 March and carry on');
+    assert.ok(rows.every((invoice) => invoice.status === 'paid' && invoice.amount_paid === 2000), `Monthly amounts differ: ${invoiceSummary(rows)}`);
+  });
+
+  await test('yearly', async () => {
+    const now = '2026-11-10T12:00:00Z';
+    const f = await fixture('yearly', now);
+    const sub = await create(f, { now, firstDebit: firstRecurringCharge(2026, 'year', new Date(now)), interval: 'year', amount: 24000 });
+    assert.equal(sub.status, 'trialing');
+    assert.equal(sub.trial_end, seconds('2027-03-01T00:00:00Z'), 'The first full year is charged on 1 March');
+    await advance(f.clock, '2027-02-28T23:59:00Z');
+    assert.equal(charged(await invoices(f)).length, 0, 'Checkout took the rest of this year; nothing more before 1 March');
+    await monthly(f, ['2027-03-01', '2027-04-01']);
+    assert.deepEqual(charged(await invoices(f)).map((invoice) => invoice.amount_paid), [24000], 'One yearly payment on 1 March');
+    await advance(f.clock, '2027-12-01T00:00:00Z');
+    await monthly(f, ['2028-03-01']);
+    const rows = charged(await invoices(f));
+    assert.deepEqual(rows.map((invoice) => invoice.amount_paid), [24000, 24000], `And again every 1 March: ${invoiceSummary(rows)}`);
   });
 
   await test('delayed-payment', async () => {
     const now = '2026-12-04T12:00:00Z';
     const f = await fixture('delayed', now);
-    const sub = await create(f, { now, firstDebit: '2026-12-01T00:00:00Z', subscriptionEnd: '2027-03-01T00:00:00Z' });
+    const sub = await create(f, { now, firstDebit: '2026-12-01T00:00:00Z' });
     assert.equal(sub.status, 'active');
     assert.equal(sub.billing_cycle_anchor, seconds('2027-01-01T00:00:00Z'));
     const rows = charged(await invoices(f));
     assert.equal(rows.length, 1, 'Catch-up month billed once');
     assert.equal(rows[0].amount_due, 2000, 'Delayed December payment must charge one full month, not a partial or double month');
-    await advance(f.clock, '2027-01-01T00:00:00Z');
-    await advance(f.clock, '2027-01-01T02:00:00Z');
-    const final = charged(await invoices(f));
-    assert.equal(final.length, 2, 'Normal January billing follows one catch-up debit');
-    assert.ok(final.every((invoice) => invoice.amount_due === 2000));
-    await advance(f.clock, '2027-02-01T00:00:00Z');
-    await advance(f.clock, '2027-02-01T02:00:00Z');
-    const february = charged(await invoices(f));
-    assert.equal(february.length, 3, 'Full February debit follows the delayed catch-up and January debit');
-    assert.ok(february.every((invoice) => invoice.status === 'paid' && invoice.amount_paid === 2000), `Delayed payment case must keep all monthly payments full: ${invoiceSummary(february)}`);
+    await monthly(f, ['2027-01-01', '2027-02-01', '2027-03-01']);
+    const later = charged(await invoices(f));
+    assert.equal(later.length, 4, 'Normal billing follows one catch-up debit and carries on past 1 March');
+    assert.ok(later.every((invoice) => invoice.status === 'paid' && invoice.amount_paid === 2000), `Delayed payment case must keep all monthly payments full: ${invoiceSummary(later)}`);
+  });
+
+  await test('year-end-cancel', async () => {
+    const now = '2027-01-10T12:00:00Z';
+    const f = await fixture('year-end', now);
+    const sub = await create(f, { now, firstDebit: '2027-02-01T00:00:00Z' });
+    await cancelAtYearEnd(sub, 2026);
+    await monthly(f, ['2027-02-01']);
+    await advance(f.clock, '2027-02-15T00:00:00Z');
+    assert.notEqual((await get(`subscriptions/${sub.id}`)).status, 'canceled', 'It runs through the paid February');
     await advance(f.clock, '2027-03-01T00:00:00Z');
     assert.equal((await get(`subscriptions/${sub.id}`)).status, 'canceled');
     await advance(f.clock, '2027-03-02T00:00:00Z');
-    assert.equal(charged(await invoices(f)).length, 3, 'No March debit after full February payment');
+    const final = await invoices(f);
+    assert.equal(charged(final).length, 1, 'The 1 February debit was the last');
+    assert.ok(final.every((invoice) => invoice.total >= 0), 'No cancellation credit');
   });
 
   await test('failed-payment', async () => {
     const now = '2027-01-10T12:00:00Z';
     const f = await fixture('failed', now, 'pm_card_chargeCustomerFail');
-    const sub = await create(f, { now, firstDebit: '2027-02-01T00:00:00Z', subscriptionEnd: '2027-03-01T00:00:00Z' });
-    await advance(f.clock, '2027-02-01T00:00:00Z');
-    await advance(f.clock, '2027-02-01T02:00:00Z');
+    const sub = await create(f, { now, firstDebit: '2027-02-01T00:00:00Z' });
+    await cancelAtYearEnd(sub, 2026);
+    await monthly(f, ['2027-02-01']);
     const before = charged(await invoices(f));
     assert.equal(before.length, 1);
     assert.equal(before[0].status, 'open', 'The test card must produce an unpaid invoice');
     assert.equal(before[0].amount_paid, 0);
     assert.equal(before[0].attempted, true);
     await advance(f.clock, '2027-02-15T00:00:00Z');
-    assert.notEqual((await get(`subscriptions/${sub.id}`)).status, 'canceled', 'Failed February payment remains retryable until club-year end');
+    assert.notEqual((await get(`subscriptions/${sub.id}`)).status, 'canceled', 'A failed February payment stays retryable until the year-end stop');
     await advance(f.clock, '2027-03-01T00:00:00Z');
     assert.equal((await get(`subscriptions/${sub.id}`)).status, 'canceled');
     const stopped = charged(await invoices(f));

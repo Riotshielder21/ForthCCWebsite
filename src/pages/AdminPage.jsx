@@ -8,7 +8,8 @@ import { usePageEditor } from '../utils/PageContentContext';
 import PagedAdminList from '../components/PagedAdminList';
 import EventRosterControl from '../components/EventRosterControl';
 import { apiUrl, apiFetch } from '../utils/api';
-import { validateEventSchedule, eventScheduleLabel, normaliseProduct } from '../utils/catalogue';
+import { validateEventSchedule, eventScheduleLabel, normaliseProduct, nextYearPriceFields, nextYearPriceInput } from '../utils/catalogue';
+import { clubYearKind, clubYearLabel, clubYearOf } from '../utils/clubYear';
 import { cleanStockFields } from '../utils/inventory';
 import { cleanEventDetails } from '../utils/eventRoster';
 
@@ -17,11 +18,13 @@ const EMPTY_PRODUCT = {
   name: '',
   category: 'SERVICES',
   basePrice: 0,
+  nextYearPriceInput: '',
   description: '',
   type: 'yearly-service',
   pricingMode: 'fixed',
   allowMonthly: false,
   hasAnnualDiscount: false,
+  thresholdProration: true,
   imageUrl: '',
   imageSources: [],
   imagePlaceholder: '',
@@ -39,7 +42,7 @@ const MEMBERSHIP_RULE_NOTES = {
 };
 
 const EDITABLE_FIELDS = ['name', 'category', 'basePrice', 'description'];
-const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorated 60%: full price, then 60% from 1 October', subscription: 'Prorated monthly: monthly price for each month left to 1 March' };
+const PRICING_LABELS = { fixed: 'Fixed: full price all year', prorated: 'Prorated 60%: full price, then 60% from 1 October', subscription: 'Subscription: monthly from the 1st, or yearly every 1 March, until cancelled' };
 
 export default function AdminPage({ products, onNavigate, tripDiscounts }) {
   const editor = usePageEditor();
@@ -119,7 +122,8 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
     setViewerProductId(product.category === 'EVENTS' ? product.id : null);
     setViewerLoadAttempt((attempt) => attempt + 1);
     setSelectedProduct(product.id);
-    setDraft({ ...EMPTY_PRODUCT, ...normaliseProduct(product), eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
+    setDraft({ ...EMPTY_PRODUCT, ...normaliseProduct(product), nextYearPriceInput: nextYearPriceInput(product),
+      eventSchedule: { ...EMPTY_PRODUCT.eventSchedule, ...product.eventSchedule } });
     setMessage('');
     resetImageInput();
   };
@@ -153,11 +157,17 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
       setError('Upload the selected image or remove it before saving the product.');
       return;
     }
+    const { nextYearPriceInput: nextPrice, ...fields } = draft;
+    if (String(nextPrice ?? '').trim() !== '' && !(Number(nextPrice) >= 0)) {
+      setError('Enter next club year\'s price in pounds, or leave it blank to keep the same price.');
+      return;
+    }
     setSaving(true);
     try {
       const product = {
-        ...draft,
-        ...normaliseProduct(draft),
+        ...fields,
+        ...normaliseProduct(fields),
+        ...(clubYearKind(fields) ? nextYearPriceFields(nextPrice) : nextYearPriceFields('')),
         basePrice: Number(draft.basePrice),
         sortOrder: Number(draft.sortOrder),
         hasAnnualDiscount: Boolean(draft.hasAnnualDiscount) && normaliseProduct(draft).pricingMode === 'subscription'
@@ -172,7 +182,7 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
       }
       if (!product.id) {
         product.id = await reserveProductId(await adminUser.getIdToken());
-        setDraft(product);
+        setDraft({ ...product, nextYearPriceInput: nextPrice });
       }
       const viewers = await saveCatalogueItem(product, viewerText, {
         saveProduct,
@@ -297,6 +307,11 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
                 {field === 'description' ? <textarea className="FormInput" rows="4" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required /> : field === 'category' ? <select className="FormInput" value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)}>{CATEGORIES.filter((category) => category !== 'ALL').map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input className="FormInput" type={field === 'basePrice' ? 'number' : 'text'} min={field === 'basePrice' ? '0' : undefined} step={field === 'basePrice' ? '0.01' : undefined} value={draft[field]} onChange={(event) => updateDraft(field, event.target.value)} required />}
               </label>
             ))}
+            {clubYearKind(draft) && <label className="FormLabel">{`${draft.pricingMode === 'subscription' ? 'Monthly price' : 'Price'} for club year ${clubYearLabel(clubYearOf() + 1)}`}
+              <input className="FormInput" type="number" min="0" step="0.01" placeholder="Same as now" value={draft.nextYearPriceInput}
+                onChange={(event) => updateDraft('nextYearPriceInput', event.target.value)} />
+              <span className="text_container_note">Quoted and charged for anything bought for next club year, in renewal emails, and for subscription payments from 1 March, when it becomes the price. This club year&apos;s price still applies to this year until then. Leave blank to keep the same price.</span>
+            </label>}
             <fieldset className="AdminEventSchedule">
               <legend className="tile_heading_bold_1">Product image</legend>
               {draft.imageUrl ? <img className="AdminImagePreview" src={draft.imageUrl} alt="Product preview" />
@@ -356,11 +371,15 @@ export default function AdminPage({ products, onNavigate, tripDiscounts }) {
             <label className="FormLabel">Shop position (lower numbers show first)<input className="FormInput" type="number" required step="1" value={draft.sortOrder} onChange={(event) => updateDraft('sortOrder', event.target.value)} /></label>
             {draft.category === 'SERVICES'
               ? <label className="FormLabel">Pricing<select className="FormInput" value={draft.pricingMode} onChange={(event) => updateDraft('pricingMode', event.target.value)}>{Object.entries(PRICING_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              : <p className="text_container text_container_note">{{ MEMBERSHIP: draft.type === 'external' ? 'External link: bought through JustGo, not this shop.' : 'Membership is a fixed club-year price. It is never prorated or paid monthly.', SUBSCRIPTIONS: 'Subscription: monthly price for each month left to 1 March.', VOUCHERS: 'Voucher: a fixed price that issues a credit code.', EVENTS: 'Event ticket: a fixed price for the whole event or course.', MERCHANDISE: 'Merchandise: a fixed price per item.' }[draft.category]}</p>}
+              : <p className="text_container text_container_note">{{ MEMBERSHIP: draft.type === 'external' ? 'External link: bought through JustGo, not this shop.' : 'Membership is a fixed club-year price. It is never prorated or paid monthly.', SUBSCRIPTIONS: 'Subscription: paid monthly from the 1st, or yearly every 1 March, until the customer cancels.', VOUCHERS: 'Voucher: a fixed price that issues a credit code.', EVENTS: 'Event ticket: a fixed price for the whole event or course.', MERCHANDISE: 'Merchandise: a fixed price per item.' }[draft.category]}</p>}
             {draft.pricingMode === 'subscription' && <>
               <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.allowMonthly === true} onChange={(event) => updateDraft('allowMonthly', event.target.checked)} /> Allow monthly payments</label>
-              <p className="text_container text_container_note">{draft.allowMonthly ? 'Customers can pay monthly by direct debit, or pay up front to 1 March.' : 'Customers pay up front for the months left until 1 March.'}</p>
-              <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.hasAnnualDiscount} onChange={(event) => updateDraft('hasAnnualDiscount', event.target.checked)} /> 20% off when paid up front</label>
+              <p className="text_container text_container_note">{draft.allowMonthly ? 'Customers can pay monthly by direct debit, or yearly every 1 March.' : 'Customers pay yearly, every 1 March.'}</p>
+              <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.hasAnnualDiscount} onChange={(event) => updateDraft('hasAnnualDiscount', event.target.checked)} /> 20% off when paid yearly</label>
+              <label className="FormLabel AdminCheckbox"><input type="checkbox" checked={draft.thresholdProration !== false} onChange={(event) => updateDraft('thresholdProration', event.target.checked)} /> Reduce the first yearly payment in 20% steps</label>
+              <p className="text_container text_container_note">{draft.thresholdProration !== false
+                ? 'Joining part way through the club year, the first yearly payment drops by 20% each time another fifth of the year has gone (about mid May, late July, early October and mid December).'
+                : 'The first yearly payment is the full year price, whenever they join.'}</p>
             </>}
             {draft.membershipRule && <>
               <label className="FormLabel">Membership<select className="FormInput" value={draft.membershipRule} onChange={(event) => updateDraft('membershipRule', event.target.value)}>{Object.entries(MEMBERSHIP_RULE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

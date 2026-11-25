@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { clubYearDates } from '../utils/clubYear.js';
-import { entitlementFor, termEntitlements, termId, termStart } from '../utils/membershipTerms.js';
+import { continuingEntitlements, entitlementFor, termEntitlements, termId, termStart } from '../utils/membershipTerms.js';
 
 const chunks = (values, size = 30) => Array.from({ length: Math.ceil(values.length / size) }, (_, index) => values.slice(index * size, (index + 1) * size));
 
@@ -16,15 +16,24 @@ export const loadTerms = async (db, membershipIds, reader = null) => {
   return byMember;
 };
 
-/** Each member's entitlements across all their terms, keyed by membership id. */
-export const loadEntitlements = async (db, membershipIds, reader = null) => {
-  const terms = await loadTerms(db, membershipIds, reader);
-  return new Map([...terms].map(([id, documents]) => [id, termEntitlements(documents.map((document) => document.data()))]));
+/**
+ * Each member's entitlements across all their terms, plus the later club years of subscriptions that carry on, keyed by
+ * membership id. Pass `members` (id to member fields) when they are already loaded, so they are not read again.
+ */
+export const loadEntitlements = async (db, membershipIds, reader = null, { members = null, now = new Date() } = {}) => {
+  const ids = [...new Set(membershipIds.filter(Boolean))];
+  const missing = members ? ids.filter((id) => !members.has(id)) : ids;
+  const references = missing.map((id) => db.collection('memberships').doc(id));
+  const [terms, loaded] = await Promise.all([loadTerms(db, ids, reader),
+    references.length ? (reader ? reader.getAll(...references) : db.getAll(...references)) : []]);
+  const fields = new Map([...(members || []), ...loaded.filter((document) => document.exists).map((document) => [document.id, document.data()])]);
+  return new Map([...terms].map(([id, documents]) => [id, [...termEntitlements(documents.map((document) => document.data())),
+    ...continuingEntitlements(fields.get(id)?.subscriptionItems, now)]]));
 };
 
 /** The member fields with `entitlements` attached, for readers such as `holdsForClubYear` and `renewalBasket`. */
 export const withEntitlements = async (db, members) => {
-  const entitlements = await loadEntitlements(db, [...members.keys()]);
+  const entitlements = await loadEntitlements(db, [...members.keys()], null, { members });
   return new Map([...members].map(([id, data]) => [id, { ...data, entitlements: entitlements.get(id) || [] }]));
 };
 

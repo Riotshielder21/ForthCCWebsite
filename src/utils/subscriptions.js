@@ -14,18 +14,16 @@ export const lineHolders = (lineId, people) => {
 // A subscription waiting for its first debit on the 1st is `trialing` in Stripe; both still take payments.
 export const subscriptionLive = (subscription) => ['active', 'trialing'].includes(subscription?.status);
 
-// Club-year subscriptions end at 1 March (metadata `cutoff_at`), after the full February debit.
+/** Monthly and yearly subscription lines on an order; both are set up as Stripe subscriptions after payment. */
+export const isRecurringLine = (item) => Boolean(item?.monthly || item?.yearly);
+
+/**
+ * A member who cancels from the continue/cancel email stops at the club-year end (metadata `cutoff_at`): after the
+ * 1 February debit, or before the 1 March yearly payment. Ending there is expected, not a failure.
+ */
 export const endedAtCutoff = (subscription) => {
   const cutoff = Number(subscription?.metadata?.cutoff_at) || 0;
   return Boolean(cutoff && subscription.status === 'canceled' && subscription.ended_at && Math.abs(subscription.ended_at - cutoff) < 24 * 60 * 60);
-};
-
-/** Move only the app-managed end for this club year; leave any separate/manual earlier cancellation untouched. */
-export const clubYearEndUpdate = (subscription, clubYear, subscriptionEnd) => {
-  const previousCutoff = Number(subscription?.metadata?.cutoff_at);
-  if (subscription?.metadata?.club_year !== String(clubYear) || !Number.isSafeInteger(previousCutoff) || previousCutoff <= 0
-    || subscription.cancel_at !== previousCutoff || previousCutoff >= subscriptionEnd) return null;
-  return [['cancel_at', String(subscriptionEnd)], ['metadata[cutoff_at]', String(subscriptionEnd)], ['proration_behavior', 'none']];
 };
 
 // Stripe subscription items carry our order line id, either on the item or (for Checkout-created items) on its product.
@@ -48,3 +46,29 @@ export const activeSubscriptionItems = (subscription) => (subscription.items || 
 
 export const monthlyTotal = (subscription) => Math.round(activeSubscriptionItems(subscription)
   .reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0) * 100) / 100;
+
+/** What an item or a whole subscription costs each time it is charged, e.g. "£25.00 a month" or "£240.00 a year". */
+export const itemPrice = (item) => item?.interval === 'year' ? `£${Number(item.yearlyAmount || 0).toFixed(2)} a year` : `£${Number(item?.monthlyAmount || 0).toFixed(2)} a month`;
+export const subscriptionPrice = (subscription) => {
+  const yearly = subscription?.interval === 'year';
+  const total = Math.round(activeSubscriptionItems(subscription).reduce((sum, item) => sum + Number((yearly ? item.yearlyAmount : item.monthlyAmount) || 0), 0) * 100) / 100;
+  return `£${total.toFixed(2)} a ${yearly ? 'year' : 'month'}`;
+};
+
+/**
+ * The member's answer to the continue/cancel email for `continuation.renewalYear`: confirmed, cancelled (it stops at the
+ * end of February), or unconfirmed, when it simply carries on.
+ */
+export const continuationStatus = (subscription) => {
+  const answer = subscription?.continuation;
+  if (!answer?.renewalYear) return null;
+  return { renewalYear: answer.renewalYear, status: ['confirmed', 'cancelled'].includes(answer.status) ? answer.status : 'unconfirmed' };
+};
+
+export const continuationLabel = (subscription) => {
+  const answer = continuationStatus(subscription);
+  if (!answer) return 'Carries on until cancelled.';
+  const year = `${answer.renewalYear}/${String((answer.renewalYear + 1) % 100).padStart(2, '0')}`;
+  return { confirmed: `Club year ${year}: confirmed, carries on.`, cancelled: `Club year ${year}: cancelled, stops at the end of February.`,
+    unconfirmed: `Club year ${year}: unconfirmed, carries on.` }[answer.status];
+};

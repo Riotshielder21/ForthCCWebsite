@@ -2,7 +2,7 @@
 # Scheduled jobs on Google Cloud (replaces the old VM systemd timers):
 #   fcc-justgo-sync     Cloud Run job, daily 04:00   (paused unless JUSTGO_API_ENABLED=true)
 #   fcc-justgo-upload   Cloud Run job, hourly        (paused unless JUSTGO_API_WRITES_ENABLED=true too)
-#   fcc-renewals        POST <API_URL>/api/jobs/renewals, 09:00 on 1 and 15 February
+#   fcc-renewals        POST <API_URL>/api/jobs/renewals, 09:00 on 1, 15 and 27 February
 #   fcc-welcome-emails  POST <API_URL>/api/jobs/welcome-emails, daily 06:00 (after the JustGo sync)
 #
 #   scripts/scheduled-jobs.sh setup <deploy-account-email>   one-off, as a project owner
@@ -116,7 +116,7 @@ deploy() {
   token="$(gcloud secrets versions access latest --secret renewal-job-token "${cloud[@]}")"
   [ -z "${GITHUB_ACTIONS:-}" ] || echo "::add-mask::$token"
   gcloud scheduler jobs describe fcc-renewals --location "$REGION" "${cloud[@]}" >/dev/null 2>&1 && header_flag=--update-headers
-  upsert_schedule fcc-renewals '0 9 1,15 2 *' "${api_url%/}/api/jobs/renewals" \
+  upsert_schedule fcc-renewals '0 9 1,15,27 2 *' "${api_url%/}/api/jobs/renewals" \
     "$header_flag" "Authorization=Bearer $token" --attempt-deadline 600s
   header_flag=--headers
   gcloud scheduler jobs describe fcc-welcome-emails --location "$REGION" "${cloud[@]}" >/dev/null 2>&1 && header_flag=--update-headers

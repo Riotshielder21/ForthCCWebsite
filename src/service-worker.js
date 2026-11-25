@@ -2,7 +2,7 @@ const manifest = __PUBLIC_SITE_MANIFEST__;
 const cacheName = `fcc-public-${manifest.version}`;
 const absolute = (path) => new URL(path, self.location.origin).href;
 const allowed = new Set([...manifest.files, ...manifest.images].map(absolute));
-const privatePath = /^\/(?:api|admin|order|my-details|checkout|check-ins|club-night|payment-success|payment-issue|_preview)(?:\/|$)/;
+const privatePath = /^\/(?:api|admin|order|my-details|checkout|check-ins|club-night|payment-success|payment-issue|subscription|_preview)(?:\/|$)/;
 // How long a page load waits for the network before falling back to the offline copy.
 const NAVIGATION_TIMEOUT_MS = 4000;
 

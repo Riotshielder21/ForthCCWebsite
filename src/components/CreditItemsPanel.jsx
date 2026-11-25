@@ -44,7 +44,8 @@ export default function CreditItemsPanel({ adminUser }) {
   const product = shop.find((candidate) => candidate.id === choice.id);
   const sizes = product && isMerchandise(product) ? Object.keys(productLimits(product) || {}) : [];
   const years = product ? clubYearChoices(product) : [];
-  const priced = useMemo(() => calculateCart(expandClubYearLines(cart), true), [cart]);
+  // Credited items are paid outside Stripe, so a subscription is a one-off payment for its club year, as the server prices it.
+  const priced = useMemo(() => calculateCart(expandClubYearLines(cart), true, null, new Date(), { recurring: false }), [cart]);
   const { total } = priced;
 
   const findCustomer = async (event) => {

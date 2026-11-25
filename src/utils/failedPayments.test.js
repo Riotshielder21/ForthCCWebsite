@@ -67,7 +67,7 @@ test('a restart basket has the stopped items for the same returning members', ()
   assert.equal(basket.clubYearChoice, 'this');
   assert.deepEqual(basket.items.map((item) => item.id), ['membership-family', 'gold-sub'], 'items with nobody to hold them are left out');
   assert.deepEqual(basket.people.map((person) => [person.firstName, person.returning, person.junior, person.lineIds.length]), [['Ann', true, false, 2], ['Ben', true, true, 1]]);
-  assert.equal(restartBasket(record, members, 2026, () => 'x', now), null, 'a finished club year cannot be restarted');
+  assert.equal(restartBasket(record, members, 2026, () => 'x', now).clubYearChoice, 'this', 'a subscription carries on, so one from an earlier year restarts from now');
   assert.equal(restartBasket({ ...record, clubYear: 2026 }, members, 2025, () => 'x', now).clubYearChoice, 'next');
   const described = restartBasket(record, members, 2025, () => 'x', now, (member) => ({ prefill: { photoConsent: member.id === 'A' } }));
   assert.deepEqual(described.people.map((person) => [person.firstName, person.prefill.photoConsent]), [['Ann', true], ['Ben', false]], 'each person gets their own extras');
@@ -97,7 +97,7 @@ test('failed-debit emails say when Stripe retries, or that payments stopped with
   assert.match(copy.body, /sub_1/);
 });
 
-test('restarting uses each stopped item year, not a subscription-level renewal year', () => {
+test('restarting uses each stopped item\'s start, not a subscription-level year', () => {
   const now = new Date('2026-11-16T12:00:00Z');
   const members = [{ id: 'A', firstName: 'Ann', dob: '1980-02-02' }];
   const record = { clubYear: 2027, items: [{ productId: 'gold-sub', clubYear: 2026, membershipIds: ['A'] }] };
@@ -106,8 +106,8 @@ test('restarting uses each stopped item year, not a subscription-level renewal y
   assert.equal(basket.items[0].clubYearChoice, 'this');
   const product = PRODUCTS.find((item) => item.id === 'gold-sub');
   assert.equal(resolveClubYearChoice(product, basket.items[0].clubYearChoice, now), 'this', 'restart works before renewals open');
-  assert.equal(restartBasket({ ...record, items: [{ ...record.items[0], clubYear: 2025 }] }, members, 2026, () => 'x', now), null,
-    'a stale stopped item must not become a renewal');
+  assert.equal(restartBasket({ ...record, items: [{ ...record.items[0], clubYear: 2025 }] }, members, 2026, () => 'x', now).items[0].clubYearChoice, 'this',
+    'an item from an earlier year restarts from now rather than as a renewal');
 });
 
 test('monthly payment receipts use the checkout receipt layout, list every item paid monthly by person, and say the days covered', () => {

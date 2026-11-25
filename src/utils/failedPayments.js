@@ -80,16 +80,16 @@ export const retryBasket = (order, currentYear) => {
 };
 
 /**
- * The basket that restarts a cancelled subscription: its items again, monthly, for the people who had them. Returns
- * null when its club year is no longer on sale. `describe(member)` adds fields to each person.
+ * The basket that restarts a cancelled subscription: its items again, for the people who had them. A subscription
+ * carries on, so it restarts from now; one that was waiting for next club year restarts from 1 March. Returns null when
+ * nothing can be restarted. `describe(member)` adds fields to each person.
  */
 export const restartBasket = (record, members, currentYear, makeId, now = new Date(), describe = () => ({})) => {
   const byId = new Map(members.map((member) => [member.id, member]));
   const people = new Map();
   const items = [];
   for (const item of record.items || []) {
-    const clubYearChoice = choiceFor(new Set([item.clubYear ?? record.clubYear]), currentYear);
-    if (!clubYearChoice) continue;
+    const clubYearChoice = (item.clubYear ?? record.clubYear) > currentYear ? 'next' : 'this';
     const holders = (item.membershipIds || []).filter((id) => byId.has(id));
     if (!item.productId || !holders.length) continue;
     const lineId = makeId();
@@ -107,14 +107,15 @@ export const restartBasket = (record, members, currentYear, makeId, now = new Da
     items, people: [...people.values()] } : null;
 };
 
-/** The member's email for a failed monthly debit; `final` when Stripe has stopped retrying. */
-export const invoiceFailureEmail = ({ names = [], itemNames = [], amountDuePence = 0, attempt = 1, nextAttempt = null, paidUntil = 0, restartUrl = '', cancelUrl = '', contact }) => {
+/** The member's email for a failed subscription payment (`yearly` for one taken every 1 March); `final` when Stripe has stopped retrying. */
+export const invoiceFailureEmail = ({ names = [], itemNames = [], amountDuePence = 0, attempt = 1, nextAttempt = null, paidUntil = 0, restartUrl = '', cancelUrl = '', contact, yearly = false }) => {
+  const kind = yearly ? 'yearly' : 'monthly';
   const who = listText(names);
-  const what = listText(itemNames) || 'your Forth Canoe Club monthly payments';
-  const intro = `Your monthly direct debit of ${money(amountDuePence)} for ${what}${who ? ` (${who})` : ''} did not go through.`;
+  const what = listText(itemNames) || `your Forth Canoe Club ${kind} payments`;
+  const intro = `Your ${kind} direct debit of ${money(amountDuePence)} for ${what}${who ? ` (${who})` : ''} did not go through.`;
   if (nextAttempt) {
     return {
-      subject: 'Your Forth Canoe Club monthly payment did not go through',
+      subject: `Your Forth Canoe Club ${kind} payment did not go through`,
       body: [intro, '',
         `Stripe, our payment provider, will try again on ${dateLabel(nextAttempt)}. You do not need to do anything if there is money in the account by then.`, '',
         `If your bank details have changed or you want to stop, contact ${contact}.`, '',
@@ -122,11 +123,11 @@ export const invoiceFailureEmail = ({ names = [], itemNames = [], amountDuePence
     };
   }
   return {
-    subject: 'Your Forth Canoe Club monthly payments have stopped',
+    subject: `Your Forth Canoe Club ${kind} payments have stopped`,
     body: [intro, '',
-      'Stripe, our payment provider, has tried again and will not try any more, so your monthly payments have stopped.',
+      `Stripe, our payment provider, has tried again and will not try any more, so your ${kind} payments have stopped.`,
       ...(paidUntil ? [`What they paid for runs until ${dateLabel(paidUntil)} and then ends.`] : []), '',
-      `To restart your monthly payments, open this link and check out again (any missed months are not charged): ${restartUrl}`, '',
+      `To restart your ${kind} payments, open this link and check out again (any missed ${yearly ? 'payments are' : 'months are'} not charged): ${restartUrl}`, '',
       `If you do not want to continue, confirm here so the club knows: ${cancelUrl}`, '',
       `Questions: ${contact}.`].join('\n')
   };
@@ -162,7 +163,8 @@ export const invoiceItemNames = (invoice) => {
 };
 
 /**
- * The checkout receipt's layout for a monthly payment Stripe collected. Every item paid monthly on the subscription
+ * The checkout receipt's layout for a subscription payment Stripe collected, monthly or yearly (when the items or the
+ * invoice lines are yearly). Every item paid on the subscription
  * is listed under the person it is for, whether it is a subscription product or a service such as kit hire paid monthly.
  * `items` are the subscription record's items (`stripeItemId`, `name`, `names`, `category`); each is priced from the
  * invoice lines for its Stripe item. Lines that match no item (or every line, for a subscription set up outside the
@@ -180,7 +182,8 @@ export const subscriptionPaymentReceipt = ({ invoice, items = [], linkedNames = 
     else if (line.amount) unmatched.push(line);
   }
   const billed = [...priced].filter(([item, pence]) => pence !== 0 || lines.some((line) => item.stripeItemId && invoiceLineItemId(line) === item.stripeItemId));
-  const entry = (name, pence, personNames) => ({ name, personNames, price: pence / 100, billing: 'monthly payment', schedule: '' });
+  const yearly = items.some((item) => item.interval === 'year') || lines.some((line) => line.price?.recurring?.interval === 'year');
+  const entry = (name, pence, personNames) => ({ name, personNames, price: pence / 100, billing: yearly ? 'yearly payment' : 'monthly payment', schedule: '' });
   const people = [...new Set(billed.flatMap(([item]) => item.names || []))].map((name) => {
     const own = billed.filter(([item]) => (item.names || []).includes(name)).map(([item, pence]) => ({ category: item.category, ...entry(item.name || 'Item', pence, item.names) }));
     return { name, email: '', memberships: own.filter((item) => item.category === 'MEMBERSHIP'),
@@ -188,7 +191,7 @@ export const subscriptionPaymentReceipt = ({ invoice, items = [], linkedNames = 
   });
   const otherItems = [
     ...billed.filter(([item]) => !(item.names || []).length).map(([item, pence]) => entry(item.name || 'Item', pence, [])),
-    ...unmatched.map((line) => entry(invoiceLineName(line) || 'Monthly payment', line.amount, linkedNames))
+    ...unmatched.map((line) => entry(invoiceLineName(line) || (yearly ? 'Yearly payment' : 'Monthly payment'), line.amount, linkedNames))
   ];
   const listed = [...billed.map(([, pence]) => pence), ...unmatched.map((line) => line.amount)].reduce((sum, pence) => sum + pence, 0);
   const paid = invoice?.amount_paid || 0;
@@ -206,25 +209,26 @@ export const subscriptionPaymentReceipt = ({ invoice, items = [], linkedNames = 
 };
 
 /** The member's email when a subscription ended early without a final failed-debit email (e.g. cancelled in Stripe). */
-export const subscriptionStoppedEmail = ({ names = [], itemNames = [], paidUntil = 0, restartUrl = '', cancelUrl = '', contact }) => {
+export const subscriptionStoppedEmail = ({ names = [], itemNames = [], paidUntil = 0, restartUrl = '', cancelUrl = '', contact, yearly = false }) => {
+  const kind = yearly ? 'yearly' : 'monthly';
   const who = listText(names);
-  const what = listText(itemNames) || 'your Forth Canoe Club monthly payments';
+  const what = listText(itemNames) || `your Forth Canoe Club ${kind} payments`;
   return {
-    subject: 'Your Forth Canoe Club monthly payments have stopped',
-    body: [`Your monthly payments for ${what}${who ? ` (${who})` : ''} have stopped.`,
+    subject: `Your Forth Canoe Club ${kind} payments have stopped`,
+    body: [`Your ${kind} payments for ${what}${who ? ` (${who})` : ''} have stopped.`,
       ...(paidUntil ? [`What they paid for runs until ${dateLabel(paidUntil)} and then ends.`] : []), '',
-      `To restart your monthly payments, open this link and check out again: ${restartUrl}`, '',
+      `To restart your ${kind} payments, open this link and check out again: ${restartUrl}`, '',
       `If you do not want to continue, confirm here so the club knows: ${cancelUrl}`, '',
       `Questions: ${contact}.`].join('\n')
   };
 };
 
 /** The treasurer's copy of a final failed debit. */
-export const treasurerFailureEmail = ({ email, names = [], itemNames = [], amountDuePence = 0, attempt = 1, subscriptionId, invoiceId, paidUntil = 0 }) => ({
-  subject: `Monthly payments stopped after failed debits - ${listText(names) || email}`,
+export const treasurerFailureEmail = ({ email, names = [], itemNames = [], amountDuePence = 0, attempt = 1, subscriptionId, invoiceId, paidUntil = 0, yearly = false }) => ({
+  subject: `${yearly ? 'Yearly' : 'Monthly'} payments stopped after failed debits - ${listText(names) || email}`,
   body: [`Stripe could not collect ${money(amountDuePence)} from ${email} after ${attempt} attempt${attempt === 1 ? '' : 's'} and has stopped retrying.`, '',
     `Items: ${listText(itemNames) || 'not recorded'}`, ...(names.length ? [`People: ${listText(names)}`] : []),
-    ...(paidUntil ? [`Paid up to: ${dateLabel(paidUntil)}. The monthly items end then once Stripe cancels the subscription.`] : []),
+    ...(paidUntil ? [`Paid up to: ${dateLabel(paidUntil)}. The ${yearly ? 'yearly' : 'monthly'} items end then once Stripe cancels the subscription.`] : []),
     `Stripe subscription: ${subscriptionId}`, `Invoice: ${invoiceId}`, '',
     'The member has been emailed links to restart the payments or confirm they are stopping. It is listed under Reports & records → Needs attention.'].join('\n')
 });

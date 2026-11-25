@@ -3,8 +3,8 @@ import {
   Trash2, ShoppingBag, X, ShoppingCart, Plus, Minus,
   CreditCard, CheckCircle2, AlertCircle
 } from 'lucide-react';
-import { calculateCart, debitRange, expandClubYearLines, expandPeopleLines } from './utils/pricing';
-import { clubYearChoices, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
+import { calculateCart, recurringText, expandClubYearLines, expandPeopleLines } from './utils/pricing';
+import { clubYearChoices, clubYearDates, clubYearKind, defaultClubYearChoice, resolveClubYearChoice, clubYearOf, clubYearLabel } from './utils/clubYear';
 import { assignLines, validateCheckout, loadDraft, saveDraft, clearDraft, blankPerson, normaliseName, returningVerificationMatches, restoreDraftLines } from './utils/checkout';
 import { applyTripDiscounts } from './utils/tripDiscount';
 import { applyConsentPrefill, checkoutWording, draftForCurrentWording } from './utils/consents';
@@ -46,6 +46,7 @@ const CheckoutPage = lazy(pageModules.checkout);
 const OrderLookupPage = lazy(pageModules['order-lookup']);
 const PaymentSuccessPage = lazy(pageModules['payment-success']);
 const PaymentIssuePage = lazy(pageModules['payment-issue']);
+const SubscriptionContinuationPage = lazy(pageModules.subscription);
 
 const newId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -57,8 +58,12 @@ const withClubYear = (product, choice) => {
 };
 const draftLine = (product, line) => ({ ...withClubYear(normaliseProduct(product), line.clubYearChoice), lineId: line.lineId, ...(line.size ? { size: line.size } : {}) });
 const groupKey = (line) => `${line.id}|${line.size || ''}|${line.clubYearChoice || ''}`;
-const choiceLabel = (choice) => {
+// A subscription carries on, so its choice is only when it starts.
+const choiceLabel = (choice, item) => {
   const year = clubYearOf(new Date());
+  if (clubYearKind(item) === 'monthly') {
+    return choice === 'next' ? `Start on ${clubYearDates(year).end.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' })}` : 'Start now';
+  }
   return choice === 'this' ? `This club year (${clubYearLabel(year)})`
     : choice === 'next' ? `Next club year (${clubYearLabel(year + 1)})`
     : `Both (${clubYearLabel(year)} and ${clubYearLabel(year + 1)})`;
@@ -429,6 +434,7 @@ export default function App() {
     if (currentPage === 'order-lookup') return <OrderLookupPage />;
     if (currentPage === 'payment-success') return <PaymentSuccessPage />;
     if (currentPage === 'payment-issue') return <PaymentIssuePage />;
+    if (currentPage === 'subscription') return <SubscriptionContinuationPage />;
     if (currentPage === 'checkout') {
       return cart.length ? (
         <CheckoutPage
@@ -618,7 +624,7 @@ export default function App() {
                           {clubYearChoices(item).length > 1 && (
                             <select value={item.clubYearChoice} onChange={(event) => setGroupClubYear(key, event.target.value)}
                               className="FormInput CartClubYear" aria-label={`Club year for ${itemLabel(item)}`}>
-                              {clubYearChoices(item).map((choice) => <option key={choice} value={choice}>{choiceLabel(choice)}</option>)}
+                              {clubYearChoices(item).map((choice) => <option key={choice} value={choice}>{choiceLabel(choice, item)}</option>)}
                             </select>
                           )}
                           <span className="CartItemMeta">
@@ -695,23 +701,28 @@ export default function App() {
                 </div>
                   {/* Cost Breakdown Section */}
                   {annualBilling ? (
-                    // Annual mode: Only show Year 1 upfront cost
+                    // Annual mode: the cost now, then any yearly subscription payments from 1 March
                     <div className="CartBreakdown">
                       <div className="CartBreakdownLabel">Your Cost</div>
                       <div className="CartSummaryLine">
                         Total: £{calculations.year1Total.toFixed(2)}
                       </div>
+                      {calculations.recurringSchedule.map((payment) => (
+                        <div key={`${payment.interval}-${payment.firstCharge.getTime()}`} className="CartSummaryLine">
+                          Then {recurringText(payment)} until you cancel
+                        </div>
+                      ))}
                     </div>
                   ) : (
-                    // Monthly mode: what is taken now, then each club year's direct debit (1st of the month, last on 1 February).
+                    // Monthly mode: what is taken now, then each subscription's payments (monthly on the 1st, yearly on 1 March) until cancelled.
                     <div className="CartBreakdown">
                       <div className="CartBreakdownLabel">Cost Breakdown</div>
                       <div className="CartSummaryLine">
                         Due now: £{calculations.year1Total.toFixed(2)}
                       </div>
-                      {calculations.monthlySchedule.map((debit) => (
-                        <div key={debit.firstDebit.getTime()} className="CartSummaryLine">
-                          Then £{debit.monthly.toFixed(2)} a month on the next {debitRange(debit).replace(/^1 payment/, 'payment')} (club year {clubYearLabel(debit.clubYear)})
+                      {calculations.recurringSchedule.map((payment) => (
+                        <div key={`${payment.interval}-${payment.firstCharge.getTime()}`} className="CartSummaryLine">
+                          Then {recurringText(payment)} until you cancel
                         </div>
                       ))}
                     </div>

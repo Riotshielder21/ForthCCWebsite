@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_VOLUNTEER_BENEFITS as tiers } from './volunteering.js';
-import { annualAdjustment, monthlyAdjustment, monthsLeftIn, volunteerPriceFor, volunteerSignupYear, VOLUNTEER_ADJUSTMENT } from './volunteerAdjustments.js';
+import { annualAdjustment, monthsLeftIn, nextChargeYear, subscriptionAdjustment, volunteerPriceFor, volunteerSignupYear, VOLUNTEER_ADJUSTMENT } from './volunteerAdjustments.js';
 
 const august = new Date('2026-08-15T12:00:00Z');
 const december = new Date('2026-12-15T12:00:00Z');
@@ -30,14 +30,24 @@ test('the volunteer price needs every holder to share the benefit', () => {
   assert.equal(price(['m1'], 2025), null);
 });
 
-test('existing monthly items are lowered from the next debit or removed when free, never raised', () => {
+test('existing subscription items are lowered from the next payment or removed when free, never raised', () => {
   const item = { status: 'active', clubYear: 2026, monthlyAmount: 25 };
-  assert.deepEqual(monthlyAdjustment({ item, volunteerPrice: 20, now: august }), { action: 'reprice', from: 25, to: 20 });
-  assert.deepEqual(monthlyAdjustment({ item, volunteerPrice: 0, now: august }), { action: 'remove', from: 25, to: 0 });
-  assert.equal(monthlyAdjustment({ item: { ...item, monthlyAmount: 18 }, volunteerPrice: 20, now: august }), null, 'a lower promo price stays');
-  assert.equal(monthlyAdjustment({ item, volunteerPrice: null, now: august }), null);
-  assert.equal(monthlyAdjustment({ item: { ...item, cancelScheduledAt: 'x' }, volunteerPrice: 0, now: august }), null);
-  assert.equal(monthlyAdjustment({ item, volunteerPrice: 20, now: february }), null, 'no debits left after 1 February');
+  assert.deepEqual(subscriptionAdjustment({ item, volunteerPrice: 20 }), { action: 'reprice', from: 25, to: 20 });
+  assert.deepEqual(subscriptionAdjustment({ item, volunteerPrice: 0 }), { action: 'remove', from: 25, to: 0 });
+  assert.equal(subscriptionAdjustment({ item: { ...item, monthlyAmount: 18 }, volunteerPrice: 20 }), null, 'a lower promo price stays');
+  assert.equal(subscriptionAdjustment({ item, volunteerPrice: null }), null);
+  assert.equal(subscriptionAdjustment({ item: { ...item, cancelScheduledAt: 'x' }, volunteerPrice: 0 }), null);
+  const yearly = { status: 'active', clubYear: 2026, interval: 'year', yearlyAmount: 240 };
+  assert.deepEqual(subscriptionAdjustment({ item: yearly, volunteerPrice: 20, product: blue }), { action: 'reprice', from: 240, to: 192 },
+    'a yearly item is twelve volunteer months, less the annual discount');
+});
+
+test('a subscription carries on, so its next payment decides which volunteer year applies', () => {
+  assert.equal(nextChargeYear({ clubYear: 2026 }, august), 2026);
+  assert.equal(nextChargeYear({ clubYear: 2025 }, august), 2026, 'one started last year is charged in this year');
+  assert.equal(nextChargeYear({ clubYear: 2026 }, february), 2027, 'after 1 February the next debit is on 1 March');
+  assert.equal(nextChargeYear({ clubYear: 2026, interval: 'year' }, august), 2027, 'a yearly item is next charged on 1 March');
+  assert.equal(nextChargeYear({ clubYear: 2027 }, december), 2027, 'next year’s item is not charged before it starts');
 });
 
 test('annual Blue and Gold: monthly saving × months left, less the 20% annual discount', () => {

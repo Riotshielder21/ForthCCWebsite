@@ -479,6 +479,7 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                 const promo = parts.reduce((sum, item) => sum + (item.promoSaving || 0), 0);
                 const price = parts.reduce((sum, item) => sum + item.displayPrice, 0) + trip + promo;
                 const monthly = parts.reduce((sum, item) => sum + (item.recurringMonthlyCost || 0), 0);
+                const yearly = parts.reduce((sum, item) => sum + (item.recurringYearlyCost || 0), 0);
                 const holders = people.filter((candidate) => candidate.lineIds.includes(line.lineId)).map(personLabel);
                 return (
                   <div key={line.lineId} className="ReviewItem">
@@ -486,7 +487,8 @@ export default function CheckoutPage({ lines, people, onPeopleChange, email, onE
                       <span className="CartItemTitle">{lineLabel(line)}{line.size ? ` (${line.size})` : ''}</span>
                       <span className="ReviewPrice">{money(price)}</span>
                     </div>
-                    {(holders.length > 0 || monthly > 0) && <p className="CartItemMeta">{[holders.join(', '), monthly > 0 ? `then ${money(monthly)} a month` : ''].filter(Boolean).join(' · ')}</p>}
+                    {(holders.length > 0 || monthly > 0 || yearly > 0) && <p className="CartItemMeta">{[holders.join(', '), monthly > 0 ? `then ${money(monthly)} a month until you cancel` : '',
+                      yearly > 0 ? `then ${money(yearly)} a year from 1 March until you cancel` : ''].filter(Boolean).join(' · ')}</p>}
                     {trip > 0 && <div className="ReviewRow ReviewDiscount"><span>{tripDiscountText(parts.flatMap((item) => item.tripDiscountReasons || []), tripDiscounts)}</span><span>-{money(trip)}</span></div>}
                     {promo > 0 && <div className="ReviewRow ReviewDiscount"><span>Discount code applied</span><span>-{money(promo)}</span></div>}
                   </div>

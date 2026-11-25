@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseProduct, productTerms, productMembershipRule, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel } from './catalogue.js';
-import { calculateCart } from './pricing.js';
+import { normaliseProduct, productTerms, productMembershipRule, resolveCatalogue, validateEventSchedule, eventSessions, eventScheduleLabel, nextYearPriceFields, nextYearPriceInput } from './catalogue.js';
+import { calculateCart, expandClubYearLines } from './pricing.js';
 import { PRODUCTS } from '../constants/products.js';
 
 test('only saved products are on sale: starter products need a record, inactive records leave, sorted by sortOrder', () => {
@@ -63,31 +63,34 @@ test('course-place voucher purchase value can be applied as scoped credit to a c
   assert.equal(redemption.total, 15);
 });
 test('product terms follow the category, and only services choose a pricing mode', () => {
-  assert.deepEqual(productTerms({ category: 'MEMBERSHIP', type: 'subscription', allowMonthly: true }), { type: 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false });
+  assert.deepEqual(productTerms({ category: 'MEMBERSHIP', type: 'subscription', allowMonthly: true }), { type: 'annual-oneoff', pricingMode: 'fixed', allowMonthly: false, thresholdProration: false });
   assert.equal(productTerms({ category: 'MEMBERSHIP', type: 'external' }).type, 'external');
-  assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'prorated' }), { type: 'yearly-service', pricingMode: 'prorated', allowMonthly: false });
+  assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'prorated' }), { type: 'yearly-service', pricingMode: 'prorated', allowMonthly: false, thresholdProration: false });
   assert.equal(productTerms({ category: 'SERVICES', pricingMode: 'fixed', type: 'yearly-service' }).pricingMode, 'fixed');
-  assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'prorated', allowMonthly: true }), { type: 'yearly-service', pricingMode: 'prorated', allowMonthly: false });
-  assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'subscription', allowMonthly: true }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: true });
+  assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'prorated', allowMonthly: true, thresholdProration: true }), { type: 'yearly-service', pricingMode: 'prorated', allowMonthly: false, thresholdProration: false });
+  assert.deepEqual(productTerms({ category: 'SERVICES', pricingMode: 'subscription', allowMonthly: true }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: true, thresholdProration: true });
   assert.equal(productTerms({ category: 'SERVICES', pricingMode: 'subscription', allowMonthly: false }).allowMonthly, false);
-  assert.deepEqual(productTerms({ category: 'SUBSCRIPTIONS', allowMonthly: true }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: true });
+  assert.deepEqual(productTerms({ category: 'SUBSCRIPTIONS', allowMonthly: true }), { type: 'subscription', pricingMode: 'subscription', allowMonthly: true, thresholdProration: true });
   assert.equal(productTerms({ category: 'SUBSCRIPTIONS', allowMonthly: false }).allowMonthly, false);
+  assert.equal(productTerms({ category: 'SUBSCRIPTIONS', thresholdProration: false }).thresholdProration, false, 'the 20% steps are on unless turned off');
   for (const [category, type] of [['VOUCHERS', 'voucher'], ['EVENTS', 'event-ticket'], ['MERCHANDISE', 'merchandise']]) {
-    assert.deepEqual(productTerms({ category, type: 'subscription', pricingMode: 'prorated', allowMonthly: true }), { type, pricingMode: 'fixed', allowMonthly: false });
+    assert.deepEqual(productTerms({ category, type: 'subscription', pricingMode: 'prorated', allowMonthly: true }), { type, pricingMode: 'fixed', allowMonthly: false, thresholdProration: false });
   }
   const defaults = resolveCatalogue(PRODUCTS);
   assert.ok(defaults.every((product) => product.pricingMode));
   assert.deepEqual(['boat-hire', 'keyhire'].map((id) => defaults.find((product) => product.id === id).pricingMode), ['prorated', 'fixed']);
 });
 
-test('a subscription that does not allow monthly payments is charged up front even in monthly mode', () => {
+test('a subscription that does not allow monthly payments is paid yearly even in monthly mode', () => {
   const now = new Date(2026, 9, 1);
   const upfront = normaliseProduct({ id: 'up', category: 'SUBSCRIPTIONS', basePrice: 10, allowMonthly: false });
   const monthly = normaliseProduct({ id: 'mo', category: 'SUBSCRIPTIONS', basePrice: 10, allowMonthly: true });
   const fixed = normaliseProduct({ id: 'fx', category: 'SERVICES', type: 'yearly-service', pricingMode: 'fixed', basePrice: 85 });
   const cart = calculateCart([upfront, monthly, fixed], false, null, now);
   assert.deepEqual(cart.items.map((item) => item.monthlyBilling), [false, true, false]);
-  assert.equal(cart.items[0].displayPrice, 50);
+  // 1 October: three fifths of the club year are left, so 60% of twelve months.
+  assert.equal(cart.items[0].displayPrice, 72);
+  assert.equal(cart.items[0].recurringYearlyCost, 120);
   assert.equal(cart.items[1].displayPrice, 10);
   assert.equal(cart.items[2].displayPrice, 85);
   assert.equal(calculateCart([fixed], true, null, new Date(2027, 0, 9)).total, 85);
@@ -106,4 +109,19 @@ test('the membership rule applies to events, services and subscriptions, mapping
   assert.deepEqual([included.membershipRule, included.membershipRequired], ['included', true]);
   const merch = normaliseProduct({ id: 'm', category: 'MERCHANDISE', membershipRule: 'included', membershipRequired: true });
   assert.equal('membershipRule' in merch || 'membershipRequired' in merch, false);
+});
+
+test('next club year\'s price is charged for next year and becomes the price on 1 March; this year\'s price applies until then', () => {
+  const gold = { id: 'gold', category: 'SUBSCRIPTIONS', type: 'subscription', pricingMode: 'subscription', allowMonthly: true, basePrice: 30, sortOrder: 1,
+    ...nextYearPriceFields('32', new Date('2027-01-10T12:00:00Z')) };
+  assert.deepEqual([gold.nextYearPrice, gold.nextYearPriceFrom], [32, 2027]);
+  const priced = (iso) => resolveCatalogue([gold], new Date(iso))[0];
+  assert.deepEqual([priced('2027-01-10T12:00:00Z').basePrice, priced('2027-01-10T12:00:00Z').nextYearPrice], [30, 32], 'January: this year\'s price still applies');
+  assert.deepEqual([priced('2027-03-01T00:00:00Z').basePrice, priced('2027-03-01T00:00:00Z').nextYearPrice], [32, 32], 'it rolls over on 1 March');
+  const lines = expandClubYearLines([{ ...priced('2027-01-10T12:00:00Z'), lineId: 'a', clubYearChoice: 'this' }, { ...priced('2027-01-10T12:00:00Z'), lineId: 'b', clubYearChoice: 'next' }]);
+  assert.deepEqual(lines.map((line) => line.basePrice), [30, 32]);
+  assert.equal(nextYearPriceInput(gold, new Date('2027-01-10T12:00:00Z')), '32', 'the editor shows the price set for the coming year');
+  assert.equal(nextYearPriceInput(gold, new Date('2027-04-01T12:00:00Z')), '', 'and nothing once it has started');
+  assert.deepEqual(nextYearPriceFields(' ', new Date('2027-01-10T12:00:00Z')), { nextYearPrice: null, nextYearPriceFrom: null });
+  assert.deepEqual(resolveCatalogue([{ ...gold, nextYearPrice: null, nextYearPriceFrom: null }], new Date('2027-01-10T12:00:00Z')).map((product) => [product.basePrice, product.nextYearPrice]), [[30, 30]]);
 });

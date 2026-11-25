@@ -201,7 +201,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
               </div>
               <p className="shop_product_description">{product.description}</p>
               {product.pricingMode === 'subscription' && product.allowMonthly && (
-                <p className="KitHireMonthlyLabel">Choose annual or monthly payment in the basket.</p>
+                <p className="KitHireMonthlyLabel">Pay monthly or yearly until you cancel; choose in the basket.</p>
               )}
               {product.category === 'EVENTS' && <p className="text_container SpaceB4">{eventScheduleLabel(product.eventSchedule)}</p>}
               {courseLeft && <p className="text_container SpaceB4" role="status">Under way: {courseLeft.left} of {courseLeft.total} sessions left.</p>}
@@ -241,7 +241,7 @@ export default function MembershipPage({ activeCategory, setActiveCategory, cart
                           : product.type === 'yearly-service' ? copy.annualPriceLabel
                             : copy.clubYearPriceLabel}
                       </div>
-                      {product.pricingMode === 'subscription' && !product.allowMonthly && <div className="KitHireMonthlyLabel">Paid up front to 1 March</div>}
+                      {product.pricingMode === 'subscription' && !product.allowMonthly && <div className="KitHireMonthlyLabel">Paid yearly, every 1 March, until you cancel</div>}
                       {product.type === 'voucher' && <div className="KitHireMonthlyLabel">Spend on: {scopeLabel(voucherScope(product), (id) => products.find((candidate) => candidate.id === id)?.name || id).replace(/^Everything/, 'everything')}</div>}
                     </>
                   )}

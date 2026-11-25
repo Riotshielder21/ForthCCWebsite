@@ -96,7 +96,7 @@ const personDetails = (person, keys) => RECEIPT_PERSON_FIELDS
   .map((field) => ({ label: field.label, value: String(field.value(person) ?? '').trim() }))
   .filter((detail) => detail.value);
 
-// Club-year items carry the label shown in the basket, e.g. "Rest of October now (80% off), then £25.00 a month: 4 payments, Nov 2026 – Feb 2027".
+// Club-year items carry the label shown in the basket, e.g. "Rest of October now (80% off), then £25.00 a month from 1 Nov 2026 until you cancel".
 const receiptBilling = (item, order) => {
   const monthly = typeof item.monthly === 'boolean' ? item.monthly : order.billingMode === 'monthly' && item.type === 'subscription';
   if (item.label && item.clubYear) {

@@ -45,10 +45,12 @@ test('percentage discount excludes membership but includes services', () => {
 });
 
 test('flat subscription savings are deducted once without annual stacking', () => {
+  // 1 October is past 40% of the club year, so the first annual payment is 60% of a year.
   const result = calculateCart([subscription], true, { type: 'flat', discountValue: 5 }, now);
-  assert.equal(result.total, 100);
-  assert.equal(result.promoDiscountValue, 25);
+  assert.equal(result.total, 144);
+  assert.equal(result.promoDiscountValue, 36);
   assert.equal(result.annualSaving, 0);
+  assert.equal(result.recurringYearlyTotal, 240, 'then twelve discounted months a year, without the annual discount');
 });
 
 test('voucher credit does not reduce future monthly subscription payments', () => {
@@ -59,9 +61,10 @@ test('voucher credit does not reduce future monthly subscription payments', () =
 
 test('annual discounts still apply before voucher credit', () => {
   const result = calculateCart([subscription], true, { type: 'credit', discountValue: 60 }, now);
-  assert.equal(result.subtotal, 100);
-  assert.equal(result.total, 40);
-  assert.equal(result.annualSaving, 25);
+  assert.equal(result.subtotal, 144);
+  assert.equal(result.total, 84);
+  assert.equal(result.annualSaving, 36);
+  assert.equal(result.recurringYearlyTotal, 240, 'credit never reduces the yearly payments');
 });
 
 test('credit skips memberships and is consumed in cart order across eligible items', () => {
@@ -146,12 +149,14 @@ test('flat annual subscription discounts stack with annual savings only when exp
 
   assert.deepEqual(
     [withoutStacking.subtotal, withoutStacking.total, withoutStacking.annualSaving, withoutStacking.promoDiscountValue],
-    [125, 100, 0, 25]
+    [180, 144, 0, 36]
   );
   assert.deepEqual(
     [withStacking.subtotal, withStacking.total, withStacking.annualSaving, withStacking.promoDiscountValue],
-    [100, 80, 25, 20]
+    [144, 115.2, 36, 28.8]
   );
+  assert.deepEqual([withoutStacking.recurringYearlyTotal, withStacking.recurringYearlyTotal], [240, 240],
+    'a code covers only this club year: the 1 March payment is next year\'s full price');
 });
 
 test('monthly subscription pricing has no annual saving and reports its discounted recurring amount', () => {
@@ -165,14 +170,20 @@ test('monthly subscription pricing has no annual saving and reports its discount
   assert.equal(result.recurringMonthlyTotal, 20);
 });
 
-test('annual subscription totals and savings use the remaining club-year months', () => {
-  const february = calculateCart([subscription], true, null, new Date(2027, 1, 28));
-  const march = calculateCart([subscription], true, null, new Date(2027, 2, 1));
-  // 28 February is the last 20% of the month and no full months follow; 1 March is a whole month and eleven more.
-  assert.deepEqual([february.items[0].clubYearInfo.monthsRemaining, february.subtotal, february.annualSaving], [1, 4, 1]);
-  assert.deepEqual([march.items[0].clubYearInfo.monthsRemaining, march.subtotal, march.annualSaving], [12, 240, 60]);
-  assert.equal(february.recurringMonthlyTotal, 0);
-  assert.equal(march.recurringMonthlyTotal, 0);
+test('annual subscriptions charge the rest of the club year in 20% steps, then the full year every 1 March', () => {
+  const at = (date, product = subscription) => calculateCart([product], true, null, date);
+  // A fifth of the 2026/27 club year has gone on 13 May, two fifths on 25 July, three on 6 October, four on 18 December.
+  assert.deepEqual([[2026, 2, 1], [2026, 4, 12], [2026, 4, 13], [2026, 6, 25], [2026, 9, 6], [2026, 11, 17], [2026, 11, 18], [2027, 1, 28]]
+    .map(([year, month, day]) => at(new Date(year, month, day, 12)).total), [240, 240, 192, 144, 96, 96, 48, 48]);
+  const february = at(new Date(2027, 1, 28));
+  assert.deepEqual([february.subtotal, february.annualSaving, february.recurringYearlyTotal, february.recurringMonthlyTotal], [48, 12, 240, 0]);
+  assert.equal(february.items[0].firstDebit.toISOString(), '2027-03-01T00:00:00.000Z');
+  assert.deepEqual(february.recurringSchedule.map(({ interval, amount, firstCharge }) => [interval, amount, firstCharge.toISOString()]),
+    [['year', 240, '2027-03-01T00:00:00.000Z']]);
+  const unprorated = at(new Date(2027, 1, 28), { ...subscription, thresholdProration: false });
+  assert.deepEqual([unprorated.total, unprorated.recurringYearlyTotal], [240, 240], 'a product can opt out and charge the full year');
+  const annualOnly = { ...subscription, allowMonthly: false };
+  assert.equal(calculateCart([annualOnly], false, null, new Date(2027, 1, 28)).recurringYearlyTotal, 240, 'annual-only subscriptions are yearly in a monthly basket');
 });
 
 test('prorated service pricing drops to 60% on 1 October', () => {
@@ -240,46 +251,73 @@ test('credit limited to categories or products only covers those items', () => {
 test('monthly items charge the joining-month share now and are debited from the next 1st', () => {
   const october = calculateCart([subscription], false, null, new Date(2026, 9, 9));
   // 23 of October's 31 days are left, which rounds up to 80%.
-  assert.deepEqual([october.total, october.items[0].monthlyAmount, october.items[0].debits], [20, 25, 4]);
+  assert.deepEqual([october.total, october.items[0].monthlyAmount, october.items[0].interval], [20, 25, 'month']);
   assert.equal(october.items[0].firstDebit.toISOString(), '2026-11-01T00:00:00.000Z');
-  assert.deepEqual(october.monthlySchedule.map(({ monthly, clubYear }) => [monthly, clubYear]), [[25, 2026]]);
+  assert.deepEqual(october.recurringSchedule.map(({ interval, amount, clubYear }) => [interval, amount, clubYear]), [['month', 25, 2026]]);
   const upFront = calculateCart([subscription], true, null, new Date(2026, 9, 9));
-  // 80% of October plus November to February, with 20% off for paying up front.
+  // Three fifths of the club year have gone, so 40% of the year price, which already has 20% off for paying up front.
   assert.equal(upFront.total, 96);
 });
 
-test('this year\'s monthly items bought in February are only charged for the rest of February', () => {
+test('monthly items bought in February carry on from 1 March', () => {
   const february = calculateCart([subscription], false, null, new Date(2027, 1, 10));
-  assert.deepEqual([february.total, february.recurringMonthlyTotal, february.items[0].debits], [20, 0, 0]);
-  assert.deepEqual(february.monthlySchedule, []);
-  assert.match(february.items[0].label, /Rest of February now \(20% off\); ends 1 Mar 2027/);
+  assert.deepEqual([february.total, february.recurringMonthlyTotal], [20, 25]);
+  assert.equal(february.items[0].firstDebit.toISOString(), '2027-03-01T00:00:00.000Z');
+  assert.equal(february.items[0].label, 'Rest of February now (20% off), then £25.00 a month from 1 Mar 2027 until you cancel');
 });
 
-test('monthly labels state the joining share, monthly amount and number of payments', () => {
-  const label = (date, part = 'this') => calculateCart([{ ...subscription, clubYearPart: part }], false, null, date).items[0].label;
-  assert.equal(label(new Date('2026-10-28T12:00:00Z')), 'Rest of October now (80% off), then £25.00 a month: 4 payments, Nov 2026 – Feb 2027');
-  assert.equal(label(new Date('2027-01-15T12:00:00Z')), 'Rest of January now (40% off), then £25.00 a month: 1 payment, Feb 2027');
-  assert.equal(label(new Date('2027-01-15T12:00:00Z'), 'next'), '£25.00 a month: 12 payments, Mar 2027 – Feb 2028');
-  assert.deepEqual(calculateCart([subscription], false, null, new Date('2026-10-28T12:00:00Z')).monthlySchedule.map((debit) => debit.debits), [4]);
+test('subscription labels state the first payment and what follows until cancelled', () => {
+  const label = (date, part = 'this', annual = false, product = subscription) =>
+    calculateCart([{ ...product, clubYearPart: part }], annual, null, date).items[0].label;
+  assert.equal(label(new Date('2026-10-28T12:00:00Z')), 'Rest of October now (80% off), then £25.00 a month from 1 Nov 2026 until you cancel');
+  assert.equal(label(new Date('2027-01-15T12:00:00Z')), 'Rest of January now (40% off), then £25.00 a month from 1 Feb 2027 until you cancel');
+  assert.equal(label(new Date('2027-01-15T12:00:00Z'), 'next'), '£25.00 a month from 1 Mar 2027 until you cancel');
+  assert.equal(label(new Date('2027-01-15T12:00:00Z'), 'this', true), 'Rest of the club year now (80% off), then £240.00 a year from 1 Mar 2027 until you cancel');
+  assert.equal(label(new Date('2027-01-15T12:00:00Z'), 'next', true), '£240.00 a year from 1 Mar 2027 until you cancel');
+  assert.equal(label(new Date('2027-01-15T12:00:00Z'), 'this', true, { ...subscription, thresholdProration: false }),
+    'This club year now, then £240.00 a year from 1 Mar 2027 until you cancel');
 });
 
-test('next year: membership and up-front items are charged now; monthly items start on 1 March', () => {
+test('next year: membership and up-front items are charged now; subscriptions start on 1 March', () => {
   const january = new Date(2027, 0, 20);
   const boatHire = { id: 'boat', category: 'SERVICES', type: 'yearly-service', pricingMode: 'prorated', basePrice: 85 };
   const lines = expandClubYearLines([
     { ...membership, lineId: 'm', clubYearChoice: 'next' },
-    { ...subscription, lineId: 's', clubYearChoice: 'both' },
+    { ...subscription, lineId: 's', clubYearChoice: 'next' },
     { ...boatHire, lineId: 'b', clubYearChoice: 'both' }
   ]);
   assert.deepEqual(lines.map((line) => [line.lineId, line.clubYearPart || 'this', line.sourceLineId]),
-    [['m', 'next', 'm'], ['s', 'this', 's'], ['s~next', 'next', 's'], ['b', 'this', 'b'], ['b~next', 'next', 'b']]);
+    [['m', 'next', 'm'], ['s', 'next', 's'], ['b', 'this', 'b'], ['b~next', 'next', 'b']]);
   const result = calculateCart(lines, false, null, january);
   assert.deepEqual(result.items.map((item) => [item.lineId, item.clubYear, item.displayPrice]),
-    [['m', 2027, 30], ['s', 2026, 10], ['s~next', 2027, 0], ['b', 2026, 51], ['b~next', 2027, 85]]);
-  assert.deepEqual(result.monthlySchedule.map(({ firstDebit, subscriptionEnd, monthly }) => [firstDebit.toISOString(), subscriptionEnd.toISOString(), monthly]), [
-    ['2027-02-01T00:00:00.000Z', '2027-03-01T00:00:00.000Z', 25],
-    ['2027-03-01T00:00:00.000Z', '2028-03-01T00:00:00.000Z', 25]
-  ]);
-  assert.equal(calculateCart([{ ...subscription, clubYearPart: 'next' }], true, null, january).total, 240);
-  assert.deepEqual(expandPeopleLines([{ id: 'p', lineIds: ['m', 's', 'b'] }], [{ lineId: 's', clubYearChoice: 'both' }])[0].lineIds, ['m', 's', 's~next', 'b']);
+    [['m', 2027, 30], ['s', 2027, 0], ['b', 2026, 51], ['b~next', 2027, 85]]);
+  assert.deepEqual(result.recurringSchedule.map(({ interval, firstCharge, amount }) => [interval, firstCharge.toISOString(), amount]),
+    [['month', '2027-03-01T00:00:00.000Z', 25]]);
+  const annualNextYear = calculateCart([{ ...subscription, clubYearPart: 'next' }], true, null, january);
+  assert.deepEqual([annualNextYear.total, annualNextYear.recurringYearlyTotal], [0, 240], 'the card is saved now and the year is charged on 1 March');
+  assert.deepEqual(expandPeopleLines([{ id: 'p', lineIds: ['m', 's', 'b'] }], [{ lineId: 'b', clubYearChoice: 'both' }])[0].lineIds, ['m', 's', 'b', 'b~next']);
+});
+
+test('payments in a later club year are quoted at the shop price, without this year\'s discount code or volunteer price', () => {
+  const gold = { ...subscription, id: 'gold', basePrice: 30, hasAnnualDiscount: true, allowMonthly: true };
+  const half = { type: 'multiplier', discountValue: 0.5 };
+  const october = new Date('2026-10-10T12:00:00Z');
+  const monthly = calculateCart([gold], false, half, october).items[0];
+  assert.deepEqual([monthly.monthlyAmount, monthly.renewalAmount, monthly.renewsAt.toISOString()], [15, 30, '2027-03-01T00:00:00.000Z']);
+  assert.match(monthly.label, /then £15\.00 a month from 1 Nov 2026 and £30\.00 a month from 1 Mar 2027 until you cancel/);
+  const yearly = calculateCart([gold], true, half, new Date('2027-01-10T12:00:00Z')).items[0];
+  assert.deepEqual([yearly.yearlyAmount, yearly.renewalAmount], [288, undefined], 'all its yearly payments are in later club years');
+  const volunteer = calculateCart([{ ...gold, basePrice: 10, volunteerOriginalPrice: 30, volunteerBenefit: true }], false, null, new Date('2027-02-05T12:00:00Z')).items[0];
+  assert.equal(volunteer.monthlyAmount, 30, 'bought in February, the first full payment is on 1 March: next year\'s price');
+  const nextYear = calculateCart([{ ...gold, clubYearPart: 'next' }], false, half, new Date('2027-01-10T12:00:00Z')).items[0];
+  assert.deepEqual([nextYear.monthlyAmount, nextYear.renewalAmount], [15, 30], 'a code used on next year\'s line covers next year');
+});
+
+test('a subscription bought in January for this year pays this year\'s price until 1 March, then next year\'s, as quoted', () => {
+  const gold = { ...subscription, id: 'gold', basePrice: 30, nextYearPrice: 32, hasAnnualDiscount: true, allowMonthly: true };
+  const january = new Date('2027-01-10T12:00:00Z');
+  const monthly = calculateCart([gold], false, null, january).items[0];
+  assert.deepEqual([monthly.monthlyAmount, monthly.renewalAmount], [30, 32]);
+  assert.match(monthly.label, /£30\.00 a month from 1 Feb 2027 and £32\.00 a month from 1 Mar 2027 until you cancel/);
+  assert.equal(calculateCart([gold], true, null, january).items[0].yearlyAmount, 307.2, 'the 1 March yearly payment is next year\'s price: 32 × 12 less 20%');
 });

@@ -1751,6 +1751,21 @@
     background: #0c4a6e;
   }
 
+  /* The continue/cancel answer buttons: green to keep a subscription, red to cancel it (as in the email). */
+  .ConfirmActionButton, .CancelActionButton {
+    @apply px-6 py-3 inline-flex items-center gap-2 text-white rounded-2xl transition-all;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .ConfirmActionButton { background: #15803d; }
+  .ConfirmActionButton:hover { background: #166534; }
+  .CancelActionButton { background: #b91c1c; }
+  .CancelActionButton:hover { background: #991b1b; }
+  .ConfirmActionButton:disabled, .CancelActionButton:disabled { @apply opacity-60 cursor-not-allowed; }
+  .ContinuationActions { @apply flex flex-wrap justify-center gap-3; }
+
   .ReviewItems { gap: 1rem; }
   .ReviewItem { @apply pb-3 border-b border-slate-100; }
   .ReviewItem:last-child { @apply pb-0 border-b-0; }

@@ -2,14 +2,15 @@
  * The club year runs from 1 March to the end of February and is named by the year it starts (1 March 2027 to
  * 28/29 February 2028 is 2027). Every date here is taken in Europe/London, whatever time zone the server runs in.
  *
- * Payment schedule: monthly direct debits are on the 1st; the last one is 1 February and every subscription stops at
- * the start of 1 March. Current-year sales close earlier: memberships on 8 February and other items on 15 February.
+ * Subscriptions carry on until they are cancelled: monthly payments are taken on the 1st of each month and annual
+ * ones every 1 March. Current-year sales close in February: memberships on 8 February and other items on 15 February.
  * From 1 January people can also buy for next club year.
  */
 const TIME_ZONE = 'Europe/London';
 const partsFormat = new Intl.DateTimeFormat('en-GB', { timeZone: TIME_ZONE, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', hourCycle: 'h23' });
 
 export const CURRENT_YEAR_SALES_CUTOFF_DAY = 15;
+const DAY_MS = 24 * 60 * 60 * 1000;
 // This year's membership is sold until the end of February's first week.
 export const LAST_MEMBERSHIP_SALE_DAY = 7;
 export const JOINING_STEP = 0.2;
@@ -54,6 +55,19 @@ export const joiningShare = (now = new Date()) => {
   return Math.ceil(((length - day + 1) * 5) / length) / 5;
 };
 
+/**
+ * The share of an annual subscription's yearly price charged when it starts part way through the club year: the full
+ * price until a fifth of the year has gone (counted in London days from 1 March), then 80%, 60%, 40% and finally 20%.
+ */
+export const THRESHOLD_STEPS = 5;
+export const thresholdShare = (now = new Date()) => {
+  const { start, end } = clubYearDates(clubYearOf(now));
+  const { year, month, day } = londonParts(now);
+  const elapsed = Math.round((londonMidnight(year, month, day) - start) / DAY_MS);
+  const passed = Math.floor((elapsed * THRESHOLD_STEPS) / Math.round((end - start) / DAY_MS));
+  return (THRESHOLD_STEPS - passed) / THRESHOLD_STEPS;
+};
+
 /** The 1st of next month, when a new subscription's first direct debit is taken. */
 export const nextFirst = (now = new Date()) => {
   const { year, month } = londonParts(now);
@@ -77,7 +91,8 @@ export const CLUB_YEAR_CHOICES = ['this', 'next', 'both'];
 
 /**
  * Which club years an item can be bought for now. Before 1 January only this year. From 1 January this year, next year
- * or both; this year's membership stops on 8 February and everything for this year stops on 15 February.
+ * or both; this year's membership stops on 8 February and everything for this year stops on 15 February. A
+ * subscription carries on into next year by itself, so it starts either now ('this') or on 1 March ('next').
  */
 export const clubYearChoices = (item, now = new Date()) => {
   const kind = clubYearKind(item);
@@ -85,7 +100,8 @@ export const clubYearChoices = (item, now = new Date()) => {
   const dates = clubYearDates(clubYearOf(now));
   if (now < dates.renewalOpens) return ['this'];
   const thisYearOnSale = now < (kind === 'membership' ? dates.membershipSaleEnds : dates.salesCutoff);
-  return thisYearOnSale ? ['this', 'next', 'both'] : ['next'];
+  if (!thisYearOnSale) return ['next'];
+  return kind === 'monthly' ? ['this', 'next'] : ['this', 'next', 'both'];
 };
 
 export const defaultClubYearChoice = (item, now = new Date()) => {
@@ -108,17 +124,13 @@ export const clubYearsFor = (choice, now = new Date()) => {
 };
 
 /**
- * When a monthly item bought now is debited. This year: from the next 1st while that is before 1 March (so not
- * when bought in February, when the joining-month charge is the only payment). Next year: from 1 March.
+ * When a subscription bought now first takes a full payment, after which it carries on until cancelled. Monthly: the
+ * next 1st, or 1 March when it is for next club year. Annual: the next 1 March, the start of the next club year.
  */
-export const monthlyDebits = (clubYear, now = new Date()) => {
+export const firstRecurringCharge = (clubYear, interval = 'month', now = new Date()) => {
   const current = clubYearOf(now);
-  const { end, start } = clubYearDates(clubYear);
-  const subscriptionEnd = end;
-  if (clubYear > current) return { firstDebit: start, debits: 12, subscriptionEnd };
-  const first = nextFirst(now);
-  return first < subscriptionEnd ? { firstDebit: first, debits: fullMonthsAfterCurrent(now), subscriptionEnd }
-    : { firstDebit: null, debits: 0, subscriptionEnd };
+  if (interval === 'year' || clubYear > current) return clubYearDates(Math.max(clubYear, current + 1)).start;
+  return nextFirst(now);
 };
 
 const toDate = (value) => {
@@ -136,7 +148,41 @@ export const recordClubYear = (record) => {
   return granted ? clubYearOf(granted) : null;
 };
 
-/** Whether a member already holds a product for a club year, from a term entitlement or an active monthly item. */
+/**
+ * The club years an active subscription item covers: from the year it started until its end (`endsAt`), if set. Items
+ * recorded before subscriptions carried on until cancelled have no `interval` and cover only their own club year.
+ */
+const subscriptionSpan = (item) => {
+  const started = recordClubYear(item);
+  if (item?.status !== 'active' || !Number.isInteger(started)) return null;
+  return { started, ends: toDate(item.endsAt), singleYear: !item.interval };
+};
+
+/** Whether an active subscription item covers a club year. */
+export const subscriptionCoversYear = (item, clubYear) => {
+  const span = subscriptionSpan(item);
+  if (!span) return false;
+  if (span.singleYear) return span.started === clubYear;
+  return span.started <= clubYear && !(span.ends && span.ends <= clubYearDates(clubYear).start);
+};
+
+/** Whether an active subscription item covers a club year or any later one, whichever year it started. */
+export const subscriptionRunsFrom = (item, clubYear) => {
+  const span = subscriptionSpan(item);
+  if (!span) return false;
+  if (span.singleYear) return span.started >= clubYear;
+  return !(span.ends && span.ends <= clubYearDates(clubYear).start);
+};
+
+/** Whether a member already holds a product for a club year, from a term entitlement or an active subscription item. */
 export const holdsForClubYear = ({ entitlements = [], subscriptionItems = [] } = {}, productId, clubYear) =>
   entitlements.some((item) => item.productId === productId && !item.endedAt && recordClubYear(item) === clubYear)
-  || subscriptionItems.some((item) => item.productId === productId && item.status === 'active' && recordClubYear(item) === clubYear);
+  || subscriptionItems.some((item) => item.productId === productId && subscriptionCoversYear(item, clubYear));
+
+/**
+ * Whether a subscription bought for a club year would overlap one the member already has. It carries on until cancelled,
+ * so anything they hold of that product for that year or later counts, including a subscription that starts later.
+ */
+export const holdsSubscriptionFrom = ({ entitlements = [], subscriptionItems = [] } = {}, productId, clubYear) =>
+  entitlements.some((item) => item.productId === productId && !item.endedAt && recordClubYear(item) >= clubYear)
+  || subscriptionItems.some((item) => item.productId === productId && subscriptionRunsFrom(item, clubYear));

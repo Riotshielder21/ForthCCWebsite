@@ -72,7 +72,7 @@ export const PAGE_CONTENT = {
     label: 'Membership & Events',
     fields: {
       title: field('Page heading', 'Membership and Events'),
-      intro: field('Page introduction', 'The club year runs from 1 March. Membership and annual kit hire cover the current club year, while annual subscriptions are prorated to the next 1 March renewal.', true),
+      intro: field('Page introduction', 'The club year runs from 1 March. Membership and annual kit hire cover the current club year. Subscriptions carry on until you cancel them, paid monthly on the 1st or yearly on 1 March.', true),
       memberEyebrow: field('Membership tile label', 'MEMBERSHIP'),
       memberTitle: field('Membership tile heading', 'Club Membership'),
       memberBody: field('Membership tile text', "Join directly through our website. We'll set up your JustGo & Paddle Scotland membership for you. Select your tier below.", true),

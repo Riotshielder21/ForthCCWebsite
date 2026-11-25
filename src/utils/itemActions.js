@@ -33,19 +33,20 @@ export const refundAvailable = (item, paymentIntent, allocation, charge) => Math
 
 /**
  * What a purchased-item action changes, so the controls, confirmations and docs say the same thing. `revoke` on a
- * refund is the combined "refund and cancel" (monthly) or "refund and revoke" (one-off) action.
+ * refund is the combined "refund and cancel" (a subscription, paid monthly or yearly) or "refund and revoke" (one-off).
  */
-export const itemActionEffects = ({ action, revoke = false }, { monthly = false } = {}) => {
+export const itemActionEffects = ({ action, revoke = false }, { monthly = false, yearly = false } = {}) => {
   const refunds = action === 'refund';
   const removesAccess = action === 'revoke' || (refunds && revoke === true);
-  return { refunds, removesAccess, stopsBilling: monthly && removesAccess };
+  return { refunds, removesAccess, stopsBilling: (monthly || yearly) && removesAccess };
 };
 
 export const itemActionLabel = (request, item = {}) => {
   const { refunds, removesAccess } = itemActionEffects(request, item);
   if (!refunds) return 'Revoke access (no refund)';
-  if (!removesAccess) return item.monthly ? 'Refund one payment (billing continues)' : 'Refund only (access kept)';
-  return item.monthly ? 'Refund and cancel' : 'Refund and revoke';
+  const recurring = item.monthly || item.yearly;
+  if (!removesAccess) return recurring ? 'Refund one payment (billing continues)' : 'Refund only (access kept)';
+  return recurring ? 'Refund and cancel' : 'Refund and revoke';
 };
 
 export const describeItemAction = (request, item = {}, amountText = 'the chosen amount') => {
@@ -53,7 +54,7 @@ export const describeItemAction = (request, item = {}, amountText = 'the chosen 
   return [
     refunds ? `Returns ${amountText} to the payer through Stripe.` : 'No money is returned.',
     removesAccess ? 'Removes the item\'s access or benefit now.' : 'Access and benefits stay as they are.',
-    stopsBilling ? 'Stops this item\'s future monthly payments; if nothing else is on the Stripe subscription, the whole subscription is cancelled.'
-      : item.monthly ? 'Monthly payments carry on.' : ''
+    stopsBilling ? 'Stops this item\'s future subscription payments; if nothing else is on the Stripe subscription, the whole subscription is cancelled.'
+      : item.monthly || item.yearly ? 'Subscription payments carry on.' : ''
   ].filter(Boolean).join(' ');
 };

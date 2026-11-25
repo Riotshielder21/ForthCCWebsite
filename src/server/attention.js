@@ -10,6 +10,7 @@ export const ATTENTION_KINDS = {
   'payment-failed': { title: 'Payment did not clear', retry: false },
   'invoice-failed': { title: 'Monthly debits failed and Stripe stopped retrying', retry: false },
   'subscription-ended': { title: 'Monthly payments ended unexpectedly', retry: false },
+  'subscription-price': { title: 'Subscription not moved to the new club year price', retry: false },
   'cancel-request': { title: 'Member asked to cancel monthly payments', retry: false },
   'discount-reused': { title: 'Single-use code used twice', retry: false },
   'welcome-email': { title: 'Welcome email not sent', retry: false }

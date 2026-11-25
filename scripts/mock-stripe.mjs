@@ -1,5 +1,6 @@
 // Stands in for the Stripe API when the checkout flow test runs the server (`node --import ./scripts/mock-stripe.mjs`).
-// It checks the requests the club-year design depends on, so a regression shows up as a Stripe error in the test.
+// It checks the requests the subscription design depends on (subscriptions carry on until cancelled, monthly or yearly),
+// so a regression shows up as a Stripe error in the test.
 const originalFetch = globalThis.fetch;
 let counter = 0;
 // Ids differ between API runs because the emulator keeps earlier runs' records.
@@ -17,7 +18,7 @@ const now = () => Math.floor(Date.now() / 1000);
 const live = (subscription) => ['active', 'trialing'].includes(subscription.status);
 const fail = (message, status = 400) => Response.json({ error: { message, ...(status === 404 ? { code: 'resource_missing' } : {}) } }, { status });
 // Payer email prefixes: `new-card.` uses different card details at every checkout; `sub-fail.` has every subscription
-// change declined; `unpaid-feb.` has an unpaid invoice left open on each subscription (voided at the cut-off);
+// change declined; `unpaid-feb.` has an unpaid invoice left open on each subscription (voided at a year-end stop);
 // `flaky.` has Stripe fail with a temporary error the first time each order's subscription is created;
 // `paid-late.` has every Checkout Session paid straight away in Stripe, with the webhook never sent; `debit-fail.` has the
 // next monthly debit on each subscription fail and stay open, for the period starting at the end of the current one, and
@@ -162,34 +163,39 @@ globalThis.fetch = async (url, options) => {
       return fail('Stripe is temporarily unavailable.', 500);
     }
     const clubYear = params.get('metadata[club_year]');
-    const cutoff = Number(params.get('metadata[cutoff_at]'));
     const paymentMethod = params.get('default_payment_method');
-    if (!paymentMethod?.startsWith('pm_e2e') || !clubYear || !cutoff) return fail('A subscription needs saved payment details, a club year and a cut-off.');
-    // Items paid with the same details for the same club year must join the existing subscription instead.
-    if ([...subscriptions.values()].some((owned) => owned.customer === params.get('customer') && live(owned)
-      && owned.metadata.club_year === clubYear && owned.default_payment_method === paymentMethod)) {
-      return fail('These payment details already pay a subscription for this club year.');
-    }
+    if (!paymentMethod?.startsWith('pm_e2e') || !clubYear) return fail('A subscription needs saved payment details and a club year.');
+    if (params.has('cancel_at') || params.has('metadata[cutoff_at]')) return fail('A new subscription carries on until cancelled, so it has no end date.');
     const items = itemsFrom(params);
-    if (!items.length || items.some((item) => item.price.recurring.interval !== 'month' || item.metadata.club_year !== clubYear)) {
-      return fail('Every item must be monthly and belong to the subscription\'s club year.');
+    const interval = items[0]?.price.recurring.interval;
+    if (!items.length || !['month', 'year'].includes(interval) || items.some((item) => item.price.recurring.interval !== interval || item.metadata.club_year !== clubYear)) {
+      return fail('Every item must share the monthly or yearly interval and the subscription\'s club year.');
+    }
+    const nextCharge = Number(params.get('trial_end') || params.get('billing_cycle_anchor'));
+    // Items paid with the same details and next charged on the same day must join the existing subscription instead,
+    // unless they missed a payment (backdated): that must be charged now, which joining a yearly or trialling one would not do.
+    const backdated = params.has('backdate_start_date');
+    if ([...subscriptions.values()].some((owned) => owned.customer === params.get('customer') && live(owned) && !owned.cancel_at
+      && owned.items.data[0]?.price.recurring.interval === interval && owned.default_payment_method === paymentMethod && owned.current_period_end === nextCharge
+      && !(backdated && (interval === 'year' || owned.status !== 'active')))) {
+      return fail('These payment details already pay a subscription charged on that day.');
     }
     let subscription;
     const base = { id: `sub_e2e_${runId}_${counter}`, customer: params.get('customer'), default_payment_method: paymentMethod, latest_invoice: null,
-      metadata: { order_ref: params.get('metadata[order_ref]'), club_year: clubYear, cutoff_at: String(cutoff) }, items: { data: items } };
+      metadata: { order_ref: params.get('metadata[order_ref]'), club_year: clubYear }, items: { data: items }, cancel_at: null };
     if (params.has('trial_end')) {
       const trialEnd = Number(params.get('trial_end'));
-      if (trialEnd <= now() || Number(params.get('cancel_at')) !== cutoff || params.get('proration_behavior') !== 'none' || params.has('billing_cycle_anchor')) {
-        return fail('A waiting subscription starts at a future 1st and is cancelled at the cut-off without prorations.');
+      if (trialEnd <= now() || params.get('proration_behavior') !== 'none' || params.has('billing_cycle_anchor')) {
+        return fail('A waiting subscription trials until its first full payment, without prorations.');
       }
-      subscription = { ...base, status: 'trialing', trial_end: trialEnd, cancel_at: cutoff, current_period_start: now(), current_period_end: trialEnd };
+      subscription = { ...base, status: 'trialing', trial_end: trialEnd, current_period_start: now(), current_period_end: trialEnd };
     } else {
       const start = Number(params.get('backdate_start_date'));
       const anchor = Number(params.get('billing_cycle_anchor'));
-      if (!start || start > now() || anchor <= now() || params.get('proration_behavior') !== 'create_prorations' || params.has('cancel_at')) {
-        return fail('A late subscription is backdated to its missed 1st, anchored on the next 1st and prorated; cancel_at is set afterwards.');
+      if (!start || start > now() || anchor <= now() || params.get('proration_behavior') !== 'create_prorations') {
+        return fail('A late subscription is backdated to its missed first payment, anchored on the next one and prorated.');
       }
-      subscription = { ...base, status: 'active', cancel_at: null, current_period_start: start, current_period_end: anchor };
+      subscription = { ...base, status: 'active', current_period_start: start, current_period_end: anchor };
     }
     subscriptions.set(subscription.id, subscription);
     if (email.startsWith('unpaid-feb.')) {
@@ -210,14 +216,15 @@ globalThis.fetch = async (url, options) => {
     const owner = subscriptions.get(params.get('subscription'));
     if (!owner || !live(owner)) return fail('No such live subscription.', 404);
     if (emailOf(owner.customer).startsWith('sub-fail.')) return fail('Your card was declined.', 402);
-    // A waiting subscription's first debit is a full month; an item joining after a missed 1st is prorated.
-    const expected = owner.status === 'trialing' ? 'none' : 'create_prorations';
-    if (params.get('proration_behavior') !== expected || params.get('price_data[recurring][interval]') !== 'month'
-      || params.get('metadata[club_year]') !== owner.metadata.club_year) {
-      return fail(`Added items must be monthly, in the subscription's club year, with proration ${expected}.`);
+    // A waiting subscription's first payment is a full period; an item joining after a missed first payment is prorated
+    // (as the server asks), and one joining a paid-up subscription waits for its next payment.
+    const interval = owner.items.data[0]?.price.recurring.interval;
+    if (!['none', 'create_prorations'].includes(params.get('proration_behavior')) || (owner.status === 'trialing' && params.get('proration_behavior') !== 'none')
+      || params.get('price_data[recurring][interval]') !== interval || !params.get('metadata[club_year]')) {
+      return fail(`Added items must share the subscription's ${interval}ly interval, name their club year and only prorate a missed payment.`);
     }
     const item = { id: `si_e2e_${runId}_${counter}`, metadata: { line_id: params.get('metadata[line_id]'), order_ref: params.get('metadata[order_ref]'), club_year: params.get('metadata[club_year]') },
-      price: { product: params.get('price_data[product]'), unit_amount: Number(params.get('price_data[unit_amount]')), recurring: { interval: 'month' } } };
+      price: { product: params.get('price_data[product]'), unit_amount: Number(params.get('price_data[unit_amount]')), recurring: { interval } } };
     owner.items.data.push(item);
     return remember(item);
   }
@@ -230,10 +237,10 @@ globalThis.fetch = async (url, options) => {
       for (const [key, value] of params) item.metadata[key.slice(9, -1)] = value;
       return remember(item);
     }
-    // Volunteer prices apply from the next debit: the same product, monthly, with no proration.
+    // Volunteer prices apply from the next payment: the same product and interval, with no proration.
     if (params.get('proration_behavior') !== 'none' || params.get('price_data[product]') !== item.price.product
-      || params.get('price_data[recurring][interval]') !== 'month' || !(Number(params.get('price_data[unit_amount]')) > 0)) {
-      return fail('A price change keeps the product and monthly interval, without prorations.');
+      || params.get('price_data[recurring][interval]') !== item.price.recurring.interval || !(Number(params.get('price_data[unit_amount]')) > 0)) {
+      return fail('A price change keeps the product and interval, without prorations.');
     }
     item.price = { ...item.price, unit_amount: Number(params.get('price_data[unit_amount]')) };
     return remember(item);
@@ -263,12 +270,20 @@ globalThis.fetch = async (url, options) => {
         }
         return remember(known);
       }
-      if ([...params.keys()].sort().join() !== 'cancel_at,proration_behavior' || params.get('proration_behavior') !== 'none'
-        || Number(params.get('cancel_at')) !== Number(known.metadata.cutoff_at)) {
-        return fail('An existing subscription is only ever given its cut-off, without prorations.');
+      const keys = [...params.keys()].sort().join();
+      // The continue/cancel email stops a subscription at the club-year end without prorating, or undoes that stop.
+      if (keys === 'cancel_at,metadata[cutoff_at],proration_behavior' && params.get('proration_behavior') === 'none'
+        && Number(params.get('cancel_at')) > now() && params.get('cancel_at') === params.get('metadata[cutoff_at]')) {
+        known.cancel_at = Number(params.get('cancel_at'));
+        known.metadata.cutoff_at = params.get('cancel_at');
+        return remember(known);
       }
-      known.cancel_at = Number(params.get('cancel_at'));
-      return remember(known);
+      if (keys === 'cancel_at,metadata[cutoff_at]' && params.get('cancel_at') === '' && params.get('metadata[cutoff_at]') === '' && known.cancel_at) {
+        known.cancel_at = null;
+        delete known.metadata.cutoff_at;
+        return remember(known);
+      }
+      return fail('An existing subscription is only given, or cleared of, the year-end stop the member asked for, without prorations.');
     }
     if (known && method === 'DELETE') Object.assign(known, { status: 'canceled', ended_at: now() });
     return Response.json(known || { id, status: id.includes('cancelled') ? 'canceled' : 'active', customer: 'cus_e2e', latest_invoice: null, metadata: {} });

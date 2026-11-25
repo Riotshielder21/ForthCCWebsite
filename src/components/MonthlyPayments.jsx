@@ -1,13 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiUrl, apiFetch } from '../utils/api';
-import { monthlyTotal, activeSubscriptionItems } from '../utils/subscriptions';
+import { activeSubscriptionItems, itemPrice, subscriptionPrice, continuationLabel } from '../utils/subscriptions';
 import ReasonInput from './ReasonInput';
 
 const date = (iso) => iso ? new Date(iso).toLocaleDateString('en-GB') : '';
-const money = (value) => `£${Number(value || 0).toFixed(2)}`;
 
-// A payer has one subscription (one direct debit) covering everyone they pay for; staff stop single items or
-// everything one member receives, and the payer's debit drops by that amount.
+// A payer has one subscription (one direct debit, monthly or yearly) covering everyone they pay for; staff stop single
+// items or everything one member receives, and the payer's payment drops by that amount.
 export default function MonthlyPayments({ adminUser, query }) {
   const [state, setState] = useState({ loading: true, subscriptions: [], failed: [], error: '' });
   const [busy, setBusy] = useState('');
@@ -23,7 +22,7 @@ export default function MonthlyPayments({ adminUser, query }) {
       cache: 'no-store', ...(body ? { body: JSON.stringify(body) } : {}) });
     const result = await response.json().catch(() => null);
     if (!result) throw new Error('The API server did not respond. For local development set VITE_API_BASE_URL (see DEVELOPMENT.md).');
-    if (!response.ok) throw new Error(result.error || 'The monthly payments request failed.');
+    if (!response.ok) throw new Error(result.error || 'The subscription payments request failed.');
     return result;
   }, [adminUser]);
 
@@ -49,7 +48,7 @@ export default function MonthlyPayments({ adminUser, query }) {
       setMessage(result.cancelScheduledAt ? `Cancellation scheduled for ${date(result.cancelScheduledAt)}. No refund or other payment changes.`
         : result.cancelledWholeSubscription
         ? `Subscription ${subscription.id} cancelled in Stripe. Nothing was left on it, so no further payments will be taken.`
-        : `${done} The payer now pays ${money(monthlyTotal(result.subscription))} a month for everything else.`);
+        : `${done} The payer now pays ${subscriptionPrice(result.subscription)} for everything else.`);
       setConfirming(null);
     } catch (error) {
       setMessage('');
@@ -60,18 +59,18 @@ export default function MonthlyPayments({ adminUser, query }) {
   };
 
   const ask = (subscription, items, path, done) => { setReason(''); setConfirming({ subscription, path, done, needsReason: true,
-    text: `Stop ${money(items.reduce((sum, item) => sum + Number(item.monthlyAmount || 0), 0))} a month for ${items.map((item) => `${item.name}${item.names?.length ? ` (${item.names.join(', ')})` : ''}`).join(', ')} on ${subscription.email}'s subscription ${subscription.id}? This takes effect in Stripe now. No money is returned. What these items pay for runs to the date it is paid up to. Membership and anything paid annually are not affected.${items.length === activeSubscriptionItems(subscription).length ? ' Nothing else is on it, so the whole subscription is cancelled.' : ' Everything else on it carries on.'} To return money as well, use Refund and cancel under Purchased item actions.` }); };
+    text: `Stop ${subscriptionPrice({ ...subscription, items: items.map((item) => ({ ...item, status: 'active', cancelScheduledAt: null })) })} for ${items.map((item) => `${item.name}${item.names?.length ? ` (${item.names.join(', ')})` : ''}`).join(', ')} on ${subscription.email}'s subscription ${subscription.id}? This takes effect in Stripe now. No money is returned. What these items pay for runs to the date it is paid up to. Membership and anything paid once are not affected.${items.length === activeSubscriptionItems(subscription).length ? ' Nothing else is on it, so the whole subscription is cancelled.' : ' Everything else on it carries on.'} To return money as well, use Refund and cancel under Purchased item actions.` }); };
 
-  if (state.loading) return <p className="ReportNotice">Loading monthly payments…</p>;
+  if (state.loading) return <p className="ReportNotice">Loading subscription payments…</p>;
   if (!state.subscriptions.length && !state.failed.length) return state.error ? <p className="StatusTextError" role="alert">{state.error}</p> : null;
   return (
     <div className="ReportPeople">
-      <h4 className="CartItemTitle">Monthly payments</h4>
+      <h4 className="CartItemTitle">Subscription payments</h4>
       {state.error && <p className="StatusTextError" role="alert">{state.error}</p>}
       {message && <p className="StatusText" role="status">{message}</p>}
       {state.failed.map((group) => (
         <p key={group.key} className="StatusTextError" role="alert">
-          {(group.itemNames || []).join(', ') || 'The monthly items'}{group.names?.length ? ` (${group.names.join(', ')})` : ''} could not be added to the payer's monthly payments: {group.error} The first payment was taken at checkout; arrange the following payments with them.
+          {(group.itemNames || []).join(', ') || 'The subscription items'}{group.names?.length ? ` (${group.names.join(', ')})` : ''} could not be added to the payer's subscription payments: {group.error} The first payment was taken at checkout; arrange the following payments with them.
         </p>
       ))}
       {state.subscriptions.map((subscription) => {
@@ -79,17 +78,18 @@ export default function MonthlyPayments({ adminUser, query }) {
         return (
           <div key={subscription.id} className="SpaceT4">
             <p className="ReportNotice">
-              <code>{subscription.id}</code>, paid by {subscription.email}: {subscription.status === 'active' ? `${money(monthlyTotal(subscription))} a month` : `cancelled ${date(subscription.cancelledAt)}`}
+              <code>{subscription.id}</code>, paid by {subscription.email}: {subscription.status === 'active' ? subscriptionPrice(subscription) : `cancelled ${date(subscription.cancelledAt)}`}
+              {subscription.status === 'active' && <><br />{continuationLabel(subscription)}</>}
             </p>
             <table className="ReportsTable">
-              <thead><tr><th scope="col">Member</th><th scope="col">Item</th><th scope="col">Order</th><th scope="col">Monthly</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+              <thead><tr><th scope="col">Member</th><th scope="col">Item</th><th scope="col">Order</th><th scope="col">Price</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
               <tbody>
                 {subscription.items.map((item) => (
                   <tr key={item.lineId}>
                     <td>{(item.names || []).join(', ') || '—'}</td>
                     <td>{item.name}</td>
                     <td>{item.orderRef || subscription.orderRef}</td>
-                    <td>{money(item.monthlyAmount)}</td>
+                    <td>{itemPrice(item)}</td>
                     <td>{item.cancelScheduledAt ? `Stops ${date(item.cancelScheduledAt)}` : item.status === 'active' ? 'Active' : `Cancelled ${date(item.cancelledAt)}`}</td>
                     <td>{item.status === 'active' && <button className="EditorCommand" type="button" disabled={Boolean(busy)}
                       onClick={() => ask(subscription, [item], `items/${encodeURIComponent(item.lineId)}/cancel`, `${item.name} removed from subscription ${subscription.id}.`)}>Cancel item</button>}

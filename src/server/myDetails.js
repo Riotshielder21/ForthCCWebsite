@@ -6,7 +6,7 @@ import { isCodeEmail, normaliseCodeEmail } from '../utils/emailCodes.js';
 import { validateDetailsUpdate, changedFields, managedByJustgo } from '../utils/myDetails.js';
 import { buildLinkedReceipt } from '../utils/receipt.js';
 import { clubYearDates, clubYearOf } from '../utils/clubYear.js';
-import { activeSubscriptionItems } from '../utils/subscriptions.js';
+import { activeSubscriptionItems, continuationLabel, itemPrice } from '../utils/subscriptions.js';
 import { resolveOrderPeople } from './orderPeople.js';
 import { loadCheckoutConsent } from './policies.js';
 import { loadNotices } from './notices.js';
@@ -54,8 +54,8 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripe
     return orders.map((order, index) => ({ ...buildLinkedReceipt(order.id, resolved[index]), createdAt: order.data().createdAt.toDate() }));
   };
   /**
-   * Active monthly payments this email pays for, and any that pay for people in its households. Another payer's
-   * email is not shown; the member can still ask the club to stop items they receive.
+   * Active subscription payments (monthly or yearly) this email pays for, and any that pay for people in its households.
+   * Another payer's email is not shown; the member can still ask the club to stop items they receive.
    */
   const monthlyPaymentsFor = async (email, householdDocs) => {
     const memberIds = new Set((await Promise.all(householdDocs.map((household) => peopleIn(household.id)))).flat().map((person) => person.id));
@@ -69,9 +69,9 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripe
       const pays = data.email === email;
       const items = activeSubscriptionItems(data).filter((item) => (pays || (item.membershipIds || []).some((id) => memberIds.has(id))));
       const requested = new Set((data.cancelRequests || []).flatMap((request) => request.lineKeys || []));
-      return { subscriptionId: document.id, paidByYou: pays,
+      return { subscriptionId: document.id, paidByYou: pays, continuation: pays ? continuationLabel(data) : '',
         items: items.map((item) => ({ key: `${item.orderRef || data.orderRef || ''}/${item.lineId}`, name: item.name || '', names: item.names || [],
-          monthlyAmount: Number(item.monthlyAmount || 0), clubYear: item.clubYear || data.clubYear || null })).map((item) => ({ ...item, cancelRequested: requested.has(item.key) })) };
+          price: itemPrice(item), clubYear: item.clubYear || data.clubYear || null })).map((item) => ({ ...item, cancelRequested: requested.has(item.key) })) };
     }).filter((subscription) => subscription.items.length);
   };
   const describe = async (household) => {
@@ -118,7 +118,7 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripe
     }
   });
 
-  // Members ask the club to stop monthly payments; staff make the change, so nothing is cancelled by mistake.
+  // Members ask the club to stop subscription payments; staff make the change, so nothing is cancelled by mistake.
   app.post('/api/my-details/monthly/:subscriptionId/cancel-request', rateLimit(5, 60 * 1000), async (req, res) => {
     try {
       if (!db()) return res.status(503).json({ error: 'Member details are not available right now.' });
@@ -126,7 +126,7 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripe
       if (!session) return;
       const subscription = (await monthlyPaymentsFor(session.email, await householdsFor(session.email)))
         .find((candidate) => candidate.subscriptionId === req.params.subscriptionId);
-      if (!subscription) return res.status(404).json({ error: 'Those monthly payments were not found.' });
+      if (!subscription) return res.status(404).json({ error: 'Those subscription payments were not found.' });
       const keys = Array.isArray(req.body?.itemKeys) ? req.body.itemKeys.filter((key) => typeof key === 'string').slice(0, 20) : [];
       const items = subscription.items.filter((item) => keys.includes(item.key) && !item.cancelRequested);
       if (!items.length) return res.status(400).json({ error: 'Choose what you would like to stop.' });
@@ -134,12 +134,12 @@ export const registerMyDetailsRoutes = (app, { db, sendEmail, emailCodes, stripe
       const at = Timestamp.now();
       await db().collection('subscriptions').doc(subscription.subscriptionId).update({
         cancelRequests: FieldValue.arrayUnion({ at, by: session.email, lineKeys: items.map((item) => item.key), reason }) });
-      const summary = items.map((item) => `${item.name}${item.names.length ? ` for ${item.names.join(', ')}` : ''} (£${item.monthlyAmount.toFixed(2)} a month)`);
+      const summary = items.map((item) => `${item.name}${item.names.length ? ` for ${item.names.join(', ')}` : ''} (${item.price})`);
       await raiseAttention('cancel-request', `${subscription.subscriptionId}-${at.toMillis()}`, { subscriptionId: subscription.subscriptionId, email: session.email,
         data: { itemKeys: items.map((item) => item.key) },
         detail: `${session.email} asked to stop: ${summary.join('; ')}.${subscription.paidByYou ? '' : ' They receive these items but someone else pays.'}${reason ? ` Reason: ${reason}` : ''} Cancel them under the member's Monthly payments, then resolve this with a note.` });
-      await sendEmail({ to: session.email, subject: 'We have your request to stop monthly payments',
-        body: ['We have received your request to stop these monthly payments:', '', ...summary.map((line) => `- ${line}`), '',
+      await sendEmail({ to: session.email, subject: 'We have your request to stop subscription payments',
+        body: ['We have received your request to stop these subscription payments:', '', ...summary.map((line) => `- ${line}`), '',
           'The club will make the change and email you to confirm. Payments continue until then; anything taken after your request will be refunded.', '',
           'For help, contact secretary@forthcanoeclub.co.uk.'].join('\n'), record: { kind: 'cancel-request', subscriptionId: subscription.subscriptionId } })
         .catch((error) => console.error('Could not confirm the cancellation request by email:', error.message));

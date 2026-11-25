@@ -9,7 +9,8 @@ export const REASON_REQUIRED = 'Enter a reason (up to 1000 characters).';
 export const ROUTINE_REASONS = {
   'grant-admin': 'Granted admin access',
   'schedule-volunteer-benefit-cancellation': 'Free volunteer benefit replaces the monthly payment',
-  'volunteer-price-change': 'Volunteer price applied to the monthly payment'
+  'volunteer-price-change': 'Volunteer price applied to the monthly payment',
+  'club-year-price-change': 'New club year price from 1 March'
 };
 
 /** The staff-entered reason for a destructive action, or '' when it is blank or too long. */

@@ -1,5 +1,5 @@
 import { DISCOUNTS } from '../constants/products.js';
-import { clubYearOf, fullMonthsAfterCurrent } from './clubYear.js';
+import { clubYearDates, clubYearOf, fullMonthsAfterCurrent, nextFirst } from './clubYear.js';
 import { PRORATED_MONTHS } from './pricing.js';
 import { applyVolunteerBenefits } from './volunteering.js';
 
@@ -27,14 +27,25 @@ export const volunteerPriceFor = ({ productId, basePrice, membershipIds, clubYea
 };
 
 /**
- * An existing monthly item is lowered to the volunteer price from its next debit, or removed at the end of the paid
- * period when the benefit makes it free. Nothing changes once the club year's last debit has been taken.
+ * The club year a subscription item's next full payment is for: next month's (monthly) or the next 1 March's (yearly),
+ * and never before the item started. A volunteer benefit for that year is what changes the payment.
  */
-export const monthlyAdjustment = ({ item, volunteerPrice, now = new Date() }) => {
-  if (item.status !== 'active' || item.cancelScheduledAt || volunteerPrice === null || !monthsLeftIn(item.clubYear, now)) return null;
-  const to = Math.min(Number(item.monthlyAmount), volunteerPrice);
-  if (to >= Number(item.monthlyAmount)) return null;
-  return to === 0 ? { action: 'remove', from: Number(item.monthlyAmount), to: 0 } : { action: 'reprice', from: Number(item.monthlyAmount), to };
+export const nextChargeYear = (item, now = new Date()) =>
+  Math.max(Number(item?.clubYear) || 0, clubYearOf(item?.interval === 'year' ? clubYearDates(clubYearOf(now)).end : nextFirst(now)));
+
+/**
+ * An existing subscription item is lowered to the volunteer price from its next payment, or removed at the end of the
+ * paid period when the benefit makes it free. `volunteerPrice` is a monthly price; a yearly item is compared with twelve
+ * months, less the annual discount when the product has one.
+ */
+export const subscriptionAdjustment = ({ item, volunteerPrice, product = null }) => {
+  if (item.status !== 'active' || item.cancelScheduledAt || volunteerPrice === null) return null;
+  const yearly = item.interval === 'year';
+  const current = Number(yearly ? item.yearlyAmount : item.monthlyAmount);
+  const price = yearly ? Math.round(volunteerPrice * 12 * (product?.hasAnnualDiscount ? 1 - DISCOUNTS.ANNUAL : 1) * 100) / 100 : volunteerPrice;
+  const to = Math.min(current, price);
+  if (to >= current) return null;
+  return to === 0 ? { action: 'remove', from: current, to: 0 } : { action: 'reprice', from: current, to };
 };
 
 const activeRefunds = (item) => (item.refunds || []).filter((refund) => !['failed', 'canceled'].includes(refund.status));
