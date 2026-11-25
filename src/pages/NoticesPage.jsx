@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Download, FilePlus2, History, RotateCcw, Send } from 'lucide-react';
 import { NoticeDocument } from '../components/NoticeDocument';
 import { usePageEditor } from '../utils/PageContentContext';
-import { NOTICE_ID_PATTERN, NOTICE_LIMITS, noticeIdFromTitle } from '../utils/notices';
+import { NOTICE_ID_PATTERN, NOTICE_LIMITS, noticeIdFromTitle, noticeTabs } from '../utils/notices';
 import { loadNoticeMode, loadNoticeVersions, noticePdfUrl, publishNotice, reorderNotices, watchPublishedNotices } from '../utils/noticesClient';
 import { tickWording } from '../constants/consentWording';
 import { CONSENT_LIMITS } from '../utils/consentWordingStore';
@@ -145,8 +145,8 @@ export default function NoticesPage() {
   const canEdit = Boolean(adminUser && editing);
   const publishedIds = new Set((state.notices || []).map((item) => item.id));
   const newDrafts = Object.entries(drafts).filter(([id, draft]) => draft.isNew && !publishedIds.has(id)).map(([id, draft]) => ({ id, title: draft.title || 'New notice', draft: true }));
-  const tabs = useMemo(() => state.notices ? [...state.notices, ...(canEdit ? newDrafts : []), ...tickedList.filter((item) => !publishedIds.has(item.id))] : [],
-    [state.notices, canEdit, drafts, tickedList]);
+  const savedTabs = useMemo(() => noticeTabs(state.all, tickedList), [state.all, tickedList]);
+  const tabs = state.notices ? [...savedTabs, ...(canEdit ? newDrafts : [])] : [];
   const allNoticeIds = new Set(state.all.map((item) => item.id));
   const missingDrafts = NOTICE_DRAFTS.filter((item) => !allNoticeIds.has(item.id) && !drafts[item.id]);
   const selected = tabs.find((tab) => tab.id === selectedId) || tabs[0];
@@ -197,7 +197,7 @@ export default function NoticesPage() {
     const title = newTitle.trim();
     const base = noticeIdFromTitle(title);
     if (!base) return setStatus({ message: '', error: 'Give the new notice a title with some letters or numbers.' });
-    const taken = new Set([...allNoticeIds, ...Object.keys(drafts)]);
+    const taken = new Set([...allNoticeIds, ...tickedList.map((item) => item.id), ...Object.keys(drafts)]);
     let id = base;
     for (let suffix = 2; taken.has(id); suffix += 1) id = `${base.slice(0, 55)}-${suffix}`;
     if (!NOTICE_ID_PATTERN.test(id)) return setStatus({ message: '', error: 'Choose a shorter title for the new notice.' });
@@ -221,8 +221,8 @@ export default function NoticesPage() {
     return result;
   }, (result) => result.live ? `${selected.title} published${result.version ? ` as version ${result.version}` : ''}. People will tick it again.` : `${selected.title} saved. Versions start when the website goes live.`);
   const move = (direction) => {
-    const ids = state.notices.map((item) => item.id);
-    const index = ids.indexOf(notice.id);
+    const ids = savedTabs.map((item) => item.id);
+    const index = ids.indexOf(selected.id);
     const target = index + direction;
     if (target < 0 || target >= ids.length) return;
     [ids[index], ids[target]] = [ids[target], ids[index]];
@@ -279,17 +279,17 @@ export default function NoticesPage() {
             <Download className="IconSm" /> PDF
           </a>}
         </header>
-        {canEdit && !ticked && <>
-          {notice && <fieldset className="NoticeOrderControls" data-editor-control="true">
+        {canEdit && (notice || ticked) && <fieldset className="NoticeOrderControls" data-editor-control="true">
             <legend>Notice tab order</legend>
             <span>These buttons change where this notice appears in the tab list.</span>
-            <button type="button" className="EditorCommand" disabled={busy || state.notices[0]?.id === notice.id} onClick={() => move(-1)}>
+            <button type="button" className="EditorCommand" disabled={busy || savedTabs[0]?.id === selected.id} onClick={() => move(-1)}>
               <ArrowLeft size={16} /> Move tab earlier
             </button>
-            <button type="button" className="EditorCommand" disabled={busy || state.notices.at(-1)?.id === notice.id} onClick={() => move(1)}>
+            <button type="button" className="EditorCommand" disabled={busy || savedTabs.at(-1)?.id === selected.id} onClick={() => move(1)}>
               <ArrowRight size={16} /> Move tab later
             </button>
           </fieldset>}
+        {canEdit && !ticked && <>
           <NoticeEditor adminUser={adminUser} notice={notice} draft={draft || { title: shownTitle || '', body: shownBody }} preLive={preLive} tabs={tabs} busy={busy}
             onDraft={(value) => setDraft(selected.id, value)} onDiscard={() => dropDraft(selected.id)} onPublish={publish} />
         </>}

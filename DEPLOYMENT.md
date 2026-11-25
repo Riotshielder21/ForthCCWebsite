@@ -36,6 +36,15 @@ Never commit secrets. Locally, copy [.env.example](.env.example) to the ignored 
 
 **GitHub Actions secrets:** `FIREBASE_SERVICE_ACCOUNT` (the deploy account), the `VITE_FIREBASE_*` web config, `VITE_APPCHECK_SITE_KEY`, and optionally `WEBSITE_ISLIVE`.
 
+**Issue summaries:** [summary.yml](.github/workflows/summary.yml) uses Copilot CLI, not the retired GitHub Models API.
+Add the repository Actions secret `COPILOT_PAT`: a fine-grained personal access token from an account with Copilot access,
+with the **Copilot Requests** account permission. The normal workflow `GITHUB_TOKEN` posts the comment; the Copilot token
+does not need repository write permissions. Missing or expired Copilot authentication fails the workflow rather than
+posting an empty summary. To summarize an existing issue, choose **Actions → Summarize new issues → Run workflow** and
+enter its number. Each successful run posts a new comment. Old failed runs use the old workflow, so use this manual
+trigger instead of rerunning them. New issues are summarized automatically. Copilot usage is charged against the token
+owner's allowance; repository code is not checked out or needed for summarization.
+
 **GitHub Actions variables** (Settings → Secrets and variables → Actions → Variables, applied on the next deploy): `APP_CHECK_MODE`, `VITE_FIREBASE_AUTH_DOMAIN` and the `JUSTGO_*` settings ([JustGo](#justgo)). Monitoring/budget recipients are `API_ALERT_EMAILS` in the workflow file; `STAFF_ALERT_EMAIL` sets Needs attention emails. Both currently use `jack.watt@forthcanoeclub.co.uk`.
 
 ## Email-code expiry cleanup

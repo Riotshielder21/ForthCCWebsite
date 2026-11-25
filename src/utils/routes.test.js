@@ -16,7 +16,11 @@ test('public paths resolve directly and legacy links canonicalise without losing
   assert.equal(resolveRoute('/order/secret?token=keep').page, 'order-lookup');
   assert.equal(resolveRoute('/_preview/contact').page, 'contact-us');
   assert.equal(resolveRoute('/_preview/contact').preview, true);
-  for (const path of ['/unknown', '/faq', '/history', '/?page=unknown']) assert.equal(resolveRoute(path).page, 'not-found');
+  assert.deepEqual(resolveRoute('/faq'), { page: 'everything-else', url: '/everything-else#faq', preview: false });
+  assert.deepEqual(resolveRoute('/history'), { page: 'everything-else', url: '/everything-else#history', preview: false });
+  assert.equal(resolveRoute('/history#magazine').url, '/everything-else#magazine');
+  assert.deepEqual(resolveRoute('/magazine'), { page: 'everything-else', url: '/everything-else#magazine', preview: false });
+  for (const path of ['/unknown', '/timetable', '/?page=unknown']) assert.equal(resolveRoute(path).page, 'not-found');
 });
 
 test('hosting serves canonical paths and revalidates pages and the worker separately from immutable hashed assets', () => {

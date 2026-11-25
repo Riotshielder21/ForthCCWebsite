@@ -19,7 +19,8 @@ test.beforeEach(async ({ page }) => {
       '/api/consent-wording': publishedWording,
       '/api/client-errors': { accepted: true },
       '/api/notices/mode': { live: true },
-      '/api/membership-names': { names: [], exists: false }
+      '/api/membership-names': { names: [], exists: false },
+      '/api/timetable': { days: [] }
     };
     return route.fulfill({ json: responses[path] || { tiers: [], rules: [] } });
   });
@@ -45,6 +46,50 @@ test('returning to a page loads published edits without a full reload', async ({
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
   expect(requests).toBeGreaterThanOrEqual(2);
   expect(await page.evaluate(() => window.navigationTestMarker)).toBe('same-document');
+});
+
+test('Everything Else is in the site menu and its tabs work with keyboard navigation', async ({ page }) => {
+  await page.goto('/everything-else');
+
+  await expect(page.getByRole('heading', { name: 'Everything Else', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'FAQ', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.getByText('How do I try paddling with the club?', { exact: true }).click();
+  await expect(page.getByRole('link', { name: 'Beginners page', exact: true })).toBeVisible();
+  await page.getByText('How does club night work?', { exact: true }).click();
+  await expect(page.getByRole('link', { name: 'weekly timetable', exact: true })).toHaveAttribute('href', '/disciplines');
+
+  const historyTab = page.getByRole('tab', { name: 'History', exact: true });
+  await historyTab.click();
+  await expect(page).toHaveURL(/\/everything-else#history$/);
+  await expect(page.getByRole('heading', { name: 'Club History', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Allan Sharples photo collection', exact: true }))
+    .toHaveAttribute('href', 'https://www.canoeingphotos.com/Photo-Collections/Allan-Sharples-Collection');
+
+  const magazineTab = page.getByRole('tab', { name: 'Kayak Magazine', exact: true });
+  await historyTab.press('ArrowRight');
+  await expect(magazineTab).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('link', { name: 'July (No. 1)', exact: true }))
+    .toHaveAttribute('href', 'https://canoeingresults.com/wp-content/uploads/2024/07/197407-Kayak-Magazine-Jul-74.pdf');
+  await magazineTab.press('Home');
+  await expect(page.getByRole('tab', { name: 'FAQ', exact: true })).toHaveAttribute('aria-selected', 'true');
+
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await expect(page.getByRole('navigation', { name: 'Site menu' }).getByRole('link', { name: 'Everything Else', exact: true })).toBeVisible();
+
+  await page.goto('/faq');
+  await expect(page).toHaveURL(/\/everything-else#faq$/);
+  await expect(page.getByRole('tab', { name: 'FAQ', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.goto('/history');
+  await expect(page).toHaveURL(/\/everything-else#history$/);
+  await expect(page.getByRole('tab', { name: 'History', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.goto('/magazine');
+  await expect(page).toHaveURL(/\/everything-else#magazine$/);
+  await expect(page.getByRole('tab', { name: 'Kayak Magazine', exact: true })).toHaveAttribute('aria-selected', 'true');
+
+  await page.goto('/disciplines');
+  await expect(page.getByRole('heading', { name: 'Supported and adaptive paddling', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Contact the Supported Paddling coordinator', exact: true })).toHaveAttribute('href', '/contact-us#support');
+  await expect(page.getByRole('link', { name: 'Learn about the Access Project', exact: true })).toHaveAttribute('href', '/access-project');
 });
 
 test('the shop offers only products loaded on this visit, and pauses buying while offline', async ({ page, context }) => {

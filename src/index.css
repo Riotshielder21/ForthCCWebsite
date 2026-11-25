@@ -1873,6 +1873,14 @@
 .NoticesPage { max-width: 76rem; }
 .NoticeAdminBar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin: 1rem 0; }
 .NoticeLayout { margin-top: 2rem; }
+.EverythingElseLayout { max-width: 76rem; }
+.EverythingElseFaqList { display: grid; gap: 1rem; }
+.EverythingElseFaqItem { height: auto; min-height: 0; }
+.EverythingElseFaqItem > summary { cursor: pointer; list-style-position: outside; }
+.EverythingElseFaqItem > summary:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: 3px; }
+.EverythingElsePanel .main_tile { height: auto; min-height: 0; }
+.EverythingElseIssues a { white-space: nowrap; }
+.EverythingElseActions { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; }
 .NoticePanel { position: relative; min-height: 28rem; padding: 2rem 2.25rem 2.5rem; background: var(--fcc-color-surface);
   border: 1px solid var(--fcc-color-border); border-radius: 0 0.75rem 0.75rem 0.75rem; box-shadow: 0 10px 30px -18px rgba(0, 33, 71, 0.45); }
 .NoticePanel:focus-visible { outline: 3px solid var(--fcc-color-accent); outline-offset: 2px; }

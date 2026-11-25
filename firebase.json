@@ -158,6 +158,9 @@
       { "source": "/home", "destination": "/", "type": 301 },
       { "source": "/activites", "destination": "/disciplines", "type": 301 },
       { "source": "/activities", "destination": "/disciplines", "type": 301 },
+      { "source": "/faq", "destination": "/everything-else#faq", "type": 301 },
+      { "source": "/history", "destination": "/everything-else#history", "type": 301 },
+      { "source": "/magazine", "destination": "/everything-else#magazine", "type": 301 },
       { "source": "/contact", "destination": "/contact-us", "type": 301 },
       { "source": "/club-night", "destination": "/check-ins", "type": 301 }
     ],

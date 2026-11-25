@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  checkNoticeAgreement, noticeIdFromTitle, noticePlainText, noticeVersionMap, NOTICE_ID_PATTERN, parseNoticeBlocks, publishedNotices, validateNoticeInput
+  checkNoticeAgreement, noticeIdFromTitle, noticePlainText, noticeTabs, noticeVersionMap, NOTICE_ID_PATTERN, parseNoticeBlocks, publishedNotices, validateNoticeInput
 } from './notices.js';
 
 test('notice IDs are slugs made from the title', () => {
@@ -52,6 +52,23 @@ const notices = [
 test('all published notices remain shown and agreed to, in order', () => {
   assert.deepEqual(publishedNotices(notices).map((notice) => notice.id), ['privacy-notice', 'terms', 'old']);
   assert.deepEqual(noticeVersionMap(notices), { 'privacy-notice': 3, terms: 2, old: 1 });
+});
+
+test('consent tabs default to the end and can be interleaved with notices after saving', () => {
+  const statements = [
+    { id: 'participation-disclaimer', title: 'Participation' },
+    { id: 'photo-video-consent', title: 'Photo' }
+  ];
+  assert.deepEqual(noticeTabs(notices, statements).map(({ id }) => id),
+    ['privacy-notice', 'terms', 'old', 'participation-disclaimer', 'photo-video-consent']);
+  const reordered = [
+    { ...notices[0], order: 2 },
+    { id: 'participation-disclaimer', order: 0 },
+    { id: 'photo-video-consent', order: 1 }
+  ];
+  assert.deepEqual(noticeTabs(reordered, statements).map(({ id }) => id),
+    ['participation-disclaimer', 'photo-video-consent', 'terms']);
+  assert.deepEqual(noticeVersionMap(reordered), { terms: 2 });
 });
 
 test('checkout agreement must match the current versions', () => {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import PDFDocument from 'pdfkit';
 import { Timestamp } from 'firebase-admin/firestore';
-import { NOTICE_ID_PATTERN, NOTICE_LIMITS, noticePlainText, parseNoticeBlocks, publishedNotices, validateNoticeInput } from '../utils/notices.js';
+import { CONSENT_TAB_IDS, NOTICE_ID_PATTERN, NOTICE_LIMITS, noticePlainText, parseNoticeBlocks, publishedNotices, validateNoticeInput } from '../utils/notices.js';
 import { rateLimit } from './rateLimit.js';
 
 /** Hash of the wording people agree to: the title and the text. Only a change to either makes a new version. */
@@ -124,10 +124,11 @@ export const reorderNotices = async (db, ids, now = Timestamp.now()) => {
     || ids.some((id) => typeof id !== 'string' || !NOTICE_ID_PATTERN.test(id))) {
     throw Object.assign(new Error('Send each notice ID once, in the new order.'), { status: 400 });
   }
-  const known = new Set((await db.collection('notices').get()).docs.map((document) => document.id));
+  const known = new Set([...CONSENT_TAB_IDS, ...(await db.collection('notices').get()).docs.map((document) => document.id)]);
   if (ids.some((id) => !known.has(id))) throw Object.assign(new Error('Unknown notice in the new order.'), { status: 400 });
   const batch = db.batch();
-  ids.forEach((id, order) => batch.update(db.collection('notices').doc(id), { order, updatedAt: now }));
+  // Consent tabs have ordering metadata only, never notice wording or notice versions.
+  ids.forEach((id, order) => batch.set(db.collection('notices').doc(id), { order, updatedAt: now }, { merge: true }));
   await batch.commit();
 };
 
